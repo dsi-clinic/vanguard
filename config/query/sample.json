@@ -1,0 +1,13 @@
+{
+    "output_file": "test_file.csv",
+    "cluster": true,
+    "slurm": {
+        "slurm_array_parallelism": 2,
+        "slurm_partition": "general",
+        "slurm_job_name": "test",
+        "slurm_nodes": 1,
+        "slurm_time": "1:00",
+        "slurm_gres": "gpu:1",
+        "slurm_mem_per_cpu": 500
+    }
+}
