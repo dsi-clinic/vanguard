@@ -1,12 +1,21 @@
-# vanguard
+# VAscular Network Gnn for Understanding And Response Detection
+(vanguard)
 
 ## Project Background
 
-[Please add project background]
+A major challenge in breast cancer care is identifying whether treatment is effective early enough to adjust therapy. Standard imaging measures, like tumor shrinkage, often appear only after weeks or months. This delay can leave patients on ineffective regimens for too long.  
+
+Tumor-associated blood vessels offer a potential early biomarker. Vascular networks support tumor growth and change rapidly during therapy. Dynamic contrast-enhanced MRI (DCE-MRI) can capture these changes, and recent work suggests that network properties—branching, tortuosity, density, and connectivity—may reveal subtle treatment responses that pixel-level metrics miss.  
+
+This project represents vascular structures as graphs, where vessel branch points are nodes and vessel segments are edges with features such as length, diameter, and curvature. Graph Neural Networks (GNNs) provide a natural framework for learning predictive patterns from these structures. By leveraging vascular graph analysis, we aim to detect treatment response earlier, enabling more personalized and adaptive cancer therapy.  
 
 ## Project Goals
 
-[Please add project background]
+- Develop a computational pipeline to convert breast MRI data into graph-based representations of blood vessel networks, where nodes correspond to vessel branch points and edges represent vessel segments annotated with length, width, and curvature  
+- Train and evaluate Graph Neural Network (GNN) models to analyze vascular graphs, capturing both local structural changes and global network patterns  
+- Compare GNN performance to baseline models using traditional imaging features  
+- Identify which vascular features are most predictive of patient-specific treatment response  
+
 
 ## Usage
 
