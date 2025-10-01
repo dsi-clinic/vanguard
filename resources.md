@@ -3,7 +3,15 @@
 ## Project-specific
 - Mama-mia dataset ([paper](https://www.nature.com/articles/s41597-025-04707-4), [code](https://github.com/LidiaGarrucho/MAMA-MIA/tree/main))
 - Segmentation model (small dataset but breast specific: [paper](https://www.nature.com/articles/s41598-024-54048-2), [code](https://github.com/mazurowski-lab/3D-Breast-FGT-and-Blood-Vessel-Segmentation))
+  - Jim's fork: https://github.com/jpivarski/3D-Breast-FGT-and-Blood-Vessel-Segmentation
+  - Make a fork of this (you will end up with a fork of a fork) and uncheck "Copy the `main` branch only". You will want all branches.
+  - Clone your forked repo
+  - Switch to the `jpivarski/fix-issues` git branch
+  - This is the branch that has a `prediction-workflow.ipynb` notebook file in it (the `main` branch doesn't)
+  - Your week 0 task is to get this running and produce the rotating image with blood vessels labeled
+- The MAMA-MIA dataset is in `/net/projects2/vanguard` on the cluster
 - [Anna's calendly](https://calendly.com/annawoodard) for scheduling 1 on 1s with her
+- Schedule a 1 on 1 meeting with Jim in Slack (#2025-autumn-karczmar-lab)
 
 ## General
 - [The Clinic repo](https://github.com/dsi-clinic/the-clinic)  
