@@ -3,6 +3,7 @@
 ## Project-specific
 - Mama-mia dataset ([paper](https://www.nature.com/articles/s41597-025-04707-4), [code](https://github.com/LidiaGarrucho/MAMA-MIA/tree/main))
 - Segmentation model (small dataset but breast specific: [paper](https://www.nature.com/articles/s41598-024-54048-2), [code](https://github.com/mazurowski-lab/3D-Breast-FGT-and-Blood-Vessel-Segmentation))
+- [Anna's calendly](https://calendly.com/annawoodard) for scheduling 1 on 1s with her
 
 ## General
 - [The Clinic repo](https://github.com/dsi-clinic/the-clinic)  
