@@ -36,6 +36,10 @@ pre-commit run --all-files
 
 ## Repository Structure
 
+
+### [resources.md](resources.md)  
+  Curated list of project, domain, and general references
+  
 ### utils
 Project python code
 
