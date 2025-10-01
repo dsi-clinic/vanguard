@@ -1,4 +1,4 @@
-# VAscular Network Gnn for Understanding And Response Detection (vanguard)
+# VAscular Networks for Graphical Understanding And Response Detection (vanguard)
 
 ## Project Background
 
