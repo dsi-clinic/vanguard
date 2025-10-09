@@ -12,6 +12,7 @@
 - The MAMA-MIA dataset is in `/net/projects2/vanguard` on the cluster
 - [Anna's calendly](https://calendly.com/annawoodard) for scheduling 1 on 1s with her
 - Schedule a 1 on 1 meeting with Jim in Slack (#2025-autumn-karczmar-lab)
+- [project kanban board](https://github.com/orgs/dsi-clinic/projects/6/views/1)
 
 ## General
 - [The Clinic repo](https://github.com/dsi-clinic/the-clinic)  
