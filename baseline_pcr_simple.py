@@ -71,4 +71,46 @@ def load_dataset(json_dir: Path, split_csv: Path) -> Tuple[pd.DataFrame, pd.Data
   if not {"patient_id", "split"}.issubset(set(splits.columns)):
     raise ValueError("split CSV must have columns: patient_id, split")
   
+  def get_splits(s: str) -> str: #getting splits from the split column in csv
+      s = str(s).strip().lower()
+      if s == "train":
+          return "train"
+      if s in "val":
+          return "val"
+      return "test"
+
+  splits["split"] = splits["split"].map(get_splits)
+  split_map = dict(zip(splits["patient_id"].astype(str), splits["split"]))
+
+  rows = []
+  for p in sorted(Path(json_dir).glob("*.json")):
+      js = json.loads(Path(p).read_text())
+
+      pid = get_patient_id(p, js)
+      y = get_label(js) 
+      age = get_age(js)
+      subtype = get_subtype(js)
+      bbox_volume = get_bbox_volume(js)
+
+      rows.append({
+            "patient_id": pid,
+            "split": split_map[pid],
+            "age": age,
+            "tumor_subtype": subtype,
+            "bbox_volume": bbox_volume,
+            "y": y,
+        })
+      
+  df = pd.DataFrame(rows)
+
+      
+  df_train = df[df["split"] == "train"].copy()
+  df_eval  = df[df["split"] != "train"].copy()
+
+  return df_train, df_eval
+
+
+
+
+
 
