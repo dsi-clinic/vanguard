@@ -15,6 +15,34 @@ This project represents vascular structures as graphs, where vessel branch point
 - Compare GNN performance to baseline models using traditional imaging features  
 - Identify which vascular features are most predictive of patient-specific treatment response  
 
+## Installation
+
+Micromamba install (one time):
+```
+curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba
+./bin/micromamba shell init -s bash -r ~/micromamba 
+source ~/.bashrc
+micromamba config append channels conda-forge
+```
+
+Installation recipe (one time):
+```bash
+micromamba config prepend channels conda-forge
+micromamba config set channel_priority strict
+git clone git@github.com:uchicago-dsi/vanguard.git
+cd vanguard
+
+micromamba create -y -n vanguard \
+  python=3.11 \
+  pytorch-gpu=2.7.* \
+  torchvision=0.22.* \
+  cuda-version=12.6 \
+  numpy pandas imageio imageio-ffmpeg
+
+micromamba activate vanguard
+pip install -r requirements.txt
+```
+
 
 ## Usage
 
