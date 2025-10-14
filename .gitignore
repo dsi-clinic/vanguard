@@ -140,3 +140,4 @@ venv.bak/
 *.avro
 
 
+radiomics_baseline/outdir/*

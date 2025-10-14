@@ -1,0 +1,17 @@
+setting:
+  binWidth: 50
+  normalize: true
+  normalizeScale: 100
+  resampledPixelSpacing: [2.5, 2.5, 2.5]
+  interpolator: sitkBSpline
+  preCrop: true
+  label: 1
+  distances: [1]
+
+imageType:
+  Original: {}
+
+featureClass:
+  shape: []
+  firstorder: []
+  glcm: []
