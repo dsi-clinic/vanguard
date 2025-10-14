@@ -14,8 +14,8 @@ python radiomics_baseline/baseline_pcr_radiomics.py \
   --images /net/projects2/vanguard/MAMA-MIA-syn60868042/images \
   --masks  /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert \
   --labels radiomics_baseline/labels.csv \
-  --split  radiomics_baseline/splits_train_test_ready_0000.csv \
-  --output radiomics_baseline/outdir_rf_0000 \
+  --split  radiomics_baseline/splits_small.csv \
+  --output radiomics_baseline/outdir_test_small \
   --params radiomics_baseline/pyradiomics_params.yaml \
   --image-pattern "{pid}/{pid}_0000.nii.gz" \
   --mask-pattern  "{pid}.nii.gz" \
