@@ -155,8 +155,10 @@ def build_pipeline(C: float = 1.0, max_iter: int = 1000) -> Pipeline:
             ("scaler", StandardScaler()),
         ]
     )
+
     cat = Pipeline(
         [
+            ("imputer", SimpleImputer(strategy="constant", fill_value="unknown")),
             ("onehot", OneHotEncoder(handle_unknown="ignore")),
         ]
     )
@@ -167,6 +169,7 @@ def build_pipeline(C: float = 1.0, max_iter: int = 1000) -> Pipeline:
         ]
     )
     clf = LogisticRegression(C=C, max_iter=max_iter, penalty="l2", solver="lbfgs")
+
     return Pipeline(
         [
             ("preprocess", pre),
