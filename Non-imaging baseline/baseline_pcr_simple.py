@@ -50,12 +50,12 @@ def get_age(js: dict[str, Any]) -> float | None:
     except Exception:
         return None
 
-
 def get_subtype(js: dict[str, Any]) -> str:
-    """Return tumor subtype (lowercased); 'unknown' if missing."""
     subtype = js.get("primary_lesion", {}).get("tumor_subtype", "")
     s = str(subtype).strip().lower()
-    return s if s else "unknown"
+    if s in {"", "nan", "null", "unknown"}:
+        return "unknown"
+    return s
 
 
 def get_label_optional(js: dict[str, Any]) -> int | None:

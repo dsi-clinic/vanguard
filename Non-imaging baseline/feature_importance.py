@@ -46,7 +46,7 @@ def get_age(js: dict[str, Any]) -> float | None:
 def get_subtype(js: dict[str, Any]) -> str:
     raw = js.get("primary_lesion", {}).get("tumor_subtype", "")
     s = str(raw).strip().lower()
-    if s == "nan":
+    if s in {"", "nan"}:
         return "unknown"
     return s
 
