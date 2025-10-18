@@ -1,0 +1,530 @@
+{
+    "1": {
+        "BA start": [
+            {
+                "id": 0,
+                "degree": 1,
+                "label": 1,
+                "coords": [
+                    -3.0159,
+                    -8.59549,
+                    -8.92809
+                ]
+            }
+        ],
+        "BA bifurcation": [
+            {
+                "id": 43,
+                "degree": 3,
+                "label": 1,
+                "coords": [
+                    -1.33447,
+                    -10.24748,
+                    1.64405
+                ]
+            }
+        ],
+        "R-PCA boundary": [
+            {
+                "id": 50,
+                "degree": 2,
+                "label": 1,
+                "coords": [
+                    0.41979,
+                    -10.9353,
+                    1.7344
+                ]
+            }
+        ],
+        "L-PCA boundary": [
+            {
+                "id": 196,
+                "degree": 2,
+                "label": 1,
+                "coords": [
+                    -1.31551,
+                    -10.86931,
+                    4.5305
+                ]
+            }
+        ]
+    },
+    "2": {
+        "BA boundary": [
+            {
+                "id": 50,
+                "degree": 2,
+                "label": 2,
+                "coords": [
+                    0.41979,
+                    -10.9353,
+                    1.7344
+                ]
+            }
+        ],
+        "Pcom bifurcation": [
+            {
+                "id": 82,
+                "degree": 3,
+                "label": 2,
+                "coords": [
+                    4.58596,
+                    -12.0662,
+                    8.32398
+                ]
+            }
+        ],
+        "Pcom boundary": [
+            {
+                "id": 643,
+                "degree": 2,
+                "label": 2,
+                "coords": [
+                    4.68349,
+                    -11.43188,
+                    8.00924
+                ]
+            }
+        ],
+        "PCA end": [
+            {
+                "id": 184,
+                "degree": 1,
+                "label": 2,
+                "coords": [
+                    22.66747,
+                    -23.54392,
+                    7.38952
+                ]
+            }
+        ]
+    },
+    "3": {
+        "BA boundary": [
+            {
+                "id": 196,
+                "degree": 2,
+                "label": 3,
+                "coords": [
+                    -1.31551,
+                    -10.86931,
+                    4.5305
+                ]
+            }
+        ],
+        "Pcom bifurcation": [
+            {
+                "id": 220,
+                "degree": 3,
+                "label": 3,
+                "coords": [
+                    0.54078,
+                    -8.11574,
+                    9.95701
+                ]
+            }
+        ],
+        "Pcom boundary": [
+            {
+                "id": 692,
+                "degree": 2,
+                "label": 3,
+                "coords": [
+                    0.85977,
+                    -7.25436,
+                    8.62102
+                ]
+            }
+        ],
+        "PCA end": [
+            {
+                "id": 321,
+                "degree": 1,
+                "label": 3,
+                "coords": [
+                    -14.72775,
+                    -23.52089,
+                    8.35545
+                ]
+            }
+        ]
+    },
+    "4": {
+        "ICA start": [
+            {
+                "id": 322,
+                "degree": 1,
+                "label": 4,
+                "coords": [
+                    10.5812,
+                    5.87559,
+                    8.57628
+                ]
+            }
+        ],
+        "Pcom bifurcation": [
+            {
+                "id": 340,
+                "degree": 3,
+                "label": 4,
+                "coords": [
+                    12.35855,
+                    1.81325,
+                    11.88971
+                ]
+            }
+        ],
+        "Pcom boundary": [
+            {
+                "id": 599,
+                "degree": 2,
+                "label": 4,
+                "coords": [
+                    11.1932,
+                    -0.02165,
+                    11.66295
+                ]
+            }
+        ],
+        "ICA bifurcation": [
+            {
+                "id": 365,
+                "degree": 3,
+                "label": 4,
+                "coords": [
+                    18.33417,
+                    2.72147,
+                    13.64779
+                ]
+            }
+        ],
+        "ACA boundary": [
+            {
+                "id": 699,
+                "degree": 2,
+                "label": 4,
+                "coords": [
+                    17.52921,
+                    3.35028,
+                    14.53557
+                ]
+            }
+        ],
+        "MCA boundary": [
+            {
+                "id": 377,
+                "degree": 2,
+                "label": 4,
+                "coords": [
+                    21.34261,
+                    3.88433,
+                    13.52662
+                ]
+            }
+        ]
+    },
+    "5": {
+        "ICA boundary": [
+            {
+                "id": 377,
+                "degree": 2,
+                "label": 5,
+                "coords": [
+                    21.34261,
+                    3.88433,
+                    13.52662
+                ]
+            }
+        ],
+        "MCA end": [
+            {
+                "id": 407,
+                "degree": 3,
+                "label": 5,
+                "coords": [
+                    27.59753,
+                    8.23909,
+                    9.64395
+                ]
+            }
+        ]
+    },
+    "6": {
+        "ICA start": [
+            {
+                "id": 454,
+                "degree": 1,
+                "label": 6,
+                "coords": [
+                    -4.99136,
+                    6.59689,
+                    7.1988
+                ]
+            }
+        ],
+        "Pcom bifurcation": [
+            {
+                "id": 474,
+                "degree": 3,
+                "label": 6,
+                "coords": [
+                    -7.30754,
+                    1.58209,
+                    8.26147
+                ]
+            }
+        ],
+        "Pcom boundary": [
+            {
+                "id": 652,
+                "degree": 2,
+                "label": 6,
+                "coords": [
+                    -5.88327,
+                    -0.43564,
+                    7.22777
+                ]
+            }
+        ],
+        "ICA bifurcation": [
+            {
+                "id": 505,
+                "degree": 3,
+                "label": 6,
+                "coords": [
+                    -14.32576,
+                    1.20714,
+                    14.16282
+                ]
+            }
+        ],
+        "ACA boundary": [
+            {
+                "id": 871,
+                "degree": 2,
+                "label": 6,
+                "coords": [
+                    -12.87994,
+                    1.34243,
+                    15.8879
+                ]
+            }
+        ],
+        "MCA boundary": [
+            {
+                "id": 518,
+                "degree": 2,
+                "label": 6,
+                "coords": [
+                    -17.70427,
+                    1.25127,
+                    15.39845
+                ]
+            }
+        ]
+    },
+    "7": {
+        "ICA boundary": [
+            {
+                "id": 518,
+                "degree": 2,
+                "label": 7,
+                "coords": [
+                    -17.70427,
+                    1.25127,
+                    15.39845
+                ]
+            }
+        ],
+        "MCA end": [
+            {
+                "id": 593,
+                "degree": 1,
+                "label": 7,
+                "coords": [
+                    -28.55146,
+                    17.34853,
+                    15.10775
+                ]
+            }
+        ]
+    },
+    "8": {
+        "ICA boundary": [
+            {
+                "id": 599,
+                "degree": 2,
+                "label": 8,
+                "coords": [
+                    11.1932,
+                    -0.02165,
+                    11.66295
+                ]
+            }
+        ],
+        "PCA boundary": [
+            {
+                "id": 643,
+                "degree": 2,
+                "label": 8,
+                "coords": [
+                    4.68349,
+                    -11.43188,
+                    8.00924
+                ]
+            }
+        ]
+    },
+    "9": {
+        "ICA boundary": [
+            {
+                "id": 652,
+                "degree": 2,
+                "label": 9,
+                "coords": [
+                    -5.88327,
+                    -0.43564,
+                    7.22777
+                ]
+            }
+        ],
+        "PCA boundary": [
+            {
+                "id": 692,
+                "degree": 2,
+                "label": 9,
+                "coords": [
+                    0.85977,
+                    -7.25436,
+                    8.62102
+                ]
+            }
+        ]
+    },
+    "10": {
+        "R-ACA boundary": [
+            {
+                "id": 1009,
+                "degree": 2,
+                "label": 10,
+                "coords": [
+                    2.59864,
+                    10.62552,
+                    15.6604
+                ]
+            }
+        ],
+        "L-ACA boundary": [
+            {
+                "id": 925,
+                "degree": 3,
+                "label": 10,
+                "coords": [
+                    0.75894,
+                    10.29827,
+                    17.2945
+                ]
+            }
+        ]
+    },
+    "11": {
+        "ICA boundary": [
+            {
+                "id": 699,
+                "degree": 2,
+                "label": 11,
+                "coords": [
+                    17.52921,
+                    3.35028,
+                    14.53557
+                ]
+            }
+        ],
+        "Acom bifurcation": [
+            {
+                "id": 764,
+                "degree": 3,
+                "label": 11,
+                "coords": [
+                    3.35179,
+                    10.82379,
+                    14.93671
+                ]
+            }
+        ],
+        "Acom boundary": [
+            {
+                "id": 1009,
+                "degree": 2,
+                "label": 11,
+                "coords": [
+                    2.59864,
+                    10.62552,
+                    15.6604
+                ]
+            }
+        ],
+        "ACA end": [
+            {
+                "id": 864,
+                "degree": 1,
+                "label": 11,
+                "coords": [
+                    2.97957,
+                    14.52644,
+                    30.94159
+                ]
+            }
+        ]
+    },
+    "12": {
+        "ICA boundary": [
+            {
+                "id": 871,
+                "degree": 2,
+                "label": 12,
+                "coords": [
+                    -12.87994,
+                    1.34243,
+                    15.8879
+                ]
+            }
+        ],
+        "Acom bifurcation": [
+            {
+                "id": 925,
+                "degree": 3,
+                "label": 12,
+                "coords": [
+                    0.75894,
+                    10.29827,
+                    17.2945
+                ]
+            }
+        ],
+        "Acom boundary": [
+            {
+                "id": 925,
+                "degree": 3,
+                "label": 12,
+                "coords": [
+                    0.75894,
+                    10.29827,
+                    17.2945
+                ]
+            }
+        ],
+        "ACA end": [
+            {
+                "id": 1007,
+                "degree": 1,
+                "label": 12,
+                "coords": [
+                    6.82235,
+                    14.47602,
+                    36.12214
+                ]
+            }
+        ]
+    }
+}

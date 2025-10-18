@@ -1,0 +1,25 @@
+{
+    "anterior": {
+        "L-A1": true,
+        "Acom": true,
+        "3rd-A2": false,
+        "R-A1": true
+    },
+    "posterior": {
+        "L-Pcom": true,
+        "L-P1": true,
+        "R-P1": true,
+        "R-Pcom": true
+    },
+    "fetal": {
+        "L-PCA": false,
+        "R-PCA": true
+    },
+    "fenestration": {
+        "L-A1": false,
+        "Acom": false,
+        "R-A1": false,
+        "L-P1": false,
+        "R-P1": false
+    }
+}

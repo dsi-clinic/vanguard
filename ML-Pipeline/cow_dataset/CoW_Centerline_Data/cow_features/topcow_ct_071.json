@@ -1,0 +1,832 @@
+{
+    "1": {
+        "BA": [
+            {
+                "segment": {
+                    "start": 24,
+                    "end": 61
+                },
+                "radius": {
+                    "mean": 1.94,
+                    "sd": 0.152,
+                    "median": 1.883,
+                    "min": 1.767,
+                    "q1": 1.84,
+                    "q3": 1.992,
+                    "max": 2.341
+                },
+                "length": 9.893,
+                "tortuosity": 0.018,
+                "volume": 119.003,
+                "curvature": {
+                    "mean": 0.283,
+                    "sd": 0.148,
+                    "median": 0.242,
+                    "min": 0.035,
+                    "q1": 0.182,
+                    "q3": 0.394,
+                    "max": 0.618
+                }
+            }
+        ],
+        "BA bifurcation": [
+            {
+                "bifurcation": {
+                    "midpoint": 61,
+                    "dist_angle": 1,
+                    "points_angle": [
+                        58,
+                        64,
+                        179
+                    ],
+                    "dist_radius": 2.979,
+                    "points_radius": [
+                        51,
+                        71,
+                        186
+                    ],
+                    "radius_parent": 1.89,
+                    "radius_child1": 1.655,
+                    "radius_child2": 1.519
+                },
+                "angles": {
+                    "BA/R-PCA": 124.064,
+                    "BA/L-PCA": 143.18,
+                    "R-PCA/L-PCA": 92.755
+                },
+                "ratios": {
+                    "radius sum": 0.596,
+                    "area sum": 0.708,
+                    "R-PCA/L-PCA": 1.09,
+                    "R-PCA/BA": 0.875,
+                    "L-PCA/BA": 0.803
+                },
+                "bifurcation exponent": 4.0
+            }
+        ]
+    },
+    "2": {
+        "PCA": [
+            {
+                "segment": {
+                    "start": 71,
+                    "end": 128
+                },
+                "radius": {
+                    "mean": 1.391,
+                    "sd": 0.176,
+                    "median": 1.376,
+                    "min": 1.063,
+                    "q1": 1.244,
+                    "q3": 1.57,
+                    "max": 1.697
+                },
+                "length": 16.874,
+                "tortuosity": 0.098,
+                "volume": 102.373,
+                "curvature": {
+                    "mean": 0.256,
+                    "sd": 0.13,
+                    "median": 0.232,
+                    "min": 0.01,
+                    "q1": 0.147,
+                    "q3": 0.357,
+                    "max": 0.59
+                }
+            }
+        ],
+        "P1": [
+            {
+                "segment": {
+                    "start": 71,
+                    "end": 97
+                },
+                "radius": {
+                    "mean": 1.557,
+                    "sd": 0.079,
+                    "median": 1.576,
+                    "min": 1.34,
+                    "q1": 1.524,
+                    "q3": 1.616,
+                    "max": 1.697
+                },
+                "length": 7.058,
+                "tortuosity": 0.061,
+                "volume": 53.885,
+                "curvature": {
+                    "mean": 0.299,
+                    "sd": 0.142,
+                    "median": 0.261,
+                    "min": 0.093,
+                    "q1": 0.165,
+                    "q3": 0.418,
+                    "max": 0.59
+                }
+            }
+        ],
+        "P2": [
+            {
+                "segment": {
+                    "start": 97,
+                    "end": 128
+                },
+                "radius": {
+                    "mean": 1.251,
+                    "sd": 0.096,
+                    "median": 1.249,
+                    "min": 1.063,
+                    "q1": 1.172,
+                    "q3": 1.336,
+                    "max": 1.411
+                },
+                "length": 9.818,
+                "tortuosity": 0.041,
+                "volume": 48.488,
+                "curvature": {
+                    "mean": 0.208,
+                    "sd": 0.098,
+                    "median": 0.199,
+                    "min": 0.006,
+                    "q1": 0.127,
+                    "q3": 0.29,
+                    "max": 0.405
+                }
+            }
+        ]
+    },
+    "3": {
+        "PCA": [
+            {
+                "segment": {
+                    "start": 185,
+                    "end": 244
+                },
+                "radius": {
+                    "mean": 1.38,
+                    "sd": 0.168,
+                    "median": 1.342,
+                    "min": 1.074,
+                    "q1": 1.229,
+                    "q3": 1.531,
+                    "max": 1.682
+                },
+                "length": 17.202,
+                "tortuosity": 0.251,
+                "volume": 104.424,
+                "curvature": {
+                    "mean": 0.312,
+                    "sd": 0.146,
+                    "median": 0.302,
+                    "min": 0.015,
+                    "q1": 0.206,
+                    "q3": 0.416,
+                    "max": 0.675
+                }
+            }
+        ],
+        "P1": [
+            {
+                "segment": {
+                    "start": 185,
+                    "end": 210
+                },
+                "radius": {
+                    "mean": 1.544,
+                    "sd": 0.094,
+                    "median": 1.554,
+                    "min": 1.28,
+                    "q1": 1.51,
+                    "q3": 1.63,
+                    "max": 1.682
+                },
+                "length": 7.102,
+                "tortuosity": 0.094,
+                "volume": 53.604,
+                "curvature": {
+                    "mean": 0.395,
+                    "sd": 0.133,
+                    "median": 0.418,
+                    "min": 0.113,
+                    "q1": 0.299,
+                    "q3": 0.47,
+                    "max": 0.676
+                }
+            }
+        ],
+        "P2": [
+            {
+                "segment": {
+                    "start": 210,
+                    "end": 244
+                },
+                "radius": {
+                    "mean": 1.258,
+                    "sd": 0.088,
+                    "median": 1.238,
+                    "min": 1.074,
+                    "q1": 1.207,
+                    "q3": 1.329,
+                    "max": 1.463
+                },
+                "length": 10.1,
+                "tortuosity": 0.107,
+                "volume": 50.819,
+                "curvature": {
+                    "mean": 0.251,
+                    "sd": 0.122,
+                    "median": 0.236,
+                    "min": 0.003,
+                    "q1": 0.158,
+                    "q3": 0.334,
+                    "max": 0.6
+                }
+            }
+        ]
+    },
+    "4": {
+        "ICA": [
+            {
+                "segment": {
+                    "start": 305,
+                    "end": 344
+                },
+                "radius": {
+                    "mean": 2.602,
+                    "sd": 0.214,
+                    "median": 2.665,
+                    "min": 2.223,
+                    "q1": 2.406,
+                    "q3": 2.77,
+                    "max": 2.963
+                },
+                "length": 10.78,
+                "tortuosity": 0.097,
+                "volume": 232.79,
+                "curvature": {
+                    "mean": 0.305,
+                    "sd": 0.132,
+                    "median": 0.298,
+                    "min": 0.026,
+                    "q1": 0.221,
+                    "q3": 0.391,
+                    "max": 0.597
+                }
+            }
+        ],
+        "C6": [
+            {
+                "segment": {
+                    "start": 305,
+                    "end": 318
+                },
+                "radius": {
+                    "mean": 2.801,
+                    "sd": 0.073,
+                    "median": 2.777,
+                    "min": 2.712,
+                    "q1": 2.742,
+                    "q3": 2.835,
+                    "max": 2.963
+                },
+                "length": 3.599,
+                "tortuosity": 0.009,
+                "volume": 89.297,
+                "curvature": {
+                    "mean": 0.192,
+                    "sd": 0.084,
+                    "median": 0.187,
+                    "min": 0.002,
+                    "q1": 0.121,
+                    "q3": 0.272,
+                    "max": 0.315
+                }
+            }
+        ],
+        "C7": [
+            {
+                "segment": {
+                    "start": 318,
+                    "end": 344
+                },
+                "radius": {
+                    "mean": 2.503,
+                    "sd": 0.191,
+                    "median": 2.468,
+                    "min": 2.223,
+                    "q1": 2.336,
+                    "q3": 2.657,
+                    "max": 2.861
+                },
+                "length": 7.181,
+                "tortuosity": 0.074,
+                "volume": 143.493,
+                "curvature": {
+                    "mean": 0.358,
+                    "sd": 0.116,
+                    "median": 0.34,
+                    "min": 0.11,
+                    "q1": 0.26,
+                    "q3": 0.449,
+                    "max": 0.611
+                }
+            }
+        ],
+        "ICA bifurcation": [
+            {
+                "bifurcation": {
+                    "midpoint": 344,
+                    "dist_angle": 1,
+                    "points_angle": [
+                        341,
+                        347,
+                        607
+                    ],
+                    "dist_radius": 3.257,
+                    "points_radius": [
+                        332,
+                        355,
+                        615
+                    ],
+                    "radius_parent": 2.481,
+                    "radius_child1": 1.525,
+                    "radius_child2": 1.548
+                },
+                "angles": {
+                    "ICA/MCA": 106.623,
+                    "ICA/ACA": 127.637,
+                    "MCA/ACA": 125.006
+                },
+                "ratios": {
+                    "radius sum": 0.807,
+                    "area sum": 1.304,
+                    "MCA/ACA": 0.985,
+                    "MCA/ICA": 0.615,
+                    "ACA/ICA": 0.624
+                },
+                "bifurcation exponent": 1.45
+            }
+        ]
+    },
+    "5": {
+        "MCA": [
+            {
+                "segment": {
+                    "start": 355,
+                    "end": 390
+                },
+                "radius": {
+                    "mean": 1.675,
+                    "sd": 0.087,
+                    "median": 1.685,
+                    "min": 1.304,
+                    "q1": 1.642,
+                    "q3": 1.717,
+                    "max": 1.809
+                },
+                "length": 10.002,
+                "tortuosity": 0.051,
+                "volume": 88.619,
+                "curvature": {
+                    "mean": 0.224,
+                    "sd": 0.128,
+                    "median": 0.229,
+                    "min": 0.005,
+                    "q1": 0.121,
+                    "q3": 0.315,
+                    "max": 0.494
+                }
+            }
+        ]
+    },
+    "6": {
+        "ICA": [
+            {
+                "segment": {
+                    "start": 444,
+                    "end": 483
+                },
+                "radius": {
+                    "mean": 2.352,
+                    "sd": 0.155,
+                    "median": 2.349,
+                    "min": 2.114,
+                    "q1": 2.227,
+                    "q3": 2.436,
+                    "max": 2.713
+                },
+                "length": 11.152,
+                "tortuosity": 0.151,
+                "volume": 194.483,
+                "curvature": {
+                    "mean": 0.31,
+                    "sd": 0.226,
+                    "median": 0.262,
+                    "min": 0.003,
+                    "q1": 0.184,
+                    "q3": 0.357,
+                    "max": 1.217
+                }
+            }
+        ],
+        "C6": [
+            {
+                "segment": {
+                    "start": 444,
+                    "end": 458
+                },
+                "radius": {
+                    "mean": 2.502,
+                    "sd": 0.121,
+                    "median": 2.51,
+                    "min": 2.338,
+                    "q1": 2.386,
+                    "q3": 2.603,
+                    "max": 2.713
+                },
+                "length": 3.998,
+                "tortuosity": 0.038,
+                "volume": 78.522,
+                "curvature": {
+                    "mean": 0.449,
+                    "sd": 0.304,
+                    "median": 0.337,
+                    "min": 0.155,
+                    "q1": 0.245,
+                    "q3": 0.436,
+                    "max": 1.22
+                }
+            }
+        ],
+        "C7": [
+            {
+                "segment": {
+                    "start": 458,
+                    "end": 483
+                },
+                "radius": {
+                    "mean": 2.268,
+                    "sd": 0.098,
+                    "median": 2.233,
+                    "min": 2.114,
+                    "q1": 2.206,
+                    "q3": 2.349,
+                    "max": 2.462
+                },
+                "length": 7.154,
+                "tortuosity": 0.075,
+                "volume": 115.961,
+                "curvature": {
+                    "mean": 0.231,
+                    "sd": 0.096,
+                    "median": 0.227,
+                    "min": 0.023,
+                    "q1": 0.162,
+                    "q3": 0.298,
+                    "max": 0.424
+                }
+            }
+        ],
+        "ICA bifurcation": [
+            {
+                "bifurcation": {
+                    "midpoint": 483,
+                    "dist_angle": 1,
+                    "points_angle": [
+                        480,
+                        485,
+                        721
+                    ],
+                    "dist_radius": 3.463,
+                    "points_radius": [
+                        471,
+                        494,
+                        730
+                    ],
+                    "radius_parent": 2.296,
+                    "radius_child1": 1.586,
+                    "radius_child2": 1.337
+                },
+                "angles": {
+                    "ICA/MCA": 149.422,
+                    "ICA/ACA": 116.667,
+                    "MCA/ACA": 92.903
+                },
+                "ratios": {
+                    "radius sum": 0.786,
+                    "area sum": 1.226,
+                    "MCA/ACA": 1.186,
+                    "MCA/ICA": 0.69,
+                    "ACA/ICA": 0.582
+                },
+                "bifurcation exponent": 1.55
+            }
+        ]
+    },
+    "7": {
+        "MCA": [
+            {
+                "segment": {
+                    "start": 493,
+                    "end": 529
+                },
+                "radius": {
+                    "mean": 1.702,
+                    "sd": 0.066,
+                    "median": 1.707,
+                    "min": 1.544,
+                    "q1": 1.679,
+                    "q3": 1.73,
+                    "max": 1.87
+                },
+                "length": 10.019,
+                "tortuosity": 0.031,
+                "volume": 91.399,
+                "curvature": {
+                    "mean": 0.261,
+                    "sd": 0.136,
+                    "median": 0.233,
+                    "min": 0.007,
+                    "q1": 0.181,
+                    "q3": 0.344,
+                    "max": 0.632
+                }
+            }
+        ]
+    },
+    "10": {
+        "Acom": [
+            {
+                "segment": {
+                    "start": 664,
+                    "end": 781
+                },
+                "radius": {
+                    "mean": 1.622,
+                    "sd": 0.159,
+                    "median": 1.628,
+                    "min": 1.376,
+                    "q1": 1.49,
+                    "q3": 1.784,
+                    "max": 1.819
+                },
+                "length": 3.775,
+                "tortuosity": 0.028,
+                "volume": 32.463,
+                "curvature": {
+                    "mean": 0.28,
+                    "sd": 0.067,
+                    "median": 0.294,
+                    "min": 0.103,
+                    "q1": 0.248,
+                    "q3": 0.323,
+                    "max": 0.412
+                }
+            }
+        ]
+    },
+    "11": {
+        "ACA": [
+            {
+                "segment": {
+                    "start": 613,
+                    "end": 697
+                },
+                "radius": {
+                    "mean": 1.35,
+                    "sd": 0.125,
+                    "median": 1.331,
+                    "min": 1.143,
+                    "q1": 1.242,
+                    "q3": 1.455,
+                    "max": 1.574
+                },
+                "length": 25.266,
+                "tortuosity": 0.312,
+                "volume": 147.087,
+                "curvature": {
+                    "mean": 0.286,
+                    "sd": 0.161,
+                    "median": 0.266,
+                    "min": 0.026,
+                    "q1": 0.159,
+                    "q3": 0.373,
+                    "max": 0.88
+                }
+            }
+        ],
+        "A1": [
+            {
+                "segment": {
+                    "start": 613,
+                    "end": 664
+                },
+                "radius": {
+                    "mean": 1.367,
+                    "sd": 0.135,
+                    "median": 1.344,
+                    "min": 1.143,
+                    "q1": 1.274,
+                    "q3": 1.495,
+                    "max": 1.574
+                },
+                "length": 15.224,
+                "tortuosity": 0.075,
+                "volume": 90.919,
+                "curvature": {
+                    "mean": 0.257,
+                    "sd": 0.143,
+                    "median": 0.222,
+                    "min": 0.035,
+                    "q1": 0.133,
+                    "q3": 0.351,
+                    "max": 0.666
+                }
+            }
+        ],
+        "A2": [
+            {
+                "segment": {
+                    "start": 664,
+                    "end": 697
+                },
+                "radius": {
+                    "mean": 1.323,
+                    "sd": 0.1,
+                    "median": 1.298,
+                    "min": 1.161,
+                    "q1": 1.236,
+                    "q3": 1.426,
+                    "max": 1.48
+                },
+                "length": 10.045,
+                "tortuosity": 0.024,
+                "volume": 56.168,
+                "curvature": {
+                    "mean": 0.323,
+                    "sd": 0.161,
+                    "median": 0.294,
+                    "min": 0.032,
+                    "q1": 0.231,
+                    "q3": 0.381,
+                    "max": 0.734
+                }
+            }
+        ],
+        "Acom bifurcation": [
+            {
+                "bifurcation": {
+                    "midpoint": 664,
+                    "dist_angle": 1,
+                    "points_angle": [
+                        661,
+                        667,
+                        862
+                    ]
+                },
+                "angles": {
+                    "A1/A2": 145.073,
+                    "A1/Acom": 110.495,
+                    "A2/Acom": 103.632
+                }
+            }
+        ]
+    },
+    "12": {
+        "ACA": [
+            {
+                "segment": {
+                    "start": 730,
+                    "end": 818
+                },
+                "radius": {
+                    "mean": 1.297,
+                    "sd": 0.092,
+                    "median": 1.305,
+                    "min": 1.063,
+                    "q1": 1.241,
+                    "q3": 1.349,
+                    "max": 1.501
+                },
+                "length": 24.847,
+                "tortuosity": 0.267,
+                "volume": 132.531,
+                "curvature": {
+                    "mean": 0.283,
+                    "sd": 0.186,
+                    "median": 0.253,
+                    "min": 0.001,
+                    "q1": 0.139,
+                    "q3": 0.393,
+                    "max": 0.818
+                }
+            }
+        ],
+        "A1": [
+            {
+                "segment": {
+                    "start": 730,
+                    "end": 781
+                },
+                "radius": {
+                    "mean": 1.282,
+                    "sd": 0.084,
+                    "median": 1.291,
+                    "min": 1.067,
+                    "q1": 1.233,
+                    "q3": 1.334,
+                    "max": 1.474
+                },
+                "length": 14.803,
+                "tortuosity": 0.047,
+                "volume": 77.257,
+                "curvature": {
+                    "mean": 0.245,
+                    "sd": 0.184,
+                    "median": 0.199,
+                    "min": 0.008,
+                    "q1": 0.106,
+                    "q3": 0.353,
+                    "max": 0.848
+                }
+            }
+        ],
+        "A2": [
+            {
+                "segment": {
+                    "start": 781,
+                    "end": 818
+                },
+                "radius": {
+                    "mean": 1.316,
+                    "sd": 0.099,
+                    "median": 1.338,
+                    "min": 1.063,
+                    "q1": 1.291,
+                    "q3": 1.36,
+                    "max": 1.501
+                },
+                "length": 10.047,
+                "tortuosity": 0.12,
+                "volume": 55.274,
+                "curvature": {
+                    "mean": 0.332,
+                    "sd": 0.153,
+                    "median": 0.328,
+                    "min": 0.061,
+                    "q1": 0.195,
+                    "q3": 0.446,
+                    "max": 0.734
+                }
+            }
+        ],
+        "Acom bifurcation": [
+            {
+                "bifurcation": {
+                    "midpoint": 781,
+                    "dist_angle": 1,
+                    "points_angle": [
+                        778,
+                        784,
+                        866
+                    ]
+                },
+                "angles": {
+                    "A1/A2": 143.909,
+                    "A1/Acom": 124.287,
+                    "A2/Acom": 86.587
+                }
+            }
+        ]
+    },
+    "15": {
+        "3rd-A2": [
+            {
+                "segment": {
+                    "start": 875,
+                    "end": 912
+                },
+                "radius": {
+                    "mean": 0.833,
+                    "sd": 0.078,
+                    "median": 0.84,
+                    "min": 0.668,
+                    "q1": 0.802,
+                    "q3": 0.904,
+                    "max": 0.976
+                },
+                "length": 9.939,
+                "tortuosity": 0.027,
+                "volume": 21.999,
+                "curvature": {
+                    "mean": 0.226,
+                    "sd": 0.134,
+                    "median": 0.211,
+                    "min": 0.007,
+                    "q1": 0.097,
+                    "q3": 0.342,
+                    "max": 0.487
+                }
+            }
+        ]
+    }
+}
