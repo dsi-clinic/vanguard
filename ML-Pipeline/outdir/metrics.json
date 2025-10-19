@@ -1,0 +1,24 @@
+{
+  "model": "rf",
+  "val": {
+    "precision": 1.0,
+    "recall": 0.8333333333333334,
+    "f1": 0.9090909090909091,
+    "n": 25,
+    "positive_rate": 0.24
+  },
+  "test": {
+    "precision": 1.0,
+    "recall": 0.9230769230769231,
+    "f1": 0.96,
+    "n": 50,
+    "positive_rate": 0.26
+  },
+  "splits": {
+    "train_n": 175,
+    "val_n": 25,
+    "test_n": 50,
+    "test_size": 0.2,
+    "val_size": 0.1
+  }
+}
