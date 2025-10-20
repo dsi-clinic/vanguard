@@ -26,6 +26,7 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.compose import ColumnTransformer
 from sklearn.inspection import permutation_importance
 
 FEATURES = ["age", "bbox_volume", "tumor_subtype"]
@@ -110,7 +111,7 @@ def load_splits(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.DataF
     return df_train, df_val
 
 
-def get_transformed_feature_names(preprocessor: Any) -> np.ndarray:
+def get_transformed_feature_names(preprocessor: ColumnTransformer) -> np.ndarray:
     """Recover transformed feature names in the fitted ColumnTransformer."""
     try:
         return preprocessor.get_feature_names_out()

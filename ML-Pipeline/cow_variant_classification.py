@@ -1,3 +1,15 @@
+"""CoW (Circle of Willis) data loader and baseline classifier.
+
+This script extracts morphometric features from 3D .vtp/.vtk polydata files,
+joins them with variant labels from JSON or CSV, engineers normalized features,
+and trains a baseline model (RandomForest or LogisticRegression).
+
+Outputs:
+- features.csv / features_engineered.csv
+- labels_from_json.csv (if label JSONs given)
+- model.pkl / metrics.json
+"""
+
 import argparse
 import json
 import re
@@ -13,7 +25,8 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
     ap = argparse.ArgumentParser("CoW data loading (graphs -> morphometrics) + labels")
     ap.add_argument(
         "--data-dir",
@@ -53,12 +66,7 @@ def parse_args():
         help="Baseline model: RandomForest (rf) or LogisticRegression (lr)",
     )
     ap.add_argument("--test-size", type=float, default=0.2, help="Test split fraction")
-    ap.add_argument(
-        "--val-size",
-        type=float,
-        default=0.1,
-        help="Validation fraction (of the whole dataset)",
-    )
+    ap.add_argument("--val-size", type=float, default=0.1, help="Validation fraction")
     ap.add_argument("--random-state", type=int, default=42, help="Random seed")
     return ap.parse_args()
 
@@ -66,66 +74,62 @@ def parse_args():
 def build_labels_from_cow_variant_json(
     variants_dir: Path, out_csv: Path
 ) -> pd.DataFrame:
+    """Flatten CoW variant JSONs into a single labels CSV."""
     rows = []
     for p in sorted(Path(variants_dir).glob("*.json")):
         obj = json.loads(p.read_text())
         flat = {"case_id": p.stem}
-        # each JSON contains groups like "fetal", "anterior", etc.
         for group, sub in obj.items():
-            if isinstance(
-                sub, dict
-            ):  # only handle sub-dictionaries (each with segment names → True/False)
+            if isinstance(sub, dict):
                 for k, v in sub.items():
-                    col = re.sub(
-                        r"[^A-Za-z0-9_]", "_", f"{group}_{k}"
-                    )  # make clean column name: i.e. "fetal_L_PCA" or "anterior_Acom"
-                    if isinstance(
-                        v, (bool, np.bool_)
-                    ):  # store True/False as integer 1/0
+                    col = re.sub(r"[^A-Za-z0-9_]", "_", f"{group}_{k}")
+                    if isinstance(v, bool | np.bool_):  # UP038 fix
                         flat[col] = int(bool(v))
                     else:
                         flat[col] = v
         rows.append(flat)
 
-    df = pd.DataFrame(rows).fillna(0)
-
-    # create a combined binary label for “fetal PCA variant” if both left/right are available
-    if "fetal_L_PCA" in df.columns and "fetal_R_PCA" in df.columns:
-        df["fetal_pca_variant"] = (
-            (df["fetal_L_PCA"] == 1) | (df["fetal_R_PCA"] == 1)
+    df_labels = pd.DataFrame(rows).fillna(0)
+    if "fetal_L_PCA" in df_labels.columns and "fetal_R_PCA" in df_labels.columns:
+        df_labels["fetal_pca_variant"] = (
+            (df_labels["fetal_L_PCA"] == 1) | (df_labels["fetal_R_PCA"] == 1)
         ).astype(int)
 
-    df.to_csv(out_csv, index=False)
-    print(f"Labels table -> {out_csv} (rows={len(df)}, cols={len(df.columns)})")
-    return df
+    df_labels.to_csv(out_csv, index=False)
+    print(
+        f"Labels table -> {out_csv} (rows={len(df_labels)}, cols={len(df_labels.columns)})"
+    )
+    return df_labels
 
 
-def find_binary_label_columns(df: pd.DataFrame) -> list[str]:
-    """Return columns that look binary (0/1)."""
-    bins = []
-    for c in df.columns:
+def find_binary_label_columns(df_labels: pd.DataFrame) -> list[str]:
+    """Return columns that contain only binary 0/1 values."""
+    bins: list[str] = []
+    for c in df_labels.columns:
         if c == "case_id":
             continue
         vals = set(
-            pd.Series(df[c]).dropna().astype(float).astype(int).unique().tolist()
+            pd.Series(df_labels[c]).dropna().astype(float).astype(int).unique().tolist()
         )
         if vals.issubset({0, 1}):
             bins.append(c)
     return bins
 
 
-# Graphs, Features
 def rglob_polydata(root: Path) -> list[Path]:
+    """Recursively find all .vtp and .vtk files."""
     return sorted(root.rglob("*.vtp")) + sorted(root.rglob("*.vtk"))
 
 
 def extract_id(path: Path, id_regex: str) -> str:
+    """Extract case ID from filename using regex."""
     m = re.match(id_regex, path.stem)
     return m.group(1) if m else path.stem
 
 
-def collect_numeric(poly) -> dict[str, np.ndarray]:
-    arrays = {}
+def collect_numeric(poly: pv.PolyData) -> dict[str, np.ndarray]:
+    """Collect numeric point/cell arrays from polydata."""
+    arrays: dict[str, np.ndarray] = {}
     for k in poly.point_data.keys():
         a = np.asarray(poly.point_data[k])
         if a.dtype.kind in "iuf" and a.size:
@@ -138,6 +142,7 @@ def collect_numeric(poly) -> dict[str, np.ndarray]:
 
 
 def summarize(arr: np.ndarray, prefix: str) -> dict[str, float]:
+    """Summarize an array with descriptive statistics."""
     arr = arr[np.isfinite(arr)]
     if not arr.size:
         return {}
@@ -154,7 +159,8 @@ def summarize(arr: np.ndarray, prefix: str) -> dict[str, float]:
     }
 
 
-def poly_to_row(poly, file: Path) -> dict[str, float]:
+def poly_to_row(poly: pv.PolyData, file: Path) -> dict[str, float]:
+    """Convert a polydata object into a feature row."""
     row: dict[str, float] = {"source_file": str(file)}
     xmin, xmax, ymin, ymax, zmin, zmax = poly.bounds
     dx, dy, dz = xmax - xmin, ymax - ymin, zmax - zmin
@@ -174,6 +180,7 @@ def poly_to_row(poly, file: Path) -> dict[str, float]:
 
 
 def build_features(files: list[Path], id_regex: str) -> pd.DataFrame:
+    """Read all polydata files and extract numeric features."""
     rows = []
     for f in files:
         poly = pv.read(f)
@@ -183,27 +190,30 @@ def build_features(files: list[Path], id_regex: str) -> pd.DataFrame:
     return pd.DataFrame(rows).dropna(axis=1, how="all")
 
 
-# Labels
 def load_labels(path: Path, id_col: str, label_col: str) -> pd.DataFrame:
+    """Load label data from a CSV or JSON file."""
     if path.suffix.lower() == ".csv":
-        df = pd.read_csv(path)
+        df_labels = pd.read_csv(path)
     else:
         obj = json.loads(path.read_text())
-        df = (
+        df_labels = (
             pd.DataFrame(obj)
             if isinstance(obj, list)
             else pd.DataFrame.from_dict(obj, orient="index")
             .reset_index()
             .rename(columns={"index": id_col})
         )
-    m = {"true": 1, "false": 0, "yes": 1, "no": 0}
-    df[label_col] = (
-        pd.Series(df[label_col]).map(lambda v: m.get(str(v).lower(), v)).astype(int)
+    mapping = {"true": 1, "false": 0, "yes": 1, "no": 0}
+    df_labels[label_col] = (
+        pd.Series(df_labels[label_col])
+        .map(lambda v: mapping.get(str(v).lower(), v))
+        .astype(int)
     )
-    return df[[id_col, label_col]]
+    return df_labels[[id_col, label_col]]
 
 
-def metrics(y_true, y_pred):
+def metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    """Compute precision, recall, f1, and related statistics."""
     return {
         "precision": float(precision_score(y_true, y_pred, zero_division=0)),
         "recall": float(recall_score(y_true, y_pred, zero_division=0)),
@@ -213,11 +223,9 @@ def metrics(y_true, y_pred):
     }
 
 
-# Feature Engineering
-def engineer_features(in_csv: Path, out_csv: Path):
-    df = pd.read_csv(in_csv)
-
-    # drop geometry
+def engineer_features(in_csv: Path, out_csv: Path) -> None:
+    """Clean and standardize raw features."""
+    df_feats = pd.read_csv(in_csv)
     drop_cols = [
         "source_file",
         "bbox_x",
@@ -227,27 +235,21 @@ def engineer_features(in_csv: Path, out_csv: Path):
         "n_points",
         "n_cells",
     ]
-    df = df.drop(columns=[c for c in drop_cols if c in df.columns])
-
-    # keep only morphometric-type features
+    df_feats = df_feats.drop(columns=[c for c in drop_cols if c in df_feats.columns])
     morpho_cols = [
         c
-        for c in df.columns
+        for c in df_feats.columns
         if any(
             k in c.lower()
             for k in ["radius", "length", "tortuosity", "curvature", "degree", "labels"]
         )
     ]
-
-    feats = df[morpho_cols].copy()
-    feats["case_id"] = df["case_id"]
-
-    # fill missing values and normalize
+    feats = df_feats[morpho_cols].copy()
+    feats["case_id"] = df_feats["case_id"]
     feats = feats.fillna(0.0)
     X = feats.drop(columns=["case_id"])
-    X = (X - X.mean()) / (X.std() + 1e-8)  # z-score
+    X = (X - X.mean()) / (X.std() + 1e-8)
     X["case_id"] = feats["case_id"]
-
     X.to_csv(out_csv, index=False)
     print(f"Engineered features -> {out_csv} ({X.shape[1]} cols)")
 
@@ -262,58 +264,49 @@ def train_baseline(
     random_state: int = 42,
     model: str = "rf",
     val_size: float = 0.1,
-):
-    # labels_source can be a CSV or a directory of per-case JSONs
+) -> None:
+    """Train baseline RandomForest or LogisticRegression model."""
     if labels_source.is_dir():
         labels_csv = outdir / "labels_from_json.csv"
         build_labels_from_cow_variant_json(labels_source, labels_csv)
     else:
         labels_csv = labels_source
 
-    # load
     X = pd.read_csv(feats_engineered_csv)
     y_df = pd.read_csv(labels_csv)
 
-    # standardize id column name inside labels to `case_id` for merge
     if id_col != "case_id" and id_col in y_df.columns:
         y_df = y_df.rename(columns={id_col: "case_id"})
 
-    df = X.merge(y_df, on="case_id", how="inner")
-    y = df[label_col].astype(int).values
-    Xmat = df.drop(columns=["case_id", label_col]).values
+    merged_df = X.merge(y_df, on="case_id", how="inner")
+    y = merged_df[label_col].astype(int).to_numpy()
+    Xmat = merged_df.drop(columns=["case_id", label_col]).to_numpy()
 
-    # --- train/val/test split ---
-    # Test
     X_trval, X_te, y_trval, y_te = train_test_split(
         Xmat, y, test_size=test_size, random_state=random_state, stratify=y
     )
-    # Validation from the remaining pool
     rel_val = val_size / (1.0 - test_size)
     X_tr, X_val, y_tr, y_val = train_test_split(
         X_trval, y_trval, test_size=rel_val, random_state=random_state, stratify=y_trval
     )
 
-    # Diff models
-    if model == "rf":
-        clf = RandomForestClassifier(
+    clf = (
+        RandomForestClassifier(
             n_estimators=400,
             class_weight="balanced_subsample",
             n_jobs=-1,
             random_state=random_state,
         )
-    else:  # logistic regression
-        # binary LR with class balancing
-        clf = LogisticRegression(
+        if model == "rf"
+        else LogisticRegression(
             class_weight="balanced",
-            solver="liblinear",  # robust for small/medium data
+            solver="liblinear",
             max_iter=2000,
             random_state=random_state,
         )
+    )
 
-    # Train
     clf.fit(X_tr, y_tr)
-
-    # Eval
     y_val_hat = clf.predict(X_val)
     y_te_hat = clf.predict(X_te)
 
@@ -338,11 +331,11 @@ def train_baseline(
     print(f"Metrics -> {outdir/'metrics.json'}")
 
 
-def main():
+def main() -> None:
+    """Pipeline entrypoint: build features, labels, and train baseline model."""
     args = parse_args()
     args.outdir.mkdir(parents=True, exist_ok=True)
 
-    # Polydata -> raw feature table
     files = rglob_polydata(args.data_dir)
     print(f"Found {len(files)} polydata files under {args.data_dir}")
     feats = build_features(files, args.id_regex)
@@ -351,11 +344,9 @@ def main():
     feats.to_csv(feats_path, index=False)
     print(f"[ok] features -> {feats_path} (n={len(feats)})")
 
-    # Feature engineering
     eng_path = args.outdir / "features_engineered.csv"
     engineer_features(feats_path, eng_path)
 
-    # Build labels preview
     if args.labels and args.label_column:
         labels_for_preview = args.labels
         if labels_for_preview.is_dir():
@@ -370,7 +361,6 @@ def main():
         preview.head(50).to_csv(prev_path, index=False)
         print(f"Join preview -> {prev_path} (rows={len(preview)})")
 
-        # Train baseline
         train_baseline(
             feats_engineered_csv=eng_path,
             labels_source=labels_for_preview,
