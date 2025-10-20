@@ -254,6 +254,10 @@ def engineer_features(in_csv: Path, out_csv: Path) -> None:
     print(f"Engineered features -> {out_csv} ({X.shape[1]} cols)")
 
 
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import StratifiedKFold, cross_validate
+
 def train_baseline(
     feats_engineered_csv: Path,
     labels_source: Path,
@@ -265,7 +269,7 @@ def train_baseline(
     model: str = "rf",
     val_size: float = 0.1,
 ) -> None:
-    """Train baseline RandomForest or LogisticRegression model."""
+    """Train baseline RandomForest or LogisticRegression model with scaling and CV."""
     if labels_source.is_dir():
         labels_csv = outdir / "labels_from_json.csv"
         build_labels_from_cow_variant_json(labels_source, labels_csv)
@@ -282,28 +286,51 @@ def train_baseline(
     y = merged_df[label_col].astype(int).to_numpy()
     Xmat = merged_df.drop(columns=["case_id", label_col]).to_numpy()
 
+    if model == "rf":
+        base_model = RandomForestClassifier(
+            n_estimators=400,
+            class_weight="balanced_subsample",
+            n_jobs=-1,
+            random_state=random_state,
+        )
+    else:
+        base_model = LogisticRegression(
+            class_weight="balanced",
+            solver="liblinear",
+            max_iter=2000,
+            random_state=random_state,
+        )
+
+    clf = Pipeline([
+        ("scaler", StandardScaler()),
+        ("model", base_model),
+    ])
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+    cv_results = cross_validate(
+        clf,
+        Xmat,
+        y,
+        cv=cv,
+        scoring=["precision", "recall", "f1"],
+        n_jobs=-1,
+    )
+
+    print("\n[Cross-Validation Results]")
+    print(
+        f"F1 mean={cv_results['test_f1'].mean():.3f} "
+        f"(±{cv_results['test_f1'].std():.3f}) | "
+        f"Precision={cv_results['test_precision'].mean():.3f} | "
+        f"Recall={cv_results['test_recall'].mean():.3f}"
+    )
+
+    # --- Train/val/test split (for final model reporting) ---
     X_trval, X_te, y_trval, y_te = train_test_split(
         Xmat, y, test_size=test_size, random_state=random_state, stratify=y
     )
     rel_val = val_size / (1.0 - test_size)
     X_tr, X_val, y_tr, y_val = train_test_split(
         X_trval, y_trval, test_size=rel_val, random_state=random_state, stratify=y_trval
-    )
-
-    clf = (
-        RandomForestClassifier(
-            n_estimators=400,
-            class_weight="balanced_subsample",
-            n_jobs=-1,
-            random_state=random_state,
-        )
-        if model == "rf"
-        else LogisticRegression(
-            class_weight="balanced",
-            solver="liblinear",
-            max_iter=2000,
-            random_state=random_state,
-        )
     )
 
     clf.fit(X_tr, y_tr)
@@ -321,14 +348,28 @@ def train_baseline(
             "test_size": float(test_size),
             "val_size": float(val_size),
         },
+        "cross_val": {
+            "f1_mean": float(cv_results["test_f1"].mean()),
+            "f1_std": float(cv_results["test_f1"].std()),
+            "precision_mean": float(cv_results["test_precision"].mean()),
+            "recall_mean": float(cv_results["test_recall"].mean()),
+        },
     }
 
     dump(clf, outdir / "model.pkl")
     (outdir / "metrics.json").write_text(json.dumps(results, indent=2))
 
+    # --- Print summary ---
     print(json.dumps(results, indent=2))
     print(f"Model -> {outdir/'model.pkl'}")
     print(f"Metrics -> {outdir/'metrics.json'}")
+
+    # --- Confusion matrices ---
+    from sklearn.metrics import confusion_matrix
+    print("\n[Confusion Matrix] Validation:")
+    print(confusion_matrix(y_val, y_val_hat))
+    print("\n[Confusion Matrix] Test:")
+    print(confusion_matrix(y_te, y_te_hat))
 
 
 def main() -> None:
