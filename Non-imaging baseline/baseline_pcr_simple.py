@@ -50,7 +50,9 @@ def get_age(js: dict[str, Any]) -> float | None:
     except Exception:
         return None
 
+
 def get_subtype(js: dict[str, Any]) -> str:
+    """Return tumor subtype string (lowercased), defaulting to 'unknown' if missing."""
     subtype = js.get("primary_lesion", {}).get("tumor_subtype", "")
     s = str(subtype).strip().lower()
     if s in {"", "nan", "null", "unknown"}:
@@ -182,7 +184,11 @@ def build_pipeline(C: float = 1.0, max_iter: int = 1000) -> Pipeline:
 
 
 def train_and_test(
-    df_train: pd.DataFrame, df_test: pd.DataFrame, outdir: Path, C: float = 1.0, max_iter: int = 1000
+    df_train: pd.DataFrame,
+    df_test: pd.DataFrame,
+    outdir: Path,
+    C: float = 1.0,
+    max_iter: int = 1000,
 ) -> dict[str, Any]:
     """Fit on TRAIN, evaluate on TEST, and write artifacts to --output."""
     outdir.mkdir(parents=True, exist_ok=True)
@@ -271,7 +277,9 @@ def main() -> None:
     df_train, df_test = load_dataset(args.json_dir, args.split_csv)
     print(f"Loaded {len(df_train)} train and {len(df_test)} test samples.")
 
-    metrics = train_and_test(df_train, df_test, args.output, C=args.C, max_iter=args.max_iter)
+    metrics = train_and_test(
+        df_train, df_test, args.output, C=args.C, max_iter=args.max_iter
+    )
     print(json.dumps(metrics, indent=2))
 
 

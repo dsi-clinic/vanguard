@@ -19,7 +19,6 @@ Usage:
 
 import argparse
 import json
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -31,11 +30,14 @@ from sklearn.inspection import permutation_importance
 
 FEATURES = ["age", "bbox_volume", "tumor_subtype"]
 
+
 def get_patient_id(path: Path, js: dict[str, Any]) -> str:
+    """Return patient ID from JSON, falling back to the filename stem."""
     return js.get("patient_id", path.stem)
 
 
 def get_age(js: dict[str, Any]) -> float | None:
+    """Extract patient age as a float, or None if missing/unparseable."""
     age = js.get("clinical_data", {}).get("age", None)
     try:
         return float(age) if age not in (None, "") else None
@@ -44,6 +46,7 @@ def get_age(js: dict[str, Any]) -> float | None:
 
 
 def get_subtype(js: dict[str, Any]) -> str:
+    """Return tumor subtype string, lowercased, or 'unknown' if missing."""
     raw = js.get("primary_lesion", {}).get("tumor_subtype", "")
     s = str(raw).strip().lower()
     if s in {"", "nan"}:
@@ -52,6 +55,7 @@ def get_subtype(js: dict[str, Any]) -> str:
 
 
 def get_label_optional(js: dict[str, Any]) -> int | None:
+    """Return binary pCR label (0/1) if present, else None."""
     lab = js.get("primary_lesion", {}).get("pcr", None)
     if lab in (None, ""):
         return None
@@ -62,6 +66,7 @@ def get_label_optional(js: dict[str, Any]) -> int | None:
 
 
 def get_bbox_volume(js: dict[str, Any]) -> float | None:
+    """Compute 3D bounding box volume if coordinates are valid; else None."""
     bc = js.get("primary_lesion", {}).get("breast_coordinates", {})
     try:
         x_min, x_max = float(bc.get("x_min")), float(bc.get("x_max"))
@@ -75,7 +80,7 @@ def get_bbox_volume(js: dict[str, Any]) -> float | None:
 
 
 def load_splits(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return train and held-out (val) DataFrames."""
+    """Load and return train and validation DataFrames based on split CSV."""
     splits = pd.read_csv(split_csv, comment="#").dropna(how="all")
     if not {"patient_id", "split"}.issubset(splits.columns):
         raise ValueError("split CSV must have columns: patient_id, split")
@@ -105,21 +110,25 @@ def load_splits(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.DataF
     return df_train, df_val
 
 
-def get_transformed_feature_names(preprocessor) -> np.ndarray:
+def get_transformed_feature_names(preprocessor: Any) -> np.ndarray:
     """Recover transformed feature names in the fitted ColumnTransformer."""
     try:
         return preprocessor.get_feature_names_out()
     except Exception:
         num_names = ["age", "bbox_volume"]
-        
         cat_enc = preprocessor.named_transformers_["cat"]["onehot"]
         cat_names = cat_enc.get_feature_names_out(["tumor_subtype"])
         return np.concatenate([num_names, cat_names])
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Compute feature importance for baseline model.")
-    ap.add_argument("--model", required=True, type=Path, help="Path to trained model.pkl")
+    """Compute and save feature importance for the baseline model."""
+    ap = argparse.ArgumentParser(
+        description="Compute feature importance for baseline model."
+    )
+    ap.add_argument(
+        "--model", required=True, type=Path, help="Path to trained model.pkl"
+    )
     ap.add_argument("--json-dir", required=True, type=Path)
     ap.add_argument("--split-csv", required=True, type=Path)
     ap.add_argument("--output", required=True, type=Path)
@@ -139,18 +148,19 @@ def main() -> None:
     feat_names = get_transformed_feature_names(pre)
     coef = clf.coef_.ravel()
     if coef.shape[0] != feat_names.shape[0]:
-        raise RuntimeError(f"n_coefs={coef.shape[0]} != n_features={feat_names.shape[0]}")
+        raise RuntimeError(
+            f"n_coefs={coef.shape[0]} != n_features={feat_names.shape[0]}"
+        )
 
-    # Load data (train/val only) and choose validation for permutation
+    # Load data and select validation split
     _, df_val = load_splits(args.json_dir, args.split_csv)
     df_perm = df_val.dropna(subset=["y"]).copy()
     split_used = "val"
 
-    # Permutation importance on VAL; if no labeled val, skip and fill NaNs
+    # Compute permutation importance (VAL)
     perm_scores = np.full_like(coef, fill_value=np.nan, dtype=float)
     X_raw = df_perm[FEATURES]
     y = df_perm["y"].astype(int).to_numpy()
-    # compute in transformed space to align with coefficients
     X_trans = pre.transform(X_raw)
     perm = permutation_importance(
         estimator=clf,
@@ -163,7 +173,7 @@ def main() -> None:
     )
     perm_scores = perm.importances_mean
 
-    # Build table, save CSV
+    # Save feature importance table
     out_df = (
         pd.DataFrame(
             {
@@ -179,7 +189,7 @@ def main() -> None:
     out_csv = args.output / "feature_importance.csv"
     out_df.to_csv(out_csv, index=False)
 
-    # Plot top-k by |coef|
+    # Plot top-k coefficients
     top = out_df.head(args.top_k)
     plt.figure(figsize=(8, max(3, 0.35 * len(top))))
     plt.barh(top["feature_name"][::-1], top["abs_coef"][::-1])
