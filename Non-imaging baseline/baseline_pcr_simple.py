@@ -33,10 +33,12 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
 def get_patient_id(path: Path, js: dict[str, Any]) -> str:
+    """Return patient ID from JSON, falling back to file stem if not present."""
     return js.get("patient_id", path.stem)
 
 
 def get_age(js) -> float | None:
+    """Extract and return patient age as float from JSON or None if unavailable."""
     age = js.get("clinical_data", {}).get("age", None)
     try:
         return float(age) if age not in (None, "") else None
@@ -45,12 +47,14 @@ def get_age(js) -> float | None:
 
 
 def get_subtype(js: dict[str, Any]) -> str:
+    """Extract and return tumor subtype as lowercase string, or 'unknown'."""
     subtype = js.get("primary_lesion", {}).get("tumor_subtype", "")
     s = str(subtype).strip().lower()
     return s if s else "unknown"
 
 
 def get_label_optional(js: dict[str, Any]) -> int | None:
+    """Extract binary pCR label from JSON or None if missing/invalid."""
     lab = js.get("primary_lesion", {}).get("pcr", None)
     if lab in (None, ""):
         return None
@@ -61,6 +65,7 @@ def get_label_optional(js: dict[str, Any]) -> int | None:
 
 
 def get_bbox_volume(js: dict[str, Any]) -> float | None:
+    """Compute bounding box volume from JSON coordinates, or None if invalid."""
     bc = js.get("primary_lesion", {}).get("breast_coordinates", {})
     try:
         x_min, x_max = float(bc.get("x_min")), float(bc.get("x_max"))
@@ -123,6 +128,7 @@ def load_dataset(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.Data
 
 
 def build_pipeline(C: float = 1.0, max_iter: int = 1000) -> Pipeline:
+    """Construct a preprocessing and logistic regression pipeline."""
     numeric_features = ["age", "bbox_volume"]
     categorical_features = ["tumor_subtype"]
 
@@ -154,6 +160,7 @@ def build_pipeline(C: float = 1.0, max_iter: int = 1000) -> Pipeline:
 
 # Model
 def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
+    """Train model, compute metrics, save outputs, and return metrics dict."""
     outdir.mkdir(parents=True, exist_ok=True)
     pipe = build_pipeline(C=C, max_iter=max_iter)
 
@@ -222,6 +229,7 @@ def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
 
 
 def main():
+    """Parse arguments, load data, train model, print metrics."""
     ap = argparse.ArgumentParser(description="Minimal pCR baseline (fixed schema).")
     ap.add_argument("--json-dir", required=True, type=Path)
     ap.add_argument("--split-csv", required=True, type=Path)
