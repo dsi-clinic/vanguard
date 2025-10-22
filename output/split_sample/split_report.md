@@ -1,20 +1,22 @@
 # MAMA-MIA Split Report
-_Generated on 2025-10-11 02:41:12 with SEED=42_
+_Generated on 2025-10-22 01:27:41 with SEED=42_
 
 ## Split Overview
-- Total patients: 1506
-- Train: 1054 (70.0%)
-- Validation: 452 (30.0%)
+- Total patients: 1465
+- Train: 1039 (70.9%)
+- Validation: 149 (10.2%)
 
 ## pCR Rate per Split
 | split   |      pcr |
 |:--------|---------:|
-| train   | 0.295977 |
-| val     | 0.293065 |
+| test    | 0.227437 |
+| train   | 0.313763 |
+| val     | 0.308725 |
 
 ## Subtype Distribution per Split
-| split   |   her2_enriched |   her2_pure |   luminal |   luminal_a |   luminal_b |   triple_negative |
-|:--------|----------------:|------------:|----------:|------------:|------------:|------------------:|
-| train   |             118 |          45 |       148 |         267 |         109 |               348 |
-| val     |              51 |          20 |        63 |         114 |          46 |               151 |
+| split   |   her2_pure |   luminal |   triple_negative |
+|:--------|------------:|----------:|------------------:|
+| test    |          76 |       119 |                82 |
+| train   |         134 |       545 |               360 |
+| val     |          19 |        78 |                52 |
 
