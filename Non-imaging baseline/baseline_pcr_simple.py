@@ -37,7 +37,7 @@ def get_patient_id(path: Path, js: dict[str, Any]) -> str:
     return js.get("patient_id", path.stem)
 
 
-def get_age(js) -> float | None:
+def get_age(js: dict) -> float | None:
     """Extract and return patient age as float from JSON or None if unavailable."""
     age = js.get("clinical_data", {}).get("age", None)
     try:
@@ -80,6 +80,7 @@ def get_bbox_volume(js: dict[str, Any]) -> float | None:
 
 def load_dataset(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Loads train/test DataFrames.
+
     CSV only includes train/val, val is treated as test for now.
     """
     splits = pd.read_csv(split_csv, comment="#").dropna(how="all")
@@ -115,15 +116,17 @@ def load_dataset(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.Data
             }
         )
 
-    df = pd.DataFrame(rows)
+    df_all = pd.DataFrame(rows)
 
     # Use val as test
-    if not (df["split"] == "test").any():
-        warnings.warn("No explicit test split found — using val as test for now.")
-        df.loc[df["split"] == "val", "split"] = "test"
+    if not (df_all["split"] == "test").any():
+        warnings.warn(
+            "No explicit test split found — using val as test for now.", stacklevel=1
+        )
+        df_all.loc[df_all["split"] == "val", "split"] = "test"
 
-    df_train = df[df["split"] == "train"].copy()
-    df_test = df[df["split"] == "test"].copy()
+    df_train = df_all[df_all["split"] == "train"].copy()
+    df_test = df_all[df_all["split"] == "test"].copy()
     return df_train, df_test
 
 
@@ -159,7 +162,13 @@ def build_pipeline(C: float = 1.0, max_iter: int = 1000) -> Pipeline:
 
 
 # Model
-def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
+def train_and_test(
+    df_train: pd.DataFrame,
+    df_test: pd.DataFrame,
+    outdir: Path,
+    C: float = 1.0,
+    max_iter: int = 1000,
+) -> dict:
     """Train model, compute metrics, save outputs, and return metrics dict."""
     outdir.mkdir(parents=True, exist_ok=True)
     pipe = build_pipeline(C=C, max_iter=max_iter)
@@ -168,7 +177,7 @@ def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
     df_test_lab = df_test.dropna(subset=["y"]).copy()
 
     X_train = df_train_lab[["age", "bbox_volume", "tumor_subtype"]]
-    y_train = df_train_lab["y"].astype(int).values
+    y_train = df_train_lab["y"].astype(int).to_numpy()
     pipe.fit(X_train, y_train)
 
     # AUCs
@@ -177,7 +186,7 @@ def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
 
     if len(df_test_lab) != 0:
         X_test = df_test_lab[["age", "bbox_volume", "tumor_subtype"]]
-        y_test = df_test_lab["y"].astype(int).values
+        y_test = df_test_lab["y"].astype(int).to_numpy()
         test_scores = pipe.predict_proba(X_test)[:, 1]
         auc_test = float(roc_auc_score(y_test, test_scores))
     else:
@@ -189,9 +198,9 @@ def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
         preds.append(
             pd.DataFrame(
                 {
-                    "patient_id": df["patient_id"].values,
-                    "split": df["split"].values,
-                    "y_true": df["y"].values,
+                    "patient_id": df["patient_id"].to_numpy(),
+                    "split": df["split"].to_numpy(),
+                    "y_true": df["y"].to_numpy(),
                     "y_pred_score": pipe.predict_proba(
                         df[["age", "bbox_volume", "tumor_subtype"]]
                     )[:, 1],
@@ -228,7 +237,7 @@ def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
     return metrics
 
 
-def main():
+def main() -> None:
     """Parse arguments, load data, train model, print metrics."""
     ap = argparse.ArgumentParser(description="Minimal pCR baseline (fixed schema).")
     ap.add_argument("--json-dir", required=True, type=Path)
