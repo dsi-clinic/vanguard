@@ -1,5 +1,4 @@
-"""
-Baseline pCR (0/1) prediction with minimal metadata features
+"""Baseline pCR (0/1) prediction with minimal metadata features
 
 Outputs (written to --output):
   - metrics.json: {"auc_train": float, "auc_test": float, "n_features": int, "n_train": int, "n_test": int}
@@ -18,37 +17,40 @@ import argparse
 import json
 import warnings
 from pathlib import Path
-from typing import Dict, Any, Tuple, Optional
+from typing import Any
 
 import joblib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score, RocCurveDisplay
+from sklearn.metrics import RocCurveDisplay, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.base import clone
-import matplotlib.pyplot as plt
 
 
-def get_patient_id(path: Path, js: Dict[str, Any]) -> str:
+def get_patient_id(path: Path, js: dict[str, Any]) -> str:
     return js.get("patient_id", path.stem)
 
-def get_age(js) -> Optional[float]:
+
+def get_age(js) -> float | None:
     age = js.get("clinical_data", {}).get("age", None)
     try:
         return float(age) if age not in (None, "") else None
     except Exception:
         return None
 
-def get_subtype(js: Dict[str, Any]) -> str:
+
+def get_subtype(js: dict[str, Any]) -> str:
     subtype = js.get("primary_lesion", {}).get("tumor_subtype", "")
     s = str(subtype).strip().lower()
     return s if s else "unknown"
 
-def get_label_optional(js: Dict[str, Any]) -> Optional[int]:
+
+def get_label_optional(js: dict[str, Any]) -> int | None:
     lab = js.get("primary_lesion", {}).get("pcr", None)
     if lab in (None, ""):
         return None
@@ -57,7 +59,8 @@ def get_label_optional(js: Dict[str, Any]) -> Optional[int]:
     except Exception:
         return None
 
-def get_bbox_volume(js: Dict[str, Any]) -> Optional[float]:
+
+def get_bbox_volume(js: dict[str, Any]) -> float | None:
     bc = js.get("primary_lesion", {}).get("breast_coordinates", {})
     try:
         x_min, x_max = float(bc.get("x_min")), float(bc.get("x_max"))
@@ -70,9 +73,8 @@ def get_bbox_volume(js: Dict[str, Any]) -> Optional[float]:
         return None
 
 
-def load_dataset(json_dir: Path, split_csv: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Loads train/test DataFrames.
+def load_dataset(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Loads train/test DataFrames.
     CSV only includes train/val, val is treated as test for now.
     """
     splits = pd.read_csv(split_csv, comment="#").dropna(how="all")
@@ -83,7 +85,7 @@ def load_dataset(json_dir: Path, split_csv: Path) -> Tuple[pd.DataFrame, pd.Data
         s = str(s).strip().lower()
         if s == "train":
             return "train"
-        elif s == 'val':
+        elif s == "val":
             return "val"
         else:
             return "test"
@@ -97,14 +99,16 @@ def load_dataset(json_dir: Path, split_csv: Path) -> Tuple[pd.DataFrame, pd.Data
         pid = get_patient_id(p, js)
         if pid not in split_map:
             raise KeyError(f"{pid} missing in split CSV")
-        rows.append({
-            "patient_id": pid,
-            "split": split_map[pid],
-            "age": get_age(js),
-            "tumor_subtype": get_subtype(js),
-            "bbox_volume": get_bbox_volume(js),
-            "y": get_label_optional(js),
-        })
+        rows.append(
+            {
+                "patient_id": pid,
+                "split": split_map[pid],
+                "age": get_age(js),
+                "tumor_subtype": get_subtype(js),
+                "bbox_volume": get_bbox_volume(js),
+                "y": get_label_optional(js),
+            }
+        )
 
     df = pd.DataFrame(rows)
 
@@ -114,7 +118,7 @@ def load_dataset(json_dir: Path, split_csv: Path) -> Tuple[pd.DataFrame, pd.Data
         df.loc[df["split"] == "val", "split"] = "test"
 
     df_train = df[df["split"] == "train"].copy()
-    df_test  = df[df["split"] == "test"].copy()
+    df_test = df[df["split"] == "test"].copy()
     return df_train, df_test
 
 
@@ -122,22 +126,31 @@ def build_pipeline(C: float = 1.0, max_iter: int = 1000) -> Pipeline:
     numeric_features = ["age", "bbox_volume"]
     categorical_features = ["tumor_subtype"]
 
-    num = Pipeline([
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
-    ])
-    cat = Pipeline([
-        ("onehot", OneHotEncoder(handle_unknown="ignore")),
-    ])
-    pre = ColumnTransformer([
-        ("num", num, numeric_features),
-        ("cat", cat, categorical_features),
-    ])
+    num = Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]
+    )
+    cat = Pipeline(
+        [
+            ("onehot", OneHotEncoder(handle_unknown="ignore")),
+        ]
+    )
+    pre = ColumnTransformer(
+        [
+            ("num", num, numeric_features),
+            ("cat", cat, categorical_features),
+        ]
+    )
     clf = LogisticRegression(C=C, max_iter=max_iter, penalty="l2", solver="lbfgs")
-    return Pipeline([
-        ("preprocess", pre),
-        ("clf", clf),
-    ])
+    return Pipeline(
+        [
+            ("preprocess", pre),
+            ("clf", clf),
+        ]
+    )
+
 
 # Model
 def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
@@ -145,7 +158,7 @@ def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
     pipe = build_pipeline(C=C, max_iter=max_iter)
 
     df_train_lab = df_train.dropna(subset=["y"]).copy()
-    df_test_lab  = df_test.dropna(subset=["y"]).copy()
+    df_test_lab = df_test.dropna(subset=["y"]).copy()
 
     X_train = df_train_lab[["age", "bbox_volume", "tumor_subtype"]]
     y_train = df_train_lab["y"].astype(int).values
@@ -166,12 +179,18 @@ def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
     # Predictions (for all patients, even unlabeled)
     preds = []
     for df in [df_train, df_test]:
-        preds.append(pd.DataFrame({
-            "patient_id": df["patient_id"].values,
-            "split": df["split"].values,
-            "y_true": df["y"].values,
-            "y_pred_score": pipe.predict_proba(df[["age","bbox_volume","tumor_subtype"]])[:, 1],
-        }))
+        preds.append(
+            pd.DataFrame(
+                {
+                    "patient_id": df["patient_id"].values,
+                    "split": df["split"].values,
+                    "y_true": df["y"].values,
+                    "y_pred_score": pipe.predict_proba(
+                        df[["age", "bbox_volume", "tumor_subtype"]]
+                    )[:, 1],
+                }
+            )
+        )
     pd.concat(preds, ignore_index=True).to_csv(outdir / "predictions.csv", index=False)
 
     # ROC curve on TEST
@@ -184,11 +203,12 @@ def train_and_test(df_train, df_test, outdir: Path, C=1.0, max_iter=1000):
 
     # Save model + metrics
     joblib.dump(pipe, outdir / "model.pkl")
-    n_feat = clone(pipe.named_steps["preprocess"]).fit(
-        df_train_lab[["age","bbox_volume","tumor_subtype"]]
-    ).transform(
-        df_train_lab[["age","bbox_volume","tumor_subtype"]]
-    ).shape[1]
+    n_feat = (
+        clone(pipe.named_steps["preprocess"])
+        .fit(df_train_lab[["age", "bbox_volume", "tumor_subtype"]])
+        .transform(df_train_lab[["age", "bbox_volume", "tumor_subtype"]])
+        .shape[1]
+    )
 
     metrics = {
         "auc_train": auc_train,
@@ -213,7 +233,9 @@ def main():
     df_train, df_test = load_dataset(args.json_dir, args.split_csv)
     print(f"Loaded {len(df_train)} train and {len(df_test)} test samples.")
 
-    metrics = train_and_test(df_train, df_test, args.output, C=args.C, max_iter=args.max_iter)
+    metrics = train_and_test(
+        df_train, df_test, args.output, C=args.C, max_iter=args.max_iter
+    )
     print(json.dumps(metrics, indent=2))
 
 
