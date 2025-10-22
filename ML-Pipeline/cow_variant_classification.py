@@ -23,6 +23,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import StratifiedKFold, cross_validate
 
 
 def parse_args() -> argparse.Namespace:
@@ -253,11 +256,6 @@ def engineer_features(in_csv: Path, out_csv: Path) -> None:
     X.to_csv(out_csv, index=False)
     print(f"Engineered features -> {out_csv} ({X.shape[1]} cols)")
 
-
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import StratifiedKFold, cross_validate
-
 def train_baseline(
     feats_engineered_csv: Path,
     labels_source: Path,
@@ -356,20 +354,15 @@ def train_baseline(
         },
     }
 
-    dump(clf, outdir / "model.pkl")
-    (outdir / "metrics.json").write_text(json.dumps(results, indent=2))
+    model_path = outdir / f"model_{model}.pkl"
+    metrics_path = outdir / f"metrics_{model}.json"
 
-    # --- Print summary ---
+    dump(clf, model_path)
+    metrics_path.write_text(json.dumps(results, indent=2))
+    
     print(json.dumps(results, indent=2))
-    print(f"Model -> {outdir/'model.pkl'}")
-    print(f"Metrics -> {outdir/'metrics.json'}")
-
-    # --- Confusion matrices ---
-    from sklearn.metrics import confusion_matrix
-    print("\n[Confusion Matrix] Validation:")
-    print(confusion_matrix(y_val, y_val_hat))
-    print("\n[Confusion Matrix] Test:")
-    print(confusion_matrix(y_te, y_te_hat))
+    print(f"Model -> {model_path}")
+    print(f"Metrics -> {metrics_path}")
 
 
 def main() -> None:
