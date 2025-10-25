@@ -22,10 +22,9 @@ from joblib import dump
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_score, recall_score
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import StratifiedKFold, cross_validate
+from sklearn.preprocessing import StandardScaler
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,7 +85,7 @@ def build_labels_from_cow_variant_json(
             if isinstance(sub, dict):
                 for k, v in sub.items():
                     col = re.sub(r"[^A-Za-z0-9_]", "_", f"{group}_{k}")
-                    if isinstance(v, bool | np.bool_):  # UP038 fix
+                    if isinstance(v, bool | np.bool_):
                         flat[col] = int(bool(v))
                     else:
                         flat[col] = v
@@ -256,6 +255,7 @@ def engineer_features(in_csv: Path, out_csv: Path) -> None:
     X.to_csv(out_csv, index=False)
     print(f"Engineered features -> {out_csv} ({X.shape[1]} cols)")
 
+
 def train_baseline(
     feats_engineered_csv: Path,
     labels_source: Path,
@@ -299,10 +299,12 @@ def train_baseline(
             random_state=random_state,
         )
 
-    clf = Pipeline([
-        ("scaler", StandardScaler()),
-        ("model", base_model),
-    ])
+    clf = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("model", base_model),
+        ]
+    )
 
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
     cv_results = cross_validate(
@@ -359,7 +361,7 @@ def train_baseline(
 
     dump(clf, model_path)
     metrics_path.write_text(json.dumps(results, indent=2))
-    
+
     print(json.dumps(results, indent=2))
     print(f"Model -> {model_path}")
     print(f"Metrics -> {metrics_path}")
