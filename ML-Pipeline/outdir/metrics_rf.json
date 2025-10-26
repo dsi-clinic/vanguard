@@ -1,16 +1,16 @@
 {
   "model": "rf",
   "val": {
-    "precision": 1.0,
-    "recall": 0.3333333333333333,
-    "f1": 0.5,
+    "precision": 0.2631578947368421,
+    "recall": 0.8333333333333334,
+    "f1": 0.4,
     "n": 25,
     "positive_rate": 0.24
   },
   "test": {
-    "precision": 0.0,
-    "recall": 0.0,
-    "f1": 0.0,
+    "precision": 0.275,
+    "recall": 0.8461538461538461,
+    "f1": 0.41509433962264153,
     "n": 50,
     "positive_rate": 0.26
   },
@@ -22,9 +22,13 @@
     "val_size": 0.1
   },
   "cross_val": {
-    "f1_mean": 0.05019607843137255,
-    "f1_std": 0.06167718667086274,
-    "precision_mean": 0.15,
-    "recall_mean": 0.03076923076923077
-  }
+    "f1_mean": 0.4126984126984127,
+    "f1_std": 0.0,
+    "precision_mean": 0.26,
+    "recall_mean": 1.0,
+    "roc_auc_mean": 0.5612889812889813,
+    "ap_mean": 0.3224252451241437
+  },
+  "best_threshold": 0.7,
+  "scores_flipped": true
 }
