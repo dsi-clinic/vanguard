@@ -1,0 +1,17 @@
+feature,percent_missing
+breast_density,96.0
+menopausal,27.1
+subtype,1.7
+pcr,1.0
+age,0.2
+site,0.0
+patient_id,0.0
+dataset,0.0
+laterality,0.0
+bbox_volume,0.0
+field_strength,0.0
+manufacturer,0.0
+model,0.0
+echo_time,0.0
+repetition_time,0.0
+pcr_label,0.0
