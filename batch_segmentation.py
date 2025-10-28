@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Batch segmentation script for processing all .nii.gz files in /images directory
+
 and extracting STEP-2 breast mask segmentations (.npy files).
 
 This script:
@@ -10,13 +11,14 @@ This script:
 """
 
 import argparse
-import glob
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
 
 # Add the segmentation project to Python path
 sys.path.append("/home/ruochun/vanguard/3D-Breast-FGT-and-Blood-Vessel-Segmentation")
@@ -39,15 +41,14 @@ def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
 
     # Get all patient directories
     patient_dirs = [
-        d for d in os.listdir(images_dir) if os.path.isdir(os.path.join(images_dir, d))
+        d for d in os.listdir(images_dir) if (Path(images_dir) / d).is_dir()
     ]
 
     for patient_id in patient_dirs:
-        patient_path = os.path.join(images_dir, patient_id)
+        patient_path = Path(images_dir) / patient_id
 
         # Find all .nii.gz files in this patient directory
-        pattern = os.path.join(patient_path, "*.nii.gz")
-        files = glob.glob(pattern)
+        files = list(patient_path.glob("*.nii.gz"))
 
         for file_path in files:
             nii_files.append((patient_id, file_path))
@@ -104,7 +105,7 @@ def run_vessel_segmentation(
     """
     try:
         # Change to the segmentation project directory
-        original_cwd = os.getcwd()
+        original_cwd = Path.cwd()
         os.chdir("/home/ruochun/vanguard/3D-Breast-FGT-and-Blood-Vessel-Segmentation")
 
         # STEP-2: Run breast segmentation
@@ -122,7 +123,7 @@ def run_vessel_segmentation(
             breast_model_path,
         ]
 
-        result_breast = subprocess.run(cmd_breast, capture_output=True, text=True)
+        result_breast = subprocess.run(cmd_breast, capture_output=True, text=True, shell=False)  # noqa: S603
 
         if result_breast.returncode != 0:
             print(f"Breast segmentation failed: {result_breast.stderr}")
@@ -146,7 +147,7 @@ def run_vessel_segmentation(
             vessel_model_path,
         ]
 
-        result_vessel = subprocess.run(cmd_vessel, capture_output=True, text=True)
+        result_vessel = subprocess.run(cmd_vessel, capture_output=True, text=True, shell=False)  # noqa: S603
 
         # Restore original working directory
         os.chdir(original_cwd)
@@ -184,20 +185,20 @@ def process_single_file(
 
     try:
         # Create temporary directories for this file
-        step1_dir = os.path.join(temp_dir, f"{patient_id}_step1")
-        step2_dir = os.path.join(temp_dir, f"{patient_id}_step2")
-        step3_dir = os.path.join(temp_dir, f"{patient_id}_step3")
+        step1_dir = Path(temp_dir) / f"{patient_id}_step1"
+        step2_dir = Path(temp_dir) / f"{patient_id}_step2"
+        step3_dir = Path(temp_dir) / f"{patient_id}_step3"
 
-        os.makedirs(step1_dir, exist_ok=True)
-        os.makedirs(step2_dir, exist_ok=True)
-        os.makedirs(step3_dir, exist_ok=True)
+        step1_dir.mkdir(parents=True, exist_ok=True)
+        step2_dir.mkdir(parents=True, exist_ok=True)
+        step3_dir.mkdir(parents=True, exist_ok=True)
 
         # Extract filename without extension
-        filename = os.path.basename(file_path)
+        filename = Path(file_path).name
         base_name = filename.replace(".nii.gz", "")
 
         # STEP-1: Preprocess
-        step1_file = os.path.join(step1_dir, f"{base_name}.npy")
+        step1_file = step1_dir / f"{base_name}.npy"
         if not preprocess_image(file_path, step1_file):
             return patient_id, False, ""
 
@@ -208,12 +209,10 @@ def process_single_file(
             return patient_id, False, ""
 
         # Move the STEP-3 result to output directory
-        step3_file = os.path.join(step3_dir, f"{base_name}.npy")
-        output_file = os.path.join(
-            output_dir, f"{patient_id}_{base_name}_vessel_segmentation.npy"
-        )
+        step3_file = step3_dir / f"{base_name}.npy"
+        output_file = Path(output_dir) / f"{patient_id}_{base_name}_vessel_segmentation.npy"
 
-        if os.path.exists(step3_file):
+        if step3_file.exists():
             shutil.move(step3_file, output_file)
             return patient_id, True, output_file
         else:
@@ -234,14 +233,15 @@ def collect_all_step3_files(output_dir: str) -> list[str]:
         List of paths to all vessel segmentation .npy files
     """
     npy_files = []
-    for root, dirs, files in os.walk(output_dir):
+    for root, _dirs, files in os.walk(output_dir):
         for file in files:
             if file.endswith(".npy") and "vessel_segmentation" in file:
-                npy_files.append(os.path.join(root, file))
+                npy_files.append(Path(root) / file)
     return npy_files
 
 
-def main():
+def main() -> None:
+    """Main function to run batch segmentation processing."""
     parser = argparse.ArgumentParser(
         description="Batch process all .nii.gz files and extract vessel segmentations (STEP-3)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -261,7 +261,7 @@ def main():
 
     parser.add_argument(
         "--temp-dir",
-        default="/tmp/batch_segmentation",
+        default=tempfile.mkdtemp(prefix="batch_segmentation_"),
         help="Temporary directory for intermediate processing",
     )
 
@@ -303,8 +303,8 @@ def main():
     args = parser.parse_args()
 
     # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
-    os.makedirs(args.temp_dir, exist_ok=True)
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    Path(args.temp_dir).mkdir(parents=True, exist_ok=True)
 
     print(f"Finding .nii.gz files in {args.images_dir}...")
     nii_files = find_nii_files(args.images_dir)
@@ -322,7 +322,7 @@ def main():
         nii_files = [
             (patient_id, file_path)
             for patient_id, file_path in nii_files
-            if f"{patient_id}_{os.path.basename(file_path).replace('.nii.gz', '')}_vessel_segmentation.npy"
+            if f"{patient_id}_{Path(file_path).name.replace('.nii.gz', '')}_vessel_segmentation.npy"
             not in existing_files
         ]
         print(

@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import SimpleITK as sitk
 from einops import rearrange
 
 # vmtk
@@ -30,13 +31,16 @@ from vtkmodules.vtkFiltersCore import (
     vtkPolyDataConnectivityFilter,
     vtkTriangleFilter,
 )
-from vtkmodules.vtkImagingCore import vtkImageThreshold
 from vtkmodules.vtkIOGeometry import vtkSTLReader
 from vtkmodules.vtkIOImage import vtkNIFTIImageReader
 from vtkmodules.vtkIOLegacy import vtkPolyDataReader, vtkPolyDataWriter
 from vtkmodules.vtkIOXML import vtkXMLPolyDataReader, vtkXMLPolyDataWriter
 
 __all__ = ["extract_centerlines"]
+
+# Constants
+DIMENSIONS_3D = 3
+THRESHOLD_DEFAULT = 0.5
 
 
 def _read_surface(surface_path: Path) -> vtkPolyData:
@@ -69,18 +73,19 @@ def _nifti_to_vtk_image(nifti_path: Path) -> vtkImageData:
 
 
 def _nrrd_to_vtk_image(nrrd_path: Path) -> vtkImageData:
-    """Read .nrrd via pynrrd -> numpy, then map to vtkImageData with correct spacing
+    """Read .nrrd via pynrrd -> numpy, then map to vtkImageData with correct spacing.
+
     volumes: (Z, Y, X) binary mask in {0,1}
     """
     import nrrd  # local import to keep top-level clean
 
     data, header = nrrd.read(str(nrrd_path))
-    if data.ndim != 3:
+    if data.ndim != DIMENSIONS_3D:
         raise ValueError(f"expected 3D nrrd, got shape {tuple(data.shape)}")
 
     # most nrrd images are stored (X, Y, Z); rearrange to (Z, Y, X) for clarity
     vol_zyx = (
-        rearrange(data, "x y z -> z y x") if header.get("dimension") == 3 else data
+        rearrange(data, "x y z -> z y x") if header.get("dimension") == DIMENSIONS_3D else data
     )
 
     # infer voxel spacing (mm) from space directions; take norms, then map to (Z,Y,X)
@@ -96,7 +101,8 @@ def _nrrd_to_vtk_image(nrrd_path: Path) -> vtkImageData:
 def _numpy_to_vtk_image(
     vol_zyx: np.ndarray, spacing_zyx: tuple[float, float, float]
 ) -> vtkImageData:
-    """Map a (Z, Y, X) numpy array to vtkImageData
+    """Map a (Z, Y, X) numpy array to vtkImageData.
+
     use Fortran-order ravel to match VTK's x-fastest memory layout
     """
     nz, ny, nx = map(int, vol_zyx.shape)
@@ -115,21 +121,16 @@ def _numpy_to_vtk_image(
 
 
 def _mask_to_surface(img: vtkImageData, level: float) -> vtkPolyData:
-    """Marching cubes (flying edges) on a binary image (0/1) at threshold = level
+    """Marching cubes (flying edges) on a binary image (0/1) at threshold = level.
+
     cleans, triangles, and keeps largest connected component
     """
-    # optional: hard-threshold to [0,1] for safety on non-binary values
-    thr = vtkImageThreshold()
-    thr.SetInputData(img)
-    thr.ThresholdBetween(0.5, 1e9)
-    thr.SetInValue(1.0)
-    thr.SetOutValue(0.0)
-    thr.SetOutputScalarTypeToFloat()
-    thr.Update()
+    # For binary data, we don't need thresholding - use the image directly
+    # The marching cubes will work directly on the binary data
 
     mc = vtkFlyingEdges3D()
-    mc.SetInputConnection(thr.GetOutputPort())
-    mc.SetValue(0, float(level))
+    mc.SetInputData(img)  # Use the original image directly
+    mc.SetValue(0, 0.5)  # Use 0.5 as the isovalue for binary data
     mc.Update()
 
     tri = vtkTriangleFilter()
@@ -203,6 +204,7 @@ def extract_centerlines(
     curve_sampling_mm: float = 0.6,
 ) -> None:
     """Given a binary vessel mask (.nii.gz/.nrrd) or a surface (.vtp/.vtk/.stl),
+
     convert masks to a surface (marching cubes), decimate to ~target_points,
     run VMTK seedless network extraction, resample polylines to ~curve_sampling_mm,
     and write a VTK PolyData file (.vtp/.vtk) to output_centerline_path.
@@ -274,11 +276,16 @@ if __name__ == "__main__":
         target_points=args.target_points,
         curve_sampling_mm=args.curve_sampling_mm,
     )
-4:05
-need something like this in your seg extraction script to save the output in the format you need
-def save_nifti_outputs(preprocessed_array, breast_mask, final_image, output_dir):
-    """
-    Save segmentation outputs as NIfTI files.
+
+
+# Example function for saving NIfTI outputs in segmentation scripts
+def save_nifti_outputs(
+    preprocessed_array: np.ndarray,
+    breast_mask: np.ndarray,
+    final_image: np.ndarray,
+    output_dir: Path,
+) -> None:
+    """Save segmentation outputs as NIfTI files.
 
     Converts from x,y,z format (used internally) back to z,x,y (SimpleITK/ITK convention).
     """
@@ -286,7 +293,7 @@ def save_nifti_outputs(preprocessed_array, breast_mask, final_image, output_dir)
 
     # convert x,y,z back to z,x,y for SimpleITK
     # reverse the preprocessing transformation: x,y,z → y,x,z → z,x,y, then unflip
-    def to_zxy(array):
+    def to_zxy(array: np.ndarray) -> np.ndarray:
         """Convert from x,y,z to z,x,y and undo flip."""
         return array[::-1].transpose(2, 1, 0)
 
