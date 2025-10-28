@@ -123,7 +123,9 @@ def run_vessel_segmentation(
             breast_model_path,
         ]
 
-        result_breast = subprocess.run(cmd_breast, capture_output=True, text=True, shell=False)  # noqa: S603
+        result_breast = subprocess.run(
+            cmd_breast, capture_output=True, text=True, shell=False
+        )  # noqa: S603
 
         if result_breast.returncode != 0:
             print(f"Breast segmentation failed: {result_breast.stderr}")
@@ -147,7 +149,9 @@ def run_vessel_segmentation(
             vessel_model_path,
         ]
 
-        result_vessel = subprocess.run(cmd_vessel, capture_output=True, text=True, shell=False)  # noqa: S603
+        result_vessel = subprocess.run(
+            cmd_vessel, capture_output=True, text=True, shell=False
+        )  # noqa: S603
 
         # Restore original working directory
         os.chdir(original_cwd)
@@ -210,7 +214,9 @@ def process_single_file(
 
         # Move the STEP-3 result to output directory
         step3_file = step3_dir / f"{base_name}.npy"
-        output_file = Path(output_dir) / f"{patient_id}_{base_name}_vessel_segmentation.npy"
+        output_file = (
+            Path(output_dir) / f"{patient_id}_{base_name}_vessel_segmentation.npy"
+        )
 
         if step3_file.exists():
             shutil.move(step3_file, output_file)

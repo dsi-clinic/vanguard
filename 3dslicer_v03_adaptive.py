@@ -391,7 +391,9 @@ def _preprocess_vessel_data(img: vtkImageData) -> vtkImageData:
 
     # Reshape to 3D
     dims = img.GetDimensions()
-    binary_data = (data > THRESHOLD_DEFAULT).astype(np.uint8).reshape((dims[2], dims[1], dims[0]))
+    binary_data = (
+        (data > THRESHOLD_DEFAULT).astype(np.uint8).reshape((dims[2], dims[1], dims[0]))
+    )
 
     # Apply morphological operations to connect nearby vessel segments
     # Dilation to thicken vessels
@@ -411,7 +413,9 @@ def _extract_skeleton_centerlines(img: vtkImageData) -> vtkPolyData:
 
     # Reshape to 3D
     dims = img.GetDimensions()
-    binary_data = (data > THRESHOLD_DEFAULT).astype(np.uint8).reshape((dims[2], dims[1], dims[0]))
+    binary_data = (
+        (data > THRESHOLD_DEFAULT).astype(np.uint8).reshape((dims[2], dims[1], dims[0]))
+    )
 
     # Extract 3D skeleton
     skeleton = skeletonize(binary_data)
@@ -619,7 +623,9 @@ def extract_adaptive_centerlines(
             raise ValueError(f"expected 3D nrrd, got shape {tuple(data.shape)}")
 
         vol_zyx = (
-            rearrange(data, "x y z -> z y x") if header.get("dimension") == DIMENSIONS_3D else data
+            rearrange(data, "x y z -> z y x")
+            if header.get("dimension") == DIMENSIONS_3D
+            else data
         )
         sdirs = header.get("space directions")
         if sdirs is None:

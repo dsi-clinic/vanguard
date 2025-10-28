@@ -85,7 +85,9 @@ def _nrrd_to_vtk_image(nrrd_path: Path) -> vtkImageData:
 
     # most nrrd images are stored (X, Y, Z); rearrange to (Z, Y, X) for clarity
     vol_zyx = (
-        rearrange(data, "x y z -> z y x") if header.get("dimension") == DIMENSIONS_3D else data
+        rearrange(data, "x y z -> z y x")
+        if header.get("dimension") == DIMENSIONS_3D
+        else data
     )
 
     # infer voxel spacing (mm) from space directions; take norms, then map to (Z,Y,X)
