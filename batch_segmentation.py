@@ -123,9 +123,9 @@ def run_vessel_segmentation(
             breast_model_path,
         ]
 
-        result_breast = subprocess.run(
+        result_breast = subprocess.run(  # noqa: S603
             cmd_breast, capture_output=True, text=True, shell=False
-        )  # noqa: S603
+        )
 
         if result_breast.returncode != 0:
             print(f"Breast segmentation failed: {result_breast.stderr}")
@@ -149,9 +149,9 @@ def run_vessel_segmentation(
             vessel_model_path,
         ]
 
-        result_vessel = subprocess.run(
+        result_vessel = subprocess.run(  # noqa: S603
             cmd_vessel, capture_output=True, text=True, shell=False
-        )  # noqa: S603
+        )
 
         # Restore original working directory
         os.chdir(original_cwd)
