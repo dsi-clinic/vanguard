@@ -1,4 +1,0 @@
-Specification of the terms of data use of the released TopCoW Centerline data:
-
-Our data is released under the CC BY-NC (Attribution-NonCommercial) license. 
-By downloading the data you agree with the license terms.
