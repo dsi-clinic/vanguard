@@ -22,6 +22,7 @@ import pandas as pd
 import pyvista as pv
 from joblib import dump
 from sklearn.ensemble import RandomForestClassifier
+import matplotlib.pyplot as plt
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
@@ -29,6 +30,9 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     roc_auc_score,
+    roc_curve,
+    confusion_matrix,
+    precision_recall_curve
 )
 from sklearn.model_selection import (
     StratifiedKFold,
@@ -78,12 +82,25 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Output directory (features.csv, engineered.csv, model, metrics)",
     )
+    ap.add_argument("--random-baseline", action="store_true",
+                help="Run a random baseline on the same splits for comparison.")
+    ap.add_argument("--bootstrap-n", type=int, default=0,
+                    help="If >0, bootstrap test metrics with N resamples to get 95% CIs.")
+    ap.add_argument("--plots", action="store_true",
+                    help="Save ROC/PR curves and confusion matrix PNGs.")
+    ap.add_argument("--save-intermediate-checks", action="store_true",
+                    help="Emit feature sanity ranges to CSV for pipeline verification.")
+    ap.add_argument("--delong", action="store_true",
+                    help="Run DeLong test to compare model AUC vs random baseline.")
+    ap.add_argument("--ensemble-runs", type=int, default=0,
+                help="If >0, repeat train/val/test with different seeds to get AUC/AP distribution.")
+    ap.add_argument("--ensemble-hist", action="store_true",
+                    help="Save histogram PNGs of ensemble AUC/AP if --ensemble-runs>0.")
     ap.add_argument("--model", choices=["rf", "lr"], default="rf")
     ap.add_argument("--test-size", type=float, default=0.2)
     ap.add_argument("--val-size", type=float, default=0.1)
     ap.add_argument("--random-state", type=int, default=42)
     return ap.parse_args()
-
 
 def build_features_from_cow_feature_jsons(feature_dir: Path) -> pd.DataFrame:
     """Read per-case CoW feature JSONs.
@@ -203,6 +220,17 @@ def find_binary_label_columns(df_labels: pd.DataFrame) -> list[str]:
             bins.append(c)
     return bins
 
+def to_int_label(val):
+    """Map fetal dict/bool/str/int to {0,1}.
+       For fetal dicts: 1 if ANY side True."""
+    if isinstance(val, dict):
+        return int(any(bool(v) for v in val.values()))
+    if isinstance(val, (bool, np.bool_)):
+        return int(val)
+    s = str(val).strip().lower()
+    if s in {"true", "yes", "1"}:  return 1
+    if s in {"false", "no", "0"}:  return 0
+    return int(val)
 
 def rglob_polydata(root: Path) -> list[Path]:
     """Recursively find all .vtp and .vtk files."""
@@ -358,6 +386,78 @@ def engineer_features(in_csv: Path, out_csv: Path) -> None:
     X.to_csv(out_csv, index=False)
     print(f"Engineered features -> {out_csv} ({X.shape[1]} cols)")
 
+def bootstrap_ci(y_true, scores, preds_threshold, n_boot=1000, alpha=0.05, seed=123):
+    """Bootstrap CI for AUC, AP, and F1 at a fixed threshold."""
+    rng = np.random.default_rng(seed)
+    y_true = np.asarray(y_true)
+    scores = np.asarray(scores)
+    n = len(y_true)
+    aucs, aps, f1s = [], [], []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        yt  = y_true[idx]
+        sc  = scores[idx]
+        pr  = (sc >= preds_threshold).astype(int)
+        try:
+            aucs.append(roc_auc_score(yt, sc))
+        except ValueError:
+            continue
+        aps.append(average_precision_score(yt, sc))
+        f1s.append(f1_score(yt, pr, zero_division=0))
+    def _ci(arr):
+        arr = np.asarray(arr)
+        lo = np.percentile(arr, 2.5)
+        hi = np.percentile(arr, 97.5)
+        return float(lo), float(hi)
+    return {"auc_ci": _ci(aucs), "ap_ci": _ci(aps), "f1_ci": _ci(f1s)}
+
+# ---- Minimal DeLong implementation (binary) ----
+def compute_midrank(x):
+    J = np.argsort(x)
+    Z = x[J]
+    N = len(x)
+    T = np.zeros(N, dtype=float)
+    i = 0
+    while i < N:
+        j = i
+        while j < N and Z[j] == Z[i]:
+            j += 1
+        T[i:j] = 0.5 * (i + j - 1) + 1
+        i = j
+    T2 = np.empty(N, dtype=float)
+    T2[J] = T
+    return T2
+
+def fast_delong(y_true, y_scores):
+    y_true = np.asarray(y_true)
+    y_scores = np.asarray(y_scores)
+    pos = y_scores[y_true == 1]
+    neg = y_scores[y_true == 0]
+    m, n = len(pos), len(neg)
+    all_scores = np.hstack([pos, neg])
+    tx = compute_midrank(pos)
+    ty = compute_midrank(neg)
+    tz = compute_midrank(all_scores)
+    auc = (tz[:m].sum() - m * (m + 1) / 2) / (m * n)
+    v01 = (tz[:m] - tx) / n
+    v10 = 1 - (tz[m:] - ty) / m
+    s01 = v01.var(ddof=1)
+    s10 = v10.var(ddof=1)
+    var = s01 / m + s10 / n
+    return auc, var
+
+def delong_test(y_true, scores1, scores2):
+    """Returns (auc_diff, p_value) comparing scores1 vs scores2."""
+    auc1, var1 = fast_delong(y_true, scores1)
+    auc2, var2 = fast_delong(y_true, scores2)
+    diff = auc1 - auc2
+    se = np.sqrt(var1 + var2)
+    if se == 0:
+        return diff, float("nan")
+    from math import erfc, sqrt
+    z = diff / se
+    p = erfc(abs(z) / np.sqrt(2))
+    return diff, float(p)
 
 def train_baseline(
     feats_engineered_csv: Path,
@@ -369,6 +469,10 @@ def train_baseline(
     random_state: int = 42,
     model: str = "rf",
     val_size: float = 0.1,
+    run_random_baseline: bool = False,
+    bootstrap_n: int = 0,
+    make_plots: bool = False,
+    run_delong: bool = False,
 ) -> None:
     """Train RF/LR with CV metrics, threshold tuning, and score flip safeguard."""
     if labels_source.is_dir():
@@ -382,19 +486,14 @@ def train_baseline(
                 continue
             case_id = jp.stem
             val = obj.get(label_col)
-            if isinstance(val, str):
-                val = {"true": 1, "false": 0, "yes": 1, "no": 0}.get(val.lower(), val)
             try:
-                val = int(val)
+                rows.append({"case_id": case_id, label_col: to_int_label(val)})
             except Exception as e:
-                logging.warning(
-                    "Skipping label JSON %s missing/invalid '%s': %s", jp, label_col, e
-                )
+                logging.warning("Skipping label JSON %s missing/invalid '%s': %s", jp, label_col, e)
                 continue
-            rows.append({"case_id": case_id, label_col: val})
-        pd.DataFrame(rows).to_csv(labels_csv, index=False)
     else:
         labels_csv = labels_source
+
 
     # --- load and merge
     X = pd.read_csv(feats_engineered_csv)
@@ -484,16 +583,89 @@ def train_baseline(
     test_scores = pos_scores(clf, X_te)
     y_te_hat = (test_scores >= best_t).astype(int)
 
+    # --- model test metrics at tuned threshold & score AUC/AP ---
+    model_auc = float(roc_auc_score(y_te, test_scores))
+    model_ap  = float(average_precision_score(y_te, test_scores))
+
+    baseline = None
+    if run_random_baseline:
+        rng = np.random.default_rng(random_state)
+        rand_scores = rng.random(len(y_te))
+        rand_preds  = (rand_scores >= 0.5).astype(int)
+        baseline = {
+            "roc_auc": float(roc_auc_score(y_te, rand_scores)),
+            "ap": float(average_precision_score(y_te, rand_scores)),
+            "precision@0.5": float(precision_score(y_te, rand_preds, zero_division=0)),
+            "recall@0.5": float(recall_score(y_te, rand_preds, zero_division=0)),
+            "f1@0.5": float(f1_score(y_te, rand_preds, zero_division=0)),
+        }
+        print(f"\n[Random baseline] AUC={baseline['roc_auc']:.3f} AP={baseline['ap']:.3f}")
+    else:
+        rand_scores = None
+
+    ci = None
+    if bootstrap_n and bootstrap_n > 0:
+        ci = bootstrap_ci(
+            y_te, test_scores, preds_threshold=best_t,
+            n_boot=bootstrap_n, alpha=0.05, seed=random_state
+        )
+
+    delong = None
+    if run_delong:
+        if rand_scores is None:
+            rng = np.random.default_rng(random_state)
+            rand_scores = rng.random(len(y_te))
+        diff, p = delong_test(y_te, test_scores, rand_scores)
+        delong = {"auc_diff": float(diff), "p_value": float(p)}
+        print(f"[DeLong] AUC(model) - AUC(random) = {diff:.3f} (p={p:.3g})")
+
+    # ---- plots (guard random where needed) ----
+    if make_plots:
+        # ROC
+        fpr_m, tpr_m, _ = roc_curve(y_te, test_scores)
+        plt.figure()
+        plt.plot(fpr_m, tpr_m, label=f"Model (AUC={model_auc:.2f})")
+        if rand_scores is not None:
+            fpr_r, tpr_r, _ = roc_curve(y_te, rand_scores)
+            plt.plot(fpr_r, tpr_r, label="Random")
+        plt.plot([0,1],[0,1],"--", lw=1)
+        plt.xlabel("False Positive Rate"); plt.ylabel("True Positive Rate")
+        plt.legend(); plt.tight_layout()
+        plt.savefig(outdir / "roc_comparison.png"); plt.close()
+
+        # PR
+        prec_m, rec_m, _ = precision_recall_curve(y_te, test_scores)
+        plt.figure()
+        plt.plot(rec_m, prec_m, label=f"Model (AP={model_ap:.2f})")
+        if rand_scores is not None:
+            prec_r, rec_r, _ = precision_recall_curve(y_te, rand_scores)
+            plt.plot(rec_r, prec_r, label="Random")
+        plt.xlabel("Recall"); plt.ylabel("Precision")
+        plt.legend(); plt.tight_layout()
+        plt.savefig(outdir / "pr_comparison.png"); plt.close()
+
+        # Confusion matrix @ tuned threshold
+        cm = confusion_matrix(y_te, y_te_hat)
+        plt.figure()
+        plt.imshow(cm, interpolation="nearest")
+        plt.title("Confusion Matrix @ tuned threshold")
+        plt.colorbar(); plt.xlabel("Predicted"); plt.ylabel("True")
+        for (i, j), v in np.ndenumerate(cm):
+            plt.text(j, i, str(v), ha="center", va="center")
+        plt.tight_layout()
+        plt.savefig(outdir / "confusion_matrix.png"); plt.close()
+        print("[ok] Plots: roc_comparison.png, pr_comparison.png, confusion_matrix.png")
+
     print(
         f"\n[Threshold] best_t={best_t:.2f} | "
         f"val_pos_rate_pred={y_val_hat.mean():.3f} | test_pos_rate_pred={y_te_hat.mean():.3f}"
     )
 
-    # ---- pack results (tuned preds) ----
+    # ---- pack & persist once ----
     results = {
         "model": model,
-        "val": metrics(y_val, y_val_hat),
-        "test": metrics(y_te, y_te_hat),
+        "scores_flipped": bool(scores_flipped),
+        "best_threshold": float(best_t),
         "splits": {
             "train_n": int(len(y_tr)),
             "val_n": int(len(y_val)),
@@ -503,25 +675,111 @@ def train_baseline(
         },
         "cross_val": {
             "f1_mean": float(cv_f1),
-            "f1_std": 0.0,  # single summary at 0.5 threshold; (kept for backward compat)
             "precision_mean": float(cv_prec),
             "recall_mean": float(cv_rec),
             "roc_auc_mean": float(roc_cv),
             "ap_mean": float(ap_cv),
         },
-        "best_threshold": float(best_t),
-        "scores_flipped": bool(scores_flipped),
+        "val": metrics(y_val, y_val_hat),
+        "test": {
+            **metrics(y_te, y_te_hat),
+            "roc_auc": model_auc,
+            "ap": model_ap,
+        },
     }
+    if ci is not None:
+        results["test"].update(ci)
+    if baseline is not None:
+        results["baseline_random"] = baseline
+    if delong is not None:
+        results["delong_vs_random"] = delong
 
     model_path = outdir / f"model_{model}.pkl"
     metrics_path = outdir / f"metrics_{model}.json"
     dump(clf, model_path)
     metrics_path.write_text(json.dumps(results, indent=2))
-
     print(json.dumps(results, indent=2))
     print(f"Model -> {model_path}")
     print(f"Metrics -> {metrics_path}")
 
+def run_ensemble(feats_engineered_csv: Path, labels_source: Path, id_col: str,
+                 label_col: str, outdir: Path, base_random_state: int,
+                 model: str, test_size: float, val_size: float, runs: int,
+                 make_plots: bool):
+    aucs, aps = [], []
+    rng = np.random.default_rng(base_random_state)
+    seeds = rng.integers(0, 2**31 - 1, size=runs).tolist()
+    for i, seed in enumerate(seeds, 1):
+        print(f"[Ensemble] run {i}/{runs} (seed={seed})")
+        # call train_baseline but suppress heavy outputs;
+        # instead, we’d factor out the core training into a subroutine that returns AUC/AP.
+        # For minimal intrusion, just duplicate the splitting+fit+scoring logic here:
+
+        X = pd.read_csv(feats_engineered_csv)
+        y_df = pd.read_csv(labels_source if not labels_source.is_dir()
+                           else outdir / "labels_from_json.csv")
+        if id_col != "case_id" and id_col in y_df.columns:
+            y_df = y_df.rename(columns={id_col: "case_id"})
+        merged = X.merge(y_df, on="case_id", how="inner")
+        y = merged[label_col].astype(int).to_numpy()
+        drop_cols = ["case_id", label_col] + [c for c in merged.columns if c.endswith("_variant")]
+        Xmat = merged.drop(columns=drop_cols, errors="ignore").to_numpy()
+
+        if model == "rf":
+            clf = RandomForestClassifier(
+                n_estimators=800, max_depth=None,
+                min_samples_leaf=1, min_samples_split=2,
+                max_features="sqrt", class_weight="balanced",
+                n_jobs=-1, random_state=seed
+            )
+        else:
+            base_model = LogisticRegression(
+                class_weight="balanced", solver="liblinear",
+                max_iter=2000, random_state=seed
+            )
+            clf = Pipeline([("scaler", StandardScaler()), ("model", base_model)])
+
+        X_trval, X_te, y_trval, y_te = train_test_split(
+            Xmat, y, test_size=test_size, random_state=seed, stratify=y
+        )
+        rel_val = val_size / (1.0 - test_size)
+        X_tr, X_val, y_tr, y_val = train_test_split(
+            X_trval, y_trval, test_size=rel_val, random_state=seed, stratify=y_trval
+        )
+        clf.fit(X_tr, y_tr)
+
+        # tune threshold on val for F1
+        P_val = clf.predict_proba(X_val)[:, 1]
+        ths = np.linspace(0.05, 0.95, 19)
+        f1s = [f1_score(y_val, (P_val >= t).astype(int)) for t in ths]
+        best_t = ths[int(np.argmax(f1s))]
+
+        P_te = clf.predict_proba(X_te)[:, 1]
+        aucs.append(float(roc_auc_score(y_te, P_te)))
+        aps.append(float(average_precision_score(y_te, P_te)))
+
+    # write distribution
+    dist = {
+        "runs": int(runs),
+        "auc": {"mean": float(np.mean(aucs)), "std": float(np.std(aucs)),
+                "min": float(np.min(aucs)), "p25": float(np.percentile(aucs,25)),
+                "median": float(np.median(aucs)), "p75": float(np.percentile(aucs,75)),
+                "max": float(np.max(aucs)), "values": aucs},
+        "ap": {"mean": float(np.mean(aps)), "std": float(np.std(aps)),
+               "min": float(np.min(aps)), "p25": float(np.percentile(aps,25)),
+               "median": float(np.median(aps)), "p75": float(np.percentile(aps,75)),
+               "max": float(np.max(aps)), "values": aps},
+    }
+    (outdir / "ensemble_metrics.json").write_text(json.dumps(dist, indent=2))
+
+    if make_plots:
+        # histograms (AUC & AP)
+        plt.figure(); plt.hist(aucs, bins=12); plt.xlabel("Test ROC-AUC"); plt.ylabel("Count"); plt.tight_layout()
+        plt.savefig(outdir / "ensemble_auc_hist.png"); plt.close()
+        plt.figure(); plt.hist(aps, bins=12); plt.xlabel("Test AP"); plt.ylabel("Count"); plt.tight_layout()
+        plt.savefig(outdir / "ensemble_ap_hist.png"); plt.close()
+
+    print("[ok] Ensemble -> ensemble_metrics.json")
 
 def main() -> None:
     """CLI entry point: build features, join labels, train model, write artifacts."""
@@ -529,7 +787,8 @@ def main() -> None:
     args.outdir.mkdir(parents=True, exist_ok=True)
 
     # --- USE CoW feature JSONs directly ---
-    feats = build_features_from_cow_feature_jsons(args.cow_feature_dir)
+    poly_files = rglob_polydata(args.cow_feature_dir)
+    feats = build_features(poly_files, id_regex=r"(.*)")
 
     feats_path = args.outdir / "features.csv"
     feats.to_csv(feats_path, index=False)
@@ -556,21 +815,15 @@ def main() -> None:
                 case_id = jp.stem
                 # map to 0/1 for the requested label column if present; otherwise skip
                 val = obj.get(args.label_column)
-                if isinstance(val, str):
-                    val = {"true": 1, "false": 0, "yes": 1, "no": 0}.get(
-                        val.lower(), val
-                    )
                 try:
-                    val = int(val)
+                    rows.append({"case_id": case_id, args.label_column: to_int_label(val)})
                 except Exception as e:
                     logging.warning(
                         "Skipping label JSON %s missing/invalid '%s': %s",
-                        jp,
-                        args.label_column,
-                        e,
+                        jp, args.label_column, e
                     )
                     continue
-                rows.append({"case_id": case_id, args.label_column: val})
+
             pd.DataFrame(rows).to_csv(labels_for_preview, index=False)
 
         labels_df = pd.read_csv(labels_for_preview)
@@ -591,8 +844,26 @@ def main() -> None:
             random_state=args.random_state,
             model=args.model,
             val_size=args.val_size,
+            run_random_baseline=args.random_baseline,
+            bootstrap_n=args.bootstrap_n,
+            make_plots=args.plots,
+            run_delong=args.delong,
         )
 
-
+        if args.ensemble_runs and args.ensemble_runs > 0:
+            run_ensemble(
+                feats_engineered_csv=eng_path,
+                labels_source=labels_for_preview,
+                id_col=args.id_column,
+                label_col=args.label_column,
+                outdir=args.outdir,
+                base_random_state=args.random_state,
+                model=args.model,
+                test_size=args.test_size,
+                val_size=args.val_size,
+                runs=args.ensemble_runs,
+                make_plots=args.ensemble_hist,
+            )
+        
 if __name__ == "__main__":
     main()
