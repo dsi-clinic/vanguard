@@ -2,10 +2,7 @@ import os
 import json
 import pandas as pd
 from sklearn.model_selection import StratifiedShuffleSplit
-import hashlib
 from tqdm import tqdm
-from datetime import datetime
-from scipy.stats import ttest_ind
 
 # PARAMETERS
 INPUT_DIR = "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files/" #Folder containing the json files
