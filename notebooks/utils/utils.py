@@ -19,7 +19,6 @@ from tqdm import tqdm
 INPUT_DIR = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files/")
 OUTPUT_CSV = Path("../../output/split_sample/splits_v1.csv")
 REPORT_MD = Path("../../output/split_sample/split_report.md")
-SEED = 42  # Fixed seed for reproducibility
 FLOAT_TOL = 1e-6  # Magic constant for float comparisons
 
 
@@ -120,8 +119,10 @@ def load_and_clean_patient_data(
 def create_dataset_splits(
     df: pd.DataFrame,
     stratify_vars: list[str],
-    seed: int = SEED,
-    split_percents: dict[str, float] | None = None,
+    seed: int = 42,
+    perc_train: float = 0.7 | None,
+    perc_val: float = 0.1 | None,
+    perc_test: float = 0.2 | None,
     external_validation: bool = False,
     external_site: str | None = None,
     site_col: str = "site",
@@ -137,10 +138,8 @@ def create_dataset_splits(
         List of column names to stratify on (e.g., ["pcr", "subtype"]).
     seed : int, default=42
         Random seed for reproducibility.
-    split_percents : dict, optional
-        Dictionary specifying split proportions,
-        e.g. {"train": 0.7, "val": 0.1, "test": 0.2}.
-        Default = {"train": 0.7, "val": 0.1, "test": 0.2}.
+    perc_train, perc_val, perc_test: float, float, float
+        Percentages for splitting
     external_validation : bool, default=False
         If True, the test set will consist entirely of samples from the
         selected external site.
@@ -161,8 +160,31 @@ def create_dataset_splits(
     if missing_vars:
         raise ValueError(f"Missing strat columns in patients: {missing_vars}")
 
-    if split_percents is None:
-        split_percents = {"train": 0.7, "val": 0.1, "test": 0.2}
+    # Define split percentages
+    # If explicit values are not passed, set defaults
+    if perc_train is None:
+        perc_train = 0.7
+    if perc_val is None:
+        perc_val = 0.1
+    if perc_test is None:
+        perc_test = 0.2
+    
+    if external_validation:
+        total = perc_train + perc_val
+        if total == 0:
+            raise ValueError("Train and validation percentages must be > 0 for external validation.")
+        perc_train = perc_train / total
+        perc_val = perc_val / total
+        if perc_test != 0.0:
+            print("⚠️ Ignoring perc_test since test set will be the held-out site.")
+    else:
+        total = perc_train + perc_val + perc_test
+        if not abs(total - 1.0) < 1e-6:
+            raise ValueError(
+                f"Train/Val/Test proportions must sum to 1.0 (currently {total:.2f})"
+            )
+
+    split_percents = {"train": perc_train, "val": perc_val, "test": perc_test}
 
     if external_validation and external_site is None:
         raise ValueError(
