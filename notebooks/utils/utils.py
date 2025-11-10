@@ -1,3 +1,12 @@
+"""
+Utility functions for the Vanguard project.
+
+Includes:
+- Data loading and cleaning
+- Splitting dataframes for ML pipelines
+- Helper functions for sample splitting and report generation
+"""
+
 import os
 import json
 import pandas as pd
@@ -5,7 +14,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from tqdm import tqdm
 
 # PARAMETERS
-INPUT_DIR = "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files/" #Folder containing the json files
+INPUT_DIR = "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files/"
 OUTPUT_CSV = "../../output/split_sample/splits_v1.csv"
 REPORT_MD = "../../output/split_sample/split_report.md"
 SEED = 42 # Fixed seed for reproducibility
@@ -41,7 +50,8 @@ def load_and_clean_patient_data(
         print("Loading patient JSON files...")
 
     # Load files and extract relevant features
-    for file in tqdm(os.listdir(input_dir), desc="Loading JSON files", unit="file", disable=not verbose):
+    for file in tqdm(os.listdir(input_dir), desc="Loading JSON files",
+                     unit="file", disable=not verbose):
         if file.endswith(".json"):
             with open(os.path.join(input_dir, file), "r") as f:
                 data = json.load(f)
@@ -55,7 +65,6 @@ def load_and_clean_patient_data(
                     "subtype": subtype,
                     "site": site
                 })
-    
     df = pd.DataFrame(records)
     if verbose:
         print(f"Loaded {len(df)} patients")
@@ -95,7 +104,7 @@ def load_and_clean_patient_data(
 def create_dataset_splits(
     df: pd.DataFrame,
     stratify_vars: list[str],
-    seed: int = 42,
+    seed: int = SEED,
     split_percents: dict = None,
     external_validation: bool = False,
     external_site: str = None,
@@ -148,23 +157,18 @@ def create_dataset_splits(
         # Test = selected site
         test_df = df[df[site_col] == external_site].copy()
         remaining_df = df[df[site_col] != external_site].copy()
-    
         # Reset index so StratifiedShuffleSplit works correctly
         remaining_df = remaining_df.reset_index(drop=True)
-    
         # Renormalize train/val proportions
         total = split_percents["train"] + split_percents["val"]
         train_ratio = split_percents["train"] / total
-    
         splitter = StratifiedShuffleSplit(
             n_splits=1, test_size=(1 - train_ratio), random_state=seed
         )
         train_idx, val_idx = next(splitter.split(remaining_df, remaining_df["strat_key"]))
-    
         remaining_df.loc[train_idx, "split"] = "train"
         remaining_df.loc[val_idx, "split"] = "val"
         test_df["split"] = "test"
-    
         df_splits = pd.concat([remaining_df, test_df], axis=0)
 
     else:
@@ -173,7 +177,6 @@ def create_dataset_splits(
         val_size = split_percents["val"]
         test_size = split_percents["test"]
         assert abs(train_size + val_size + test_size - 1.0) < 1e-6, "Splits must sum to 1."
-
         # First split: Train vs (Val+Test)
         splitter1 = StratifiedShuffleSplit(
             n_splits=1, test_size=(1 - train_size), random_state=seed
@@ -181,24 +184,19 @@ def create_dataset_splits(
         train_idx, temp_idx = next(splitter1.split(df, df["strat_key"]))
         train_df = df.iloc[train_idx].copy()
         temp_df = df.iloc[temp_idx].copy()
-
         # Second split: Val vs Test
         test_ratio = test_size / (val_size + test_size)
         splitter2 = StratifiedShuffleSplit(
             n_splits=1, test_size=test_ratio, random_state=seed
         )
         val_idx, test_idx = next(splitter2.split(temp_df, temp_df["strat_key"]))
-
         val_df = temp_df.iloc[val_idx].copy()
         test_df = temp_df.iloc[test_idx].copy()
-
         train_df["split"] = "train"
         val_df["split"] = "val"
         test_df["split"] = "test"
-
         df_splits = pd.concat([train_df, val_df, test_df], axis=0)
-
-    # Step 5. Clean up 
+    # Step 5. Clean up
     df_splits = df_splits.drop(columns=["strat_key"]).reset_index(drop=True)
     return df_splits
 
