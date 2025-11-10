@@ -6,32 +6,37 @@ Includes:
 - Helper functions for sample splitting and report generation
 """
 
+from __future__ import annotations
+
 import json
-import os
+from pathlib import Path
 
 import pandas as pd
 from sklearn.model_selection import StratifiedShuffleSplit
 from tqdm import tqdm
 
 # PARAMETERS
-INPUT_DIR = "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files/"
-OUTPUT_CSV = "../../output/split_sample/splits_v1.csv"
-REPORT_MD = "../../output/split_sample/split_report.md"
-SEED = 42 # Fixed seed for reproducibility
+INPUT_DIR = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files/")
+OUTPUT_CSV = Path("../../output/split_sample/splits_v1.csv")
+REPORT_MD = Path("../../output/split_sample/split_report.md")
+SEED = 42  # Fixed seed for reproducibility
+FLOAT_TOL = 1e-6  # Magic constant for float comparisons
+
 
 def load_and_clean_patient_data(
-    input_dir: str,
-    output_csv: str,
-    verbose: bool = True
+    input_dir: Path,
+    output_csv: Path,
+    verbose: bool = True,
 ) -> pd.DataFrame:
-    """Load patient-level JSON metadata files into a pandas DataFrame,
-    clean key variables (subtype and pCR), and save to CSV.
+    """Load patient-level JSON metadata files into a pandas DataFrame.
+
+    Clean key variables (subtype and pCR), and save to CSV.
 
     Parameters
     ----------
-    input_dir : str
+    input_dir : Path
         Path to the folder containing .json files.
-    output_csv : str
+    output_csv : Path
         Path where the output CSV file will be saved.
     verbose : bool, default=True
         Whether to print progress and summary info.
@@ -43,26 +48,33 @@ def load_and_clean_patient_data(
         ['patient_id', 'pcr', 'subtype', 'site']
     """
     # Step 1. Load patient microdata
-    records = []
+    records: list[dict] = []
     if verbose:
         print("Loading patient JSON files...")
 
     # Load files and extract relevant features
-    for file in tqdm(os.listdir(input_dir), desc="Loading JSON files",
-                     unit="file", disable=not verbose):
-        if file.endswith(".json"):
-            with open(os.path.join(input_dir, file), encoding="utf-8") as f:
+    for file_path in tqdm(
+        input_dir.iterdir(),
+        desc="Loading JSON files",
+        unit="file",
+        disable=not verbose,
+    ):
+        if file_path.suffix == ".json":
+            with file_path.open(encoding="utf-8") as f:
                 data = json.load(f)
-                patient_id = data.get("patient_id", None)
-                pcr = data.get("primary_lesion", {}).get("pcr", None)
-                subtype = data.get("primary_lesion", {}).get("tumor_subtype", None)
-                site = data.get("imaging_data", {}).get("site", None)
-                records.append({
+            patient_id = data.get("patient_id")
+            pcr = data.get("primary_lesion", {}).get("pcr")
+            subtype = data.get("primary_lesion", {}).get("tumor_subtype")
+            site = data.get("imaging_data", {}).get("site")
+            records.append(
+                {
                     "patient_id": patient_id,
                     "pcr": pcr,
                     "subtype": subtype,
-                    "site": site
-                })
+                    "site": site,
+                },
+            )
+
     df = pd.DataFrame(records)
     if verbose:
         print(f"Loaded {len(df)} patients")
@@ -76,16 +88,20 @@ def load_and_clean_patient_data(
     df["subtype"] = df["subtype"].astype(str).str.strip().str.lower()
 
     # 3. Group HER2 variants
-    df["subtype"] = df["subtype"].replace({
-        "her2_enriched": "her2_pure",
-        "her2+": "her2_pure"
-    })
+    df["subtype"] = df["subtype"].replace(
+        {
+            "her2_enriched": "her2_pure",
+            "her2+": "her2_pure",
+        },
+    )
 
     # 4. Group luminal variants
-    df["subtype"] = df["subtype"].replace({
-        "luminal_a": "luminal",
-        "luminal_b": "luminal"
-    })
+    df["subtype"] = df["subtype"].replace(
+        {
+            "luminal_a": "luminal",
+            "luminal_b": "luminal",
+        },
+    )
 
     # Step 3. Optional sanity check
     if verbose:
@@ -93,21 +109,23 @@ def load_and_clean_patient_data(
         print(df["subtype"].value_counts(dropna=False))
 
     # Step 4. Save output
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_csv, index=False)
     if verbose:
         print(f"\nCleaned dataset saved to: {output_csv}")
 
     return df
 
+
 def create_dataset_splits(
     df: pd.DataFrame,
     stratify_vars: list[str],
     seed: int = SEED,
-    split_percents: dict = None,
+    split_percents: dict[str, float] | None = None,
     external_validation: bool = False,
-    external_site: str = None,
+    external_site: str | None = None,
     site_col: str = "site",
-):
+) -> pd.DataFrame:
     """Create reproducible stratified splits for train/val/test sets.
 
     Parameters
@@ -135,31 +153,32 @@ def create_dataset_splits(
     """
     # Step 1. Input validation
     df = df.copy()
-    assert all(var in df.columns for var in stratify_vars), \
-        f"Missing stratification columns in df: {stratify_vars}"
+    missing_vars = [v for v in stratify_vars if v not in df.columns]
+    if missing_vars:
+        raise ValueError(f"Missing stratification columns in df: {missing_vars}")
 
     if split_percents is None:
         split_percents = {"train": 0.7, "val": 0.1, "test": 0.2}
 
-    if external_validation:
-        assert external_site is not None, \
-            "When external_validation=True, you must specify external_site."
+    if external_validation and external_site is None:
+        raise ValueError(
+            "When external_validation=True, you must specify external_site.",
+        )
 
     # Step 2. Prepare stratification key
     df["strat_key"] = df[stratify_vars].astype(str).agg("_".join, axis=1)
 
     # Step 3: External validation logic
     if external_validation:
-        # Test = selected site
         test_df = df[df[site_col] == external_site].copy()
-        remaining_df = df[df[site_col] != external_site].copy()
-        # Reset index so StratifiedShuffleSplit works correctly
-        remaining_df = remaining_df.reset_index(drop=True)
-        # Renormalize train/val proportions
+        remaining_df = df[df[site_col] != external_site].copy().reset_index(drop=True)
         total = split_percents["train"] + split_percents["val"]
         train_ratio = split_percents["train"] / total
+
         splitter = StratifiedShuffleSplit(
-            n_splits=1, test_size=(1 - train_ratio), random_state=seed
+            n_splits=1,
+            test_size=(1 - train_ratio),
+            random_state=seed,
         )
         train_idx, val_idx = next(splitter.split(remaining_df, remaining_df["strat_key"]))
         remaining_df.loc[train_idx, "split"] = "train"
@@ -172,32 +191,42 @@ def create_dataset_splits(
         train_size = split_percents["train"]
         val_size = split_percents["val"]
         test_size = split_percents["test"]
-        assert abs(train_size + val_size + test_size - 1.0) < 1e-6, "Splits must sum to 1."
-        # First split: Train vs (Val+Test)
+
+        if abs(train_size + val_size + test_size - 1.0) >= FLOAT_TOL:
+            raise ValueError("Splits must sum to 1.0.")
+
         splitter1 = StratifiedShuffleSplit(
-            n_splits=1, test_size=(1 - train_size), random_state=seed
+            n_splits=1,
+            test_size=(1 - train_size),
+            random_state=seed,
         )
         train_idx, temp_idx = next(splitter1.split(df, df["strat_key"]))
         train_df = df.iloc[train_idx].copy()
         temp_df = df.iloc[temp_idx].copy()
-        # Second split: Val vs Test
+
         test_ratio = test_size / (val_size + test_size)
         splitter2 = StratifiedShuffleSplit(
-            n_splits=1, test_size=test_ratio, random_state=seed
+            n_splits=1,
+            test_size=test_ratio,
+            random_state=seed,
         )
         val_idx, test_idx = next(splitter2.split(temp_df, temp_df["strat_key"]))
         val_df = temp_df.iloc[val_idx].copy()
         test_df = temp_df.iloc[test_idx].copy()
+
         train_df["split"] = "train"
         val_df["split"] = "val"
         test_df["split"] = "test"
         df_splits = pd.concat([train_df, val_df, test_df], axis=0)
-    # Step 5. Clean up
+
     df_splits = df_splits.drop(columns=["strat_key"]).reset_index(drop=True)
     return df_splits
 
+
 def print_split_report(df_splits: pd.DataFrame) -> None:
-    """Print a summary report of dataset splits, including:
+    """Print a summary report of dataset splits.
+
+    Includes:
     - Number of patients per split
     - pCR rate per split
     - Subtype distribution per split
@@ -214,26 +243,20 @@ def print_split_report(df_splits: pd.DataFrame) -> None:
 
     print("\n=== Sanity Check: Split Summary ===")
 
-    # Counts per split
     summary_counts = df_splits.groupby("split").size()
     print("\nPatients per split:")
     print(summary_counts)
 
-    # pCR rate per split
     summary_pcr = df_splits.groupby("split")["pcr"].mean()
     print("\npCR rate per split:")
     print(summary_pcr.round(3))
 
-    # Subtype distribution per split
     summary_subtype = (
-        df_splits.groupby(["split", "subtype"])
-        .size()
-        .unstack(fill_value=0)
+        df_splits.pivot_table(index="split", columns="subtype", aggfunc="size", fill_value=0)
         .sort_index()
     )
     print("\nSubtype distribution per split:")
     print(summary_subtype)
 
-    # Overall totals
     print("\nTotal patients:", len(df_splits))
     print("Report generated successfully.\n")
