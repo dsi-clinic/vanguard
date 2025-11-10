@@ -171,7 +171,9 @@ def create_dataset_splits(
     # Step 3: External validation logic
     if external_validation:
         test_df = patients[patients[site_col] == external_site].copy()
-        remaining_df = patients[patients[site_col] != external_site].copy().reset_index(drop=True)
+        remaining_df = (
+        patients[patients[site_col] != external_site].copy().reset_index(drop=True)
+        )
         total = split_percents["train"] + split_percents["val"]
         train_ratio = split_percents["train"] / total
 
@@ -180,7 +182,8 @@ def create_dataset_splits(
             test_size=(1 - train_ratio),
             random_state=seed,
         )
-        train_idx, val_idx = next(splitter.split(remaining_df, remaining_df["strat_key"]))
+        train_idx, val_idx = next(splitter.split(remaining_df, 
+                                                 remaining_df["strat_key"]))
         remaining_df.loc[train_idx, "split"] = "train"
         remaining_df.loc[val_idx, "split"] = "val"
         test_df["split"] = "test"
@@ -252,7 +255,10 @@ def print_split_report(df_splits: pd.DataFrame) -> None:
     print(summary_pcr.round(3))
 
     summary_subtype = (
-        df_splits.pivot_table(index="split", columns="subtype", aggfunc="size", fill_value=0)
+        df_splits.pivot_table(index="split", 
+                              columns="subtype", 
+                              aggfunc="size", 
+                              fill_value=0)
         .sort_index()
     )
     print("\nSubtype distribution per split:")
