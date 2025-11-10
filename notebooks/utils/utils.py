@@ -180,7 +180,7 @@ def create_dataset_splits(
             print("⚠️ Ignoring perc_test since test set will be the held-out site.")
     else:
         total = perc_train + perc_val + perc_test
-        if not abs(total - 1.0) < 1e-6:
+        if not abs(total - 1.0) < FLOAT_TOL:
             raise ValueError(
                 f"Train/Val/Test proportions must sum to 1.0 (currently {total:.2f})"
             )
