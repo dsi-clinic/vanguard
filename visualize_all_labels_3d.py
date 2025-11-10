@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Create 3D visualizations for vessels (label 2) in the NRRD file.
+Create 3D visualizations for label 1 in the NRRD file.
 Can run locally with display or attempt offscreen rendering.
 """
 
@@ -50,10 +50,13 @@ except ImportError:
     print("Error: PyVista not available. Please install it to visualize masks.")
 
 
-def load_nrrd_mask(nrrd_path: Path, label_value: int):
+def load_nrrd_mask(nrrd_path: Path, label_value: int, data=None, header=None):
     """Load NRRD mask and extract specific label."""
-    print(f"Loading: {nrrd_path}")
-    data, header = nrrd.read(str(nrrd_path))
+    if data is None or header is None:
+        print(f"Loading: {nrrd_path}")
+        data, header = nrrd.read(str(nrrd_path))
+    else:
+        print(f"Using pre-loaded data from: {nrrd_path}")
     
     print(f"  Shape: {data.shape}")
     print(f"  Dtype: {data.dtype}")
@@ -84,8 +87,8 @@ def load_nrrd_mask(nrrd_path: Path, label_value: int):
     # Get spacing from header
     sdirs = header.get("space directions")
     if sdirs is not None:
-        spacing_xyz = tuple(float(np.linalg.norm(np.asarray(v))) for v in sdirs)
-        spacing = spacing_xyz
+        sdirs_array = np.asarray(sdirs)
+        spacing = tuple(np.linalg.norm(sdirs_array, axis=-1).astype(float))
     else:
         spacing = (1.0, 1.0, 1.0)
     
@@ -102,6 +105,8 @@ def create_3d_visualization(
     opacity: float = 1.0,
     n_frames: int = 120,
     framerate: int = 15,
+    data=None,
+    header=None,
 ):
     """Create a 3D rotating visualization of the mask."""
     if not PYVISTA_AVAILABLE:
@@ -110,8 +115,8 @@ def create_3d_visualization(
     nrrd_path = Path(nrrd_path)
     output_path = Path(output_path)
     
-    # Load mask
-    mask, spacing, label_name = load_nrrd_mask(nrrd_path, label_value)
+    # Load mask (reuse data/header if provided to avoid double loading)
+    mask, spacing, label_name = load_nrrd_mask(nrrd_path, label_value, data=data, header=header)
     
     if np.count_nonzero(mask) == 0:
         print(f"  Warning: No voxels for {label_name}, skipping visualization")
@@ -157,14 +162,18 @@ def create_3d_visualization(
         print(f"  Generating {n_frames} frame rotating video (framerate={framerate})...")
         plotter.open_movie(str(output_path), framerate=framerate)
         
+        # Precompute azimuth angles vectorized
+        azimuth_angles = 180 + np.arange(n_frames) * 360 / n_frames
+        progress_interval = max(1, n_frames // 4)
+        
         for i in range(n_frames):
             plotter.camera_position = "yz"
             plotter.camera.elevation = 30
-            plotter.camera.azimuth = 180 + i * 360 / n_frames
+            plotter.camera.azimuth = azimuth_angles[i]
             plotter.render()
             plotter.write_frame()
             
-            if (i + 1) % 30 == 0:
+            if (i + 1) % progress_interval == 0 or i == n_frames - 1:
                 print(f"    Progress: {i + 1}/{n_frames} frames ({100*(i+1)/n_frames:.1f}%)")
         
         plotter.close()
@@ -205,7 +214,7 @@ def create_3d_visualization(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Create 3D rotating visualization for vessels (label 2) in NRRD mask"
+        description="Create 3D rotating visualization for label 1 in NRRD mask"
     )
     parser.add_argument(
         "input",
@@ -232,26 +241,33 @@ def main():
     
     args = parser.parse_args()
     
-    # Load the file to check if label 2 exists
+    # Only visualize label 1
+    label_value = 1
     nrrd_path = Path(args.input)
+    
+    # Load file once and reuse for both check and visualization
     data, header = nrrd.read(str(nrrd_path))
-    unique_values = np.unique(data)
     
-    print(f"Found labels: {unique_values}")
+    # Check if label exists without computing unique values (faster for large arrays)
+    label_exists = np.any(data == label_value)
     
-    # Only visualize label 2 (vessels)
-    label_value = 2
-    if label_value not in unique_values:
-        print(f"\nERROR: Label {label_value} (vessels) not found in the NRRD file!")
+    if label_exists:
+        unique_values = np.unique(data)
+        print(f"Found labels: {unique_values}")
+    else:
+        # Only compute unique values if label not found (for error message)
+        unique_values = np.unique(data)
+        print(f"Found labels: {unique_values}")
+        print(f"\nERROR: Label {label_value} not found in the NRRD file!")
         print(f"Available labels: {unique_values}")
         return
     
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Create visualization for vessels (label 2)
-    color = "red"  # Vessels color
-    output_path = output_dir / f"vessels_3d.mp4"
+    # Create visualization for label 1
+    color = "red"
+    output_path = output_dir / f"label_1_3d.mp4"
     
     create_3d_visualization(
         str(nrrd_path),
@@ -261,6 +277,8 @@ def main():
         opacity=1.0,
         n_frames=args.frames,
         framerate=args.framerate,
+        data=data,
+        header=header,
     )
     
     print(f"\n✓ Visualization completed!")
