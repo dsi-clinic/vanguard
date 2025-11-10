@@ -1,5 +1,4 @@
-"""
-Utility functions for the Vanguard project.
+"""Utility functions for the Vanguard project.
 
 Includes:
 - Data loading and cleaning
@@ -7,8 +6,9 @@ Includes:
 - Helper functions for sample splitting and report generation
 """
 
-import os
 import json
+import os
+
 import pandas as pd
 from sklearn.model_selection import StratifiedShuffleSplit
 from tqdm import tqdm
@@ -24,8 +24,7 @@ def load_and_clean_patient_data(
     output_csv: str,
     verbose: bool = True
 ) -> pd.DataFrame:
-    """
-    Load patient-level JSON metadata files into a pandas DataFrame,
+    """Load patient-level JSON metadata files into a pandas DataFrame,
     clean key variables (subtype and pCR), and save to CSV.
 
     Parameters
@@ -37,13 +36,12 @@ def load_and_clean_patient_data(
     verbose : bool, default=True
         Whether to print progress and summary info.
 
-    Returns
+    Returns:
     -------
     df : pd.DataFrame
         Cleaned DataFrame with columns:
         ['patient_id', 'pcr', 'subtype', 'site']
     """
-
     # Step 1. Load patient microdata
     records = []
     if verbose:
@@ -53,7 +51,7 @@ def load_and_clean_patient_data(
     for file in tqdm(os.listdir(input_dir), desc="Loading JSON files",
                      unit="file", disable=not verbose):
         if file.endswith(".json"):
-            with open(os.path.join(input_dir, file), "r", encoding="utf-8") as f:
+            with open(os.path.join(input_dir, file), encoding="utf-8") as f:
                 data = json.load(f)
                 patient_id = data.get("patient_id", None)
                 pcr = data.get("primary_lesion", {}).get("pcr", None)
@@ -110,8 +108,7 @@ def create_dataset_splits(
     external_site: str = None,
     site_col: str = "site",
 ):
-    """
-    Create reproducible stratified splits for train/val/test sets.
+    """Create reproducible stratified splits for train/val/test sets.
 
     Parameters
     ----------
@@ -131,12 +128,11 @@ def create_dataset_splits(
     site_col : str, default="site"
         Column name containing site identifiers.
 
-    Returns
+    Returns:
     -------
     df_splits : pd.DataFrame
         Original dataframe with an added column 'split' ∈ {"train", "val", "test"}.
     """
-
     # Step 1. Input validation
     df = df.copy()
     assert all(var in df.columns for var in stratify_vars), \
@@ -201,8 +197,7 @@ def create_dataset_splits(
     return df_splits
 
 def print_split_report(df_splits: pd.DataFrame) -> None:
-    """
-    Print a summary report of dataset splits, including:
+    """Print a summary report of dataset splits, including:
     - Number of patients per split
     - pCR rate per split
     - Subtype distribution per split
@@ -212,7 +207,6 @@ def print_split_report(df_splits: pd.DataFrame) -> None:
     df_splits : pd.DataFrame
         DataFrame with columns ['patient_id', 'pcr', 'subtype', 'split'].
     """
-
     required_cols = {"split", "pcr", "subtype"}
     missing = required_cols - set(df_splits.columns)
     if missing:
