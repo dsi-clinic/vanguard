@@ -131,16 +131,19 @@ def create_dataset_splits(
     Parameters
     ----------
     df : pd.DataFrame
-        Input dataframe containing at least `patient_id` and stratification variables.
+        Input dataframe containing at least `patient_id` and stratification 
+        variables.
     stratify_vars : list[str]
         List of column names to stratify on (e.g., ["pcr", "subtype"]).
     seed : int, default=42
         Random seed for reproducibility.
     split_percents : dict, optional
-        Dictionary specifying split proportions, e.g. {"train": 0.7, "val": 0.1, "test": 0.2}.
+        Dictionary specifying split proportions, 
+        e.g. {"train": 0.7, "val": 0.1, "test": 0.2}.
         Default = {"train": 0.7, "val": 0.1, "test": 0.2}.
     external_validation : bool, default=False
-        If True, the test set will consist entirely of samples from the selected external site.
+        If True, the test set will consist entirely of samples from the 
+        selected external site.
     external_site : str, optional
         Site name to hold out for testing if `external_validation=True`.
     site_col : str, default="site"
@@ -149,13 +152,14 @@ def create_dataset_splits(
     Returns:
     -------
     df_splits : pd.DataFrame
-        Original dataframe with an added column 'split' ∈ {"train", "val", "test"}.
+        Original dataframe with an added column 
+        'split' ∈ {"train", "val", "test"}.
     """
     # Step 1. Input validation
     patients = df.copy()
     missing_vars = [v for v in stratify_vars if v not in patients.columns]
     if missing_vars:
-        raise ValueError(f"Missing stratification columns in patients: {missing_vars}")
+        raise ValueError(f"Missing strat columns in patients: {missing_vars}")
 
     if split_percents is None:
         split_percents = {"train": 0.7, "val": 0.1, "test": 0.2}
@@ -203,7 +207,8 @@ def create_dataset_splits(
             test_size=(1 - train_size),
             random_state=seed,
         )
-        train_idx, temp_idx = next(splitter1.split(patients, patients["strat_key"]))
+        train_idx, temp_idx = next(splitter1.split(patients, 
+                                                   patients["strat_key"]))
         train_df = patients.iloc[train_idx].copy()
         temp_df = patients.iloc[temp_idx].copy()
 
