@@ -177,7 +177,7 @@ def create_dataset_splits(
         test_df = patients[patients[site_col] == external_site].copy()
         remaining_df = (
             patients[patients[site_col] != external_site].copy().reset_index(drop=True)
-            )
+        )
         total = split_percents["train"] + split_percents["val"]
         train_ratio = split_percents["train"] / total
 
@@ -188,7 +188,7 @@ def create_dataset_splits(
         )
         train_idx, val_idx = next(
             splitter.split(remaining_df, remaining_df["strat_key"])
-            )
+        )
         remaining_df.loc[train_idx, "split"] = "train"
         remaining_df.loc[val_idx, "split"] = "val"
         test_df["split"] = "test"
