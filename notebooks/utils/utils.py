@@ -168,11 +168,12 @@ def create_dataset_splits(
         perc_val = 0.1
     if perc_test is None:
         perc_test = 0.2
-    
     if external_validation:
         total = perc_train + perc_val
         if total == 0:
-            raise ValueError("Train and validation percentages must be > 0 for external validation.")
+            raise ValueError(
+                "Train and validation percentages must be > 0 for external validation."
+            )
         perc_train = perc_train / total
         perc_val = perc_val / total
         if perc_test != 0.0:
