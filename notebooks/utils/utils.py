@@ -131,18 +131,18 @@ def create_dataset_splits(
     Parameters
     ----------
     df : pd.DataFrame
-        Input dataframe containing at least `patient_id` and stratification 
+        Input dataframe containing at least `patient_id` and stratification
         variables.
     stratify_vars : list[str]
         List of column names to stratify on (e.g., ["pcr", "subtype"]).
     seed : int, default=42
         Random seed for reproducibility.
     split_percents : dict, optional
-        Dictionary specifying split proportions, 
+        Dictionary specifying split proportions,
         e.g. {"train": 0.7, "val": 0.1, "test": 0.2}.
         Default = {"train": 0.7, "val": 0.1, "test": 0.2}.
     external_validation : bool, default=False
-        If True, the test set will consist entirely of samples from the 
+        If True, the test set will consist entirely of samples from the
         selected external site.
     external_site : str, optional
         Site name to hold out for testing if `external_validation=True`.
@@ -152,7 +152,7 @@ def create_dataset_splits(
     Returns:
     -------
     df_splits : pd.DataFrame
-        Original dataframe with an added column 
+        Original dataframe with an added column
         'split' ∈ {"train", "val", "test"}.
     """
     # Step 1. Input validation
@@ -176,8 +176,8 @@ def create_dataset_splits(
     if external_validation:
         test_df = patients[patients[site_col] == external_site].copy()
         remaining_df = (
-        patients[patients[site_col] != external_site].copy().reset_index(drop=True)
-        )
+            patients[patients[site_col] != external_site].copy().reset_index(drop=True)
+            )
         total = split_percents["train"] + split_percents["val"]
         train_ratio = split_percents["train"] / total
 
@@ -186,8 +186,9 @@ def create_dataset_splits(
             test_size=(1 - train_ratio),
             random_state=seed,
         )
-        train_idx, val_idx = next(splitter.split(remaining_df, 
-                                                 remaining_df["strat_key"]))
+        train_idx, val_idx = next(
+            splitter.split(remaining_df, remaining_df["strat_key"])
+            )
         remaining_df.loc[train_idx, "split"] = "train"
         remaining_df.loc[val_idx, "split"] = "val"
         test_df["split"] = "test"
@@ -207,8 +208,7 @@ def create_dataset_splits(
             test_size=(1 - train_size),
             random_state=seed,
         )
-        train_idx, temp_idx = next(splitter1.split(patients, 
-                                                   patients["strat_key"]))
+        train_idx, temp_idx = next(splitter1.split(patients, patients["strat_key"]))
         train_df = patients.iloc[train_idx].copy()
         temp_df = patients.iloc[temp_idx].copy()
 
@@ -259,13 +259,9 @@ def print_split_report(df_splits: pd.DataFrame) -> None:
     print("\npCR rate per split:")
     print(summary_pcr.round(3))
 
-    summary_subtype = (
-        df_splits.pivot_table(index="split", 
-                              columns="subtype", 
-                              aggfunc="size", 
-                              fill_value=0)
-        .sort_index()
-    )
+    summary_subtype = df_splits.pivot_table(
+        index="split", columns="subtype", aggfunc="size", fill_value=0
+        ).sort_index()
     print("\nSubtype distribution per split:")
     print(summary_subtype)
 
