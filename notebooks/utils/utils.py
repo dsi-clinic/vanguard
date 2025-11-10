@@ -43,7 +43,7 @@ def load_and_clean_patient_data(
 
     Returns:
     -------
-    df : pd.DataFrame
+    patients : pd.DataFrame
         Cleaned DataFrame with columns:
         ['patient_id', 'pcr', 'subtype', 'site']
     """
@@ -75,20 +75,20 @@ def load_and_clean_patient_data(
                 },
             )
 
-    df = pd.DataFrame(records)
+    patients = pd.DataFrame(records)
     if verbose:
-        print(f"Loaded {len(df)} patients")
+        print(f"Loaded {len(patients)} patients")
 
     # Step 2. Clean subtype and pCR before stratification
 
     # 1. Drop observations with missing subtype or pcr
-    df = df.dropna(subset=["subtype", "pcr"]).copy()
+    patients = patients.dropna(subset=["subtype", "pcr"]).copy()
 
     # 2. Normalize strings (remove whitespace, lowercase)
-    df["subtype"] = df["subtype"].astype(str).str.strip().str.lower()
+    patients["subtype"] = patients["subtype"].astype(str).str.strip().str.lower()
 
     # 3. Group HER2 variants
-    df["subtype"] = df["subtype"].replace(
+    patients["subtype"] = patients["subtype"].replace(
         {
             "her2_enriched": "her2_pure",
             "her2+": "her2_pure",
@@ -96,7 +96,7 @@ def load_and_clean_patient_data(
     )
 
     # 4. Group luminal variants
-    df["subtype"] = df["subtype"].replace(
+    patients["subtype"] = patients["subtype"].replace(
         {
             "luminal_a": "luminal",
             "luminal_b": "luminal",
@@ -106,15 +106,15 @@ def load_and_clean_patient_data(
     # Step 3. Optional sanity check
     if verbose:
         print("\nSubtype counts after cleaning:")
-        print(df["subtype"].value_counts(dropna=False))
+        print(patients["subtype"].value_counts(dropna=False))
 
     # Step 4. Save output
     output_csv.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(output_csv, index=False)
+    patients.to_csv(output_csv, index=False)
     if verbose:
         print(f"\nCleaned dataset saved to: {output_csv}")
 
-    return df
+    return patients
 
 
 def create_dataset_splits(
@@ -152,10 +152,10 @@ def create_dataset_splits(
         Original dataframe with an added column 'split' ∈ {"train", "val", "test"}.
     """
     # Step 1. Input validation
-    df = df.copy()
-    missing_vars = [v for v in stratify_vars if v not in df.columns]
+    patients = df.copy()
+    missing_vars = [v for v in stratify_vars if v not in patients.columns]
     if missing_vars:
-        raise ValueError(f"Missing stratification columns in df: {missing_vars}")
+        raise ValueError(f"Missing stratification columns in patients: {missing_vars}")
 
     if split_percents is None:
         split_percents = {"train": 0.7, "val": 0.1, "test": 0.2}
@@ -166,12 +166,12 @@ def create_dataset_splits(
         )
 
     # Step 2. Prepare stratification key
-    df["strat_key"] = df[stratify_vars].astype(str).agg("_".join, axis=1)
+    patients["strat_key"] = patients[stratify_vars].astype(str).agg("_".join, axis=1)
 
     # Step 3: External validation logic
     if external_validation:
-        test_df = df[df[site_col] == external_site].copy()
-        remaining_df = df[df[site_col] != external_site].copy().reset_index(drop=True)
+        test_df = patients[patients[site_col] == external_site].copy()
+        remaining_df = patients[patients[site_col] != external_site].copy().reset_index(drop=True)
         total = split_percents["train"] + split_percents["val"]
         train_ratio = split_percents["train"] / total
 
@@ -200,9 +200,9 @@ def create_dataset_splits(
             test_size=(1 - train_size),
             random_state=seed,
         )
-        train_idx, temp_idx = next(splitter1.split(df, df["strat_key"]))
-        train_df = df.iloc[train_idx].copy()
-        temp_df = df.iloc[temp_idx].copy()
+        train_idx, temp_idx = next(splitter1.split(patients, patients["strat_key"]))
+        train_df = patients.iloc[train_idx].copy()
+        temp_df = patients.iloc[temp_idx].copy()
 
         test_ratio = test_size / (val_size + test_size)
         splitter2 = StratifiedShuffleSplit(
