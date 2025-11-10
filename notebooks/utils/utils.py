@@ -261,7 +261,7 @@ def print_split_report(df_splits: pd.DataFrame) -> None:
 
     summary_subtype = df_splits.pivot_table(
         index="split", columns="subtype", aggfunc="size", fill_value=0
-        ).sort_index()
+    ).sort_index()
     print("\nSubtype distribution per split:")
     print(summary_subtype)
 
