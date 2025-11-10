@@ -53,7 +53,7 @@ def load_and_clean_patient_data(
     for file in tqdm(os.listdir(input_dir), desc="Loading JSON files",
                      unit="file", disable=not verbose):
         if file.endswith(".json"):
-            with open(os.path.join(input_dir, file), "r") as f:
+            with open(os.path.join(input_dir, file), "r", encoding="utf-8") as f:
                 data = json.load(f)
                 patient_id = data.get("patient_id", None)
                 pcr = data.get("primary_lesion", {}).get("pcr", None)
