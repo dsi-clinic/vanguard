@@ -1,4 +1,23 @@
 #!/usr/bin/env python3
+"""
+make_labels_from_json.py
+
+Helper script (optional) to build a labels.csv from patient-level JSON
+metadata, e.g.:
+
+{
+  "patient_id": "ISPY2_768214",
+  "primary_lesion": {
+      "pcr": 0,
+      "tumor_subtype": "triple_negative",
+      "breast_coordinates": { ... }
+  }
+}
+
+This script would walk a directory of JSONs, pick out patient_id, pcr,
+and tumor_subtype, and write labels.csv that the rest of the pipeline can read.
+"""
+
 import argparse, json, os, csv
 
 def truthy_to_int(v):
