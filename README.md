@@ -116,7 +116,8 @@ micromamba create -y -n vmtk \
   python=3.11 \
   vmtk=1.5.0 \
   "itk=5.3.*" "libitk=5.3.*" \
-  "vtk>=9.2" \
+  "vtk>=9.4" \
+  pyvista \
   numpy "nibabel>=5.2" "pynrrd>=1.0" einops imageio imageio-ffmpeg
 
 # Activate the environment
@@ -129,6 +130,12 @@ import vtk
 print("vmtk ok:", vmtkscripts.__file__)
 print("vtk:", vtk.vtkVersion().GetVTKVersion())
 PY
+
+# Already have the environment?
+# Upgrade the rendering stack (needed for headless PyVista) with:
+micromamba install -y -n vmtk -c conda-forge "vtk>=9.4" pyvista
+
+VTK 9.4+ bundles the GLX/EGL/OSMesa backends in a single wheel, so once the environment is upgraded no extra `vtk-osmesa` wheel or 2D fallback visualization is required—the centerline scripts will always render headlessly via PyVista.
 ```
 ## Usage Instructions
 ### For Neural Network Segmentation:
