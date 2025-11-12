@@ -499,11 +499,12 @@ def train_baseline(
     val_scores = pos_scores(clf, X_val)
     best_t, tinfo = choose_threshold(
         val_scores, y_val,
-        beta=0.6,          # slightly precision-tilted
-        pos_rate_lo=0.05,  # avoid predicting almost nothing
-        pos_rate_hi=0.80,  # avoid predicting almost everything
+        beta=0.4,           # for better precision
+        pos_rate_lo=0.05,
+        pos_rate_hi=0.60,   # stricter upper bound
         min_tn=1
     )
+
     print(f"[Threshold] chosen={best_t:.3f} | info={tinfo}")
 
     # predictions with tuned threshold
@@ -585,6 +586,25 @@ def train_baseline(
     print(f"[Split sizes] train={len(y_tr)} | val={len(y_val)} | test={len(y_te)}")
     print(f"[Threshold summary] best_t={best_t:.3f} | "
           f"val_pos_rate={y_val_hat.mean():.3f} | test_pos_rate={(test_scores>=best_t).mean():.3f}")
+
+    if model == "rf" and hasattr(clf, "feature_importances_"):
+        X_cols = merged_df.drop(columns=drop_cols, errors="ignore").columns
+        imp_df = pd.DataFrame({
+            "feature": X_cols,
+            "importance": clf.feature_importances_
+        }).sort_values("importance", ascending=False)
+        imp_path = outdir / "feature_importance.csv"
+        imp_df.to_csv(imp_path, index=False)
+        print(f"[ok] Feature importances -> {imp_path}")
+
+        # Top 20 bar plot
+        plt.figure(figsize=(6,4))
+        plt.barh(imp_df.head(20)["feature"][::-1], imp_df.head(20)["importance"][::-1])
+        plt.xlabel("Importance")
+        plt.title("Top 20 RF Feature Importances")
+        plt.tight_layout()
+        plt.savefig(outdir / "feature_importance_top20.png")
+        plt.close()
 
     # results
     results = {
@@ -687,6 +707,9 @@ def run_ensemble(feats_engineered_csv: Path, labels_source: Path, id_col: str,
                "max": float(np.max(aps)), "values": aps},
     }
     (outdir / "ensemble_metrics.json").write_text(json.dumps(dist, indent=2))
+
+    print(f"[Ensemble Summary] AUC mean={np.mean(aucs):.3f} ± {np.std(aucs):.3f}, "
+      f"AP mean={np.mean(aps):.3f} ± {np.std(aps):.3f}")
 
     if make_plots:
         plt.figure(); plt.hist(aucs, bins=12); plt.xlabel("Test ROC-AUC"); plt.ylabel("Count"); plt.tight_layout()

@@ -1,58 +1,58 @@
 {
   "model": "rf",
-  "scores_flipped": true,
-  "best_threshold": 0.7463,
+  "scores_flipped": false,
+  "best_threshold": 0.36000000000000004,
   "splits": {
-    "train_n": 175,
-    "val_n": 25,
-    "test_n": 50,
+    "train_n": 35,
+    "val_n": 5,
+    "test_n": 10,
     "test_size": 0.2,
     "val_size": 0.1
   },
   "cross_val": {
-    "f1_mean": 0.4126984126984127,
-    "precision_mean": 0.26,
-    "recall_mean": 1.0,
-    "roc_auc_mean": 0.5505613305613306,
-    "ap_mean": 0.3228091456585577
+    "f1_mean": 0.8,
+    "precision_mean": 0.9090909090909091,
+    "recall_mean": 0.7142857142857143,
+    "roc_auc_mean": 0.9603174603174603,
+    "ap_mean": 0.9173789633416962
   },
   "val": {
-    "precision": 0.3,
-    "recall": 0.5,
-    "f1": 0.375,
-    "n": 25,
-    "positive_rate": 0.24
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "n": 5,
+    "positive_rate": 0.2
   },
   "test": {
-    "precision": 0.3,
-    "recall": 0.6923076923076923,
-    "f1": 0.4186046511627907,
-    "n": 50,
-    "positive_rate": 0.26,
-    "roc_auc": 0.5644490644490645,
-    "ap": 0.3215428912932333,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "n": 10,
+    "positive_rate": 0.3,
+    "roc_auc": 1.0,
+    "ap": 1.0,
     "auc_ci": [
-      0.38589943244739755,
-      0.7389307359307359
+      NaN,
+      NaN
     ],
     "ap_ci": [
-      0.17377571714385823,
-      0.5645896575675922
+      1.0,
+      1.0
     ],
     "f1_ci": [
-      0.2,
-      0.5909090909090909
+      1.0,
+      1.0
     ]
   },
   "baseline_random": {
-    "roc_auc": 0.5114345114345115,
-    "ap": 0.3901988449806697,
-    "precision@0.5": 0.2,
-    "recall@0.5": 0.38461538461538464,
-    "f1@0.5": 0.2631578947368421
+    "roc_auc": 0.9047619047619048,
+    "ap": 0.8666666666666667,
+    "precision@0.5": 0.5,
+    "recall@0.5": 1.0,
+    "f1@0.5": 0.6666666666666666
   },
   "delong_vs_random": {
-    "auc_diff": 0.053014553014552934,
-    "p_value": 0.6931962416657814
+    "auc_diff": 0.09523809523809523,
+    "p_value": 0.40081416938293446
   }
 }
