@@ -125,7 +125,9 @@ def build_features_from_cow_feature_jsons(feature_dir: Path) -> pd.DataFrame:
             logging.warning("Skipping feature JSON %s due to parse error: %s", p, e)
             continue
 
-        case_id = p.stem
+        fname = p.stem
+        case_id = "_".join(fname.split("_")[:2])
+
         feats: dict[str, float] = {"case_id": case_id}
 
         if isinstance(data, dict):
