@@ -8,9 +8,9 @@ Outputs (written to --output):
 - model.pkl: saved logistic regression model
 
 Usage:
-  python baseline_pcr_simple.py \
-    --json-dir /path/to/jsons \
-    --split-csv splits_v1.csv \
+  python baseline_pcr_simple.py
+    --json-dir /path/to/jsons
+    --split-csv splits_v1.csv
     --output outdir
 """
 
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -46,8 +45,8 @@ def get_age(js: dict[str, Any]) -> float | None:
     """Return patient age as float, or None if missing/unparseable."""
     age = js.get("clinical_data", {}).get("age", None)
     try:
-        return float(age) if age not in (None, "") else None
-    except Exception:
+        return float(age) if age is not None else None
+    except (TypeError, ValueError):
         return None
 
 
@@ -63,11 +62,16 @@ def get_subtype(js: dict[str, Any]) -> str:
 def get_label_optional(js: dict[str, Any]) -> int | None:
     """Return pCR label (0/1) if present, else None."""
     lab = js.get("primary_lesion", {}).get("pcr", None)
+
+    # If missing or blank, return None
     if lab in (None, ""):
         return None
+
     try:
+        # Convert "0" or "1" (string or int) into integer form
         return int(lab)
     except Exception:
+        # If conversion fails (e.g. "NA" or malformed), treat as unlabeled
         return None
 
 
@@ -75,9 +79,12 @@ def get_bbox_volume(js: dict[str, Any]) -> float | None:
     """Return 3D bbox volume if all coordinates present and valid; else None."""
     bc = js.get("primary_lesion", {}).get("breast_coordinates", {})
     try:
-        x_min, x_max = float(bc.get("x_min")), float(bc.get("x_max"))
-        y_min, y_max = float(bc.get("y_min")), float(bc.get("y_max"))
-        z_min, z_max = float(bc.get("z_min")), float(bc.get("z_max"))
+        x_min = float(bc.get("x_min"))
+        x_max = float(bc.get("x_max"))
+        y_min = float(bc.get("y_min"))
+        y_max = float(bc.get("y_max"))
+        z_min = float(bc.get("z_min"))
+        z_max = float(bc.get("z_max"))
         dx, dy, dz = x_max - x_min, y_max - y_min, z_max - z_min
         vol = dx * dy * dz
         return vol if (dx > 0 and dy > 0 and dz > 0) else None
@@ -98,7 +105,7 @@ def load_dataset(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.Data
     if not {"patient_id", "split"}.issubset(set(splits.columns)):
         raise ValueError("split CSV must have columns: patient_id, split")
 
-    def map_split(s: str) -> str:
+    def get_splits(s: str) -> str:  # getting splits from the split column in csv
         s = str(s).strip().lower()
         if s == "train":
             return "train"
@@ -108,12 +115,13 @@ def load_dataset(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.Data
             return "test"
         return "test"
 
-    splits["split"] = splits["split"].map(map_split)
+    splits["split"] = splits["split"].map(get_splits)
     split_map = dict(zip(splits["patient_id"].astype(str), splits["split"]))
 
     rows: list[dict[str, Any]] = []
     for p in sorted(Path(json_dir).glob("*.json")):
         js = json.loads(Path(p).read_text())
+
         pid = get_patient_id(p, js)
         if pid not in split_map:
             raise KeyError(f"{pid} missing in split CSV")
@@ -197,11 +205,12 @@ def train_and_test(
     df_train_lab = df_train.dropna(subset=["y"]).copy()
     df_test_lab = df_test.dropna(subset=["y"]).copy()
 
+    # Fit on labeled train only
     X_train = df_train_lab[["age", "bbox_volume", "tumor_subtype"]]
     y_train = df_train_lab["y"].astype(int).to_numpy()
     pipe.fit(X_train, y_train)
 
-    # AUCs
+    # Train AUC
     train_scores = pipe.predict_proba(X_train)[:, 1]
     auc_train = float(roc_auc_score(y_train, train_scores))
 
@@ -240,7 +249,7 @@ def train_and_test(
     else:
         print("[WARN] No labeled TEST samples; skipping ROC plot.")
 
-    # Save model + metrics
+    # Save model
     joblib.dump(pipe, outdir / "model.pkl")
 
     n_feat = (
@@ -252,10 +261,10 @@ def train_and_test(
 
     metrics: dict[str, Any] = {
         "auc_train": auc_train,
-        "auc_test": auc_test,
+        "auc_test": auc_eval,
         "n_features": int(n_feat),
-        "n_train": int(df_train_lab.shape[0]),
-        "n_test": int(df_test_lab.shape[0]),
+        "n_train": int(df_train_lab.shape[0]),  # labeled train
+        "n_test": int(df_eval_lab.shape[0]),  # labeled eval
     }
     (outdir / "metrics.json").write_text(json.dumps(metrics, indent=2))
     return metrics
@@ -274,8 +283,9 @@ def main() -> None:
     ap.add_argument("--max-iter", type=int, default=1000)
     args = ap.parse_args()
 
-    df_train, df_test = load_dataset(args.json_dir, args.split_csv)
-    print(f"Loaded {len(df_train)} train and {len(df_test)} test samples.")
+    df_train, df_eval = load_dataset(args.json_dir, args.split_csv)
+
+    print(f"Loaded {len(df_train)} train and {len(df_eval)} held-out samples.")
 
     metrics = train_and_test(
         df_train, df_test, args.output, C=args.C, max_iter=args.max_iter
