@@ -460,7 +460,9 @@ def main() -> None:
     test_ids = splits.index[splits["split"] == "test"].tolist()
 
     # Parse image patterns (comma-separated)
-    image_patterns = [pat.strip() for pat in args.image_pattern.split(",") if pat.strip()]
+    image_patterns = [
+        pat.strip() for pat in args.image_pattern.split(",") if pat.strip()
+    ]
 
     # Extract features
     feat_train = extract_split_features(
