@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-radiomics_extract.py
+"""Run PyRadiomics over all patients in a split and write feature tables to disk.
 
 Stage 1 of the pipeline: run PyRadiomics over all patients in a split and
 write feature tables to disk.
@@ -22,158 +20,258 @@ write feature tables to disk.
 You can then feed these files to radiomics_train.py to build models.
 """
 
-import argparse, os, sys, warnings, logging
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+import warnings
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
-from radiomics import featureextractor
-
-from joblib import Parallel, delayed
-from tqdm import tqdm
 import yaml
+from joblib import Parallel, delayed
+from radiomics import featureextractor
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=UserWarning)
 logging.basicConfig(level=logging.WARNING)
 logging.getLogger("radiomics").setLevel(logging.ERROR)
-np.random.seed(42)
 
 
 # ---------------------------------------------------------------------
 # small helpers
 # ---------------------------------------------------------------------
-def read_yaml(path: Optional[str]) -> Dict[str, Any]:
+def read_yaml(path: str | None) -> dict[str, Any]:
+    """Load a YAML file if ``path`` is not None; otherwise return an empty dict."""
     if not path:
         return {}
-    with open(path, "r") as f:
+    yaml_path = Path(path)
+    with yaml_path.open() as f:
         data = yaml.safe_load(f)
     return data or {}
 
-def load_csv(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, comment="#")
-    assert "patient_id" in df.columns, f"{path} must have patient_id"
-    return df
 
-def path_from_pattern(root: str, pid: str, pattern: Optional[str]) -> Path:
+def load_csv(path: str) -> pd.DataFrame:
+    """Load a CSV file and ensure it contains a ``patient_id`` column."""
+    csv_path = Path(path)
+    data = pd.read_csv(csv_path, comment="#")
+    if "patient_id" not in data.columns:
+        msg = f"{csv_path} must have patient_id"
+        raise ValueError(msg)
+    return data
+
+
+def path_from_pattern(root: str, pid: str, pattern: str | None) -> Path:
+    """Resolve an image or mask path from a root directory and an optional pattern.
+
+    If ``pattern`` is None, assume a simple ``{pid}.nii.gz`` layout under ``root``.
+    Otherwise, interpret ``pattern`` as either a format string with ``{pid}``
+    or a literal relative/absolute path.
+    """
     if not pattern:
         return Path(root) / f"{pid}.nii.gz"
-    p = pattern.format(pid=pid)
-    pth = Path(p)
-    return pth if pth.is_absolute() else Path(root) / p
+    if "{pid}" in pattern:
+        rel = pattern.format(pid=pid)
+    else:
+        rel = pattern
+    pth = Path(rel)
+    if pth.is_absolute():
+        return pth
+    return Path(root) / rel
 
-def file_exists(p: Path) -> bool:
-    return Path(p).exists()
 
-def ensure_exists(p: Path, what: str):
-    if not file_exists(p):
-        raise FileNotFoundError(f"{what} not found: {p}")
+def file_exists(path: Path) -> bool:
+    """Return True if ``path`` exists on disk."""
+    return Path(path).exists()
+
+
+def ensure_exists(path: Path, what: str) -> None:
+    """Raise a FileNotFoundError if ``path`` does not exist."""
+    if not file_exists(path):
+        msg = f"{what} not found: {path}"
+        raise FileNotFoundError(msg)
 
 
 # ---------------------------------------------------------------------
 # radiomics extractor builder
 # ---------------------------------------------------------------------
-def build_extractor(params: Dict[str, Any], label_override: Optional[int] = None):
+def build_extractor(
+    params: dict[str, Any],
+    label_override: int | None = None,
+) -> featureextractor.RadiomicsFeatureExtractor:
+    """Build and configure a :class:`RadiomicsFeatureExtractor` from parameters.
+
+    Parameters
+    ----------
+    params:
+        Dictionary with PyRadiomics settings and feature-class configuration.
+        Expected keys include ``setting``, ``param``, and ``featureClasses``.
+    label_override:
+        Optional integer label to force all featureClasses to use for the mask.
+    """
     setting = params.get("setting") or {}
-    ext = featureextractor.RadiomicsFeatureExtractor(**setting)
+    extractor = featureextractor.RadiomicsFeatureExtractor(**setting)
 
-    if label_override is not None:
-        ext.settings["label"] = int(label_override)
+    # General enables / disables (attributes on the extractor)
+    for key, value in params.get("param", {}).items():
+        try:
+            setattr(extractor, key, value)
+        except Exception:  # pragma: no cover - defensive
+            print(
+                f"[WARN] could not set extractor param '{key}'",
+                file=sys.stderr,
+            )
 
-    # image types
-    if params.get("imageType") is not None:
-        ext.disableAllImageTypes()
-        for name, cfg in (params["imageType"] or {}).items():
-            try:
-                ext.enableImageTypeByName(name, **(cfg or {}))
-            except TypeError:
-                if name.lower() == "log" and cfg and "sigma" in cfg:
-                    ext.settings["sigma"] = cfg["sigma"]
-                ext.enableImageTypeByName(name)
-    else:
-        ext.enableImageTypeByName("Original")
+    feature_classes = params.get("featureClasses")
+    if feature_classes:
+        # Optionally override label (PyRadiomics uses ``label`` for mask values)
+        if label_override is not None:
+            for spec in feature_classes.values():
+                if isinstance(spec, dict):
+                    spec["label"] = label_override
 
-    # feature classes
-    if params.get("featureClass") is not None:
-        ext.disableAllFeatures()
-        for fcls, feats in (params["featureClass"] or {}).items():
+        # New-style per-class enablement
+        try:
+            extractor.enableAllFeatures()
+        except Exception:  # pragma: no cover - defensive
+            # If this fails we still try to enable/disable below.
+            print(
+                "[WARN] enableAllFeatures() failed; continuing with partial config.",
+                file=sys.stderr,
+            )
+
+        for fcls, spec in feature_classes.items():
             ok = False
-            for name_try in (fcls, fcls.lower()):
-                try:
-                    if feats:
-                        for feat in feats:
-                            ext.enableFeatureByName(name_try, feat)
-                    else:
-                        ext.enableFeatureClassByName(name_try)
+            try:
+                if spec is False:
+                    extractor.disableFeatureClassByName(fcls)
                     ok = True
-                    break
-                except Exception:
-                    continue
+                elif spec is True:
+                    extractor.enableFeatureClassByName(fcls)
+                    ok = True
+                elif isinstance(spec, dict):
+                    # Disable all features, then re-enable the subset.
+                    extractor.disableFeatureClassByName(fcls)
+                    for fname, flag in spec.items():
+                        if flag:
+                            extractor.enableFeatureByName(fcls, fname)
+                    ok = True
+            except Exception as exc:  # pragma: no cover - defensive
+                print(
+                    f"[WARN] error configuring feature class {fcls}: {exc}",
+                    file=sys.stderr,
+                )
             if not ok:
-                print(f"[WARN] could not enable feature class {fcls}", file=sys.stderr)
+                print(
+                    f"[WARN] could not enable feature class {fcls}",
+                    file=sys.stderr,
+                )
     else:
-        for fcls in ("firstorder","shape","glcm","glrlm","glszm","gldm","ngtdm"):
-            try: ext.enableFeatureClassByName(fcls)
-            except Exception: pass
+        # Default to a standard set of feature classes.
+        default_classes = (
+            "firstorder",
+            "shape",
+            "glcm",
+            "glrlm",
+            "glszm",
+            "gldm",
+            "ngtdm",
+        )
+        for fcls in default_classes:
+            try:
+                extractor.enableFeatureClassByName(fcls)
+            except Exception as exc:  # pragma: no cover - defensive
+                print(
+                    f"[WARN] could not enable feature class {fcls}: {exc}",
+                    file=sys.stderr,
+                )
 
-    return ext
+    return extractor
 
 
 # ---------------------------------------------------------------------
 # peritumor mask creation (cast to UInt8)
 # ---------------------------------------------------------------------
-def make_peritumor_mask(mask_path: Path, radius_mm: float) -> Optional[sitk.Image]:
+def make_peritumor_mask(mask_path: Path, radius_mm: float) -> sitk.Image | None:
+    """Dilate a binary tumor mask to create a peritumor shell of given radius.
+
+    Returns a SimpleITK image with dtype UInt8 containing the shell region, or
+    ``None`` if the radius is non-positive or the mask cannot be read.
+    """
     try:
-        m = sitk.ReadImage(str(mask_path))
-        m_bin = sitk.Cast(m > 0, sitk.sitkUInt8)
-        spacing = m.GetSpacing()
-        rad_vox = [max(1, int(round(radius_mm / s))) for s in spacing]
-        dil = sitk.BinaryDilate(m_bin, rad_vox)
-        shell = sitk.Subtract(dil, m_bin)
-        shell.CopyInformation(m)
-        return shell
-    except Exception as e:
-        print(f"[WARN] peritumor failed for {mask_path.stem}: {e}", file=sys.stderr)
+        mask = sitk.ReadImage(str(mask_path))
+    except Exception as exc:  # pragma: no cover - I/O defensive
+        print(f"[WARN] could not read mask {mask_path}: {exc}", file=sys.stderr)
         return None
+
+    spacing = mask.GetSpacing()  # (sx, sy, sz)
+    mean_spacing = float(np.mean(spacing))
+    r_vox = int(round(radius_mm / mean_spacing))
+    if r_vox <= 0:
+        return None
+
+    dilated = sitk.BinaryDilate(
+        sitk.Cast(mask, sitk.sitkUInt8),
+        [r_vox] * len(spacing),
+    )
+    shell = sitk.Subtract(dilated, sitk.Cast(mask, sitk.sitkUInt8))
+    shell = sitk.BinaryThreshold(
+        shell,
+        lowerThreshold=1,
+        upperThreshold=255,
+        insideValue=1,
+        outsideValue=0,
+    )
+    shell.CopyInformation(mask)
+    return shell
 
 
 # ---------------------------------------------------------------------
 # flatten radiomics output
 # ---------------------------------------------------------------------
-def _is_number(x):
+def _is_number(value: object) -> bool:
+    """Return True if ``value`` can be cast to ``float`` without error."""
     try:
-        float(x)
+        float(value)
         return True
     except Exception:
         return False
 
-def flatten_radiomics_result(res: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
-    out = {}
-    for k, v in res.items():
-        colkey = f"{prefix}{k}" if prefix else k
 
-        if v is None:
-            out[colkey] = None
+def flatten_radiomics_result(
+    res: dict[str, Any],
+    prefix: str = "",
+) -> dict[str, Any]:
+    """Flatten the (possibly nested) PyRadiomics result dict into a 1D mapping.
+
+    Diagnostics keys are skipped. Nested dicts, lists, and tuples are expanded
+    into separate scalar entries, with keys prefixed by ``prefix``.
+    """
+    out: dict[str, Any] = {}
+    for key, value in res.items():
+        if key.startswith("diagnostics_"):
             continue
 
-        if isinstance(v, np.ndarray):
-            if v.ndim == 0:
-                val = v.item()
-                out[colkey] = float(val) if _is_number(val) else val
-            elif v.ndim == 1:
-                for i, vv in enumerate(v.tolist()):
-                    out[f"{colkey}_{i}"] = float(vv) if _is_number(vv) else vv
-            else:
-                out[colkey] = len(v.ravel())
+        colkey = f"{prefix}{key}"
+
+        if isinstance(value, dict):
+            for subkey, subval in value.items():
+                full_key = f"{colkey}_{subkey}"
+                out[full_key] = float(subval) if _is_number(subval) else subval
             continue
 
-        if isinstance(v, (list, tuple)):
-            for i, vv in enumerate(v):
-                out[f"{colkey}_{i}"] = float(vv) if _is_number(vv) else vv
+        if value is None:
             continue
 
-        out[colkey] = float(v) if _is_number(v) else v
+        if isinstance(value, list | tuple):
+            for idx, elem in enumerate(value):
+                out[f"{colkey}_{idx}"] = float(elem) if _is_number(elem) else elem
+        else:
+            out[colkey] = float(value) if _is_number(value) else value
 
     return out
 
@@ -185,71 +283,103 @@ def extract_for_pid(
     pid: str,
     images_dir: str,
     masks_dir: str,
-    image_patterns: List[str],
+    image_patterns: list[str],
     mask_pattern: str,
-    extractor,
+    extractor: featureextractor.RadiomicsFeatureExtractor,
     peri_radius_mm: float = 0.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
+    """Extract radiomics features for a single patient across all phases."""
     base_mask_path = path_from_pattern(masks_dir, pid, mask_pattern)
     ensure_exists(base_mask_path, "Mask")
+    try:
+        mask_img = sitk.ReadImage(str(base_mask_path))
+    except Exception as exc:  # pragma: no cover - I/O defensive
+        msg = f"Could not read mask for {pid}: {exc}"
+        raise RuntimeError(msg) from exc
 
-    row = {"patient_id": pid}
+    out_row: dict[str, Any] = {"patient_id": pid}
 
-    for pi, pat in enumerate(image_patterns):
+    for pat in image_patterns:
         img_path = path_from_pattern(images_dir, pid, pat)
-        ensure_exists(img_path, f"Image (phase {pi+1})")
+        ensure_exists(img_path, f"Image pattern '{pat}'")
+        try:
+            img = sitk.ReadImage(str(img_path))
+        except Exception as exc:  # pragma: no cover - I/O defensive
+            msg = f"Could not read image for {pid} ({pat}): {exc}"
+            raise RuntimeError(msg) from exc
 
-        # tumor features for this phase
-        tumor_res = extractor.execute(str(img_path), str(base_mask_path))
-        row.update(flatten_radiomics_result(tumor_res, prefix=f"p{pi+1}_tumor_"))
+        # Run on tumor mask
+        res_tumor = extractor.execute(img, mask_img)
+        tumor_prefix = f"{pat}_tumor_"
+        out_row.update(flatten_radiomics_result(res_tumor, prefix=tumor_prefix))
 
-        # peritumor features for this phase
-        if peri_radius_mm and peri_radius_mm > 0.0:
+        # Optional peritumor shell
+        if peri_radius_mm > 0:
             peri_mask = make_peritumor_mask(base_mask_path, peri_radius_mm)
             if peri_mask is not None:
-                peri_res = extractor.execute(str(img_path), peri_mask)
-                row.update(flatten_radiomics_result(peri_res, prefix=f"p{pi+1}_peri_"))
+                res_peri = extractor.execute(img, peri_mask)
+                peri_prefix = f"{pat}_peri{int(peri_radius_mm)}mm_"
+                out_row.update(
+                    flatten_radiomics_result(res_peri, prefix=peri_prefix),
+                )
 
-    return row
+    return out_row
 
 
 # ---------------------------------------------------------------------
 # extract for split
 # ---------------------------------------------------------------------
 def extract_split_features(
-    pids: List[str],
+    pids: list[str],
     images_dir: str,
     masks_dir: str,
-    image_patterns: List[str],
+    image_patterns: list[str],
     mask_pattern: str,
-    extractor,
+    extractor: featureextractor.RadiomicsFeatureExtractor,
     peri_radius_mm: float = 0.0,
     n_jobs: int = 1,
-    tag: str = "train",
 ) -> pd.DataFrame:
+    """Extract features for a list of patients and return as a DataFrame."""
+    rows: list[dict[str, Any]] = []
     if n_jobs == 1:
-        rows = [
-            extract_for_pid(pid, images_dir, masks_dir, image_patterns, mask_pattern,
-                            extractor, peri_radius_mm)
-            for pid in tqdm(pids, desc=f"{tag.upper()} radiomics", unit="case")
-        ]
-    else:
-        rows = Parallel(n_jobs=n_jobs, prefer="processes")(
-            delayed(extract_for_pid)(
-                pid, images_dir, masks_dir, image_patterns, mask_pattern,
-                extractor, peri_radius_mm
+        for pid in tqdm(pids, desc="Extracting radiomics (serial)"):
+            rows.append(
+                extract_for_pid(
+                    pid,
+                    images_dir,
+                    masks_dir,
+                    image_patterns,
+                    mask_pattern,
+                    extractor,
+                    peri_radius_mm=peri_radius_mm,
+                ),
             )
-            for pid in tqdm(pids, desc=f"{tag.upper()} radiomics", unit="case")
+    else:
+        # Parallel execution
+        func = delayed(extract_for_pid)
+        rows = Parallel(n_jobs=n_jobs)(
+            func(
+                pid,
+                images_dir,
+                masks_dir,
+                image_patterns,
+                mask_pattern,
+                extractor,
+                peri_radius_mm=peri_radius_mm,
+            )
+            for pid in tqdm(pids, desc=f"Extracting radiomics (n_jobs={n_jobs})")
         )
-    return pd.DataFrame.from_records(rows).set_index("patient_id")
+
+    return pd.DataFrame(rows).set_index("patient_id")
 
 
 # ---------------------------------------------------------------------
 # simple numeric sanitizer for extractor (so trainer finds *_final.csv)
 # ---------------------------------------------------------------------
-def sanitize_numeric(df: pd.DataFrame, tag: str) -> pd.DataFrame:
-    raw = df.shape
-    num = df.select_dtypes(include=[np.number]).copy()
+def sanitize_numeric(data: pd.DataFrame, tag: str) -> pd.DataFrame:
+    """Keep only numeric columns and drop degenerate ones, with debug logging."""
+    raw_shape = data.shape
+    num = data.select_dtypes(include=[np.number]).copy()
     # drop all-NaN
     all_nan = num.columns[num.isna().all()].tolist()
     num = num.drop(columns=all_nan, errors="ignore")
@@ -257,82 +387,124 @@ def sanitize_numeric(df: pd.DataFrame, tag: str) -> pd.DataFrame:
     nunique = num.nunique(dropna=True)
     zero_var = nunique[nunique <= 1].index.tolist()
     num = num.drop(columns=zero_var, errors="ignore")
-    print(f"[DEBUG] {tag}: raw={raw} -> numeric={num.shape} (all-NaN={len(all_nan)}, zero-var={len(zero_var)})")
+    print(
+        f"[DEBUG] {tag}: raw={raw_shape} -> numeric={num.shape} "
+        f"(all-NaN={len(all_nan)}, zero-var={len(zero_var)})",
+    )
     return num
 
 
 # ---------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------
-def main():
+def main() -> None:
+    """Entry point: run extraction for train and test splits and write CSVs."""
     ap = argparse.ArgumentParser(description="Extract radiomics features only.")
     ap.add_argument("--images", required=True)
     ap.add_argument("--masks", required=True)
     ap.add_argument("--labels", required=True)
-    ap.add_argument("--split", required=True)
+    ap.add_argument("--splits", required=True)
     ap.add_argument("--output", required=True)
-    ap.add_argument("--params", default=None)
-    ap.add_argument("--image-pattern", default="{pid}/{pid}_0001.nii.gz",
-                    help="comma-separated list for multiple phases")
-    ap.add_argument("--mask-pattern",  default="{pid}.nii.gz")
-    ap.add_argument("--label", type=int, default=None)
-    ap.add_argument("--n-proc", type=int, default=1)
-    ap.add_argument("--peri-radius-mm", type=float, default=0.0,
-                    help="0 = no peritumor extraction")
+    ap.add_argument(
+        "--params",
+        default=None,
+        help="Optional YAML with PyRadiomics params.",
+    )
+    ap.add_argument(
+        "--image-pattern",
+        default="{pid}/{pid}_0001.nii.gz",
+        help="Python format string or relative path for image files.",
+    )
+    ap.add_argument(
+        "--mask-pattern",
+        default="{pid}/{pid}_mask.nii.gz",
+        help="Python format string or relative path for mask files.",
+    )
+    ap.add_argument(
+        "--peri-radius-mm",
+        type=float,
+        default=0.0,
+        help="If > 0, build a peritumor shell of this radius (in mm).",
+    )
+    ap.add_argument(
+        "--n-jobs",
+        type=int,
+        default=1,
+        help="Number of parallel jobs for feature extraction.",
+    )
+    ap.add_argument(
+        "--label-override",
+        type=int,
+        default=None,
+        help="Optional mask label value overriding any YAML label.",
+    )
+
     args = ap.parse_args()
 
-    outdir = Path(args.output); outdir.mkdir(parents=True, exist_ok=True)
+    outdir = Path(args.output)
+    outdir.mkdir(parents=True, exist_ok=True)
 
-    labels = load_csv(args.labels)[["patient_id","pcr"]].set_index("patient_id")
-    split  = load_csv(args.split)[["patient_id","split"]].set_index("patient_id")
-    split["split"] = split["split"].str.lower().replace({"val":"test"})
-    joined = split.join(labels, how="inner")
+    # Load metadata
+    labels = load_csv(args.labels)[["patient_id", "pcr"]].set_index("patient_id")
+    splits = load_csv(args.splits).set_index("patient_id")
+    params = read_yaml(args.params)
 
-    # turn comma-separated patterns into a list
-    image_patterns = [s.strip() for s in args.image_pattern.split(",") if s.strip()]
+    # Build extractor (optionally overriding mask label)
+    extractor = build_extractor(params, label_override=args.label_override)
 
-    # filter to patients that actually have the FIRST image + mask
-    train_pids, test_pids = [], []
-    for pid, row in joined.iterrows():
-        first_img = path_from_pattern(args.images, pid, image_patterns[0])
-        msk_p     = path_from_pattern(args.masks,  pid, args.mask_pattern)
-        if not (file_exists(first_img) and file_exists(msk_p)):
-            continue
-        if row["split"] == "train":
-            train_pids.append(pid)
-        elif row["split"] == "test":
-            test_pids.append(pid)
+    # Identify train/test patient IDs
+    if "split" not in splits.columns:
+        msg = f"{args.splits} must contain a 'split' column"
+        raise ValueError(msg)
+    train_ids = splits.index[splits["split"] == "train"].tolist()
+    test_ids = splits.index[splits["split"] == "test"].tolist()
 
-    if not train_pids or not test_pids:
-        sys.exit("[ERROR] After filtering for image+mask, no train or test patients remain.")
+    # Parse image patterns (comma-separated)
+    image_patterns = [
+        pat.strip() for pat in args.image_pattern.split(",") if pat.strip()
+    ]
 
-    params    = read_yaml(args.params) if args.params else {}
-    extractor = build_extractor(params, label_override=args.label)
+    # Extract features
+    feat_train = extract_split_features(
+        train_ids,
+        args.images,
+        args.masks,
+        image_patterns,
+        args.mask_pattern,
+        extractor,
+        peri_radius_mm=args.peri_radius_mm,
+        n_jobs=args.n_jobs,
+    )
+    feat_test = extract_split_features(
+        test_ids,
+        args.images,
+        args.masks,
+        image_patterns,
+        args.mask_pattern,
+        extractor,
+        peri_radius_mm=args.peri_radius_mm,
+        n_jobs=args.n_jobs,
+    )
 
-    print("[INFO] Extracting radiomics...")
-    Xtr = extract_split_features(train_pids, args.images, args.masks,
-                                 image_patterns, args.mask_pattern,
-                                 extractor, peri_radius_mm=args.peri_radius_mm,
-                                 n_jobs=args.n_proc, tag="train")
-    Xtr.to_csv(outdir / "features_train.csv")
+    # Sanitize numeric-only
+    feat_train_final = sanitize_numeric(feat_train, tag="train")
+    feat_test_final = sanitize_numeric(feat_test, tag="test")
 
-    Xte = extract_split_features(test_pids, args.images, args.masks,
-                                 image_patterns, args.mask_pattern,
-                                 extractor, peri_radius_mm=args.peri_radius_mm,
-                                 n_jobs=args.n_proc, tag="test")
-    Xte.to_csv(outdir / "features_test.csv")
+    # Align columns (test must have same columns as train)
+    feat_test_final = feat_test_final.reindex(
+        columns=feat_train_final.columns,
+        fill_value=np.nan,
+    )
 
-    # also save labels so training script doesn't have to reload CSVs
-    joined.loc[Xtr.index].to_csv(outdir / "train_labels_split.csv")
-    joined.loc[Xte.index].to_csv(outdir / "test_labels_split.csv")
+    # Save outputs
+    feat_train.to_csv(outdir / "features_train_raw.csv")
+    feat_test.to_csv(outdir / "features_test_raw.csv")
+    feat_train_final.to_csv(outdir / "features_train_final.csv")
+    feat_test_final.to_csv(outdir / "features_test_final.csv")
 
-    # create numeric-only versions (this is what trainer will read)
-    Xtr_final = sanitize_numeric(Xtr, "train")
-    Xte_final = sanitize_numeric(Xte, "test")
-    Xtr_final.to_csv(outdir / "features_train_final.csv")
-    Xte_final.to_csv(outdir / "features_test_final.csv")
-
-    print("[INFO] Done. Wrote features_train(.csv|_final.csv), features_test(.csv|_final.csv), and label/split CSVs.")
+    # Also save labels so training script doesn't have to reload CSVs
+    labels.loc[train_ids].to_csv(outdir / "train_labels_split.csv")
+    labels.loc[test_ids].to_csv(outdir / "test_labels_split.csv")
 
 
 if __name__ == "__main__":
