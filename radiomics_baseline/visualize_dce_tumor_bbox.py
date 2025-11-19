@@ -1,168 +1,148 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Visualize DCE-MRI phases for one patient with a tumor bounding box.
+Visualize DCE-MRI phases (0000..0005) with tumor mask and a zoomed-out crop.
 
-- loads N DCE phases (0001, 0002, …)
-- tries to get a tight tumor box from the segmentation mask
-- falls back to JSON breast_coordinates if mask is empty/missing
-- normalizes all phases with the same min/max
-- draws the box on every phase
-- saves to radiomics_baseline/figures by default
+- Loads phases {pid}/{pid}_0000.nii.gz ... {pid}/{pid}_0005.nii.gz
+- Uses one global [vmin, vmax] across phases to preserve enhancement
+- Selects the tumor slice with max mask area (consistent z across phases)
+- Crops to an expanded "breast" box around the tumor (configurable)
+- Overlays tumor mask contour in red
+- Saves to radiomics_baseline/figures/{pid}_dce_tumor_zoom.png
 
-Example Code:
+Example Usage:
+
 python radiomics_baseline/visualize_dce_tumor_bbox.py \
-  --pid ISPY2_491779 \
+  --pid DUKE_001 \
   --images-dir /net/projects2/vanguard/MAMA-MIA-syn60868042/images \
   --masks-dir  /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert \
-  --json-dir   /net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files \
-  --image-patterns "{pid}/{pid}_0001.nii.gz,{pid}/{pid}_0002.nii.gz,{pid}/{pid}_0003.nii.gz,{pid}/{pid}_0004.nii.gz"
-
+  --zoom-factor 2.0 \
+  --outdir radiomics_baseline/figures
 
 """
 
-import argparse, json
+import argparse, sys, re
 from pathlib import Path
-
 import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 
 
-def load_sitk(path: Path) -> sitk.Image:
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
-    return sitk.ReadImage(str(path))
+def read_img(path: Path) -> np.ndarray:
+    img = sitk.ReadImage(str(path))
+    arr = sitk.GetArrayFromImage(img)  # (z, y, x)
+    return arr.astype(np.float32)
 
+def read_mask(path: Path) -> np.ndarray:
+    m = sitk.ReadImage(str(path))
+    a = sitk.GetArrayFromImage(m) > 0
+    return a.astype(np.uint8)  # (z, y, x) in {0,1}
 
-def mask_bbox_from_seg(mask_img: sitk.Image):
-    """Get tight bbox from nonzero mask voxels. Returns (zmin,zmax,ymin,ymax,xmin,xmax) or None."""
-    arr = sitk.GetArrayFromImage(mask_img)  # (Z,Y,X)
-    nz = np.nonzero(arr)
-    if len(nz[0]) == 0:
-        return None
-    z_min, z_max = int(nz[0].min()), int(nz[0].max())
-    y_min, y_max = int(nz[1].min()), int(nz[1].max())
-    x_min, x_max = int(nz[2].min()), int(nz[2].max())
-    return z_min, z_max, y_min, y_max, x_min, x_max
+def tumor_z_with_max_area(mask: np.ndarray) -> int:
+    areas = (mask > 0).sum(axis=(1, 2))
+    if areas.max() == 0:
+        raise ValueError("Mask appears empty—no positive voxels found.")
+    return int(np.argmax(areas))
 
+def bbox_2d_from_mask(mask2d: np.ndarray) -> tuple[int, int, int, int]:
+    ys, xs = np.where(mask2d > 0)
+    if ys.size == 0:
+        raise ValueError("2D mask slice is empty; cannot compute bbox.")
+    return int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
 
-def bbox_from_json(json_path: Path):
-    """Fallback bbox from patient json (1-based → 0-based)."""
-    if not json_path.exists():
-        return None
-    with open(json_path, "r") as f:
-        data = json.load(f)
-    coords = data.get("primary_lesion", {}).get("breast_coordinates")
-    if not coords:
-        return None
-    x_min = coords["x_min"] - 1
-    x_max = coords["x_max"] - 1
-    y_min = coords["y_min"] - 1
-    y_max = coords["y_max"] - 1
-    z_min = coords["z_min"] - 1
-    z_max = coords["z_max"] - 1
-    return z_min, z_max, y_min, y_max, x_min, x_max
+def expand_bbox(ymin, ymax, xmin, xmax, expand: float, H: int, W: int):
+    cy = 0.5 * (ymin + ymax)
+    cx = 0.5 * (xmin + xmax)
+    h = (ymax - ymin + 1) * expand
+    w = (xmax - xmin + 1) * expand
+    nymin = int(max(0, np.floor(cy - 0.5 * h)))
+    nymax = int(min(H - 1, np.ceil(cy + 0.5 * h)))
+    nxmin = int(max(0, np.floor(cx - 0.5 * w)))
+    nxmax = int(min(W - 1, np.ceil(cx + 0.5 * w)))
+    return nymin, nymax, nxmin, nxmax
 
+def build_phase_paths(images_dir: Path, pid: str) -> list[Path]:
+    paths = []
+    for p in range(6):  # exactly 0000..0005
+        candidate = images_dir / f"{pid}" / f"{pid}_{p:04d}.nii.gz"
+        if candidate.exists():
+            paths.append(candidate)
+        else:
+            print(f"[WARN] missing phase {p:04d}: {candidate}", file=sys.stderr)
+    if not paths:
+        raise FileNotFoundError("No phases (0000..0005) found for this PID.")
+    return paths
 
-def load_slice(img: sitk.Image, z: int) -> np.ndarray:
-    arr = sitk.GetArrayFromImage(img)  # (Z,Y,X)
-    z = max(0, min(z, arr.shape[0] - 1))
-    return arr[z, :, :]
-
-
-def normalize_many(slices):
-    stacked = np.stack(slices, axis=0)
-    vmin = np.percentile(stacked, 1)
-    vmax = np.percentile(stacked, 99)
-    out = []
-    for s in slices:
-        ss = np.clip((s - vmin) / (vmax - vmin + 1e-8), 0, 1)
-        out.append(ss)
-    return out
-
+_phase_re = re.compile(r"_(\d{4})\.nii(?:\.gz)?$")  # robust for .nii or .nii.gz
+def parse_phase_number(path: Path) -> int | None:
+    m = _phase_re.search(path.name)
+    return int(m.group(1)) if m else None
 
 def main():
-    # default outdir = radiomics_baseline/figures (folder of this script + "figures")
-    default_outdir = Path(__file__).resolve().parent / "figures"
-
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pid", required=True)
-    ap.add_argument("--images-dir", required=True)
-    ap.add_argument("--masks-dir", required=True)
-    ap.add_argument("--json-dir", required=True)
-    ap.add_argument(
-        "--image-patterns",
-        required=True,
-        help='comma-separated patterns, e.g. "{pid}/{pid}_0001.nii.gz,{pid}/{pid}_0002.nii.gz"',
-    )
-    ap.add_argument("--outdir", default=str(default_outdir))
+    ap.add_argument("--images-dir", required=True, type=Path)
+    ap.add_argument("--masks-dir",  required=True, type=Path)
+    ap.add_argument("--pid",        required=True, type=str)
+    ap.add_argument("--zoom-factor", type=float, default=2.0,
+                    help=">1.0 zooms OUT (more context). 2.0 is a good start.")
+    ap.add_argument("--outdir", type=Path, default=Path("radiomics_baseline/figures"))
     args = ap.parse_args()
 
-    pid = args.pid
-    outdir = Path(args.outdir)
+    outdir = args.outdir
     outdir.mkdir(parents=True, exist_ok=True)
 
-    patterns = [p.strip() for p in args.image_patterns.split(",") if p.strip()]
+    # ---- load mask & choose slice ----
+    mask_path = args.masks_dir / f"{args.pid}.nii.gz"
+    if not mask_path.exists():
+        raise FileNotFoundError(f"Mask not found: {mask_path}")
+    mask3d = read_mask(mask_path)
+    z = tumor_z_with_max_area(mask3d)
+    mask2d = mask3d[z]
 
-    mask_path = Path(args.masks_dir) / f"{pid}.nii.gz"
-    mask_img = load_sitk(mask_path)
-    tumor_bbox = mask_bbox_from_seg(mask_img)
+    # tumor bbox on this slice, then expand to show more context
+    ymin, ymax, xmin, xmax = bbox_2d_from_mask(mask2d)
 
-    if tumor_bbox is None:
-        json_path = Path(args.json_dir) / f"{pid}.json"
-        tumor_bbox = bbox_from_json(json_path)
+    # derive H, W from first phase
+    phase_paths = build_phase_paths(args.images_dir, args.pid)
+    first_img = read_img(phase_paths[0])
+    H, W = first_img.shape[1:]
+    eymin, eymax, exmin, exmax = expand_bbox(ymin, ymax, xmin, xmax,
+                                             expand=args.zoom_factor, H=H, W=W)
 
-    if tumor_bbox is None:
-        raise RuntimeError("Could not determine tumor/breast bounding box from mask or JSON")
+    # ---- load available phases, crop consistently, compute global min/max ----
+    crops = []
+    for pth in phase_paths:
+        vol = read_img(pth)
+        if z < 0 or z >= vol.shape[0]:
+            raise IndexError(f"Chosen z={z} outside volume depth for {pth.name}.")
+        crops.append(vol[z, eymin:eymax+1, exmin:exmax+1])
 
-    z_min, z_max, y_min, y_max, x_min, x_max = tumor_bbox
-    z_mid = (z_min + z_max) // 2
+    gmin = float(min(np.min(c) for c in crops))
+    gmax = float(max(np.max(c) for c in crops))
+    if not np.isfinite(gmin) or not np.isfinite(gmax) or gmax <= gmin:
+        gmin = gmax = None  # fallback
 
-    slice_imgs = []
-    titles = []
-    for pat in patterns:
-        img_path = Path(args.images_dir) / pat.format(pid=pid)
-        img = load_sitk(img_path)
-        sl = load_slice(img, z_mid)
-        slice_imgs.append(sl)
-        titles.append(img_path.name)
-
-    slice_norm = normalize_many(slice_imgs)
-
-    n = len(slice_norm)
-    fig, axes = plt.subplots(1, n, figsize=(4 * n, 5))
+    # ---- plot ----
+    n = len(crops)
+    fig, axes = plt.subplots(1, n, figsize=(4*n, 4), dpi=160)
     if n == 1:
         axes = [axes]
 
-    for ax, img2d, title in zip(axes, slice_norm, titles):
-        ax.imshow(img2d, cmap="gray", vmin=0, vmax=1)
+    mask_crop = mask2d[eymin:eymax+1, exmin:exmax+1]
 
-        rect_x = x_min
-        rect_y = y_min
-        rect_w = x_max - x_min + 1
-        rect_h = y_max - y_min + 1
-        ax.add_patch(
-            plt.Rectangle(
-                (rect_x, rect_y),
-                rect_w,
-                rect_h,
-                edgecolor="red",
-                fill=False,
-                linewidth=2,
-            )
-        )
-
-        ax.set_title(f"{title}\nz={z_mid}")
+    for ax, pth, img in zip(axes, phase_paths, crops):
+        ax.imshow(img, cmap="gray", vmin=gmin, vmax=gmax)
+        ax.contour(mask_crop, levels=[0.5], colors="red", linewidths=1.5)
+        phase = parse_phase_number(pth)
+        ax.set_title(f"t={phase}" if phase is not None else pth.name)
         ax.axis("off")
 
-    fig.suptitle(f"{pid} – DCE phases with tumor bbox", y=0.98)
-    fig.tight_layout()
-
-    out_path = outdir / f"{pid}_dce_tumor_bbox.png"
-    fig.savefig(out_path, dpi=150)
+    fig.suptitle(f"{args.pid} — DCE phases with tumor mask (zoom={args.zoom_factor}×)", y=0.98)
+    outpath = outdir / f"{args.pid}_dce_tumor_zoom.png"
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(outpath, bbox_inches="tight")
     plt.close(fig)
-    print(f"[INFO] saved {out_path}")
-
+    print(f"[INFO] saved: {outpath}")
 
 if __name__ == "__main__":
     main()
