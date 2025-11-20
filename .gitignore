@@ -140,3 +140,8 @@ venv.bak/
 *.avro
 
 
+out_pcr_jose/model_rf.pkl
+out_pcr_jose/features.csv
+out_pcr_jose/features_engineered.csv
+out_pcr_jose/features_join_preview.csv
+*.pkl
