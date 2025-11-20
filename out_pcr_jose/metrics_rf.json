@@ -1,0 +1,35 @@
+{
+  "model": "rf",
+  "scores_flipped": false,
+  "best_threshold": 0.24,
+  "splits": {
+    "train_n": 68,
+    "val_n": 23,
+    "test_n": 23,
+    "test_size": 0.2,
+    "val_size": 0.2
+  },
+  "cross_val": {
+    "f1_mean": 0.4,
+    "precision_mean": 0.625,
+    "recall_mean": 0.29411764705882354,
+    "roc_auc_mean": 0.8693147362037599,
+    "ap_mean": 0.4745013873971284
+  },
+  "val": {
+    "precision": 0.6,
+    "recall": 0.75,
+    "f1": 0.6666666666666666,
+    "n": 23,
+    "positive_rate": 0.17391304347826086
+  },
+  "test": {
+    "precision": 0.5,
+    "recall": 0.6666666666666666,
+    "f1": 0.5714285714285714,
+    "n": 23,
+    "positive_rate": 0.13043478260869565,
+    "roc_auc": 0.9166666666666667,
+    "ap": 0.6984126984126984
+  }
+}
