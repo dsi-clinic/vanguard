@@ -9,73 +9,51 @@ from skeleton3d_utils.skeleton_to_graph import *
 
 
 def process_vessel_image(input_npy_path: str, threshold: float, output_folder: str):
-    """
-    Complete end-to-end pipeline:
-    .npy → vessels → skeleton → segments → graph → metrics → JSON
-
-    Parameters
-    ----------
-    input_npy_path : str
-        Path to the input .npy array file.
-    threshold : float
-        Skeletonization threshold (0–1).
-    output_folder : str
-        Folder where all outputs will be saved.
-
-    Returns
-    -------
-    dict
-        The final JSON morphometry dictionary.
-    """
-    # 1. LOAD IMAGE
+    # Extract image name
     image_name = os.path.basename(input_npy_path).replace(".npy", "")
-    image_output_dir = os.path.join(output_folder, image_name)
-    os.makedirs(image_output_dir, exist_ok=True)
 
-    print("1. Loading .npy image...")
+    # JSON output will be saved directly in output_folder
+    output_json_path = os.path.join(output_folder, f"{image_name}_morphometry.json")
+
+    # Skip if already processed
+    if os.path.exists(output_json_path):
+        print(f"[SKIP] {image_name} already processed at {output_json_path}")
+        return output_json_path
+
+    # 1. Load
     final_image = np.load(input_npy_path)
-    vessels = final_image[1]    # Extract layer 1
+    vessels = final_image[1]
 
-    # 2. SKELETONIZATION
-    print("2. Running skeletonization...")
+    # 2. Skeleton
     skeleton = skeletonize3d(vessels, threshold=threshold)
 
-    # 3. EXTRACT SEGMENTS (raw voxel edges)
-    print("3. Extracting voxel-level segments...")
+    # 3. Segments
     segments = edges_to_segments(skeleton)
 
-    # 4. BUILD GRAPH
-    print("4. Building skeleton graph...")
+    # 4. Graph
     G = segments_to_graph(segments)
 
-    # 5. RADIUS MAP
-    print("5. Computing radius map...")
+    # 5. Radius map
     radius_map = obtain_radius_map(vessels, G)
 
-    # 6. PATH SEGMENTS (between bifurcations)
-    print("6. Extracting anatomical segment paths...")
+    # 6. Paths
     segment_paths = extract_segments(G)
 
-    # 7. BIFURCATIONS
-    print("7. Detecting bifurcations...")
+    # 7. Bifurcations
     bifurcations = detect_bifurcations(G)
 
-    # 8. CONNECTED COMPONENT LABELS
-    print("8. Assigning component labels...")
+    # 8. Component labels
     vessel_labels = assign_component_labels(G)
 
-    # 9. BUILD JSON METRICS
-    print("9. Computing vessel morphometry JSON...")
-    output_json_path = os.path.join(image_output_dir, f"{image_name}_morphometry.json")
-
+    # 9. Save ONLY the JSON (no folders, no .npy intermediate files)
     build_vessel_json(
         G,
         vessel_labels,
         segment_paths,
         radius_map,
         bifurcations,
-        output_path=output_json_path
+        output_path=output_json_path,
     )
 
-    print("10. Pipeline complete.")
-    print(f"📄 Output saved to: {output_json_path}")
+    print(f"[DONE] Saved JSON: {output_json_path}")
+    return output_json_path
