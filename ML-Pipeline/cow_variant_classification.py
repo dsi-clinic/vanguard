@@ -433,6 +433,11 @@ def train_baseline(
         y_df = y_df.rename(columns={id_col: "case_id"})
     merged_df = X.merge(y_df, on="case_id", how="inner")
 
+    before = len(merged_df)
+    merged_df = merged_df[merged_df[label_col].notna()].copy()
+    after = len(merged_df)
+    print(f"[train_baseline] Dropped {before - after} rows with missing {label_col} (kept {after})")
+
     y = merged_df[label_col].astype(int).to_numpy()
     drop_cols = ["case_id", label_col] + [c for c in merged_df.columns if c.endswith("_variant")]
     Xmat = merged_df.drop(columns=drop_cols, errors="ignore").to_numpy()
@@ -576,14 +581,9 @@ def train_baseline(
         plt.savefig(outdir / "pr_comparison.png"); plt.close()
 
         cm = confusion_matrix(y_te, y_te_hat)
-        plt.figure()
-        plt.imshow(cm, interpolation="nearest")
-        plt.title("Confusion Matrix @ tuned threshold")
-        plt.colorbar(); plt.xlabel("Predicted"); plt.ylabel("True")
-        for (i, j), v in np.ndenumerate(cm):
-            plt.text(j, i, str(v), ha="center", va="center")
-        plt.tight_layout(); plt.savefig(outdir / "confusion_matrix.png"); plt.close()
-        print("[ok] Plots: roc_comparison.png, pr_comparison.png, confusion_matrix.png")
+        plot_confusion_matrix_clean(cm, outdir)
+        print("[ok] Plots: roc_comparison.png, pr_comparison.png, confusion_matrix_labeled.png")
+
 
     print(f"[Split sizes] train={len(y_tr)} | val={len(y_val)} | test={len(y_te)}")
     print(f"[Threshold summary] best_t={best_t:.3f} | "
@@ -645,6 +645,51 @@ def train_baseline(
     print(json.dumps(results, indent=2))
     print(f"Model -> {model_path}")
     print(f"Metrics -> {metrics_path}")
+
+
+def plot_confusion_matrix_clean(cm, outdir, title="Confusion Matrix @ tuned threshold"):
+    """
+    Clean, readable confusion matrix for binary classification.
+
+    cm: 2x2 numpy array or list-of-lists in [ [TN, FP], [FN, TP] ] format
+    outdir: directory to save the figure
+    """
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+
+    # Show matrix
+    im = ax.imshow(cm, cmap="viridis")
+
+    # Annotate counts in each cell
+    for i in range(2):
+        for j in range(2):
+            ax.text(j, i, cm[i, j],
+                    ha='center', va='center',
+                    color='white', fontsize=12)
+
+    # Set binary tick positions
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+
+    # Set tick labels (TEXT, not numbers)
+    ax.set_xticklabels(["Predicted: not pCR", "Predicted: pCR"], rotation=20, ha='right')
+    ax.set_yticklabels(["True: not pCR", "True: pCR"])
+
+    # Axis labels
+    ax.set_xlabel("Predicted label")
+    ax.set_ylabel("True label")
+
+    # Title
+    ax.set_title(title)
+
+    # Colorbar
+    fig.colorbar(im, ax=ax)
+
+    # Save and show
+    plt.tight_layout()
+    fig.savefig(f"{outdir}/confusion_matrix_clean.png", dpi=220)
+    plt.close(fig)
+
 
 def run_ensemble(feats_engineered_csv: Path, labels_source: Path, id_col: str,
                  label_col: str, outdir: Path, base_random_state: int,
