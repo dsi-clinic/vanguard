@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -261,10 +262,10 @@ def train_and_test(
 
     metrics: dict[str, Any] = {
         "auc_train": auc_train,
-        "auc_test": auc_eval,
+        "auc_test": auc_test,
         "n_features": int(n_feat),
         "n_train": int(df_train_lab.shape[0]),  # labeled train
-        "n_test": int(df_eval_lab.shape[0]),  # labeled eval
+        "n_test": int(df_test_lab.shape[0]),  # labeled eval
     }
     (outdir / "metrics.json").write_text(json.dumps(metrics, indent=2))
     return metrics
@@ -283,9 +284,9 @@ def main() -> None:
     ap.add_argument("--max-iter", type=int, default=1000)
     args = ap.parse_args()
 
-    df_train, df_eval = load_dataset(args.json_dir, args.split_csv)
+    df_train, df_test = load_dataset(args.json_dir, args.split_csv)
 
-    print(f"Loaded {len(df_train)} train and {len(df_eval)} held-out samples.")
+    print(f"Loaded {len(df_train)} train and {len(df_test)} held-out samples.")
 
     metrics = train_and_test(
         df_train, df_test, args.output, C=args.C, max_iter=args.max_iter
