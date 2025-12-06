@@ -359,7 +359,6 @@ def build_estimator(
     raise ValueError(msg)
 
 
-
 # ---------------------------
 # Main
 # ---------------------------
@@ -373,8 +372,9 @@ def main() -> None:
     ap.add_argument("--labels", required=True)
     ap.add_argument("--output", required=True)
 
-    ap.add_argument("--classifier", choices=["logistic", "rf", "xgb"], default="logistic")
-
+    ap.add_argument(
+        "--classifier", choices=["logistic", "rf", "xgb"], default="logistic"
+    )
 
     # Logistic options
     ap.add_argument("--logreg-C", type=float, default=1.0)
@@ -385,7 +385,7 @@ def main() -> None:
     )
     ap.add_argument("--logreg-l1-ratio", type=float, default=0.0)
 
-        # RF options
+    # RF options
     ap.add_argument("--rf-n-estimators", type=int, default=300)
     ap.add_argument("--rf-max-depth", type=int, default=None)
     ap.add_argument("--rf-min-samples-leaf", type=int, default=1)
@@ -638,7 +638,6 @@ def main() -> None:
             "rf": "random_forest",
             "xgb": "xgboost",
         }.get(args.classifier, str(args.classifier)),
-
         "class_order": classes_.tolist(),
         "threshold_train_youdenJ": thr_opt,
         "sensitivity_test": sens,
