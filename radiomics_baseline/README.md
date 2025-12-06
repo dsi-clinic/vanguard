@@ -2,36 +2,66 @@
 
 ## Radiomics Baseline
 
-This folder runs a 2-step pipeline:
+This folder implements a two-stage radiomics baseline to predict pathologic
+complete response (pCR) from breast DCE-MRI.
 
-1. **Extract** PyRadiomics features from the MRI volumes + masks to CSVs.
-2. **Train** a ML models (logistic / random forest) on those features CSVs, optionally adding subtype, to predict pCR.
+1. **Extract** PyRadiomics features from MRI volumes and tumor masks to CSVs.
+2. **Train** machine-learning models (logistic regression, random forest,
+   extreme gradient boosting) on those feature tables, optionally including
+   subtype, to predict pCR.
 
-We split it like this because extraction is slow, but training is fast — so you can extract once and try many models.
+We separate extraction and training because extraction is slow but training is
+fast — you can extract once and reuse the same features across many models.
 
----------------------------
+---
 
 
 ## Files
 
-- `radiomics_extract.py`  
-  - **Inputs:** a directory of images, a directory of masks, a split file (or list of case IDs), and a radiomics parameter YAML (if you want non-default PyRadiomics settings).
-  - Runs PyRadiomics on all patients in the split. Supports:
-    - multiple DCE phases (comma-separated `--image-pattern`)
-    - optional peritumoral shell (`--peri-radius-mm`)
-    - tumor mask from NIfTI
+- `radiomics_extract.py`
+
+Stage 1: run PyRadiomics on all patients in the split and write feature tables.
+
+  - **Inputs - CLI arguments:**
+      - Supports:
+        - multiple DCE phases
+        - optional peritumoral shell
+        - tumor mask from NIfTI
+
+    - `--images`  
+      Root directory containing MRI volumes.
+    - `--masks`  
+      Root directory containing NIfTI tumor masks.
+    - `--labels`  
+      CSV with at least columns `patient_id,pcr[,subtype]`.
+    - `--split`  
+      CSV with at least a `patient_id` column and a train/test indicator.
+    - `--output`  
+      Output directory where feature tables and split label CSVs are written.
+    - `--params`  
+      PyRadiomics YAML configuration (bin width, resampling, feature classes).
+    - `--image-pattern`  
+      Comma-separated template(s) for image paths relative to `--images`, e.g.  
+      `"{pid}/{pid}_0001.nii.gz,{pid}/{pid}_0002.nii.gz"`.
+    - `--mask-pattern`  
+      Template for mask paths relative to `--masks`, e.g. `"{pid}.nii.gz"`.
+    - `--peri-radius-mm`  
+      Optional peritumoral shell width in millimeters (0 = tumor only).
+    - `--n-proc`  
+      Number of worker processes.
+  
   - **Outputs:** outputs to the chosen folder:
-    - `features_train.csv` — one row per training case, columns = radiomic features + `case_id`
-    - `features_test.csv` — one row per test case, columns = radiomic features + `case_id`
-    - `train_labels_split.csv`
-    - `test_labels_split.csv`
+    - `features_train.csv` — one row per training case, columns = radiomic features + `patient_id`
+    - `features_test.csv` — one row per test case, columns = radiomic features + `patient_id`
+    - `train_labels_split.csv` - labels for training data
+    - `test_labels_split.csv` - labels for testing data
 
 
 - `radiomics_train.py`
   - **Inputs:**
     - `--train-features`: path to the CSV produced by the extractor for the train split  
     - `--test-features`: path to the CSV produced by the extractor for the test split  
-    - `--labels`: CSV that maps `case_id` to the label you want to predict
+    - `--labels`: CSV that maps `patient_id` to the label you want to predict
   - Reads the CSVs above + the master `labels.csv`, sanitizes to numeric, (optionally) appends subtype, and trains a model
   - **Outputs:**
     - `metrics.json`
@@ -50,18 +80,9 @@ We split it like this because extraction is slow, but training is fast — so yo
 
 
 ## Example Code:
-Below are example commands you can copy-paste and adjust to your paths. Run them from the project root (the folder that contains `radiomics_baseline/`).
+Below are example commands you can copy-paste and adjust to your paths.
 
-# 1 Run feature extraction
-**Base Code:**
-python radiomics_baseline/radiomics_extract.py \
-  --images-dir /path/to/images \
-  --masks-dir /path/to/masks \
-  --splits radiomics_baseline/splits.csv \
-  --params radiomics_baseline/radiomics_params.yaml \
-  --output-dir radiomics_baseline/experiments/extract_peri5_multiphase
-
-
+# 1. Run feature extraction
 **Example: 5 mm Peri, Multi-Phase (0001, 0002)**
 
 python radiomics_baseline/radiomics_extract.py \
@@ -78,18 +99,26 @@ python radiomics_baseline/radiomics_extract.py \
 
 
 
-# 2 Train the baseline model on the extracted features
-**Example: Logistic, Subtype Included, 5 mm Peri, Multi-Phase**
+# 2. Train the baseline model on the extracted features
+**Example: Logistic, Subtype Included**
+Additionally, with elastic net penalty, correlation pruning, SelectKBest,
+and cross-validated grid search.
 
   python radiomics_baseline/radiomics_train.py \
-  --train-features radiomics_baseline/experiments/extract_peri5_multiphase/features_train.csv \
-  --test-features  radiomics_baseline/experiments/extract_peri5_multiphase/features_test.csv \
-  --labels         radiomics_baseline/labels.csv \
-  --output         radiomics_baseline/experiments/train_logreg_subtype_peri5_multiphase \
-  --classifier     logistic \
-  --include-subtype
+      --train-features experiments/extract_peri5_multiphase/features_train.csv \
+      --test-features  experiments/extract_peri5_multiphase/features_test.csv \
+      --labels         labels.csv \
+      --output         outputs/elasticnet_corr0.9_k50_cv5 \
+      --classifier     logistic \
+      --logreg-penalty elasticnet \
+      --logreg-l1-ratio 0.5 \
+      --corr-threshold 0.9 \
+      --k-best         50 \
+      --grid-search \
+      --cv-folds       5 \
+      --include-subtype
 
-**Example: Random Forest, 5 mm Peri, Multi-Phase**
+**Example: Random Forest**
   python radiomics_baseline/radiomics_train.py \
   --train-features radiomics_baseline/experiments/extract_peri5_multiphase/features_train.csv \
   --test-features  radiomics_baseline/experiments/extract_peri5_multiphase/features_test.csv \
@@ -99,3 +128,13 @@ python radiomics_baseline/radiomics_extract.py \
   --rf-n-estimators 500 \
   --rf-max-depth 8
 
+**Example: XGBoost**
+  python radiomics_baseline/radiomics_train.py \
+    --train-features radiomics_baseline/experiments/extract_peri5_multiphase/features_train.csv \
+    --test-features  radiomics_baseline/experiments/extract_peri5_multiphase/features_test.csv \
+    --labels         radiomics_baseline/labels.csv \
+    --output         radiomics_baseline/experiments/train_xgb_peri5_multiphase \
+    --classifier     xgb \
+    --corr-threshold 0.9 \
+    --k-best         50 \
+    --grid-search

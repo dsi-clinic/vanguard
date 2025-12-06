@@ -17,7 +17,7 @@ What this script does
 3) Sanitize to numeric-only; drop all-NaN and zero-variance columns.
 4) (Optional) Correlation prune (train-only), then align test columns.
 5) (Optional) SelectKBest K features (train-only), then align test columns.
-6) Train the chosen classifier (logistic or RF), optionally via GridSearchCV.
+6) Train the chosen classifier (logistic, RF, or XGBoost), optionally via GridSearchCV.
 7) Save metrics.json, predictions.csv, ROC/PR/Calibration plots, and model.pkl.
 
 Example Usage
@@ -248,6 +248,7 @@ def build_estimator(
     args: argparse.Namespace,
 ) -> RandomForestClassifier | LogisticRegression | GridSearchCV:
     """Return a classifier or a GridSearchCV wrapping the classifier."""
+    # ---------------- Logistic regression ----------------
     if args.classifier == "logistic":
         solver = "saga" if args.logreg_penalty in ("l1", "elasticnet") else "lbfgs"
         base = LogisticRegression(
@@ -276,35 +277,87 @@ def build_estimator(
             )
         return base
 
-    # Random Forest
-    base = RandomForestClassifier(
-        n_estimators=args.rf_n_estimators,
-        max_depth=args.rf_max_depth,
-        min_samples_leaf=args.rf_min_samples_leaf,
-        min_samples_split=args.rf_min_samples_split,
-        max_features=normalize_rf_max_features(args.rf_max_features),
-        ccp_alpha=args.rf_ccp_alpha,
-        n_jobs=-1,
-        class_weight="balanced",
-        random_state=42,
-    )
-    if args.grid_search:
-        param_grid_rf: dict[str, list[float | int | str]] = {
-            "n_estimators": [300, 400, 500],
-            "max_depth": [6, 8, 10],
-            "min_samples_leaf": [5, 10, 20],
-            "max_features": [0.2, 0.3, 0.5, "sqrt"],
-        }
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-        return GridSearchCV(
-            base,
-            param_grid_rf,
-            scoring="roc_auc",
-            cv=cv,
+    # ---------------- Random forest ----------------
+    if args.classifier == "rf":
+        base = RandomForestClassifier(
+            n_estimators=args.rf_n_estimators,
+            max_depth=args.rf_max_depth,
+            min_samples_leaf=args.rf_min_samples_leaf,
+            min_samples_split=args.rf_min_samples_split,
+            max_features=normalize_rf_max_features(args.rf_max_features),
+            ccp_alpha=args.rf_ccp_alpha,
             n_jobs=-1,
-            verbose=1,
+            class_weight="balanced",
+            random_state=42,
         )
-    return base
+        if args.grid_search:
+            param_grid_rf: dict[str, list[float | int | str]] = {
+                "n_estimators": [300, 400, 500],
+                "max_depth": [6, 8, 10],
+                "min_samples_leaf": [5, 10, 20],
+                "max_features": [0.2, 0.3, 0.5, "sqrt"],
+            }
+            cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+            return GridSearchCV(
+                base,
+                param_grid_rf,
+                scoring="roc_auc",
+                cv=cv,
+                n_jobs=-1,
+                verbose=1,
+            )
+        return base
+
+    # ---------------- XGBoost ----------------
+    if args.classifier == "xgb":
+        try:
+            from xgboost import XGBClassifier
+        except ImportError as exc:  # optional dependency
+            msg = (
+                "XGBoost is not installed. Install it with "
+                "'pip install xgboost' or "
+                "'conda install -c conda-forge xgboost' to use "
+                "--classifier xgb."
+            )
+            raise ImportError(msg) from exc
+
+        base = XGBClassifier(
+            objective="binary:logistic",
+            n_estimators=args.xgb_n_estimators,
+            max_depth=args.xgb_max_depth,
+            learning_rate=args.xgb_learning_rate,
+            subsample=args.xgb_subsample,
+            colsample_bytree=args.xgb_colsample_bytree,
+            reg_lambda=args.xgb_reg_lambda,
+            reg_alpha=args.xgb_reg_alpha,
+            scale_pos_weight=args.xgb_scale_pos_weight,
+            n_jobs=-1,
+            random_state=42,
+            eval_metric="logloss",  # avoids warning; logistic loss for binary clf
+        )
+        if args.grid_search:
+            param_grid_xgb: dict[str, list[float | int]] = {
+                "n_estimators": [200, 300, 400],
+                "max_depth": [3, 4, 5],
+                "learning_rate": [0.03, 0.05, 0.1],
+                "subsample": [0.7, 0.8, 1.0],
+                "colsample_bytree": [0.7, 0.8, 1.0],
+            }
+            cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+            return GridSearchCV(
+                base,
+                param_grid_xgb,
+                scoring="roc_auc",
+                cv=cv,
+                n_jobs=-1,
+                verbose=1,
+            )
+        return base
+
+    # ---------------- Fallback ----------------
+    msg = f"Unknown classifier: {args.classifier!r}"
+    raise ValueError(msg)
+
 
 
 # ---------------------------
@@ -320,7 +373,8 @@ def main() -> None:
     ap.add_argument("--labels", required=True)
     ap.add_argument("--output", required=True)
 
-    ap.add_argument("--classifier", choices=["logistic", "rf"], default="logistic")
+    ap.add_argument("--classifier", choices=["logistic", "rf", "xgb"], default="logistic")
+
 
     # Logistic options
     ap.add_argument("--logreg-C", type=float, default=1.0)
@@ -331,7 +385,7 @@ def main() -> None:
     )
     ap.add_argument("--logreg-l1-ratio", type=float, default=0.0)
 
-    # RF options
+        # RF options
     ap.add_argument("--rf-n-estimators", type=int, default=300)
     ap.add_argument("--rf-max-depth", type=int, default=None)
     ap.add_argument("--rf-min-samples-leaf", type=int, default=1)
@@ -339,15 +393,34 @@ def main() -> None:
     ap.add_argument("--rf-max-features", default="sqrt")
     ap.add_argument("--rf-ccp-alpha", type=float, default=0.0)
 
+    # XGBoost options
+    ap.add_argument("--xgb-n-estimators", type=int, default=300)
+    ap.add_argument("--xgb-max-depth", type=int, default=4)
+    ap.add_argument("--xgb-learning-rate", type=float, default=0.05)
+    ap.add_argument("--xgb-subsample", type=float, default=0.8)
+    ap.add_argument("--xgb-colsample-bytree", type=float, default=0.8)
+    ap.add_argument("--xgb-reg-lambda", type=float, default=1.0)
+    ap.add_argument("--xgb-reg-alpha", type=float, default=0.0)
+    ap.add_argument(
+        "--xgb-scale-pos-weight",
+        type=float,
+        default=1.0,
+        help=(
+            "Scale positive class in XGBoost; "
+            "e.g. n_negative / n_positive for imbalance."
+        ),
+    )
+
     # Feature handling
     ap.add_argument(
         "--include-subtype",
         action="store_true",
         help=(
-            "Append labels subtype as numeric feature "
-            "(column 'subtype' or 'tumor_subtype')."
+            "Append a numeric-coded subtype column from labels "
+            "(if 'subtype' or 'tumor_subtype' present)."
         ),
     )
+
     ap.add_argument(
         "--corr-threshold",
         type=float,
@@ -560,9 +633,12 @@ def main() -> None:
         "auc_train_cv_by_subtype": auc_cv_by_subtype,
         "auc_test_by_subtype": auc_test_by_subtype,
         "n_features_used": int(Xtr.shape[1]),
-        "classifier_type": (
-            "logistic" if args.classifier == "logistic" else "random_forest"
-        ),
+        "classifier_type": {
+            "logistic": "logistic",
+            "rf": "random_forest",
+            "xgb": "xgboost",
+        }.get(args.classifier, str(args.classifier)),
+
         "class_order": classes_.tolist(),
         "threshold_train_youdenJ": thr_opt,
         "sensitivity_test": sens,

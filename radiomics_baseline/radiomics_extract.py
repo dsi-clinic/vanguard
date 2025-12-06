@@ -1,23 +1,54 @@
 #!/usr/bin/env python3
 """Run PyRadiomics over all patients in a split and write feature tables to disk.
 
-Stage 1 of the pipeline: run PyRadiomics over all patients in a split and
+Stage 1: Run PyRadiomics over all patients in a split and
 write feature tables to disk.
 
-- loads labels and train/test split
-- checks that each patient has (at least) the first image phase + mask
-- for each patient:
-    - for each requested image phase pattern (comma-separated)
-        - run PyRadiomics on tumor mask
-        - optionally build a peritumor shell (dilation in mm) and run again
-- flattens PyRadiomics dicts into a single row per patient
-- writes:
+Inputs
+------
+- --images : CSV from radiomics_extract.py (rows = patients, cols = features)
+- --masks  : CSV from radiomics_extract.py
+- --labels : CSV with at least columns: patient_id,pcr[,subtype]
+- --split  : CSV with at least columns: patient_id,pcr[,subtype]
+- --output : output directory to write metrics, plots, and model
+- --params : PyRadiomics YAML configuration
+- --image-pattern  : Comma-separated template(s) for image paths relative
+- --peri-radius-mm : Optional peritumoral shell width in millimeters (0 = tumor only).
+- --n-proc 8       : Number of worker processes.
+
+What this script does
+---------------------
+1) Loads labels and train/test split
+2) Checks that each patient has (at least) the first image phase + mask
+3) For each patient:
+    - For each requested image phase pattern (comma-separated)
+        - Run PyRadiomics on tumor mask
+        - Optionally build a peritumor shell (dilation in mm) and run again
+4) Flattens PyRadiomics dicts into a single row per patient
+5) Saves:
     - features_train.csv
     - features_test.csv
     - train_labels_split.csv
     - test_labels_split.csv
 
 You can then feed these files to radiomics_train.py to build models.
+
+Example Usage
+---------------------
+
+# 1 peri 5mm, multi-phase
+python $SCRIPTS/radiomics_extract.py \
+  --images "$IMAGES" \
+  --masks  "$MASKS" \
+  --labels "$LABELS" \
+  --split  "$SPLIT" \
+  --output "$OUTROOT/extract_peri5_multiphase" \
+  --params "$PARAMS" \
+  --image-pattern "{pid}/{pid}_0001.nii.gz,{pid}/{pid}_0002.nii.gz" \
+  --mask-pattern  "{pid}.nii.gz" \
+  --peri-radius-mm 5 \
+  --n-proc 8
+
 """
 
 from __future__ import annotations
