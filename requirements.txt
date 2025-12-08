@@ -11,9 +11,6 @@ setuptools>=64.0.0
 submitit~=1.5
 tqdm~=4.67
 
-# Jupyter
-jupyterlab~=4.0.0
-
 # project packages
 einops~=0.8
 nibabel~=5.3
@@ -22,7 +19,7 @@ matplotlib~=3.10
 pydicom~=3.0
 pandas>=2.1
 scikit-learn~=1.7
-numpy~=2.3
+numpy~=2.2
 joblib~=1.5
 PyYAML~=6.0
 SimpleITK~=2.5
