@@ -26,11 +26,18 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from baseline_pcr_simple import (
+    get_age,
+    get_bbox_volume,
+    get_label_optional,
+    get_patient_id,
+    get_subtype,
+)
 from sklearn.compose import ColumnTransformer
 from sklearn.inspection import permutation_importance
-from baseline_pcr_simple import get_patient_id, get_age, get_subtype, get_label_optional, get_bbox_volume
 
 FEATURES = ["age", "bbox_volume", "tumor_subtype"]
+
 
 def load_splits(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load and return train and validation DataFrames based on split CSV."""
