@@ -8,9 +8,9 @@ This project implements a machine learning pipeline for pCR (pathologic complete
 The `pcr_prediction.py` script trains and evaluates machine learning models to predict pCR outcomes based on input parameters and experimental conditions.
 
 ## Goals
-- Predict PCR success rates and amplification efficiency
-- Identify optimal reaction parameters
-- Reduce experimental iterations through predictive modeling
+- Predict pCR outcomes and identify key feature importance factors
+- Optimize parameters based on predictive models
+- Reduce experimental iterations through data-driven modeling approaches
 
 ## Requirements
 - Python 3.8+
