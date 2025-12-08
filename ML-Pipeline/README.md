@@ -2,10 +2,10 @@
 # ML Pipeline - PCR Prediction
 
 ## Overview
-This project implements a machine learning pipeline for PCR (Polymerase Chain Reaction) prediction using `pcr_prediction.py`.
+This project implements a machine learning pipeline for pCR (pathologic complete response) prediction using `pcr_prediction.py`.
 
 ## What It Does
-The `pcr_prediction.py` script trains and evaluates machine learning models to predict PCR outcomes based on input parameters and experimental conditions.
+The `pcr_prediction.py` script trains and evaluates machine learning models to predict pCR outcomes based on input parameters and experimental conditions.
 
 ## Goals
 - Predict PCR success rates and amplification efficiency
