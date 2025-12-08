@@ -1,0 +1,12 @@
+name: vanguard
+channels:
+  - conda-forge
+  - radiomics
+
+dependencies:
+  - python=3.11
+  - pip
+  - pyradiomics
+
+  - pip:
+      - -r requirements.txt
