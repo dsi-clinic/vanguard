@@ -21,7 +21,6 @@ pynrrd~=1.1
 matplotlib~=3.10
 pydicom~=3.0
 pandas>=2.1
-pyradiomics~=3.0
 scikit-learn~=1.7
 numpy~=2.3
 joblib~=1.5
