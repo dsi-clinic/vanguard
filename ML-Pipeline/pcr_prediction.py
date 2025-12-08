@@ -1,4 +1,4 @@
-"""CoW (Circle of Willis) data loader and baseline classifier (JSON-only).
+"""MAMA-MIA data loader and baseline classifier (JSON-only).
 
 This script extracts morphometric features from per-case JSON files,
 joins them with variant labels from JSON or CSV, engineers normalized features,
@@ -49,13 +49,13 @@ DEFAULT_PROBA_THRESHOLD = 0.5
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     ap = argparse.ArgumentParser(
-        "CoW feature extraction + baseline classification (JSON morphometrics)"
+        "JSON feature extraction + baseline classification (JSON morphometrics)"
     )
     ap.add_argument(
-        "--cow-feature-dir",
+        "--feature-dir",
         type=Path,
         required=True,
-        help="Directory of per-case CoW feature JSONs (one <case_id>.json per case)",
+        help="Directory of per-case MAMA-MIA Data feature JSONs (one <case_id>.json per case)",
     )
     ap.add_argument(
         "--labels",
@@ -124,7 +124,7 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def build_features_from_cow_feature_jsons(feature_dir: Path) -> pd.DataFrame:
+def build_features_from_feature_jsons(feature_dir: Path) -> pd.DataFrame:
     """Aggregate numeric stats from per-case JSON morphometrics into one row per case_id."""
     rows: list[dict[str, float]] = []
 
@@ -820,10 +820,6 @@ def plot_confusion_matrix_clean(
     )
     ax.set_yticklabels(["True: not pCR", "True: pCR"])
 
-    # Axis labels
-    ax.set_xlabel("Predicted label")
-    ax.set_ylabel("True label")
-
     # Title
     ax.set_title(title)
 
@@ -957,8 +953,8 @@ def main() -> None:
     args = parse_args()
     args.outdir.mkdir(parents=True, exist_ok=True)
 
-    # Build features from CoW JSONs
-    feats = build_features_from_cow_feature_jsons(args.cow_feature_dir)
+    # Build features from JSONs
+    feats = build_features_from_feature_jsons(args.feature_dir)
 
     feats_path = args.outdir / "features.csv"
     feats.to_csv(feats_path, index=False)

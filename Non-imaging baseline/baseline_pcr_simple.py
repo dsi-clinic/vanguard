@@ -38,59 +38,76 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
 def get_patient_id(path: Path, js: dict[str, Any]) -> str:
-    """Return patient_id from JSON, falling back to the filename stem."""
-    return js.get("patient_id", path.stem)
+    """Return patient_id from JSON; fail-fast if missing/blank."""
+    pid = js.get("patient_id", None)
+    if pid in (None, ""):
+        raise KeyError(f"patient_id missing in JSON {path}")
+    return str(pid)
 
 
-def get_age(js: dict[str, Any]) -> float | None:
-    """Return patient age as float, or None if missing/unparseable."""
+def get_age(js: dict[str, Any]) -> float:
+    """Return patient age as float; raise if missing or unparseable."""
     age = js.get("clinical_data", {}).get("age", None)
+    if age is None:
+        raise KeyError("clinical_data.age is missing")
     try:
-        return float(age) if age is not None else None
-    except (TypeError, ValueError):
-        return None
+        return float(age)
+    except Exception as e:
+        raise ValueError(f"unable to parse age value: {age!r}") from e
 
 
 def get_subtype(js: dict[str, Any]) -> str:
-    """Return tumor subtype string (lowercased), defaulting to 'unknown' if missing."""
-    subtype = js.get("primary_lesion", {}).get("tumor_subtype", "")
+    """Return tumor subtype string (lowercased); raise if missing/blank."""
+    subtype = js.get("primary_lesion", {}).get("tumor_subtype", None)
+    if subtype in (None, ""):
+        raise KeyError("primary_lesion.tumor_subtype is missing")
     s = str(subtype).strip().lower()
-    if s in {"", "nan", "null", "unknown"}:
-        return "unknown"
+    if s in {"", "nan", "null"}:
+        raise ValueError(f"invalid tumor_subtype: {subtype!r}")
     return s
 
 
-def get_label_optional(js: dict[str, Any]) -> int | None:
-    """Return pCR label (0/1) if present, else None."""
+def get_label_optional(js: dict[str, Any]) -> int:
+    """Return pCR label (0/1); raise if missing or not 0/1."""
     lab = js.get("primary_lesion", {}).get("pcr", None)
-
-    # If missing or blank, return None
     if lab in (None, ""):
-        return None
-
+        raise KeyError("primary_lesion.pcr label is missing")
     try:
-        # Convert "0" or "1" (string or int) into integer form
-        return int(lab)
-    except Exception:
-        # If conversion fails (e.g. "NA" or malformed), treat as unlabeled
-        return None
+        ilab = int(lab)
+    except Exception as e:
+        raise ValueError(f"unable to parse pcr label: {lab!r}") from e
+    if ilab not in (0, 1):
+        raise ValueError(f"pcr label must be 0 or 1, got {ilab!r}")
+    return ilab
 
 
-def get_bbox_volume(js: dict[str, Any]) -> float | None:
-    """Return 3D bbox volume if all coordinates present and valid; else None."""
-    bc = js.get("primary_lesion", {}).get("breast_coordinates", {})
-    try:
-        x_min = float(bc.get("x_min"))
-        x_max = float(bc.get("x_max"))
-        y_min = float(bc.get("y_min"))
-        y_max = float(bc.get("y_max"))
-        z_min = float(bc.get("z_min"))
-        z_max = float(bc.get("z_max"))
-        dx, dy, dz = x_max - x_min, y_max - y_min, z_max - z_min
-        vol = dx * dy * dz
-        return vol if (dx > 0 and dy > 0 and dz > 0) else None
-    except Exception:
-        return None
+def get_bbox_volume(js: dict[str, Any]) -> float:
+    """Return 3D bbox volume; raise if coordinates missing/invalid/non-positive."""
+    bc = js.get("primary_lesion", {}).get("breast_coordinates", None)
+    if not isinstance(bc, dict):
+        raise KeyError("primary_lesion.breast_coordinates is missing or not an object")
+
+    def _get_float(key: str) -> float:
+        if key not in bc:
+            raise KeyError(f"breast_coordinates missing key: {key}")
+        try:
+            return float(bc[key])
+        except Exception as e:
+            raise ValueError(f"invalid coordinate {key}: {bc.get(key)!r}") from e
+
+    x_min = _get_float("x_min")
+    x_max = _get_float("x_max")
+    y_min = _get_float("y_min")
+    y_max = _get_float("y_max")
+    z_min = _get_float("z_min")
+    z_max = _get_float("z_max")
+
+    dx, dy, dz = x_max - x_min, y_max - y_min, z_max - z_min
+    if dx <= 0 or dy <= 0 or dz <= 0:
+        raise ValueError(
+            f"invalid bbox dimensions (dx,dy,dz)=({dx},{dy},{dz}); must be > 0"
+        )
+    return dx * dy * dz
 
 
 # ------------------ Data loading ------------------

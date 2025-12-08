@@ -28,57 +28,9 @@ import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.inspection import permutation_importance
+from baseline_pcr_simple import get_patient_id, get_age, get_subtype, get_label_optional, get_bbox_volume
 
 FEATURES = ["age", "bbox_volume", "tumor_subtype"]
-
-
-def get_patient_id(path: Path, js: dict[str, Any]) -> str:
-    """Return patient ID from JSON, falling back to the filename stem."""
-    return js.get("patient_id", path.stem)
-
-
-def get_age(js: dict[str, Any]) -> float | None:
-    """Extract patient age as a float, or None if missing/unparseable."""
-    age = js.get("clinical_data", {}).get("age", None)
-    try:
-        return float(age) if age not in (None, "") else None
-    except Exception:
-        return None
-
-
-def get_subtype(js: dict[str, Any]) -> str:
-    """Return tumor subtype string, lowercased, or 'unknown' if missing."""
-    raw = js.get("primary_lesion", {}).get("tumor_subtype", "")
-    s = str(raw).strip().lower()
-    if s in {"", "nan"}:
-        return "unknown"
-    return s
-
-
-def get_label_optional(js: dict[str, Any]) -> int | None:
-    """Return binary pCR label (0/1) if present, else None."""
-    lab = js.get("primary_lesion", {}).get("pcr", None)
-    if lab in (None, ""):
-        return None
-    try:
-        return int(lab)
-    except Exception:
-        return None
-
-
-def get_bbox_volume(js: dict[str, Any]) -> float | None:
-    """Compute 3D bounding box volume if coordinates are valid; else None."""
-    bc = js.get("primary_lesion", {}).get("breast_coordinates", {})
-    try:
-        x_min, x_max = float(bc.get("x_min")), float(bc.get("x_max"))
-        y_min, y_max = float(bc.get("y_min")), float(bc.get("y_max"))
-        z_min, z_max = float(bc.get("z_min")), float(bc.get("z_max"))
-        dx, dy, dz = x_max - x_min, y_max - y_min, z_max - z_min
-        vol = dx * dy * dz
-        return vol if (dx > 0 and dy > 0 and dz > 0) else None
-    except Exception:
-        return None
-
 
 def load_splits(json_dir: Path, split_csv: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load and return train and validation DataFrames based on split CSV."""
