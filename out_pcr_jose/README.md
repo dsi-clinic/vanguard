@@ -17,7 +17,7 @@ This directory contains outputs from Jose's extraction method, as mentioned in `
     * Plots Precision against Recall.
     * *Useful for:* Evaluating performance when the classes are imbalanced (e.g., if there are far fewer pCR cases than non-pCR cases).
 
-### 📈 Feature Analysis
+### Feature Analysis
 * **`feature_importance.csv`**
     * Raw data file listing all input features and their calculated importance scores (Gini impurity or permutation importance).
     * Sorted by contribution to the model's decision-making process.
@@ -26,7 +26,7 @@ This directory contains outputs from Jose's extraction method, as mentioned in `
     * Bar chart visualizing the top 20 most influential features from the CSV file.
     * *Useful for:* Quickly identifying which imaging biomarkers are driving predictions.
 
-### 📝 Metrics & Logs
+### Metrics & Logs
 * **`metrics_rf.json`**
     * A JSON file containing the exact numerical scores for the Random Forest model.
     *
