@@ -605,7 +605,7 @@ def _render_volume_visualization(
     grid = pv.wrap(data)
     plotter = pv.Plotter(off_screen=True, window_size=VIZ_WINDOW_SIZE)
     plotter.add_volume(grid, opacity="linear", cmap=cmap)
-    plotter.background_color = "black"
+    plotter.background_color = "white"
     plotter.show_axes()
 
     output_path = viz_dir / filename
@@ -629,10 +629,10 @@ def _visualize_3d_vessels_from_numpy(vessel_data: np.ndarray, viz_dir: Path) -> 
         stage="vessels_numpy",
         description="Input volume (NumPy)",
         filename="vessels_3d.mp4",
-        cmap="Blues",
+        cmap="Blues_r",
         surface_stage="vessels_numpy_surface",
         surface_description="Sparse vessel surface",
-        surface_color="cyan",
+        surface_color="darkblue",
         nonzero_threshold=0.0,
         treat_probability=True,
     )
@@ -656,10 +656,10 @@ def _visualize_3d_vessels(img: vtkImageData, viz_dir: Path) -> None:
         stage="vessels_vtk",
         description="Input volume (VTK)",
         filename="vessels_3d.mp4",
-        cmap="Blues",
+        cmap="Blues_r",
         surface_stage="vessels_vtk_surface",
         surface_description="Sparse vessel surface (VTK)",
-        surface_color="cyan",
+        surface_color="darkblue",
         nonzero_threshold=0.0,
         treat_probability=True,
     )
@@ -690,7 +690,7 @@ def _visualize_intermediate_stage(
         cmap=cmap,
         surface_stage=f"{stage}_surface",
         surface_description=description or stage,
-        surface_color="orange" if "skeleton" in stage else "magenta",
+        surface_color="darkorange" if "skeleton" in stage else "darkmagenta",
         nonzero_threshold=0.01,
     )
 
@@ -767,7 +767,7 @@ def _render_isosurface_visualization(
             return False
         plotter = pv.Plotter(off_screen=True, window_size=VIZ_WINDOW_SIZE)
         plotter.add_mesh(surface, color=color, opacity=1.0)
-        plotter.background_color = "black"
+        plotter.background_color = "white"
         plotter.show_axes()
         output_path = viz_dir / f"{stage}_stage_visualization.mp4"
         print(f"Saving {stage} isosurface visualization to: {output_path}")
@@ -799,9 +799,10 @@ def _visualize_centerlines(centerlines: vtkPolyData, viz_dir: Path) -> None:
     print(f"Centerlines lines: {centerlines.GetNumberOfCells()}")
 
     plotter = pv.Plotter(off_screen=True, window_size=[1920, 1080])
+    plotter.background_color = "white"
     centerlines_pv = pv.wrap(centerlines)
     centerlines_tubes = centerlines_pv.tube(radius=0.3, n_sides=8)
-    plotter.add_mesh(centerlines_tubes, color="cyan")
+    plotter.add_mesh(centerlines_tubes, color="darkblue")
 
     output_path = viz_dir / "final_centerlines_3d.mp4"
     print(f"Saving centerlines visualization to: {output_path}")
