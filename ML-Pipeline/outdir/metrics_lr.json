@@ -1,0 +1,30 @@
+{
+  "model": "lr",
+  "val": {
+    "precision": 0.42857142857142855,
+    "recall": 0.5,
+    "f1": 0.46153846153846156,
+    "n": 25,
+    "positive_rate": 0.24
+  },
+  "test": {
+    "precision": 0.15,
+    "recall": 0.23076923076923078,
+    "f1": 0.18181818181818182,
+    "n": 50,
+    "positive_rate": 0.26
+  },
+  "splits": {
+    "train_n": 175,
+    "val_n": 25,
+    "test_n": 50,
+    "test_size": 0.2,
+    "val_size": 0.1
+  },
+  "cross_val": {
+    "f1_mean": 0.3921360069747166,
+    "f1_std": 0.1147417523801229,
+    "precision_mean": 0.32783797729618164,
+    "recall_mean": 0.49230769230769234
+  }
+}

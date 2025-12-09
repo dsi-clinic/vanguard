@@ -49,6 +49,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+logs/
 parts/
 sdist/
 var/
@@ -141,3 +142,17 @@ venv.bak/
 
 
 radiomics_baseline/outdir/*
+*.npy
+
+out_pcr_jose/model_rf.pkl
+out_pcr_jose/features.csv
+out_pcr_jose/features_engineered.csv
+out_pcr_jose/features_join_preview.csv
+*.pkl
+# Ignore Rebecca's large feature files
+out_pcr_rebecca/features.csv
+out_pcr_rebecca/features_engineered.csv
+out_pcr_rebecca/features_join_preview.csv
+CoW_Centerline_Extraction/
+jose_json_outputs/
+out_pcr_rebecca/
