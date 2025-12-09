@@ -1,27 +1,43 @@
-import os
+"""Processing pipeline for vessel skeletonization and morphometry export."""
+
 import sys
+from pathlib import Path
+
 import numpy as np
 
-sys.path.append(os.path.abspath("vanguard/notebooks"))
-from skeleton3d_utils.skeleton3d import skeletonize3d
-from skeleton3d_utils.skeleton3d_visuals import edges_to_segments
-from skeleton3d_utils.skeleton_to_graph import *
 
+def process_vessel_image(
+    input_npy_path: str, threshold: float, output_folder: str
+) -> Path:
+    """Run the full vessel processing pipeline and write morphometry JSON."""
+    notebook_root = Path(__file__).resolve().parent.parent
+    if str(notebook_root) not in sys.path:
+        sys.path.append(str(notebook_root))
 
-def process_vessel_image(input_npy_path: str, threshold: float, output_folder: str):
-    # Extract image name
-    image_name = os.path.basename(input_npy_path).replace(".npy", "")
+    from skeleton3d_utils.skeleton3d import skeletonize3d
+    from skeleton3d_utils.skeleton3d_visuals import edges_to_segments
+    from skeleton3d_utils.skeleton_to_graph import (
+        assign_component_labels,
+        build_vessel_json,
+        detect_bifurcations,
+        extract_segments,
+        obtain_radius_map,
+        segments_to_graph,
+    )
+
+    input_path = Path(input_npy_path)
+    image_name = input_path.stem
 
     # JSON output will be saved directly in output_folder
-    output_json_path = os.path.join(output_folder, f"{image_name}_morphometry.json")
+    output_json_path = Path(output_folder) / f"{image_name}_morphometry.json"
 
     # Skip if already processed
-    if os.path.exists(output_json_path):
+    if output_json_path.exists():
         print(f"[SKIP] {image_name} already processed at {output_json_path}")
         return output_json_path
 
     # 1. Load
-    final_image = np.load(input_npy_path)
+    final_image = np.load(input_path)
     vessels = final_image[1]
 
     # 2. Skeleton

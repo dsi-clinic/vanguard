@@ -1,9 +1,9 @@
 # skeleton3d.py
 """Topology-preserving morphological skeletonization for 3D volumes.
 
-Each voxel is treated as a node connected to its potential 26 neighbors (in a 
-3×3×3 cube). Voxels are iteratively removed in order of increasing priority, 
-but only if their removal does not disconnect any of their neighbors (checked 
+Each voxel is treated as a node connected to its potential 26 neighbors (in a
+3×3×3 cube). Voxels are iteratively removed in order of increasing priority,
+but only if their removal does not disconnect any of their neighbors (checked
 via Breadth First Search).
 
 Public:
@@ -19,11 +19,13 @@ import numpy as np
 # each voxel. Generate all combinations of shifts by -1, 0, +1 in each
 # dimension and then remove 0, 0, 0 (itself).
 _OFFSETS_3D = np.array(
-    [(dz, dy, dx)
-     for dz in (-1, 0, 1)
-     for dy in (-1, 0, 1)
-     for dx in (-1, 0, 1)
-     if not (dz == 0 and dy == 0 and dx == 0)],
+    [
+        (dz, dy, dx)
+        for dz in (-1, 0, 1)
+        for dy in (-1, 0, 1)
+        for dx in (-1, 0, 1)
+        if not (dz == 0 and dy == 0 and dx == 0)
+    ],
     dtype=np.int64,
 )
 
@@ -33,19 +35,23 @@ for i, (dz, dy, dx) in enumerate(_OFFSETS_3D):
     opp = (-dz, -dy, -dx)
     _REV_3D[i] = np.where((_OFFSETS_3D == opp).all(axis=1))[0][0]
 
+EXPECTED_DIMENSIONS = 3
+
 
 # Ring-buffer queue utilities
 
+
 @nb.njit
-def _queue_push_3d(Q, ss, k, i, j):
-    """This function adds a voxel’s coordinates to the BFS queue.
-    It uses a circular (ring) buffer so it can efficiently reuse the same 
+def _queue_push_3d(Q: np.ndarray, ss: np.ndarray, k: int, i: int, j: int) -> None:
+    """Add a voxel’s coordinates to the BFS queue.
+
+    It uses a circular (ring) buffer so it can efficiently reuse the same
     fixed-size array instead of growing a list.”
 
     Inputs:
         -Q: a 2D NumPy array of shape (N, 3) — it stores voxel coordinates.
         Each row is [k, i, j] (z, y, x).
-        -ss: a small array of size 2, [start, stop], that keeps track of which 
+        -ss: a small array of size 2, [start, stop], that keeps track of which
         part of the queue is active.
             - ss[0] = start index (where to pop from)
             - ss[1] = stop index (where to push next)
@@ -56,8 +62,9 @@ def _queue_push_3d(Q, ss, k, i, j):
     Q[ss[1], 2] = j
     ss[1] = 0 if (ss[1] + 1 == len(Q)) else ss[1] + 1
 
+
 @nb.njit
-def _queue_pop_3d(Q, ss):
+def _queue_pop_3d(Q: np.ndarray, ss: np.ndarray) -> tuple[int, int, int]:
     """Pop (k, i, j) coordinates from the BFS ring-buffer queue.
 
     Removes and returns the voxel coordinates located at the current
@@ -81,8 +88,9 @@ def _queue_pop_3d(Q, ss):
     ss[0] = 0 if (ss[0] + 1 == len(Q)) else ss[0] + 1
     return k, i, j
 
+
 @nb.njit
-def _queue_empty(ss):
+def _queue_empty(ss: np.ndarray) -> bool:
     """Check whether the BFS ring-buffer queue is empty.
 
     The queue is considered empty when the start and stop
@@ -98,8 +106,9 @@ def _queue_empty(ss):
     """
     return ss[0] == ss[1]
 
+
 @nb.njit
-def _queue_clear(ss):
+def _queue_clear(ss: np.ndarray) -> None:
     """Clear the BFS ring-buffer queue.
 
     Resets the queue by setting the start index equal to the stop index,
@@ -114,8 +123,9 @@ def _queue_clear(ss):
 
 # 3D skeletonization core
 
+
 @nb.njit
-def _add_edges_3d(nodes, edges, k, i, j):
+def _add_edges_3d(nodes: np.ndarray, edges: np.ndarray, k: int, i: int, j: int) -> None:
     """Update the edge bitmask for voxel (k, i, j) based on its 26-connected neighbors.
 
     For the voxel at position (k, i, j), this function checks all 26 possible
@@ -154,8 +164,9 @@ def _add_edges_3d(nodes, edges, k, i, j):
             # a connection to neighbor b
             edges[k, i, j] |= np.uint32(1 << b)
 
+
 @nb.njit
-def _add_node_3d(nodes, edges, k, i, j):
+def _add_node_3d(nodes: np.ndarray, edges: np.ndarray, k: int, i: int, j: int) -> None:
     """Activate a voxel (k, i, j) as a node and update all relevant edge connections.
 
     Sets the voxel at (k, i, j) to True in the `nodes` array and updates its
@@ -189,10 +200,12 @@ def _add_node_3d(nodes, edges, k, i, j):
             # Refresh the neighbor’s connectivity mask.
             _add_edges_3d(nodes, edges, nk, ni, nj)
 
+
 @nb.njit
-def _remove_node_3d(nodes, edges, k, i, j):
-    """Remove a voxel (k, i, j) from the active node set and update neighbor
-    connectivity.
+def _remove_node_3d(
+    nodes: np.ndarray, edges: np.ndarray, k: int, i: int, j: int
+) -> None:
+    """Remove a voxel from the active node set and update neighbor connectivity.
 
     Marks the voxel as inactive in `nodes` and clears its edge bitmask in `edges`.
     For all 26 possible neighbor directions, if the neighbor voxel is active,
@@ -227,8 +240,9 @@ def _remove_node_3d(nodes, edges, k, i, j):
             # Remove the reverse edge in the neighbor’s mask:
             edges[nk, ni, nj] &= np.uint32(~(1 << rb))
 
+
 @nb.njit
-def _set_seeds_3d(edges, seeds, k, i, j):
+def _set_seeds_3d(edges: np.ndarray, seeds: np.ndarray, k: int, i: int, j: int) -> int:
     """Collect all 3D neighbors connected to voxel (k, i, j).
 
     Reads the 26-bit connectivity mask from `edges[k, i, j]` and enumerates
@@ -267,8 +281,20 @@ def _set_seeds_3d(edges, seeds, k, i, j):
     # Return how many connected neighbors were found.
     return n
 
+
 @nb.njit
-def _remove_if_not_articulation_3d(nodes, edges, seeds, Q, Qss, touched, tss, k, i, j):
+def _remove_if_not_articulation_3d(
+    nodes: np.ndarray,
+    edges: np.ndarray,
+    seeds: np.ndarray,
+    Q: np.ndarray,
+    Qss: np.ndarray,
+    touched: np.ndarray,
+    tss: np.ndarray,
+    k: int,
+    i: int,
+    j: int,
+) -> None:
     """Test and remove voxel (k, i, j) if it is not an articulation point.
 
     This function attempts to remove a voxel while preserving the local
@@ -287,7 +313,9 @@ def _remove_if_not_articulation_3d(nodes, edges, seeds, Q, Qss, touched, tss, k,
         touched (np.ndarray): 3D int array tracking visited voxels with timestamps.
         tss (np.ndarray): Two-element array [start_stamp, stop_stamp] used to manage
             unique BFS visitation ranges.
-        k, i, j (int): Coordinates of the voxel being tested.
+        k (int): Z-index of the voxel being tested.
+        i (int): Y-index of the voxel being tested.
+        j (int): X-index of the voxel being tested.
 
     Returns:
         None. The voxel is removed in-place if safe; otherwise restored.
@@ -307,7 +335,7 @@ def _remove_if_not_articulation_3d(nodes, edges, seeds, Q, Qss, touched, tss, k,
     tk, ti, tj = seeds[0, 0], seeds[0, 1], seeds[0, 2]
     # Mark it as “visited” using the current timestamp tss[0].
     touched[tk, ti, tj] = tss[0]
-    tss[1] += 1 # Increment tss[1]
+    tss[1] += 1  # Increment tss[1]
 
     # Loop over the remaining neighbors
     for s in range(1, num):
@@ -322,7 +350,7 @@ def _remove_if_not_articulation_3d(nodes, edges, seeds, Q, Qss, touched, tss, k,
         # pop the next voxel to explore.
         while not _queue_empty(Qss):
             ck, ci, cj = _queue_pop_3d(Q, Qss)
-            stamp = touched[ck, ci, cj] # prevent re-visiting voxels
+            stamp = touched[ck, ci, cj]  # prevent re-visiting voxels
             # confirming connectivity. Mark as connected and stop this BFS.
             if tss[0] <= stamp < tss[1]:
                 connected = True
@@ -359,8 +387,20 @@ def _remove_if_not_articulation_3d(nodes, edges, seeds, Q, Qss, touched, tss, k,
     # have a clean time window
     tss[0] = tss[1]
 
+
 @nb.njit
-def _skeletonize_impl_3d(nodes, edges, seeds, Q, Qss, touched, tss, kk, ii, jj):
+def _skeletonize_impl_3d(
+    nodes: np.ndarray,
+    edges: np.ndarray,
+    seeds: np.ndarray,
+    Q: np.ndarray,
+    Qss: np.ndarray,
+    touched: np.ndarray,
+    tss: np.ndarray,
+    kk: np.ndarray,
+    ii: np.ndarray,
+    jj: np.ndarray,
+) -> None:
     """Core implementation of the 3D topology-preserving thinning algorithm.
 
     Iterates through all active voxels (given by kk, ii, jj) in order of
@@ -370,18 +410,19 @@ def _skeletonize_impl_3d(nodes, edges, seeds, Q, Qss, touched, tss, kk, ii, jj):
 
     Args:
         nodes (np.ndarray): 3D boolean array (Z, H, W) marking active voxels.
-        edges (np.ndarray): 3D uint32 array (Z, H, W) of 26-bit connectivity 
+        edges (np.ndarray): 3D uint32 array (Z, H, W) of 26-bit connectivity
         masks.
-        seeds (np.ndarray): (26, 3) array for temporarily storing neighbor 
+        seeds (np.ndarray): (26, 3) array for temporarily storing neighbor
         coordinates.
         Q (np.ndarray): (N, 3) BFS queue used during connectivity testing.
-        Qss (np.ndarray): Two-element array [start, stop] controlling the BFS 
+        Qss (np.ndarray): Two-element array [start, stop] controlling the BFS
         queue state.
         touched (np.ndarray): 3D int array tracking BFS visitation stamps.
-        tss (np.ndarray): Two-element array [start_stamp, stop_stamp] for 
+        tss (np.ndarray): Two-element array [start_stamp, stop_stamp] for
         managing visit timestamps.
-        kk, ii, jj (np.ndarray): 1D arrays of voxel indices representing 
-        the order in which voxels are processed (sorted by increasing priority).
+        kk (np.ndarray): Z indices of active voxels sorted by priority.
+        ii (np.ndarray): Y indices of active voxels sorted by priority.
+        jj (np.ndarray): X indices of active voxels sorted by priority.
 
     Returns:
         None. Modifies `nodes` and `edges` in place to represent the final skeleton.
@@ -392,11 +433,12 @@ def _skeletonize_impl_3d(nodes, edges, seeds, Q, Qss, touched, tss, kk, ii, jj):
         # They have already been sorted so that low-priority voxels are
         # processed (and potentially removed) first.
         _remove_if_not_articulation_3d(
-            nodes, edges, seeds, Q, Qss, touched, tss,
-            kk[idx], ii[idx], jj[idx]
+            nodes, edges, seeds, Q, Qss, touched, tss, kk[idx], ii[idx], jj[idx]
         )
 
+
 # Public function
+
 
 def skeletonize3d(priority: np.ndarray, threshold: float) -> np.ndarray:
     """Perform topology-preserving skeletonization on a 3D volume.
@@ -420,13 +462,15 @@ def skeletonize3d(priority: np.ndarray, threshold: float) -> np.ndarray:
             to neighbor direction b as defined in `_OFFSETS_3D`.
     """
     # Ensure the input array really is 3D
-    assert priority.ndim == 3
+    if priority.ndim != EXPECTED_DIMENSIONS:
+        raise ValueError(
+            f"`priority` must be {EXPECTED_DIMENSIONS}D, received {priority.ndim}D"
+        )
     # Create a binary mask of active voxels.
     nodes = priority > threshold
     # Initialize an empty connectivity array, same shape as the input.
     # Each voxel will later store a 26-bit integer (inside the 32-bit container).
     edges = np.zeros_like(nodes, dtype=np.uint32)
-
 
     Z, H, W = nodes.shape
     # For every active voxel, call _add_edges_3d() to compute its connections

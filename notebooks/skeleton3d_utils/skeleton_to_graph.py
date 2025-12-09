@@ -1,41 +1,57 @@
+"""Utilities to convert skeleton volumes into graph representations."""
+
+import json
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+
 import networkx as nx
 import numpy as np
-
 from scipy.ndimage import distance_transform_edt
-import json
+
+Point3D = tuple[int, int, int]
+Segment = tuple[Point3D, Point3D]
+PathList = list[Point3D]
+
+SEGMENT_DEGREE = 2
+BIFURCATION_DEGREE = 3
+MIN_CURVATURE_POINTS = 3
 
 
-def segments_to_graph(segments):
-    G = nx.Graph()
+def segments_to_graph(segments: Iterable[Segment]) -> nx.Graph:
+    """Build a NetworkX graph from pairs of segment endpoints."""
+    graph = nx.Graph()
     for p1, p2 in segments:
-        p1 = tuple(int(x) for x in p1)  # ensure hashable ints
-        p2 = tuple(int(x) for x in p2)
-        
-        G.add_node(p1, pos=np.array(p1))
-        G.add_node(p2, pos=np.array(p2))
-        G.add_edge(p1, p2)
-    return G
+        p1_tuple = tuple(int(x) for x in p1)
+        p2_tuple = tuple(int(x) for x in p2)
 
-def obtain_radius_map(vessels, G):
+        graph.add_node(p1_tuple, pos=np.array(p1_tuple))
+        graph.add_node(p2_tuple, pos=np.array(p2_tuple))
+        graph.add_edge(p1_tuple, p2_tuple)
+    return graph
+
+
+def obtain_radius_map(vessels: np.ndarray, graph: nx.Graph) -> dict[Point3D, float]:
+    """Compute a radius map for each node based on the distance transform."""
     dist = distance_transform_edt(vessels)
-    radius_map = {node: float(dist[node[2], node[1], node[0]]) for node in G.nodes()}
-    return radius_map
+    return {node: float(dist[node[2], node[1], node[0]]) for node in graph.nodes()}
 
-def extract_segments(G):
-    segments = []
-    visited = set()
 
-    for node in G.nodes():
-        # endpoints or bifurcations
-        if G.degree(node) != 2:
-            for nei in G.neighbors(node):
-                path = [node]
+def extract_segments(graph: nx.Graph) -> list[PathList]:
+    """Return polylines that trace each vessel segment between bifurcations."""
+    segments: list[PathList] = []
+    visited: set[tuple[Point3D, ...]] = set()
+
+    for node in graph.nodes():
+        if graph.degree(node) != SEGMENT_DEGREE:
+            for nei in graph.neighbors(node):
+                path: PathList = [node]
                 prev = node
                 curr = nei
 
-                while G.degree(curr) == 2:
+                while graph.degree(curr) == SEGMENT_DEGREE:
                     path.append(curr)
-                    nxt = [n for n in G.neighbors(curr) if n != prev][0]
+                    nxt = [n for n in graph.neighbors(curr) if n != prev][0]
                     prev, curr = curr, nxt
 
                 path.append(curr)
@@ -46,26 +62,23 @@ def extract_segments(G):
                     segments.append(path)
     return segments
 
-def compute_segment_metrics(path, radius_map):
-    import numpy as np
-    
-    # ensure Python ints for coordinates
+
+def compute_segment_metrics(
+    path: PathList, radius_map: dict[Point3D, float]
+) -> dict[str, Any]:
+    """Calculate geometry and radius statistics for a vessel segment."""
     coords = np.array([tuple(int(v) for v in p) for p in path], dtype=float)
     radii = np.array([float(radius_map[p]) for p in path], dtype=float)
 
-    # Length
     diffs = np.diff(coords, axis=0)
     length = float(np.sum(np.linalg.norm(diffs, axis=1)))
 
-    # Tortuosity
     straight = float(np.linalg.norm(coords[-1] - coords[0]))
-    tort = float(length / straight) if straight > 0 else 1.0
+    tortuosity = float(length / straight) if straight > 0 else 1.0
 
-    # Volume
-    vol = float(np.sum(np.pi * radii**2))
+    volume = float(np.sum(np.pi * radii**2))
 
-    # Curvature
-    if len(coords) >= 3:
+    if len(coords) >= MIN_CURVATURE_POINTS:
         v1 = coords[2:] - coords[1:-1]
         v2 = coords[1:-1] - coords[:-2]
         angles = []
@@ -81,7 +94,7 @@ def compute_segment_metrics(path, radius_map):
     return {
         "segment": {
             "start": [int(v) for v in coords[0]],
-            "end":   [int(v) for v in coords[-1]]
+            "end": [int(v) for v in coords[-1]],
         },
         "radius": {
             "mean": float(np.mean(radii)),
@@ -93,8 +106,8 @@ def compute_segment_metrics(path, radius_map):
             "max": float(np.max(radii)),
         },
         "length": float(length),
-        "tortuosity": float(tort),
-        "volume": float(vol),
+        "tortuosity": float(tortuosity),
+        "volume": float(volume),
         "curvature": {
             "mean": float(np.mean(curvature)),
             "sd": float(np.std(curvature)),
@@ -103,171 +116,111 @@ def compute_segment_metrics(path, radius_map):
             "q1": float(np.percentile(curvature, 25)),
             "q3": float(np.percentile(curvature, 75)),
             "max": float(np.max(curvature)),
-        }
+        },
     }
 
-def detect_bifurcations(G):
-    bif = []
 
-    for node in G.nodes():
-        if G.degree(node) == 3:
-            neigh = list(G.neighbors(node))
+def detect_bifurcations(graph: nx.Graph) -> list[dict[str, Any]]:
+    """Detect bifurcation points and compute opening angles."""
+    bifurcations: list[dict[str, Any]] = []
+
+    for node in graph.nodes():
+        if graph.degree(node) == BIFURCATION_DEGREE:
+            neigh = list(graph.neighbors(node))
             p0 = np.array(node)
             vecs = [np.array(n) - p0 for n in neigh]
 
-            # angle helper
-            def angle(a, b):
-                return float(np.degrees(
-                    np.arccos(
-                        np.clip(np.dot(a, b) / (np.linalg.norm(a)*np.linalg.norm(b)), -1, 1)
+            def angle(a: np.ndarray, b: np.ndarray) -> float:
+                return float(
+                    np.degrees(
+                        np.arccos(
+                            np.clip(
+                                np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)),
+                                -1,
+                                1,
+                            )
+                        )
                     )
-                ))
+                )
 
             bdict = {
                 "bifurcation": {
                     "midpoint": [int(a) for a in node],
-                    "points_angle": [[int(a) for a in p] for p in neigh]
+                    "points_angle": [[int(a) for a in p] for p in neigh],
                 },
                 "angles": {
                     "pair1": angle(vecs[0], vecs[1]),
                     "pair2": angle(vecs[0], vecs[2]),
                     "pair3": angle(vecs[1], vecs[2]),
-                }
+                },
             }
 
-            bif.append(bdict)
+            bifurcations.append(bdict)
 
-    return bif
+    return bifurcations
 
 
-def assign_component_labels(G):
-    """
-    Identify connected components in the skeleton graph and assign
-    each node a component ID. Also return a {id: name} label map.
+def assign_component_labels(graph: nx.Graph) -> dict[int, str]:
+    """Identify connected components and assign default labels."""
+    components = list(nx.connected_components(graph))
 
-    Parameters
-    ----------
-    G : networkx.Graph
-        The skeleton graph.
+    vessel_labels = {i + 1: f"component_{i+1}" for i in range(len(components))}
 
-    Returns
-    -------
-    vessel_labels : dict
-        Maps component index → default vessel label ("component_1", ...)
-    """
-    components = list(nx.connected_components(G))
-
-    # Default name: component_1, component_2, ...
-    vessel_labels = {i+1: f"component_{i+1}" for i in range(len(components))}
-
-    # Assign component id to each node
     for idx, comp in enumerate(components, start=1):
         for node in comp:
-            G.nodes[node]["component"] = idx
+            graph.nodes[node]["component"] = idx
 
     return vessel_labels
 
 
-import json
-
 def build_vessel_json(
-    G,
-    vessel_labels,
-    segment_paths,
-    radius_map,
-    bifurcations,
-    output_path="vessels_morphometry.json"
-):
-    """
-    Build final vessel morphometry JSON grouped by connected component
-    and save the output to a predefined file path.
-
-    Parameters
-    ----------
-    G : networkx.Graph
-        Skeleton graph with node["component"] already assigned.
-    vessel_labels : dict
-        Mapping {component_id: vessel_name}.
-    segment_paths : list[list[tuple]]
-        Each entry is a list of (x,y,z) positions defining a curved segment.
-    radius_map : dict
-        Mapping {(x,y,z): radius}.
-    bifurcations : list[dict]
-        Output from detect_bifurcations(). May contain malformed entries.
-    output_path : str
-        File path where the JSON file will be saved.
-
-    Returns
-    -------
-    dict
-        The full JSON dictionary that is also saved to disk.
-    """
-
-    final_json = {}
+    graph: nx.Graph,
+    vessel_labels: dict[int, str],
+    segment_paths: list[PathList],
+    radius_map: dict[Point3D, float],
+    bifurcations: list[dict[str, Any]],
+    output_path: str | Path = Path("vessels_morphometry.json"),
+) -> dict[str, Any]:
+    """Build final vessel morphometry JSON grouped by connected component."""
+    final_json: dict[str, Any] = {}
 
     for idx in vessel_labels:
-
-        # --------------------------
-        # Collect nodes in this component
-        # --------------------------
         comp_nodes = {
-            n for n in G.nodes()
-            if G.nodes[n].get("component") == idx
+            n for n in graph.nodes() if graph.nodes[n].get("component") == idx
         }
 
-        # --------------------------
-        # Collect segments in this component
-        # --------------------------
         segs = [p for p in segment_paths if tuple(p[0]) in comp_nodes]
 
-        seg_metrics = [
-            compute_segment_metrics(p, radius_map)
-            for p in segs
-        ]
+        seg_metrics = [compute_segment_metrics(p, radius_map) for p in segs]
 
-        # --------------------------
-        # Collect bifurcations in this component
-        # (robust filtering to avoid malformed entries)
-        # --------------------------
         bif = []
 
-        for b in bifurcations:
-
-            # must be dict
-            if not isinstance(b, dict):
+        for entry in bifurcations:
+            if not isinstance(entry, dict):
                 continue
 
-            # must contain "bifurcation" block
-            if "bifurcation" not in b:
-                continue
-            if not isinstance(b["bifurcation"], dict):
+            if "bifurcation" not in entry or not isinstance(entry["bifurcation"], dict):
                 continue
 
-            # must contain midpoint
-            midpoint = b["bifurcation"].get("midpoint")
+            midpoint = entry["bifurcation"].get("midpoint")
             if midpoint is None:
                 continue
 
-            midpoint = tuple(midpoint)
+            midpoint_tuple = tuple(midpoint)
 
-            # is this bifurcation inside this component?
-            if midpoint in comp_nodes:
-                bif.append(b)
+            if midpoint_tuple in comp_nodes:
+                bif.append(entry)
 
-        # --------------------------
-        # Build JSON entry
-        # --------------------------
-        entry = {vessel_labels[idx]: seg_metrics}
+        entry: dict[str, Any] = {vessel_labels[idx]: seg_metrics}
 
-        if len(bif) > 0:
+        if bif:
             entry[f"{vessel_labels[idx]} bifurcation"] = bif
 
         final_json[str(idx)] = entry
 
-    # --------------------------
-    # Save to file
-    # --------------------------
-    with open(output_path, "w") as f:
-        json.dump(final_json, f, indent=4)
+    output_path = Path(output_path)
+    with output_path.open("w") as file_handle:
+        json.dump(final_json, file_handle, indent=4)
 
     print(f"✔ Vessel morphometry JSON saved to: {output_path}")
+    return final_json
