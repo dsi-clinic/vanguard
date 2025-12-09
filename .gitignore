@@ -139,6 +139,9 @@ venv.bak/
 
 # data files
 *.avro
+
+
+radiomics_baseline/outdir/*
 *.npy
 
 out_pcr_jose/model_rf.pkl
