@@ -21,7 +21,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 # Add the segmentation project to Python path
-sys.path.append("/home/ruochun/vanguard/3D-Breast-FGT-and-Blood-Vessel-Segmentation")
+SCRIPT_DIR = Path(__file__).parent.parent
+sys.path.append(str(SCRIPT_DIR / "3D-Breast-FGT-and-Blood-Vessel-Segmentation"))
 
 import numpy as np
 import SimpleITK as sitk
@@ -106,7 +107,8 @@ def run_vessel_segmentation(
     try:
         # Change to the segmentation project directory
         original_cwd = Path.cwd()
-        os.chdir("/home/ruochun/vanguard/3D-Breast-FGT-and-Blood-Vessel-Segmentation")
+        script_dir = Path(__file__).parent.parent
+        os.chdir(script_dir / "3D-Breast-FGT-and-Blood-Vessel-Segmentation")
 
         # STEP-2: Run breast segmentation
         print("  Running breast segmentation (STEP-2)...")
@@ -248,6 +250,9 @@ def collect_all_step3_files(output_dir: str) -> list[str]:
 
 def main() -> None:
     """Main function to run batch segmentation processing."""
+    # Get script directory for relative paths
+    script_dir = Path(__file__).parent.parent
+    
     parser = argparse.ArgumentParser(
         description="Batch process all .nii.gz files and extract vessel segmentations (STEP-3)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -261,7 +266,7 @@ def main() -> None:
 
     parser.add_argument(
         "--output-dir",
-        default="/home/ruochun/vanguard/vessel_segmentations",
+        default=str(script_dir / "vessel_segmentations"),
         help="Directory to save all STEP-3 vessel segmentation .npy files",
     )
 
@@ -273,13 +278,13 @@ def main() -> None:
 
     parser.add_argument(
         "--breast-model-path",
-        default="/home/ruochun/vanguard/3D-Breast-FGT-and-Blood-Vessel-Segmentation/trained_models/breast_model.pth",
+        default=str(script_dir / "3D-Breast-FGT-and-Blood-Vessel-Segmentation" / "trained_models" / "breast_model.pth"),
         help="Path to the breast segmentation model (STEP-2)",
     )
 
     parser.add_argument(
         "--vessel-model-path",
-        default="/home/ruochun/vanguard/3D-Breast-FGT-and-Blood-Vessel-Segmentation/trained_models/dv_model.pth",
+        default=str(script_dir / "3D-Breast-FGT-and-Blood-Vessel-Segmentation" / "trained_models" / "dv_model.pth"),
         help="Path to the vessel segmentation model (STEP-3)",
     )
 

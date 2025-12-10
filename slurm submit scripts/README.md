@@ -21,7 +21,7 @@ The scripts automate the submission of batch processing jobs on the cluster, han
 
 **Usage**:
 ```bash
-cd /home/ruochun/vanguard
+cd /path/to/vanguard
 sbatch "slurm submit scripts/submit_vessel_segmentation.slurm"
 ```
 
@@ -132,7 +132,7 @@ sbatch "slurm submit scripts/submit_vtp_to_json_conversion.slurm"
 
 **Usage**:
 ```bash
-cd /home/ruochun/vanguard
+cd /path/to/vanguard
 ./submit_job.sh
 ```
 
@@ -209,7 +209,7 @@ To disable email notifications, remove or comment out the `#SBATCH --mail-*` lin
 
 ### Log Directory
 
-All logs are saved to `/home/ruochun/vanguard/logs/` with the format:
+All logs are saved to `logs/` directory (relative to project root) with the format:
 - Output: `logs/<job-name>-<JOB_ID>.out`
 - Errors: `logs/<job-name>-<JOB_ID>.err`
 

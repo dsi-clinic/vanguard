@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=vessel-segmentation
+#SBATCH --job-name=vessel-seg-opt
 #SBATCH --partition=general          # Use general partition (has GPUs available)
 #SBATCH --gres=gpu:1                 # Request 1 GPU for segmentation
-#SBATCH --cpus-per-task=16           # Increased CPUs for more workers
-#SBATCH --mem=128G                   # Increased memory for more parallel workers
+#SBATCH --cpus-per-task=32           # Increased CPUs for more workers (was 16)
+#SBATCH --mem=256G                   # Increased memory for more parallel workers (was 128G)
 #SBATCH --time=12:00:00              # 12 hours (max for general partition)
-#SBATCH --output=logs/vessel-seg-%j.out
-#SBATCH --error=logs/vessel-seg-%j.err
+#SBATCH --output=logs/vessel-seg-opt-%j.out
+#SBATCH --error=logs/vessel-seg-opt-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ruochun@duke.edu
 
@@ -30,9 +30,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- Optional: be nice to BLAS/OpenMP threads ---
-export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
-export MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+# --- Optimize thread/process settings ---
+# More aggressive parallelization
+export OMP_NUM_THREADS=4              # Reduced per-process threads (was full CPU count)
+export MKL_NUM_THREADS=4              # Reduced per-process threads
+export CUDA_VISIBLE_DEVICES=0         # Explicitly set GPU
 export PYTHONUNBUFFERED=1
 
 # --- Configuration ---
@@ -42,16 +44,17 @@ IMAGES_DIR="/net/projects2/vanguard/MAMA-MIA-syn60868042/images"
 OUTPUT_DIR="/net/projects2/vanguard/vessel_segmentations"
 BREAST_MODEL="${PROJECT_ROOT}/3D-Breast-FGT-and-Blood-Vessel-Segmentation/trained_models/breast_model.pth"
 VESSEL_MODEL="${PROJECT_ROOT}/3D-Breast-FGT-and-Blood-Vessel-Segmentation/trained_models/dv_model.pth"
-MAX_WORKERS=8                         # Increased workers for faster processing (8 workers with 16 CPUs)
+MAX_WORKERS=16                        # Increased workers (was 8) - 2 CPUs per worker with 32 total
 
 echo "========================================="
-echo "Vessel Segmentation Job Started"
+echo "Vessel Segmentation Job Started (OPTIMIZED)"
 echo "========================================="
 echo "Job ID: ${SLURM_JOB_ID}"
 echo "Node: $(hostname)"
 echo "GPUs: ${CUDA_VISIBLE_DEVICES:-none}"
 echo "CPUs: ${SLURM_CPUS_PER_TASK}"
 echo "Memory: ${SLURM_MEM_PER_NODE}MB"
+echo "Workers: ${MAX_WORKERS}"
 echo "Time limit: ${SLURM_TIME_LIMIT:-unknown}"
 echo "Date: $(date)"
 echo "========================================="

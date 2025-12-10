@@ -7,9 +7,10 @@ from pathlib import Path
 
 from tqdm import tqdm
 
+SCRIPT_DIR = Path(__file__).parent.parent
 CENTERLINES_DIR = Path("/net/projects2/vanguard/centerlines")
 JSON_DIR = CENTERLINES_DIR / "json_files"
-SCRIPT_PATH = Path("/home/ruochun/vanguard/centerline_to_json.py")
+SCRIPT_PATH = SCRIPT_DIR / "centerline_to_json.py"
 
 
 def convert_vtp_to_json(vtp_file: Path, json_file: Path) -> bool:

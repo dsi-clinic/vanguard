@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 
 # Get the directory paths
+SCRIPT_DIR = Path(__file__).parent.parent
 VESSEL_SEG_DIR = Path("/net/projects2/vanguard/vessel_segmentations")
-OUTPUT_DIR = Path("/home/ruochun/vanguard/centerline_json_outputs")
-SCRIPT_DIR = Path("/home/ruochun/vanguard")
+OUTPUT_DIR = SCRIPT_DIR / "centerline_json_outputs"
 
 
 def process_file(input_file: Path, output_json: Path) -> bool:

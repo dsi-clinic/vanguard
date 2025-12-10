@@ -7,9 +7,10 @@ import sys
 from pathlib import Path
 
 # Configuration
+SCRIPT_DIR = Path(__file__).parent.parent
 SEGMENTATION_DIR = Path("/net/projects2/vanguard/vessel_segmentations")
 OUTPUT_DIR = Path("/net/projects2/vanguard/centerlines")
-SCRIPT_PATH = Path("/home/ruochun/vanguard/3dslicer_v07_graph_based.py")
+SCRIPT_PATH = SCRIPT_DIR / "3dslicer_v07_graph_based.py"
 NUM_FILES = 1004
 
 

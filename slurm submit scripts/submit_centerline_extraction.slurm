@@ -31,8 +31,10 @@ echo "Date: $(date)"
 echo "========================================="
 
 # Run batch centerline extraction
-cd /home/ruochun/vanguard
-python batch_extract_centerlines.py
+# Get project root directory
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${PROJECT_ROOT}"
+python batch_processing/batch_extract_centerlines.py
 
 echo ""
 echo "========================================="

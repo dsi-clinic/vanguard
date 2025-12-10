@@ -30,13 +30,13 @@ The batch processing pipeline:
 Processes all files with parallel processing and progress tracking.
 
 ```bash
-cd /home/ruochun/vanguard
+cd /path/to/vanguard
 python batch_processing/batch_segmentation.py --help
 ```
 
 **Key Options**:
 - `--images-dir`: Source directory (default: `/net/projects2/vanguard/MAMA-MIA-syn60868042/images`)
-- `--output-dir`: Output directory (default: `/home/ruochun/vanguard/breast_masks`)
+- `--output-dir`: Output directory (default: `vessel_segmentations` relative to project root)
 - `--max-workers`: Parallel workers (default: 4)
 - `--patient-limit`: Limit for testing (e.g., `--patient-limit 10`)
 - `--cleanup`: Clean temporary files
@@ -44,10 +44,10 @@ python batch_processing/batch_segmentation.py --help
 **Example Usage**:
 ```bash
 # Quick test with 3 patients (similar to quick_batch_test.py)
-python batch_processing/batch_segmentation.py --patient-limit 3 --output-dir /home/ruochun/vanguard/test_breast_masks
+python batch_processing/batch_segmentation.py --patient-limit 3 --output-dir test_breast_masks
 
 # Test with 10 patients
-python batch_processing/batch_segmentation.py --patient-limit 10 --output-dir /home/ruochun/vanguard/test_masks
+python batch_processing/batch_segmentation.py --patient-limit 10 --output-dir test_masks
 
 # Full processing with 8 parallel workers
 python batch_processing/batch_segmentation.py --max-workers 8 --cleanup
