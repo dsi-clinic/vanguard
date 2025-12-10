@@ -27,18 +27,10 @@ micromamba config append channels conda-forge
 
 Installation recipe (one time):
 ```bash
-micromamba config prepend channels conda-forge
-micromamba config set channel_priority strict
 git clone git@github.com:uchicago-dsi/vanguard.git
 cd vanguard
 
-micromamba create -y -n vanguard \
-  python=3.11 \
-  pytorch-gpu=2.7.* \
-  torchvision=0.22.* \
-  cuda-version=12.6 \
-  numpy pandas imageio imageio-ffmpeg
-
+micromamba create -y -f environment.yml
 micromamba activate vanguard
 pip install -r requirements.txt
 ```
