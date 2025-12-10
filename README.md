@@ -2,18 +2,18 @@
 
 ## Project Background
 
-A major challenge in breast cancer care is identifying whether treatment is effective early enough to adjust therapy. Standard imaging measures, like tumor shrinkage, often appear only after weeks or months. This delay can leave patients on ineffective regimens for too long.  
+A major challenge in breast cancer care is identifying whether treatment is effective early enough to adjust therapy. Standard imaging measures, like tumor shrinkage, often appear only after weeks or months. This delay can leave patients on ineffective regimens for too long.
 
-Tumor-associated blood vessels offer a potential early biomarker. Vascular networks support tumor growth and change rapidly during therapy. Dynamic contrast-enhanced MRI (DCE-MRI) can capture these changes, and recent work suggests that network properties—branching, tortuosity, density, and connectivity—may reveal subtle treatment responses that pixel-level metrics miss.  
+Tumor-associated blood vessels offer a potential early biomarker. Vascular networks support tumor growth and change rapidly during therapy. Dynamic contrast-enhanced MRI (DCE-MRI) can capture these changes, and recent work suggests that network properties—branching, tortuosity, density, and connectivity—may reveal subtle treatment responses that pixel-level metrics miss.
 
-This project represents vascular structures as graphs, where vessel branch points are nodes and vessel segments are edges with features such as length, diameter, and curvature. Graph Neural Networks (GNNs) provide a natural framework for learning predictive patterns from these structures. By leveraging vascular graph analysis, we aim to detect treatment response earlier, enabling more personalized and adaptive cancer therapy.  
+This project represents vascular structures as graphs, where vessel branch points are nodes and vessel segments are edges with features such as length, diameter, and curvature. Graph Neural Networks (GNNs) provide a natural framework for learning predictive patterns from these structures. By leveraging vascular graph analysis, we aim to detect treatment response earlier, enabling more personalized and adaptive cancer therapy.
 
 ## Project Goals
 
-- Develop a computational pipeline to convert breast MRI data into graph-based representations of blood vessel networks, where nodes correspond to vessel branch points and edges represent vessel segments annotated with length, width, and curvature  
-- Train and evaluate Graph Neural Network (GNN) models to analyze vascular graphs, capturing both local structural changes and global network patterns  
-- Compare GNN performance to baseline models using traditional imaging features  
-- Identify which vascular features are most predictive of patient-specific treatment response  
+- Develop a computational pipeline to convert breast MRI data into graph-based representations of blood vessel networks, where nodes correspond to vessel branch points and edges represent vessel segments annotated with length, width, and curvature
+- Train and evaluate Graph Neural Network (GNN) models to analyze vascular graphs, capturing both local structural changes and global network patterns
+- Compare GNN performance to baseline models using traditional imaging features
+- Identify which vascular features are most predictive of patient-specific treatment response
 
 ## Installation
 
@@ -25,68 +25,6 @@ source ~/.bashrc
 micromamba config append channels conda-forge
 ```
 
-Installation recipe (one time):
-```bash
-git clone git@github.com:uchicago-dsi/vanguard.git
-cd vanguard
-
-micromamba create -y -f environment.yml
-micromamba activate vanguard
-pip install -r requirements.txt
-```
-
-
-## Usage
-
-
-
- ### Slurm
-If you are using the DSI's cluster then you have another option with your `make` commands which is to run VS Code on the cluster login node. To do this execute in `make run-ssh`. 
-
-For more information about how to use Slurm, please look at the information [here](https://github.com/uchicago-dsi/core-facility-docs/blob/main/slurm.md).
-
-
-## Style
-We use [`ruff`](https://docs.astral.sh/ruff/) to enforce style standards and grade code quality. This is an automated code checker that looks for specific issues in the code that need to be fixed to make it readable and consistent with common standards. `ruff` is run before each commit via [`pre-commit`](https://pre-commit.com/). If it fails, the commit will be blocked and the user will be shown what needs to be changed.
-
-To check for errors locally, first ensure that `pre-commit` is installed by running `pip install pre-commit` followed by `pre-commit install`. Once installed, check for errors by running:
-```
-pre-commit run --all-files
-```
-
-## Repository Structure
-
-
-### [resources.md](resources.md)  
-  Curated list of project, domain, and general references
-  
-### utils
-Project python code
-
-### notebooks
-Contains short, clean notebooks to demonstrate analysis.
-
-### data
-
-Contains details of acquiring all raw data used in repository. If data is small (<50MB) then it is okay to save it to the repo, making sure to clearly document how to the data is obtained.
-
-If the data is larger than 50MB than you should not add it to the repo and instead document how to get the data in the README.md file in the data directory. 
-
-This [README.md file](/data/README.md) should be kept up to date.
-
-### output
-Should contain work product generated by the analysis. Keep in mind that results should (generally) be excluded from the git repository.
-
-
-### Micromamba setup instructions/recipe
-here's a working recipe for me for vanguard
-Micromamba install (one time):
-```
-curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba
-./bin/micromamba shell init -s bash -r ~/micromamba
-source ~/.bashrc
-micromamba config append channels conda-forge
-```
 Installation recipe (one time):
 ```bash
 micromamba config prepend channels conda-forge
@@ -103,3 +41,384 @@ micromamba create -y -n vanguard \
 micromamba activate vanguard
 pip install -r requirements.txt
 ```
+
+## Repository Structure and Methodologies
+
+This repository contains a complete pipeline for predicting pathologic complete response (pCR) from breast DCE-MRI using vascular graph analysis. The following sections describe each component and how to reuse them for future cohorts.
+
+---
+
+## 1. Baseline Models
+
+### 1.1 Non-Imaging Baseline (`Non-imaging baseline/`)
+
+**Purpose**: Predict pCR using only demographic and clinical metadata features (no imaging data).
+
+**Methodology**:
+- Extracts features from patient JSON metadata files: age, tumor subtype, bounding box volume
+- Uses logistic regression with L2 regularization
+- Includes feature importance analysis via permutation importance and coefficient analysis
+
+**Key Files**:
+- `baseline_pcr_simple.py`: Main training script for non-imaging baseline
+- `feature_importance.py`: Analyzes which non-imaging features are most predictive
+
+**Usage**:
+```bash
+# Train baseline model
+python Non-imaging\ baseline/baseline_pcr_simple.py \
+  --json-dir /path/to/patient_info_files \
+  --split-csv splits_v1.csv \
+  --output outdir
+
+# Analyze feature importance
+python Non-imaging\ baseline/feature_importance.py \
+  --model outdir/model.pkl \
+  --json-dir /path/to/patient_info_files \
+  --split-csv splits_v1.csv \
+  --output feature_outdir
+```
+
+**Outputs**: `metrics.json`, `predictions.csv`, `roc_test.png`, `model.pkl`, feature importance plots
+
+---
+
+### 1.2 Radiomics Baseline (`radiomics_baseline/`)
+
+**Purpose**: Predict pCR using PyRadiomics features extracted from MRI volumes and tumor masks.
+
+**Methodology**:
+- **Stage 1 (Extraction)**: Extracts PyRadiomics features (first-order, shape, texture features) from DCE-MRI volumes and tumor masks
+- **Stage 2 (Training)**: Trains classifiers (logistic regression, random forest, XGBoost) on extracted feature tables
+- Supports multiple DCE phases and optional peritumoral shell analysis
+- Includes feature selection (correlation pruning, SelectKBest) and optional subtype inclusion
+
+**Key Files**:
+- `radiomics_extract.py`: Extracts PyRadiomics features to CSV
+- `radiomics_train.py`: Trains models on extracted features
+- `pyradiomics_params.yaml`: Configuration for PyRadiomics extraction
+
+**Usage**:
+```bash
+# Extract features
+python radiomics_baseline/radiomics_extract.py \
+  --images /path/to/images \
+  --masks /path/to/segmentations \
+  --labels radiomics_baseline/labels.csv \
+  --split radiomics_baseline/splits_train_test_ready.csv \
+  --output radiomics_baseline/experiments/extract_peri5_multiphase \
+  --params radiomics_baseline/pyradiomics_params.yaml \
+  --image-pattern "{pid}/{pid}_0001.nii.gz,{pid}/{pid}_0002.nii.gz" \
+  --mask-pattern "{pid}.nii.gz" \
+  --peri-radius-mm 5
+
+# Train model
+python radiomics_baseline/radiomics_train.py \
+  --train-features experiments/extract_peri5_multiphase/features_train_final.csv \
+  --test-features experiments/extract_peri5_multiphase/features_test_final.csv \
+  --labels labels.csv \
+  --output outputs/elasticnet_corr0.9_k50_cv5 \
+  --classifier logistic \
+  --include-subtype
+```
+
+**Outputs**: Feature CSVs, `metrics.json`, `predictions.csv`, ROC/PR/calibration plots, `model.pkl`
+
+**See**: [`radiomics_baseline/README.md`](radiomics_baseline/README.md) for detailed documentation
+
+---
+
+## 2. Centerline Extraction Methods
+
+### 2.1 Skeleton3D (`skeleton3d/`)
+
+**Purpose**: Topology-preserving 3D skeletonization algorithm for vessel segmentation volumes.
+
+**Methodology**:
+- Iteratively removes voxels from binary vessel masks while preserving 26-connectivity
+- Each voxel is treated as a node with 26-connected neighbors
+- Produces skeleton volumes and optional graph representations
+
+**Key Features**:
+- Preserves vessel topology (no breaking connectivity)
+- Can export to JSON or other formats for downstream analysis
+- Includes visualization utilities for skeleton inspection
+
+**Usage**: See [`skeleton3d/README.md`](skeleton3d/README.md) for implementation details and API
+
+**When to use**: When you need a simple, topology-preserving skeletonization without island connection or graph building.
+
+---
+
+### 2.2 Centerline Extraction (`centerline_extraction/`)
+
+**Purpose**: Graph-based centerline extraction with island connection and graph structure building.
+
+**Methodology**:
+1. **Binarizes** segmentation at specified threshold
+2. **Skeletonizes** binary mask to extract 3D skeleton
+3. **Connects fragmented islands** using k-nearest neighbor search (optional)
+4. **Builds graph structure** from skeleton (nodes = branch points, edges = vessel segments)
+5. **Extracts centerlines** as polylines from graph structure
+6. **Outputs** centerlines as VTK PolyData (`.vtp`) or JSON format
+
+**Key Features**:
+- Graph-based extraction using 26-connectivity (based on Matlab Skel2Graph3D)
+- Island connection to heal fragmented skeletons before graph building
+- Supports multiple input formats: `.nii.gz`, `.nrrd`, `.npy` (4D arrays with channel selection)
+- Off-screen PyVista visualizations for debugging
+
+**Key Files**:
+- `extract_centerlines.py`: Main extraction script
+- `run_centerline_extraction.py`: Convenience wrapper that combines extraction and JSON conversion
+
+**Usage**:
+```bash
+# Extract centerlines only
+python centerline_extraction/extract_centerlines.py \
+  vessel_segmentation.npy \
+  output_centerlines.vtp \
+  --no-visualizations \
+  --max-connection-distance-mm 15.0
+
+# Extract and convert to JSON in one step
+python centerline_extraction/run_centerline_extraction.py \
+  vessel_segmentation.npy \
+  output_centerlines.json \
+  --spacing 1.0 1.0 1.0
+```
+
+**When to use**: When you need robust centerline extraction with island connection and graph structure for downstream ML analysis.
+
+**See**: [`centerline_extraction/README.md`](centerline_extraction/README.md) for detailed options and examples
+
+---
+
+## 3. ML Testbed (`ML-Pipeline/`)
+
+**Purpose**: Machine learning pipeline for training and evaluating pCR prediction models on graph-based vascular features.
+
+**Methodology**:
+- Loads per-case JSON feature files (extracted from centerlines)
+- Engineers features (aggregation, normalization, feature selection)
+- Trains models (Random Forest, Logistic Regression)
+- Evaluates with cross-validation, bootstrap confidence intervals, and statistical tests
+- Supports ensemble runs for stability assessment
+
+**Key Features**:
+- Handles missing data and feature engineering
+- Includes random baseline comparison and DeLong test for statistical validation
+- Ensemble runs to assess model stability across random seeds
+- Comprehensive metrics and visualizations
+
+**Key Files**:
+- `pcr_prediction.py`: Main training and evaluation script
+
+**Usage**:
+```bash
+python ML-Pipeline/pcr_prediction.py \
+  --feature-dir vessel_segmentations/processed_3D \
+  --labels pcr_labels.csv \
+  --label-column pcr \
+  --id-column patient_id \
+  --outdir out_pcr \
+  --model rf \
+  --plots \
+  --test-size 0.2 \
+  --val-size 0.2 \
+  --bootstrap-n 1000 \
+  --delong
+```
+
+**Outputs**: 
+- `metrics.json`: Performance metrics (AUC, AP, accuracy, precision, recall, F1)
+- `predictions.csv`: Per-case predictions
+- `feature_importance.csv` and plots: Top predictive features
+- ROC/PR curves, confusion matrices
+- `model.pkl`: Trained model for inference
+
+**See**: [`ML-Pipeline/README.md`](ML-Pipeline/README.md) for all command-line options
+
+---
+
+## 4. Current Test Results
+
+The following directories contain results from different experimental runs:
+
+### `out_pcr/`
+Results from main pCR prediction experiments using graph-based vascular features.
+
+**Contents**:
+- `metrics_rf.json`: Model performance metrics
+- `feature_importance.csv` and `feature_importance_top20.png`: Feature rankings
+- `roc_comparison.png`, `pr_comparison.png`: Performance visualizations
+- `confusion_matrix.png`: Classification results
+
+### `out_pcr_jose/`
+Results from experiments run by Jose (specific configuration/cohort variant).
+
+### `out_pcr_rebecca/`
+Results from experiments run by Rebecca (specific configuration/cohort variant).
+
+**Note**: Each output directory follows the same structure as described in the ML-Pipeline section. Compare metrics across directories to assess model performance under different conditions or data splits.
+
+---
+
+## 5. Helper Tools
+
+### 5.1 Batch Processing (`batch_processing/`)
+
+**Purpose**: Automated batch processing scripts for large-scale vessel segmentation and centerline extraction.
+
+**Key Scripts**:
+- `batch_segmentation.py`: Batch vessel segmentation from `.nii.gz` files
+  - Preprocesses images (normalization, axis rotation)
+  - Runs 3-step segmentation pipeline (preprocessing → breast mask → vessel segmentation)
+  - Supports parallel processing and resume functionality
+- `batch_extract_centerlines.py`: Batch centerline extraction from vessel segmentations
+- `batch_process_centerlines.py`: Batch processing that extracts centerlines and converts to JSON with proper spacing extraction
+- `batch_convert_vtp_to_json.py`: Converts VTP centerline files to JSON format
+
+**Usage**:
+```bash
+# Batch vessel segmentation
+python batch_processing/batch_segmentation.py \
+  --images-dir /path/to/images \
+  --output-dir /path/to/vessel_segmentations \
+  --max-workers 8 \
+  --resume
+
+# Batch centerline extraction
+python batch_processing/batch_extract_centerlines.py
+
+# Batch process centerlines to JSON
+python batch_processing/batch_process_centerlines.py
+```
+
+**See**: [`batch_processing/README.md`](batch_processing/README.md) for detailed documentation
+
+---
+
+### 5.2 SLURM Submit Scripts (`slurm submit scripts/`)
+
+**Purpose**: Pre-configured SLURM batch job scripts for running pipeline components on HPC clusters.
+
+**Key Scripts**:
+- `submit_vessel_segmentation.slurm`: Main vessel segmentation job (1 GPU, 16 CPUs, 128GB RAM)
+- `submit_vessel_segmentation_array.slurm`: Array job for parallel processing (one file per task)
+- `submit_vessel_segmentation_optimized.slurm`: High-resource version for faster processing
+- `submit_centerline_extraction.slurm`: Centerline extraction job
+- `submit_vtp_to_json_conversion.slurm`: VTP to JSON conversion job
+
+**Usage**:
+```bash
+# Submit vessel segmentation
+sbatch "slurm submit scripts/submit_vessel_segmentation.slurm"
+
+# Submit array job (processes all files in parallel)
+sbatch "slurm submit scripts/submit_vessel_segmentation_array.slurm"
+
+# Monitor jobs
+squeue -u $USER
+tail -f logs/vessel-seg-<JOB_ID>.out
+```
+
+**See**: [`slurm submit scripts/README.md`](slurm submit scripts/README.md) for all available scripts and monitoring commands
+
+---
+
+### 5.3 Clinical and Imaging Exploration (`Clinical and Imaging Exploration/`)
+
+**Purpose**: Exploratory data analysis (EDA) notebooks for understanding clinical and imaging data distributions.
+
+**Contents**:
+- `exploration.ipynb`: Jupyter notebook for data exploration
+- `eda_out/`: Generated outputs including:
+  - Figures: age distributions, pCR rates by subtype/laterality/menopausal status, missing data patterns
+  - Tables: summary statistics, missing data summaries
+
+**Usage**: Open `exploration.ipynb` in Jupyter and run cells to regenerate EDA outputs for new cohorts.
+
+---
+
+## Complete Pipeline Workflow
+
+For a new cohort, the typical workflow is:
+
+1. **Data Preparation**:
+   - Organize DCE-MRI images in patient subdirectories
+   - Prepare patient metadata JSON files
+   - Create train/test split CSV
+
+2. **Vessel Segmentation**:
+   ```bash
+   sbatch "slurm submit scripts/submit_vessel_segmentation.slurm"
+   ```
+   Or use batch processing:
+   ```bash
+   python batch_processing/batch_segmentation.py --resume
+   ```
+
+3. **Centerline Extraction**:
+   ```bash
+   python batch_processing/batch_extract_centerlines.py
+   ```
+   Or use SLURM:
+   ```bash
+   sbatch "slurm submit scripts/submit_centerline_extraction.slurm"
+   ```
+
+4. **Convert to JSON** (if needed):
+   ```bash
+   python batch_processing/batch_process_centerlines.py
+   ```
+
+5. **Train Baselines** (for comparison):
+   ```bash
+   # Non-imaging baseline
+   python Non-imaging\ baseline/baseline_pcr_simple.py --json-dir <path> --split-csv <csv> --output <outdir>
+   
+   # Radiomics baseline
+   python radiomics_baseline/radiomics_extract.py <args>
+   python radiomics_baseline/radiomics_train.py <args>
+   ```
+
+6. **Train ML Models**:
+   ```bash
+   python ML-Pipeline/pcr_prediction.py \
+     --feature-dir <centerline_json_dir> \
+     --labels <labels.csv> \
+     --outdir out_pcr_new_cohort
+   ```
+
+7. **Compare Results**: Compare metrics across `out_pcr*` directories to assess model performance.
+
+---
+
+## Style
+
+We use [`ruff`](https://docs.astral.sh/ruff/) to enforce style standards and grade code quality. This is an automated code checker that looks for specific issues in the code that need to be fixed to make it readable and consistent with common standards. `ruff` is run before each commit via [`pre-commit`](https://pre-commit.com/). If it fails, the commit will be blocked and the user will be shown what needs to be changed.
+
+To check for errors locally, first ensure that `pre-commit` is installed by running `pip install pre-commit` followed by `pre-commit install`. Once installed, check for errors by running:
+```
+pre-commit run --all-files
+```
+
+---
+
+## Additional Resources
+
+- [`resources.md`](resources.md): Curated list of project, domain, and general references
+- [`workflow.md`](workflow.md): Detailed workflow documentation
+- [`DataPolicy.md`](DataPolicy.md): Data handling and privacy policies
+
+---
+
+## Notes for Next Cohort
+
+- All scripts support `--resume` flags to safely restart interrupted jobs
+- Use SLURM array jobs (`submit_vessel_segmentation_array.slurm`) for maximum parallelization
+- Check individual README files in each folder for detailed usage and options
+- Compare baseline models (non-imaging, radiomics) against graph-based methods to assess improvement
+- Use `Clinical and Imaging Exploration/` to understand data distributions before modeling
+- All output directories follow consistent structure for easy comparison across experiments
