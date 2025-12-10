@@ -10,7 +10,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent.parent
 SEGMENTATION_DIR = Path("/net/projects2/vanguard/vessel_segmentations")
 OUTPUT_DIR = Path("/net/projects2/vanguard/centerlines")
-SCRIPT_PATH = SCRIPT_DIR / "3dslicer_v07_graph_based.py"
+SCRIPT_PATH = SCRIPT_DIR / "centerline_extraction" / "extract_centerlines.py"
 NUM_FILES = 1004
 
 

@@ -26,7 +26,7 @@ def process_file(input_file: Path, output_json: Path) -> bool:
         print("Step 1: Extracting centerlines...")
         cmd1 = [
             sys.executable,
-            str(SCRIPT_DIR / "3dslicer_v07_graph_based.py"),
+            str(SCRIPT_DIR / "centerline_extraction" / "extract_centerlines.py"),
             str(input_file),
             str(temp_centerline),
             "--no-visualizations",
