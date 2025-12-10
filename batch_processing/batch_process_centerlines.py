@@ -6,10 +6,72 @@ import subprocess
 import sys
 from pathlib import Path
 
+import SimpleITK as sitk
+
 # Get the directory paths
 SCRIPT_DIR = Path(__file__).parent.parent
 VESSEL_SEG_DIR = Path("/net/projects2/vanguard/vessel_segmentations")
+IMAGES_DIR = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/images")
 OUTPUT_DIR = SCRIPT_DIR / "centerline_json_outputs"
+
+
+def get_spacing_from_segmentation_file(seg_file: Path) -> tuple[float, float, float]:
+    """Extract spacing from original .nii.gz file based on segmentation filename.
+
+    Segmentation files are named: {patient_id}_{base_name}_vessel_segmentation.npy
+    Original files are at: {IMAGES_DIR}/{patient_id}/{base_name}.nii.gz
+
+    Args:
+        seg_file: Path to segmentation .npy file
+
+    Returns:
+        Tuple of (x, y, z) spacing in mm, or (1.0, 1.0, 1.0) if not found
+    """
+    # Parse filename: {patient_id}_{base_name}_vessel_segmentation.npy
+    stem = seg_file.stem  # Remove .npy extension
+    if not stem.endswith("_vessel_segmentation"):
+        return (1.0, 1.0, 1.0)
+
+    # Remove "_vessel_segmentation" suffix
+    prefix = stem[: -len("_vessel_segmentation")]
+
+    # Get list of all patient directories to match against
+    if not IMAGES_DIR.exists():
+        print(f"  Warning: Images directory {IMAGES_DIR} does not exist")
+        return (1.0, 1.0, 1.0)
+
+    patient_dirs = [d.name for d in IMAGES_DIR.iterdir() if d.is_dir()]
+
+    # Try different splits: check if prefix starts with any patient_id
+    # and if the remaining part matches a file in that directory
+    parts = prefix.split("_")
+
+    for i in range(1, len(parts)):
+        candidate_patient_id = "_".join(parts[:i])
+        candidate_base_name = "_".join(parts[i:])
+
+        # Check if this patient_id exists as a directory
+        if candidate_patient_id in patient_dirs:
+            original_file = (
+                IMAGES_DIR / candidate_patient_id / f"{candidate_base_name}.nii.gz"
+            )
+            if original_file.exists():
+                try:
+                    img = sitk.ReadImage(str(original_file))
+                    spacing_xyz = img.GetSpacing()
+                    print(f"  Found spacing from {original_file.name}: {spacing_xyz}")
+                    return tuple(spacing_xyz)
+                except Exception as e:
+                    print(
+                        f"  Warning: Could not read spacing from {original_file}: {e}"
+                    )
+                    continue
+
+    # If we can't find the original file, return default spacing
+    print(
+        f"  Warning: Could not find original .nii.gz file for {seg_file.name}, using default spacing (1.0, 1.0, 1.0)"
+    )
+    return (1.0, 1.0, 1.0)
 
 
 def process_file(input_file: Path, output_json: Path) -> bool:
@@ -22,6 +84,12 @@ def process_file(input_file: Path, output_json: Path) -> bool:
     temp_centerline = output_json.parent / f"{output_json.stem}_temp.vtp"
 
     try:
+        # Extract spacing from original .nii.gz file
+        print("Step 0: Extracting spacing from original image...")
+        spacing = get_spacing_from_segmentation_file(input_file)
+        spacing_str = f"{spacing[0]} {spacing[1]} {spacing[2]}"
+        print(f"  Using spacing: {spacing_str}")
+
         # Step 1: Extract centerlines
         print("Step 1: Extracting centerlines...")
         cmd1 = [
@@ -53,9 +121,9 @@ def process_file(input_file: Path, output_json: Path) -> bool:
             "--segmentation",
             str(input_file),
             "--spacing",
-            "1.0",
-            "1.0",
-            "1.0",
+            str(spacing[0]),
+            str(spacing[1]),
+            str(spacing[2]),
         ]
         result2 = subprocess.run(cmd2, capture_output=True, text=True)  # noqa: S603
 

@@ -321,6 +321,13 @@ def main() -> None:
         help="Resume processing, skip already processed files",
     )
 
+    parser.add_argument(
+        "--file-index",
+        type=int,
+        default=None,
+        help="Process only the file at this index in the sorted list (for SLURM array jobs)",
+    )
+
     args = parser.parse_args()
 
     # Create output directory
@@ -330,11 +337,26 @@ def main() -> None:
     print(f"Finding .nii.gz files in {args.images_dir}...")
     nii_files = find_nii_files(args.images_dir)
 
+    # Sort files for reproducible ordering
+    nii_files = sorted(nii_files, key=lambda x: (x[0], str(x[1])))
+
     if args.patient_limit:
         nii_files = nii_files[: args.patient_limit]
         print(f"Limited to first {args.patient_limit} files for testing")
 
     print(f"Found {len(nii_files)} .nii.gz files to process")
+
+    # If file-index is specified, process only that file (for SLURM array jobs)
+    # Do this BEFORE resume filtering so we can check if the specific file was already processed
+    if args.file_index is not None:
+        if args.file_index < 0 or args.file_index >= len(nii_files):
+            print(
+                f"Error: file-index {args.file_index} is out of range (0-{len(nii_files)-1})"
+            )
+            return [], []
+
+        nii_files = [nii_files[args.file_index]]
+        print(f"Processing single file at index {args.file_index}: {nii_files[0][0]}")
 
     # Filter out already processed files if resuming
     if args.resume:
@@ -346,11 +368,16 @@ def main() -> None:
             if f"{patient_id}_{Path(file_path).name.replace('.nii.gz', '')}_vessel_segmentation.npy"
             not in existing_files
         ]
-        print(
-            f"Resuming: {len(nii_files)} files remaining (skipped {original_count - len(nii_files)} already processed)"
-        )
+        skipped_count = original_count - len(nii_files)
+        if skipped_count > 0:
+            print(
+                f"Resuming: {len(nii_files)} files remaining (skipped {skipped_count} already processed)"
+            )
+        if len(nii_files) == 0:
+            print("All files already processed, exiting")
+            return [], []
 
-    # Prepare arguments for parallel processing
+    # Prepare arguments for processing
     process_args = [
         (
             patient_id,
@@ -363,28 +390,51 @@ def main() -> None:
         for patient_id, file_path in nii_files
     ]
 
-    # Process files in parallel
+    # Process files
     successful_files = []
     failed_files = []
 
     start_time = time.time()
 
-    with ProcessPoolExecutor(max_workers=args.max_workers) as executor:
-        # Submit all tasks
-        future_to_patient = {
-            executor.submit(process_single_file, arg): arg[0] for arg in process_args
-        }
+    # If processing a single file (SLURM array job), don't use ProcessPoolExecutor
+    if args.file_index is not None:
+        # Process single file directly
+        (
+            patient_id,
+            file_path,
+            temp_dir,
+            output_dir,
+            breast_model_path,
+            vessel_model_path,
+        ) = process_args[0]
+        result = process_single_file(process_args[0])
+        patient_id, success, output_path = result
 
-        # Process completed tasks
-        for i, future in enumerate(as_completed(future_to_patient), 1):
-            patient_id, success, output_path = future.result()
+        if success:
+            successful_files.append(output_path)
+            print(f"✓ {patient_id}: {output_path}")
+        else:
+            failed_files.append(patient_id)
+            print(f"✗ {patient_id}: Failed")
+    else:
+        # Process multiple files in parallel
+        with ProcessPoolExecutor(max_workers=args.max_workers) as executor:
+            # Submit all tasks
+            future_to_patient = {
+                executor.submit(process_single_file, arg): arg[0]
+                for arg in process_args
+            }
 
-            if success:
-                successful_files.append(output_path)
-                print(f"[{i}/{len(nii_files)}] ✓ {patient_id}: {output_path}")
-            else:
-                failed_files.append(patient_id)
-                print(f"[{i}/{len(nii_files)}] ✗ {patient_id}: Failed")
+            # Process completed tasks
+            for i, future in enumerate(as_completed(future_to_patient), 1):
+                patient_id, success, output_path = future.result()
+
+                if success:
+                    successful_files.append(output_path)
+                    print(f"[{i}/{len(nii_files)}] ✓ {patient_id}: {output_path}")
+                else:
+                    failed_files.append(patient_id)
+                    print(f"[{i}/{len(nii_files)}] ✗ {patient_id}: Failed")
 
     end_time = time.time()
 

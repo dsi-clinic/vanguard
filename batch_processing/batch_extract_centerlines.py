@@ -11,13 +11,12 @@ SCRIPT_DIR = Path(__file__).parent.parent
 SEGMENTATION_DIR = Path("/net/projects2/vanguard/vessel_segmentations")
 OUTPUT_DIR = Path("/net/projects2/vanguard/centerlines")
 SCRIPT_PATH = SCRIPT_DIR / "centerline_extraction" / "extract_centerlines.py"
-NUM_FILES = 1004
 
 
 def main() -> None:
-    """Extract centerlines from first N vessel segmentations."""
+    """Extract centerlines from all vessel segmentations."""
     # Get list of segmentation files
-    seg_files = sorted(SEGMENTATION_DIR.glob("*.npy"))[:NUM_FILES]
+    seg_files = sorted(SEGMENTATION_DIR.glob("*.npy"))
 
     if len(seg_files) == 0:
         print("No segmentation files found!")
