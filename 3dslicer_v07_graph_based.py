@@ -38,6 +38,12 @@ from vtkmodules.vtkIOXML import vtkXMLPolyDataWriter
 # Constants
 DIMENSIONS_3D = 3
 THRESHOLD_DEFAULT = 0.5
+NUMPY_4D_DIMENSION = 4
+MIN_DOWNSAMPLE_DIMENSION = 2
+MIN_NEIGHBORS_FOR_JUNCTION = 2
+MAX_NEIGHBORS_FOR_ENDPOINT = 1
+CANAL_NEIGHBORS = 2
+MULTI_LABEL_THRESHOLD = 2
 
 # Visualization optimization settings
 VIZ_N_FRAMES = 60  # Reduced from 120 for faster generation
@@ -322,6 +328,12 @@ def _connect_nearest_islands_optimized(
 ) -> np.ndarray:
     """Connect sparse islands in skeleton using optimized batch connection method.
 
+    Args:
+        skeleton: Binary skeleton array (z, y, x).
+        spacing: Voxel spacing (z, y, x) in mm.
+        max_distance_mm: Maximum distance to connect islands (mm).
+        max_endpoints_per_component: Maximum endpoints to sample per component.
+
     OPTIMIZATIONS (v05):
     - Batch connection: Find all valid connections in one pass, connect them all
     - Precomputed endpoints: Find all endpoints once, group by component
@@ -531,7 +543,7 @@ def _connect_nearest_islands_optimized(
         for target_label, (
             (ep_z, ep_y, ep_x),
             (target_x, target_y, target_z),
-            dist,
+            _dist,
         ) in connections_to_make:
             # Check if components are still separate (using union-find)
             target_idx = label_to_idx.get(target_label)
@@ -730,7 +742,9 @@ def _visualize_intermediate_stage(
     )
 
 
-def _record_pyvista_rotation(plotter: pv.Plotter, output_path: Path, stage: str) -> bool:
+def _record_pyvista_rotation(
+    plotter: pv.Plotter, output_path: Path, stage: str
+) -> bool:
     """Capture rotating PyVista frames and encode with imageio."""
     try:
         import imageio as iio
@@ -791,7 +805,7 @@ def _render_isosurface_visualization(
         data = volume.astype(np.float32, copy=False)
         max_cells = 6_000_000  # limit cells to reduce VTK crashes
         downsample_factor = 1
-        while data.size > max_cells and min(data.shape) >= 2:
+        while data.size > max_cells and min(data.shape) >= MIN_DOWNSAMPLE_DIMENSION:
             data = data[::2, ::2, ::2]
             downsample_factor *= 2
         if downsample_factor > 1:
@@ -945,6 +959,15 @@ def _skel2graph3d(
 ) -> tuple[list[dict], list[dict]]:
     """Convert 3D skeleton to graph structure (nodes and links) - Python version of Skel2Graph3D.
 
+    Args:
+        skeleton_array: Binary skeleton array.
+        z_coords: Z coordinates of skeleton points.
+        y_coords: Y coordinates of skeleton points.
+        x_coords: X coordinates of skeleton points.
+        coord_to_idx: Mapping from (z, y, x) coordinates to point indices.
+        graph: Adjacency list representation of skeleton graph.
+        min_branch_length: Minimum branch length to keep.
+
     Based on Matlab Skel2Graph3D.m:
     - Identifies nodes (junctions with >2 neighbors, endpoints with 1 neighbor)
     - Follows links from nodes to other nodes
@@ -972,11 +995,11 @@ def _skel2graph3d(
 
     for i in range(n_points):
         num_neighbors = len(graph[i])
-        if num_neighbors > 2:
+        if num_neighbors > MIN_NEIGHBORS_FOR_JUNCTION:
             junction_voxels.append(i)
         elif num_neighbors == 1:
             endpoint_voxels.append(i)
-        elif num_neighbors == 2:
+        elif num_neighbors == CANAL_NEIGHBORS:
             canal_voxels.append(i)
 
     # Group adjacent junction voxels into nodes (like Matlab Skel2Graph3D)
@@ -1343,7 +1366,7 @@ def _load_and_binarize_image(
         spacing_zyx = (1.0, 1.0, 1.0)
 
         if extract_label is not None:
-            if data.ndim == 4:
+            if data.ndim == NUMPY_4D_DIMENSION:
                 print(
                     "Detected multi-channel NumPy volume; collapsing via argmax for label extraction."
                 )
@@ -1369,7 +1392,7 @@ def _load_and_binarize_image(
             print(f"  Original volume shape (z,y,x): {original_volume.shape}")
             binary_volume = original_volume
         else:
-            if data.ndim == 4:
+            if data.ndim == NUMPY_4D_DIMENSION:
                 if npy_channel < 0 or npy_channel >= data.shape[0]:
                     raise ValueError(
                         f"Requested channel {npy_channel} but input only has {data.shape[0]} channels."
@@ -1420,7 +1443,7 @@ def _load_and_binarize_image(
             raise ValueError(f"Expected 3D NRRD, got shape {tuple(data.shape)}")
 
         unique_values = np.unique(data)
-        if unique_values.size > 2 and extract_label is None:
+        if unique_values.size > MULTI_LABEL_THRESHOLD and extract_label is None:
             raise ValueError(
                 "Multi-label NRRD detected; specify --extract-label to choose the vessel label."
             )
