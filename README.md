@@ -48,9 +48,27 @@ This repository contains a complete pipeline for predicting pathologic complete 
 
 ---
 
-## 1. Baseline Models
+## 1. Data
 
-### 1.1 Non-Imaging Baseline (`Non-imaging baseline/`)
+### 1.1 MAMA-MIA Dataset
+This project utilizes the **MAMA-MIA (Multi-Center Breast Cancer DCE-MRI Benchmark)** dataset, a comprehensive collection of breast cancer imaging and clinical data designed to advance AI research in tumor segmentation and treatment response prediction.
+
+The dataset aggregates data from **1,506 patients** across four major clinical collections (I-SPY1, I-SPY2, NACT-Pilot, and Duke-Breast-Cancer-MRI). It provides a robust foundation for analyzing vascular networks due to its high-quality expert annotations and harmonized clinical variables.
+
+**Key Features:**
+* **Imaging Data:** Dynamic Contrast-Enhanced MRI (DCE-MRI) scans for 1,506 patients, including multiple time points to track changes during therapy.
+* **Annotations:** Expert-validated 3D tumor segmentations for precise localization of the tumor volume.
+* **Clinical Variables:** Includes 49 harmonized variables such as patient age, menopausal status, tumor subtypes, and treatment outcomes (specifically Pathologic Complete Response or pCR).
+
+**Link to Dataset:**
+[https://github.com/LidiaGarrucho/MAMA-MIA](https://github.com/LidiaGarrucho/MAMA-MIA)
+
+**Reference:**
+> Lidia Garrucho et al. MAMA-MIA: A large-scale multi-center breast cancer DCE-MRI benchmark dataset with expert segmentations. Synapse https://doi.org/10.7303/SYN60868042 (2024).
+
+## 2. Baseline Models
+
+### 2.1 Non-Imaging Baseline (`Non-imaging baseline/`)
 
 **Purpose**: Predict pCR using only demographic and clinical metadata features (no imaging data).
 
@@ -83,7 +101,7 @@ python Non-imaging\ baseline/feature_importance.py \
 
 ---
 
-### 1.2 Radiomics Baseline (`radiomics_baseline/`)
+### 2.2 Radiomics Baseline (`radiomics_baseline/`)
 
 **Purpose**: Predict pCR using PyRadiomics features extracted from MRI volumes and tumor masks.
 
@@ -128,9 +146,9 @@ python radiomics_baseline/radiomics_train.py \
 
 ---
 
-## 2. Centerline Extraction Methods
+## 3. Centerline Extraction Methods
 
-### 2.1 Skeleton3D (`skeleton3d/`)
+### 3.1 Skeleton3D (`skeleton3d/`)
 
 **Purpose**: Topology-preserving 3D skeletonization algorithm for vessel segmentation volumes.
 
@@ -150,7 +168,7 @@ python radiomics_baseline/radiomics_train.py \
 
 ---
 
-### 2.2 Centerline Extraction (`centerline_extraction/`)
+### 3.2 Centerline Extraction (`centerline_extraction/`)
 
 **Purpose**: Graph-based centerline extraction with island connection and graph structure building.
 
@@ -194,7 +212,7 @@ python centerline_extraction/run_centerline_extraction.py \
 
 ---
 
-## 3. ML Testbed (`ML-Pipeline/`)
+## 4. ML Testbed (`ML-Pipeline/`)
 
 **Purpose**: Machine learning pipeline for training and evaluating pCR prediction models on graph-based vascular features.
 
@@ -241,12 +259,9 @@ python ML-Pipeline/pcr_prediction.py \
 
 ---
 
-## 4. Current Test Results
+## 5. Current Test Results
 
 The following directories contain results from different experimental runs:
-
-### `out_pcr/`
-Results from main pCR prediction experiments using graph-based vascular features.
 
 **Contents**:
 - `metrics_rf.json`: Model performance metrics
@@ -264,9 +279,9 @@ Results from experiments run by Rebecca (specific configuration/cohort variant).
 
 ---
 
-## 5. Helper Tools
+## 6. Helper Tools
 
-### 5.1 Batch Processing (`batch_processing/`)
+### 6.1 Batch Processing (`batch_processing/`)
 
 **Purpose**: Automated batch processing scripts for large-scale vessel segmentation and centerline extraction.
 
@@ -299,7 +314,7 @@ python batch_processing/batch_process_centerlines.py
 
 ---
 
-### 5.2 SLURM Submit Scripts (`slurm submit scripts/`)
+### 6.2 SLURM Submit Scripts (`slurm submit scripts/`)
 
 **Purpose**: Pre-configured SLURM batch job scripts for running pipeline components on HPC clusters.
 
@@ -327,7 +342,7 @@ tail -f logs/vessel-seg-<JOB_ID>.out
 
 ---
 
-### 5.3 Clinical and Imaging Exploration (`Clinical and Imaging Exploration/`)
+### 6.3 Clinical and Imaging Exploration (`Clinical and Imaging Exploration/`)
 
 **Purpose**: Exploratory data analysis (EDA) notebooks for understanding clinical and imaging data distributions.
 
@@ -341,7 +356,7 @@ tail -f logs/vessel-seg-<JOB_ID>.out
 
 ---
 
-## Complete Pipeline Workflow
+## Pipeline Workflow
 
 For a new cohort, the typical workflow is:
 
