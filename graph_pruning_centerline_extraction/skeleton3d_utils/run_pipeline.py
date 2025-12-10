@@ -8,7 +8,9 @@ def main() -> None:
     """Parse CLI arguments, skip existing outputs, and call the pipeline."""
     project_root = Path(__file__).resolve().parents[2]
     sys.path.append(str(project_root / "graph_pruning_centerline_extraction"))
-    sys.path.append(str(project_root / "graph_pruning_centerline_extraction" / "skeleton3d_utils"))
+    sys.path.append(
+        str(project_root / "graph_pruning_centerline_extraction" / "skeleton3d_utils")
+    )
 
     from skeleton3d_utils.pipeline import process_vessel_image
 
