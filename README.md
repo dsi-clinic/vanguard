@@ -71,7 +71,7 @@ The dataset aggregates data from **1,506 patients** across four major clinical c
 
 ## 2. Baseline Models
 
-### 2.1 Non-Imaging Baseline (`Non-imaging baseline/`)
+### 2.1 Non-Imaging Baseline (`non_imaging_baseline/`)
 
 **Purpose**: Predict pCR using only demographic and clinical metadata features (no imaging data).
 
@@ -87,13 +87,13 @@ The dataset aggregates data from **1,506 patients** across four major clinical c
 **Usage**:
 ```bash
 # Train baseline model
-python Non-imaging\ baseline/baseline_pcr_simple.py \
+python non_imaging_baseline/baseline_pcr_simple.py \
   --json-dir /path/to/patient_info_files \
   --split-csv splits_v1.csv \
   --output outdir
 
 # Analyze feature importance
-python Non-imaging\ baseline/feature_importance.py \
+python non_imaging_baseline/feature_importance.py \
   --model outdir/model.pkl \
   --json-dir /path/to/patient_info_files \
   --split-csv splits_v1.csv \
@@ -151,40 +151,41 @@ python radiomics_baseline/radiomics_train.py \
 
 ## 3. Centerline Extraction Methods
 
-### 3.1 Skeleton3D (`skeleton3d/`)
+### 3.1 Graph Pruning (`graph_pruning_centerline_extraction/`)
 
-**Purpose**: Topology-preserving 3D skeletonization algorithm for vessel segmentation volumes.
+**Purpose**: Topology-preserving 3D skeletonization algorithm for vessel segmentation volumes using graph pruning methodology.
 
 **Methodology**:
 - Iteratively removes voxels from binary vessel masks while preserving 26-connectivity
 - Each voxel is treated as a node with 26-connected neighbors
 - Produces skeleton volumes and optional graph representations
+- Uses graph-based pruning to maintain vessel topology
 
 **Key Features**:
 - Preserves vessel topology (no breaking connectivity)
 - Can export to JSON or other formats for downstream analysis
 - Includes visualization utilities for skeleton inspection
 
-**Usage**: See [`skeleton3d/README.md`](skeleton3d/README.md) for implementation details and API
+**Usage**: See [`graph_pruning_centerline_extraction/README.md`](graph_pruning_centerline_extraction/README.md) for implementation details and API
 
-**When to use**: When you need a simple, topology-preserving skeletonization without island connection or graph building.
+**When to use**: When you need a topology-preserving skeletonization with graph-based pruning for downstream analysis.
 
 ---
 
-### 3.2 Centerline Extraction (`centerline_extraction/`)
+### 3.2 Thinning-Based (`thinning_based_centerline_extraction/`)
 
-**Purpose**: Graph-based centerline extraction with island connection and graph structure building.
+**Purpose**: Thinning-based centerline extraction with island connection and graph structure building.
 
 **Methodology**:
 1. **Binarizes** segmentation at specified threshold
-2. **Skeletonizes** binary mask to extract 3D skeleton
+2. **Skeletonizes** binary mask to extract 3D skeleton using thinning algorithm
 3. **Connects fragmented islands** using k-nearest neighbor search (optional)
 4. **Builds graph structure** from skeleton (nodes = branch points, edges = vessel segments)
 5. **Extracts centerlines** as polylines from graph structure
 6. **Outputs** centerlines as VTK PolyData (`.vtp`) or JSON format
 
 **Key Features**:
-- Graph-based extraction using 26-connectivity (based on Matlab Skel2Graph3D)
+- Thinning-based extraction using 26-connectivity (based on Matlab Skel2Graph3D)
 - Island connection to heal fragmented skeletons before graph building
 - Supports multiple input formats: `.nii.gz`, `.nrrd`, `.npy` (4D arrays with channel selection)
 - Off-screen PyVista visualizations for debugging
@@ -196,14 +197,14 @@ python radiomics_baseline/radiomics_train.py \
 **Usage**:
 ```bash
 # Extract centerlines only
-python centerline_extraction/extract_centerlines.py \
+python thinning_based_centerline_extraction/extract_centerlines.py \
   vessel_segmentation.npy \
   output_centerlines.vtp \
   --no-visualizations \
   --max-connection-distance-mm 15.0
 
 # Extract and convert to JSON in one step
-python centerline_extraction/run_centerline_extraction.py \
+python thinning_based_centerline_extraction/run_centerline_extraction.py \
   vessel_segmentation.npy \
   output_centerlines.json \
   --spacing 1.0 1.0 1.0
@@ -211,7 +212,7 @@ python centerline_extraction/run_centerline_extraction.py \
 
 **When to use**: When you need robust centerline extraction with island connection and graph structure for downstream ML analysis.
 
-**See**: [`centerline_extraction/README.md`](centerline_extraction/README.md) for detailed options and examples
+**See**: [`thinning_based_centerline_extraction/README.md`](thinning_based_centerline_extraction/README.md) for detailed options and examples
 
 ---
 
@@ -262,23 +263,18 @@ python ML-Pipeline/pcr_prediction.py \
 
 ---
 
-## 5. Current Test Results
+## 5. Output Directories
 
-The following directories contain results from different experimental runs:
+**Note**: Output directories are excluded from git (see `.gitignore`). The following directories contain outputs:
 
-**Contents**:
-- `metrics_rf.json`: Model performance metrics
-- `feature_importance.csv` and `feature_importance_top20.png`: Feature rankings
-- `roc_comparison.png`, `pr_comparison.png`: Performance visualizations
-- `confusion_matrix.png`: Classification results
+- `graph_pruning_outdir/`: Graph pruning method results (excluded from git)
+- `thinning_based_outdir/`: Thinning-based method results (excluded from git)
 
-### `graph_pruning_outdir/`
-Results from experiments run by Jose (specific configuration/cohort variant).
+**Full paths to reproducible outputs** (if needed for reference):
+- Graph pruning results: `/net/projects2/vanguard/output/skeleton_to_graph_output/` (if regenerated)
+- Centerline JSON outputs: `/net/projects2/vanguard/centerline_json_outputs/` (if regenerated)
 
-### `thinning_based_outdir/`
-Results from experiments run by Rebecca (specific configuration/cohort variant).
-
-**Note**: Each output directory follows the same structure as described in the ML-Pipeline section. Compare metrics across directories to assess model performance under different conditions or data splits.
+**Note**: To reproduce results, run the pipeline with the same configuration. Output directories follow consistent structure for easy comparison across experiments.
 
 ---
 
@@ -317,7 +313,7 @@ python batch_processing/batch_process_centerlines.py
 
 ---
 
-### 6.2 SLURM Submit Scripts (`slurm submit scripts/`)
+### 6.2 SLURM Submit Scripts (`slurm_submit_scripts/`)
 
 **Purpose**: Pre-configured SLURM batch job scripts for running pipeline components on HPC clusters.
 
@@ -331,21 +327,21 @@ python batch_processing/batch_process_centerlines.py
 **Usage**:
 ```bash
 # Submit vessel segmentation
-sbatch "slurm submit scripts/submit_vessel_segmentation.slurm"
+sbatch slurm_submit_scripts/submit_vessel_segmentation.slurm
 
 # Submit array job (processes all files in parallel)
-sbatch "slurm submit scripts/submit_vessel_segmentation_array.slurm"
+sbatch slurm_submit_scripts/submit_vessel_segmentation_array.slurm
 
 # Monitor jobs
 squeue -u $USER
 tail -f logs/vessel-seg-<JOB_ID>.out
 ```
 
-**See**: [`slurm submit scripts/README.md`](slurm submit scripts/README.md) for all available scripts and monitoring commands
+**See**: [`slurm_submit_scripts/README.md`](slurm_submit_scripts/README.md) for all available scripts and monitoring commands
 
 ---
 
-### 6.3 Clinical and Imaging Exploration (`Clinical and Imaging Exploration/`)
+### 6.3 Clinical and Imaging Exploration (`clinical_and_imaging_exploration/`)
 
 **Purpose**: Exploratory data analysis (EDA) notebooks for understanding clinical and imaging data distributions.
 
@@ -361,55 +357,124 @@ tail -f logs/vessel-seg-<JOB_ID>.out
 
 ## Pipeline Workflow
 
-For a new cohort, the typical workflow is:
+### End-to-End Example
 
-1. **Data Preparation**:
-   - Organize DCE-MRI images in patient subdirectories
-   - Prepare patient metadata JSON files
-   - Create train/test split CSV
+This example shows a complete walkthrough from raw data to model training using relative paths:
 
-2. **Vessel Segmentation**:
-   ```bash
-   sbatch "slurm submit scripts/submit_vessel_segmentation.slurm"
-   ```
-   Or use batch processing:
-   ```bash
-   python batch_processing/batch_segmentation.py --resume
-   ```
+**Expected input folder layout:**
+```
+vanguard/
+├── data/
+│   ├── images/              # DCE-MRI images (patient subdirectories)
+│   │   └── DUKE_001/
+│   │       ├── DUKE_001_0001.nii.gz
+│   │       └── DUKE_001_0002.nii.gz
+│   ├── masks/               # Tumor segmentations
+│   │   └── DUKE_001.nii.gz
+│   └── metadata/            # Patient JSON files
+│       └── DUKE_001.json
+├── splits_v1.csv           # Train/test split
+└── labels.csv              # pCR labels
+```
 
-3. **Centerline Extraction**:
-   ```bash
-   python batch_processing/batch_extract_centerlines.py
-   ```
-   Or use SLURM:
-   ```bash
-   sbatch "slurm submit scripts/submit_centerline_extraction.slurm"
-   ```
+**Complete pipeline:**
 
-4. **Convert to JSON** (if needed):
+1. **Vessel Segmentation**:
    ```bash
-   python batch_processing/batch_process_centerlines.py
+   python batch_processing/batch_segmentation.py \
+     --images-dir data/images \
+     --output-dir data/vessel_segmentations \
+     --max-workers 4 \
+     --resume
    ```
+   Output: `data/vessel_segmentations/*.npy` (vessel segmentation masks)
 
-5. **Train Baselines** (for comparison):
+2. **Centerline Extraction** (thinning-based method):
+   ```bash
+   python batch_processing/batch_extract_centerlines.py \
+     --input-dir data/vessel_segmentations \
+     --output-dir data/centerlines_vtp \
+     --method thinning
+   ```
+   Or use graph pruning method:
+   ```bash
+   python batch_processing/batch_extract_centerlines.py \
+     --input-dir data/vessel_segmentations \
+     --output-dir data/centerlines_vtp \
+     --method graph_pruning
+   ```
+   Output: `data/centerlines_vtp/*.vtp` (centerline polylines)
+
+3. **Convert to JSON**:
+   ```bash
+   python batch_processing/batch_process_centerlines.py \
+     --input-dir data/centerlines_vtp \
+     --output-dir data/centerlines_json \
+     --spacing 1.0 1.0 1.0
+   ```
+   Output: `data/centerlines_json/*.json` (centerline features)
+
+4. **Train Baselines** (for comparison):
    ```bash
    # Non-imaging baseline
-   python Non-imaging\ baseline/baseline_pcr_simple.py --json-dir <path> --split-csv <csv> --output <outdir>
+   python non_imaging_baseline/baseline_pcr_simple.py \
+     --json-dir data/metadata \
+     --split-csv splits_v1.csv \
+     --output outputs/non_imaging_baseline
    
    # Radiomics baseline
-   python radiomics_baseline/radiomics_extract.py <args>
-   python radiomics_baseline/radiomics_train.py <args>
+   python radiomics_baseline/radiomics_extract.py \
+     --images data/images \
+     --masks data/masks \
+     --labels labels.csv \
+     --split splits_v1.csv \
+     --output outputs/radiomics_features
+   
+   python radiomics_baseline/radiomics_train.py \
+     --train-features outputs/radiomics_features/features_train_final.csv \
+     --test-features outputs/radiomics_features/features_test_final.csv \
+     --labels labels.csv \
+     --output outputs/radiomics_baseline
    ```
 
-6. **Train ML Models**:
+5. **Train ML Models** (graph-based):
    ```bash
    python ML-Pipeline/pcr_prediction.py \
-     --feature-dir <centerline_json_dir> \
-     --labels <labels.csv> \
-     --outdir out_pcr_new_cohort
+     --feature-dir data/centerlines_json \
+     --labels labels.csv \
+     --label-column pcr \
+     --id-column patient_id \
+     --outdir outputs/graph_model \
+     --model rf \
+     --plots \
+     --test-size 0.2
+   ```
+   Output: `outputs/graph_model/metrics_rf.json`, `predictions.csv`, `feature_importance.csv`
+
+6. **Compare Results**: Compare metrics across `outputs/*` directories to assess model performance.
+
+---
+
+### Alternative: Using SLURM
+
+For HPC clusters, use SLURM submit scripts:
+
+1. **Vessel Segmentation**:
+   ```bash
+   sbatch slurm_submit_scripts/submit_vessel_segmentation.slurm
    ```
 
-7. **Compare Results**: Compare metrics across `out_pcr*` directories to assess model performance.
+2. **Centerline Extraction**:
+   ```bash
+   sbatch slurm_submit_scripts/submit_centerline_extraction.slurm
+   ```
+
+3. **Convert to JSON**:
+   ```bash
+   sbatch slurm_submit_scripts/submit_vtp_to_json_conversion.slurm
+   ```
+
+See [`slurm_submit_scripts/README.md`](slurm_submit_scripts/README.md) for detailed SLURM usage.
 
 ---
 
@@ -438,5 +503,5 @@ pre-commit run --all-files
 - Use SLURM array jobs (`submit_vessel_segmentation_array.slurm`) for maximum parallelization
 - Check individual README files in each folder for detailed usage and options
 - Compare baseline models (non-imaging, radiomics) against graph-based methods to assess improvement
-- Use `Clinical and Imaging Exploration/` to understand data distributions before modeling
+- Use `clinical_and_imaging_exploration/` to understand data distributions before modeling
 - All output directories follow consistent structure for easy comparison across experiments
