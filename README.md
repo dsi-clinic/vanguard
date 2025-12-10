@@ -269,10 +269,9 @@ python ML-Pipeline/pcr_prediction.py \
 
 - `graph_pruning_outdir/`: Graph pruning method results (excluded from git)
 - `thinning_based_outdir/`: Thinning-based method results (excluded from git)
-- `output/`: General pipeline outputs (excluded from git)
 
 **Full paths to reproducible outputs** (if needed for reference):
-- Graph pruning results: `/net/projects2/vanguard/output/skeleton_to_graph_output/`
+- Graph pruning results: `/net/projects2/vanguard/output/skeleton_to_graph_output/` (if regenerated)
 - Centerline JSON outputs: `/net/projects2/vanguard/centerline_json_outputs/` (if regenerated)
 
 **Note**: To reproduce results, run the pipeline with the same configuration. Output directories follow consistent structure for easy comparison across experiments.
