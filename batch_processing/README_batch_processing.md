@@ -26,17 +26,7 @@ The batch processing pipeline:
 
 ## Scripts Available
 
-### 1. `quick_batch_test.py` - Quick Testing
-Processes only the first 3 patients for testing.
-
-```bash
-cd /home/ruochun/vanguard
-python quick_batch_test.py
-```
-
-**Output**: `test_breast_masks/` directory with `.npy` files
-
-### 2. `batch_segmentation.py` - Full Processing
+### `batch_segmentation.py` - Batch Processing
 Processes all files with parallel processing and progress tracking.
 
 ```bash
@@ -53,6 +43,9 @@ python batch_processing/batch_segmentation.py --help
 
 **Example Usage**:
 ```bash
+# Quick test with 3 patients (similar to quick_batch_test.py)
+python batch_processing/batch_segmentation.py --patient-limit 3 --output-dir /home/ruochun/vanguard/test_breast_masks
+
 # Test with 10 patients
 python batch_processing/batch_segmentation.py --patient-limit 10 --output-dir /home/ruochun/vanguard/test_masks
 
@@ -63,7 +56,8 @@ python batch_processing/batch_segmentation.py --max-workers 8 --cleanup
 python batch_processing/batch_segmentation.py \
     --images-dir /path/to/images \
     --output-dir /path/to/output \
-    --model-path /path/to/breast_model.pth
+    --breast-model-path /path/to/breast_model.pth \
+    --vessel-model-path /path/to/vessel_model.pth
 ```
 
 ## Output Format
