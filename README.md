@@ -15,6 +15,9 @@ This project represents vascular structures as graphs, where vessel branch point
 - Compare GNN performance to baseline models using traditional imaging features
 - Identify which vascular features are most predictive of patient-specific treatment response
 
+## Team
+- Bella Summe, Julia Luo, José Cardona Arias, Rebecca Wu
+
 ## Installation
 
 Micromamba install (one time):
