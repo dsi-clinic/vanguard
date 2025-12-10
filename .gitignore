@@ -153,3 +153,14 @@ out_pcr_rebecca/features_join_preview.csv
 CoW_Centerline_Extraction/
 jose_json_outputs/
 out_pcr_rebecca/
+
+# Output directories (keep only small examples in git)
+output/
+graph_pruning_outdir/
+thinning_based_outdir/
+centerline_outputs/
+test_outputs/
+*.vtp
+*.vtk
+*-out/
+logs/

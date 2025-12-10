@@ -27,5 +27,5 @@ echo "Processing TASK_ID $TASK_ID / $TOTAL: $INPUT_FILE"
 
 # 👇 IMPORTANT: use the python from your vanguard env here
 /home/jmcarias/micromamba/envs/vanguard/bin/python \
-    /home/jmcarias/vanguard/notebooks/skeleton3d_utils/run_pipeline.py \
+    /home/jmcarias/vanguard/graph_pruning_centerline_extraction/skeleton3d_utils/run_pipeline.py \
     "$INPUT_FILE" "$OUTPUT_DIR" 0.5
