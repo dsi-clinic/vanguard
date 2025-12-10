@@ -252,7 +252,7 @@ def main() -> None:
     """Main function to run batch segmentation processing."""
     # Get script directory for relative paths
     script_dir = Path(__file__).parent.parent
-    
+
     parser = argparse.ArgumentParser(
         description="Batch process all .nii.gz files and extract vessel segmentations (STEP-3)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -278,13 +278,23 @@ def main() -> None:
 
     parser.add_argument(
         "--breast-model-path",
-        default=str(script_dir / "3D-Breast-FGT-and-Blood-Vessel-Segmentation" / "trained_models" / "breast_model.pth"),
+        default=str(
+            script_dir
+            / "3D-Breast-FGT-and-Blood-Vessel-Segmentation"
+            / "trained_models"
+            / "breast_model.pth"
+        ),
         help="Path to the breast segmentation model (STEP-2)",
     )
 
     parser.add_argument(
         "--vessel-model-path",
-        default=str(script_dir / "3D-Breast-FGT-and-Blood-Vessel-Segmentation" / "trained_models" / "dv_model.pth"),
+        default=str(
+            script_dir
+            / "3D-Breast-FGT-and-Blood-Vessel-Segmentation"
+            / "trained_models"
+            / "dv_model.pth"
+        ),
         help="Path to the vessel segmentation model (STEP-3)",
     )
 
