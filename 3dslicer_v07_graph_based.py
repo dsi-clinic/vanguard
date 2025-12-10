@@ -114,7 +114,7 @@ except Exception:  # noqa: S110
 # Set theme (optional, won't affect headless rendering)
 try:
     pv.set_plot_theme("dark")
-except Exception:
+except Exception:  # noqa: S110
     pass
 
 print("PyVista loaded with offscreen rendering enabled")
@@ -125,18 +125,18 @@ __all__ = ["extract_adaptive_centerlines"]
 class UnionFind:
     """Union-Find (Disjoint Set) data structure for tracking component merges."""
 
-    def __init__(self, n: int):
+    def __init__(self: UnionFind, n: int) -> None:
         """Initialize with n elements."""
         self.parent = np.arange(n, dtype=np.int32)
         self.rank = np.zeros(n, dtype=np.int32)
 
-    def find(self, x: int) -> int:
+    def find(self: UnionFind, x: int) -> int:
         """Find root of x with path compression."""
         if self.parent[x] != x:
             self.parent[x] = self.find(self.parent[x])
         return self.parent[x]
 
-    def union(self, x: int, y: int) -> bool:
+    def union(self: UnionFind, x: int, y: int) -> bool:
         """Union x and y. Returns True if they were in different sets."""
         root_x = self.find(x)
         root_y = self.find(y)
@@ -155,7 +155,7 @@ class UnionFind:
 
         return True
 
-    def get_components(self) -> dict[int, set[int]]:
+    def get_components(self: UnionFind) -> dict[int, set[int]]:
         """Get all components as a dictionary mapping root to set of elements."""
         components = {}
         for i in range(len(self.parent)):
@@ -263,7 +263,7 @@ def _skeletonize_binary_volume(volume: np.ndarray, pad: int = 1) -> np.ndarray:
 
 def _ensure_zyx(volume: np.ndarray, name: str = "") -> np.ndarray:
     """Ensure volume is arranged as (z, y, x)."""
-    if volume.ndim != 3:
+    if volume.ndim != DIMENSIONS_3D:
         return volume
     original_shape = volume.shape
     if volume.shape[0] == volume.shape[1] and volume.shape[2] != volume.shape[0]:
@@ -730,7 +730,7 @@ def _visualize_intermediate_stage(
     )
 
 
-def _record_pyvista_rotation(plotter, output_path: Path, stage: str) -> bool:
+def _record_pyvista_rotation(plotter: pv.Plotter, output_path: Path, stage: str) -> bool:
     """Capture rotating PyVista frames and encode with imageio."""
     try:
         import imageio as iio
@@ -1001,7 +1001,7 @@ def _skel2graph3d(
         visited = set()
         junction_components = []
 
-        def dfs_junction(start_idx: int, component: list[int]):
+        def dfs_junction(start_idx: int, component: list[int]) -> None:
             stack = [start_idx]
             while stack:
                 node_idx = stack.pop()
