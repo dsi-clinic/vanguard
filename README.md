@@ -254,10 +254,10 @@ Results from main pCR prediction experiments using graph-based vascular features
 - `roc_comparison.png`, `pr_comparison.png`: Performance visualizations
 - `confusion_matrix.png`: Classification results
 
-### `out_pcr_jose/`
+### `graph_pruning_outdir/`
 Results from experiments run by Jose (specific configuration/cohort variant).
 
-### `out_pcr_rebecca/`
+### `thinning_based_outdir/`
 Results from experiments run by Rebecca (specific configuration/cohort variant).
 
 **Note**: Each output directory follows the same structure as described in the ML-Pipeline section. Compare metrics across directories to assess model performance under different conditions or data splits.
