@@ -1,0 +1,35 @@
+{
+  "model": "rf",
+  "scores_flipped": false,
+  "best_threshold": 0.6,
+  "splits": {
+    "train_n": 4,
+    "val_n": 3,
+    "test_n": 4,
+    "test_size": 0.3,
+    "val_size": 0.3
+  },
+  "cross_val": {
+    "f1_mean": 0.8,
+    "precision_mean": 0.8,
+    "recall_mean": 0.8,
+    "roc_auc_mean": 0.8,
+    "ap_mean": 0.8599999999999999
+  },
+  "val": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "n": 3,
+    "positive_rate": 0.3333333333333333
+  },
+  "test": {
+    "precision": 0.5,
+    "recall": 0.5,
+    "f1": 0.5,
+    "n": 4,
+    "positive_rate": 0.5,
+    "roc_auc": 0.5,
+    "ap": 0.5833333333333333
+  }
+}

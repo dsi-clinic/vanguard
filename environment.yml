@@ -1,0 +1,17 @@
+name: vanguard
+channels:
+  - conda-forge
+  - radiomics
+
+dependencies:
+  - python=3.11
+  - pip
+  - pyradiomics
+  - pytorch-gpu=2.7.*
+  - torchvision=0.22.*
+  - cuda-version=12.6
+  - imageio
+  - imageio-ffmpeg
+
+  - pip:
+      - -r requirements.txt
