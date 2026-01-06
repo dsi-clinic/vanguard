@@ -23,3 +23,7 @@ numpy~=2.2
 joblib~=1.5
 PyYAML~=6.0
 SimpleITK~=2.5
+vtk~=9.5
+numba~=0.62
+plotly~=6.5
+networkx~=3.6
