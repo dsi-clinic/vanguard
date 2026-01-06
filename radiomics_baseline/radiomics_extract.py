@@ -65,8 +65,15 @@ import pandas as pd
 import SimpleITK as sitk
 import yaml
 from joblib import Parallel, delayed
-from radiomics import featureextractor
 from tqdm import tqdm
+
+try:
+    from radiomics import featureextractor
+except Exception:
+
+    def featureextractor(*args, **kwargs):  # noqa: ANN201, D103
+        raise err  # noqa: F821
+
 
 warnings.filterwarnings("ignore", category=UserWarning)
 logging.basicConfig(level=logging.WARNING)

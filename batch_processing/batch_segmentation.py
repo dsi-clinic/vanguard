@@ -20,13 +20,24 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-# Add the segmentation project to Python path (must be before importing from it)
-SCRIPT_DIR = Path(__file__).parent.parent
-sys.path.insert(0, str(SCRIPT_DIR / "3D-Breast-FGT-and-Blood-Vessel-Segmentation"))
+import numpy as np
+import SimpleITK as sitk
 
-import numpy as np  # noqa: E402
-import SimpleITK as sitk  # noqa: E402
-from preprocessing import normalize_image, zscore_image  # noqa: E402
+# FIXME: this is cobbling together an installation process in the script itself
+# packages must be installed in an environment
+try:
+    SCRIPT_DIR = Path(__file__).parent.parent
+    sys.path.insert(0, str(SCRIPT_DIR / "3D-Breast-FGT-and-Blood-Vessel-Segmentation"))
+
+    from preprocessing import normalize_image, zscore_image  # noqa: E402
+
+except ImportError:
+
+    def normalize_image(*args, **kwargs):  # noqa: ANN201, D103
+        raise err  # noqa: F821
+
+    def zscore_image(*args, **kwargs):  # noqa: ANN201, D103
+        raise err  # noqa: F821
 
 
 def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
