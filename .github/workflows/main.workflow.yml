@@ -11,7 +11,8 @@ on:
       - dev
 
 jobs:
-  linter:
+  tests:
+    name: PR Tests
     runs-on: ubuntu-latest
     steps:
 
@@ -35,4 +36,4 @@ jobs:
         uses: pre-commit/action@v3.0.1
 
       - name: Test with pytest
-        run: python -m pytest
+        run: python -m pytest -p no:warnings
