@@ -27,3 +27,4 @@ vtk~=9.5
 numba~=0.62
 plotly~=6.5
 networkx~=3.4
+scikit-image~=0.25
