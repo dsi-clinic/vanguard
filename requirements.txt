@@ -26,4 +26,4 @@ SimpleITK~=2.5
 vtk~=9.5
 numba~=0.62
 plotly~=6.5
-networkx~=3.6
+networkx~=3.4
