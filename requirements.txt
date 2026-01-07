@@ -1,5 +1,5 @@
 # development tools
-ruff==0.7.2
+ruff~=0.14
 pre-commit~=3.8
 coverage~=7.10
 pytest~=7.4
@@ -23,3 +23,9 @@ numpy~=2.2
 joblib~=1.5
 PyYAML~=6.0
 SimpleITK~=2.5
+vtk~=9.5
+numba~=0.62
+plotly~=6.5
+networkx~=3.4
+scikit-image~=0.25
+pyvista~=0.46

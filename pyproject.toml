@@ -36,8 +36,12 @@ ignore = [
   "D415",   # allow first line of doctstrings to end without punctuation
   "ANN002", # missing type on *args
   "ANN003", # missing type on **kwargs
-  "B905"    # won't work on python <3.10
+  "B905",   # won't work on python <3.10
+  "S101",   # allow assertions (!!!)
 ]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.pytest.ini_options]
+python_files = "*.py"
