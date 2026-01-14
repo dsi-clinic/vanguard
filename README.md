@@ -32,7 +32,7 @@ Installation recipe (one time):
 ```bash
 micromamba config prepend channels conda-forge
 micromamba config set channel_priority strict
-git clone git@github.com:uchicago-dsi/vanguard.git
+git clone --recursive git@github.com:uchicago-dsi/vanguard.git
 cd vanguard
 micromamba create -y -n vanguard \
   python=3.11 \
@@ -44,6 +44,8 @@ micromamba create -y -n vanguard \
 micromamba activate vanguard
 pip install -r requirements.txt
 ```
+
+(Be sure to clone this repo with `--recursive` so that submodules like [dsi-clinic/vanguard-blood-vessel-segmentation](https://github.com/dsi-clinic/vanguard-blood-vessel-segmentation) are included.)
 
 ## Repository Structure and Methodologies
 
