@@ -152,3 +152,9 @@ out_pcr_rebecca/features_join_preview.csv
 CoW_Centerline_Extraction/
 jose_json_outputs/
 out_pcr_rebecca/
+# Output directories
+*_outdir/
+*_outputs/
+output/
+out/
+feature_outdir/
