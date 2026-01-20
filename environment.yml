@@ -8,6 +8,7 @@ dependencies:
   - pytorch-gpu
   - torchvision
   - cuda-version
+  - numpy
   - vmtk
   - itk
   - libitk
@@ -15,6 +16,7 @@ dependencies:
   - imageio-ffmpeg
 
   - pip:
+    # Note that any packages that are listed in requirements.txt will override the ones listed here.
     - -r requirements.txt
     # The precompiled version of Pyradiomics does not work with Python > 3.9.
     # The master branch of the repository has a fix to allow for pip to install it using Python 3.10 and later.

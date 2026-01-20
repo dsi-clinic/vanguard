@@ -34,14 +34,14 @@ micromamba config prepend channels conda-forge
 micromamba config set channel_priority strict
 git clone --recursive git@github.com:uchicago-dsi/vanguard.git
 cd vanguard
-micromamba env create -n vanguard -f environment.yml
+micromamba env create -y -n vanguard -f environment.yml
 micromamba activate vanguard
 ```
 
 To Update:
 ```bash
 micromamba activate vanguard
-micromamba env update -f environment.yml
+micromamba env update -y -f environment.yml
 ```
 
 (Be sure to clone this repo with `--recursive` so that submodules like [dsi-clinic/vanguard-blood-vessel-segmentation](https://github.com/dsi-clinic/vanguard-blood-vessel-segmentation) are included.)
