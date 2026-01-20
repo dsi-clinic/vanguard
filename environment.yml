@@ -1,17 +1,23 @@
 name: vanguard
 channels:
   - conda-forge
-  - radiomics
 
 dependencies:
-  - python=3.11
+  - python>=3.10
   - pip
-  - pyradiomics
-  - pytorch-gpu=2.7.*
-  - torchvision=0.22.*
-  - cuda-version=12.6
+  - pytorch-gpu
+  - torchvision
+  - cuda-version
+  - vmtk
+  - itk
+  - libitk
   - imageio
   - imageio-ffmpeg
 
   - pip:
-      - -r requirements.txt
+    - -r requirements.txt
+    # The precompiled version of Pyradiomics does not work with Python > 3.9.
+    # The master branch of the repository has a fix to allow for pip to install it using Python 3.10 and later.
+    # This must be installed here because it depends on numpy. If you place it in requirements.txt,
+    # it will fail to compile. This is the best solution we have right now.
+    - git+https://github.com/AIM-Harvard/pyradiomics.git@master
