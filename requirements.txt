@@ -29,3 +29,4 @@ plotly~=6.5
 networkx~=3.4
 scikit-image~=0.25
 pyvista~=0.46
+seaborn~=0.13.2
