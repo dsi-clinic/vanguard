@@ -2,8 +2,8 @@
 
 from evaluation.evaluator import (
     Evaluator,
-    FoldSplit,
     FoldResults,
+    FoldSplit,
     KFoldResults,
     TrainTestResults,
 )

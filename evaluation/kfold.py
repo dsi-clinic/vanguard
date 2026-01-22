@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-from sklearn.model_selection import StratifiedKFold, KFold
+from sklearn.model_selection import KFold, StratifiedKFold
 
 
 def create_kfold_splits(
@@ -15,9 +15,8 @@ def create_kfold_splits(
     shuffle: bool = True,
     random_state: int = 42,
 ) -> list[dict[str, np.ndarray | int]]:
-    """
-    Create k-fold splits and return them as a list of dictionaries.
-    
+    """Create k-fold splits and return them as a list of dictionaries.
+
     Parameters
     ----------
     X : np.ndarray
@@ -34,8 +33,8 @@ def create_kfold_splits(
         Whether to shuffle data before splitting
     random_state : int, default=42
         Random seed for reproducibility
-        
-    Returns
+
+    Returns:
     -------
     list[dict[str, np.ndarray | int]]
         List of dictionaries, one per fold, each containing:
@@ -58,7 +57,7 @@ def create_kfold_splits(
             shuffle=shuffle,
             random_state=random_state,
         )
-    
+
     splits = []
     for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(X, y)):
         split_dict = {
@@ -66,7 +65,7 @@ def create_kfold_splits(
             "train_indices": train_idx,
             "val_indices": val_idx,
         }
-        
+
         # Add patient IDs if available
         if patient_ids is not None:
             split_dict["train_patient_ids"] = patient_ids[train_idx]
@@ -74,7 +73,7 @@ def create_kfold_splits(
         else:
             split_dict["train_patient_ids"] = None
             split_dict["val_patient_ids"] = None
-        
+
         splits.append(split_dict)
-    
+
     return splits
