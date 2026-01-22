@@ -1,0 +1,338 @@
+"""Main Evaluator class for model evaluation."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from evaluation.kfold import create_kfold_splits
+from evaluation.metrics import (
+    aggregate_fold_metrics,
+    compute_binary_metrics,
+)
+from evaluation.utils import (
+    align_data,
+    prepare_predictions_df,
+    validate_inputs,
+)
+from evaluation.visualizations import VISUALIZATION_REGISTRY
+
+
+@dataclass
+class FoldSplit:
+    """Represents a single fold split."""
+    fold_idx: int
+    train_indices: np.ndarray
+    val_indices: np.ndarray
+    train_patient_ids: np.ndarray | None = None
+    val_patient_ids: np.ndarray | None = None
+
+
+@dataclass
+class FoldResults:
+    """Results from a single fold."""
+    fold_idx: int
+    predictions: pd.DataFrame  # columns: patient_id, y_true, y_pred, y_prob
+    metrics: dict[str, float] | None = None  # Optional pre-computed metrics
+
+
+@dataclass
+class KFoldResults:
+    """Aggregated results from k-fold cross-validation."""
+    fold_metrics: list[dict[str, float]]
+    aggregated_metrics: dict[str, dict[str, float]]
+    predictions: pd.DataFrame  # columns: patient_id, fold, y_true, y_pred, y_prob
+    n_splits: int
+    model_name: str
+    run_name: str | None = None
+
+
+@dataclass
+class TrainTestResults:
+    """Results from train/test evaluation."""
+    metrics: dict[str, float]
+    predictions: pd.DataFrame  # columns: patient_id, y_true, y_pred, y_prob
+    model_name: str
+    run_name: str | None = None
+
+
+class Evaluator:
+    """
+    Main evaluator class for model evaluation with k-fold cross-validation.
+    
+    The evaluator generates splits and aggregates results, but does not train models.
+    Models handle their own training and return predictions/metrics to the evaluator.
+    """
+    
+    def __init__(
+        self,
+        X: np.ndarray | pd.DataFrame,
+        y: np.ndarray | pd.Series,
+        patient_ids: np.ndarray | pd.Series | None = None,
+        model_name: str = "model",
+        random_state: int = 42,
+    ):
+        """
+        Initialize evaluator with data.
+        
+        Parameters
+        ----------
+        X : np.ndarray | pd.DataFrame
+            Feature matrix
+        y : np.ndarray | pd.Series
+            Target labels
+        patient_ids : np.ndarray | pd.Series, optional
+            Patient IDs for tracking (recommended)
+        model_name : str, default="model"
+            Name of the model (e.g., "radiomics_baseline", "non_imaging_baseline").
+            Used for organizing outputs and comparing multiple models.
+        random_state : int, default=42
+            Random seed for reproducibility
+            
+        Note: This accepts data directly (arrays/DataFrames), not file paths.
+        Model systems are responsible for loading data from their configuration
+        (CLI args, config files, config objects, etc.) and passing it here.
+        
+        Note: Model is NOT passed here - models handle their own training.
+        """
+        # Validate inputs
+        validate_inputs(X, y, patient_ids)
+        
+        # Align and store data
+        self.X, self.y, self.patient_ids = align_data(X, y, patient_ids)
+        self.model_name = model_name
+        self.random_state = random_state
+    
+    def create_kfold_splits(
+        self,
+        n_splits: int = 5,
+        stratify: bool = True,
+        shuffle: bool = True,
+    ) -> list[FoldSplit]:
+        """
+        Create k-fold splits and return them to the model.
+        
+        Parameters
+        ----------
+        n_splits : int, default=5
+            Number of folds
+        stratify : bool, default=True
+            Whether to use stratified k-fold (maintains class distribution)
+        shuffle : bool, default=True
+            Whether to shuffle data before splitting
+            
+        Returns
+        -------
+        list[FoldSplit]
+            List of FoldSplit objects, one per fold, containing:
+            - train_indices: indices for training
+            - val_indices: indices for validation
+            - train_patient_ids: patient IDs for training (if available)
+            - val_patient_ids: patient IDs for validation (if available)
+        """
+        split_dicts = create_kfold_splits(
+            X=self.X,
+            y=self.y,
+            patient_ids=self.patient_ids,
+            n_splits=n_splits,
+            stratify=stratify,
+            shuffle=shuffle,
+            random_state=self.random_state,
+        )
+        
+        # Convert to FoldSplit objects
+        splits = []
+        for split_dict in split_dicts:
+            splits.append(FoldSplit(
+                fold_idx=split_dict["fold_idx"],
+                train_indices=split_dict["train_indices"],
+                val_indices=split_dict["val_indices"],
+                train_patient_ids=split_dict["train_patient_ids"],
+                val_patient_ids=split_dict["val_patient_ids"],
+            ))
+        
+        return splits
+    
+    def aggregate_kfold_results(
+        self,
+        fold_results: list[FoldResults],
+    ) -> KFoldResults:
+        """
+        Aggregate predictions and metrics from model across all folds.
+        
+        Parameters
+        ----------
+        fold_results : list[FoldResults]
+            List of results from model, one per fold. Each FoldResults contains:
+            - fold_idx: fold number
+            - predictions: DataFrame with patient_id, y_true, y_pred, y_prob
+            - metrics: dict of metrics for this fold (optional, can compute from predictions)
+        
+        Returns
+        -------
+        KFoldResults
+            Aggregated results with mean ± std metrics across folds
+        """
+        if not fold_results:
+            raise ValueError("fold_results cannot be empty")
+        
+        # Extract metrics for each fold (compute if not provided)
+        fold_metrics_list = []
+        all_predictions = []
+        
+        for fold_result in fold_results:
+            # Compute metrics if not provided
+            if fold_result.metrics is None:
+                y_true = fold_result.predictions["y_true"].values
+                y_pred = fold_result.predictions["y_pred"].values
+                y_prob = fold_result.predictions["y_prob"].values
+                metrics = compute_binary_metrics(y_true, y_pred, y_prob)
+            else:
+                metrics = fold_result.metrics
+            
+            fold_metrics_list.append(metrics)
+            
+            # Add fold column to predictions
+            preds_with_fold = fold_result.predictions.copy()
+            preds_with_fold["fold"] = fold_result.fold_idx
+            all_predictions.append(preds_with_fold)
+        
+        # Aggregate metrics
+        aggregated_metrics = aggregate_fold_metrics(fold_metrics_list)
+        
+        # Combine all predictions
+        combined_predictions = pd.concat(all_predictions, ignore_index=True)
+        
+        return KFoldResults(
+            fold_metrics=fold_metrics_list,
+            aggregated_metrics=aggregated_metrics,
+            predictions=combined_predictions,
+            n_splits=len(fold_results),
+            model_name=self.model_name,
+        )
+    
+    def compute_metrics(
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        y_prob: np.ndarray,
+    ) -> dict[str, float]:
+        """
+        Compute metrics from predictions.
+        
+        Can be called by models if they want metrics for a single fold,
+        or used internally during aggregation.
+        
+        Parameters
+        ----------
+        y_true : np.ndarray
+            True binary labels
+        y_pred : np.ndarray
+            Predicted binary labels
+        y_prob : np.ndarray
+            Predicted probabilities for positive class
+            
+        Returns
+        -------
+        dict[str, float]
+            Dictionary of computed metrics
+        """
+        return compute_binary_metrics(y_true, y_pred, y_prob)
+    
+    def save_results(
+        self,
+        results: KFoldResults | TrainTestResults,
+        output_dir: Path,
+        run_name: str | None = None,
+    ) -> None:
+        """
+        Save results to output directory, organized by model name and run name.
+        
+        Parameters
+        ----------
+        results : KFoldResults | TrainTestResults
+            Evaluation results to save
+        output_dir : Path
+            Base output directory. Results will be saved to:
+            output_dir / model_name / run_name / (if run_name provided)
+            output_dir / model_name / (if no run_name)
+        run_name : str, optional
+            Name of this run (e.g., "run_001", "experiment_1", timestamp).
+            Used for tracking multiple runs of the same model.
+            If None, results saved directly under model_name.
+            
+        Note: output_dir is a Path object. Model systems determine this path
+        from their configuration (CLI args, config files, etc.) and pass it here.
+        """
+        output_dir = Path(output_dir)
+        
+        # Determine final output directory
+        if run_name:
+            final_output_dir = output_dir / self.model_name / run_name
+            results.run_name = run_name
+        else:
+            final_output_dir = output_dir / self.model_name
+        
+        final_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save predictions
+        predictions_path = final_output_dir / "predictions.csv"
+        results.predictions.to_csv(predictions_path, index=False)
+        
+        # Prepare metrics dictionary
+        if isinstance(results, KFoldResults):
+            metrics_dict = {
+                "evaluation_type": "kfold",
+                "model_name": results.model_name,
+                "n_splits": results.n_splits,
+                "aggregated_metrics": results.aggregated_metrics,
+                "per_fold_metrics": [
+                    {"fold": i, **metrics}
+                    for i, metrics in enumerate(results.fold_metrics)
+                ],
+                "n_samples": len(results.predictions),
+                "n_features": self.X.shape[1] if len(self.X.shape) > 1 else 1,
+            }
+            if results.run_name:
+                metrics_dict["run_name"] = results.run_name
+            
+            # Save per-fold metrics separately
+            per_fold_path = final_output_dir / "metrics_per_fold.json"
+            import json
+            with open(per_fold_path, "w") as f:
+                json.dump(metrics_dict["per_fold_metrics"], f, indent=2)
+        else:
+            metrics_dict = {
+                "evaluation_type": "train_test",
+                "model_name": results.model_name,
+                "metrics": results.metrics,
+                "n_samples": len(results.predictions),
+                "n_features": self.X.shape[1] if len(self.X.shape) > 1 else 1,
+            }
+            if results.run_name:
+                metrics_dict["run_name"] = results.run_name
+        
+        # Save metrics
+        metrics_path = final_output_dir / "metrics.json"
+        import json
+        with open(metrics_path, "w") as f:
+            json.dump(metrics_dict, f, indent=2)
+        
+        # Generate and save visualizations
+        plots_dir = final_output_dir / "plots"
+        plots_dir.mkdir(exist_ok=True)
+        
+        y_true = results.predictions["y_true"].values
+        y_prob = results.predictions["y_prob"].values
+        
+        # Generate all registered visualizations
+        for viz_name, viz_func in VISUALIZATION_REGISTRY.items():
+            output_path = plots_dir / f"{viz_name}.png"
+            try:
+                viz_func(y_true, y_prob, output_path)
+            except Exception as e:
+                # If visualization fails, log but continue
+                print(f"Warning: Failed to generate {viz_name}: {e}")
