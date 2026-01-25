@@ -10,12 +10,14 @@ Outputs:
 - model.pkl / metrics.json
 """
 
-import argparse
+import yaml
 import json
 import logging
 import math
 import numbers
+import shutil
 from pathlib import Path
+from datetime import datetime
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -24,23 +26,14 @@ from joblib import dump
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
-    average_precision_score,
-    confusion_matrix,
-    f1_score,
-    fbeta_score,
-    precision_recall_curve,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-    roc_curve,
+    average_precision_score, confusion_matrix, f1_score,
+    precision_recall_curve, precision_score, recall_score,
+    roc_auc_score, roc_curve
 )
-from sklearn.model_selection import (
-    StratifiedKFold,
-    cross_val_predict,
-    train_test_split,
-)
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from feature_factor import get_clinical_features
 
 ROC_FLIP_THRESHOLD = 0.5
 DEFAULT_PROBA_THRESHOLD = 0.5
@@ -124,105 +117,28 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def build_features_from_feature_jsons(feature_dir: Path) -> pd.DataFrame:
-    """Aggregate numeric stats from per-case JSON morphometrics into one row per case_id."""
-    rows: list[dict[str, float]] = []
-
-    def to_num(x: object) -> float | None:
-        if isinstance(x, bool):
-            return float(x)
-        if isinstance(x, numbers.Real):
-            return float(x)
-        if isinstance(x, str):
-            try:
-                return float(x.strip())
-            except Exception:
-                return None
-        return None
-
-    json_files = sorted(feature_dir.glob("*.json"))
-    if not json_files:
-        raise FileNotFoundError(f"No JSON feature files found in {feature_dir}")
-
-    for p in json_files:
-        try:
-            data = json.loads(p.read_text())
-        except Exception as e:
-            logging.warning("Skipping feature JSON %s due to parse error: %s", p, e)
-            continue
-
-        fname = p.stem
-        case_id = "_".join(fname.split("_")[:2])
-
-        feats: dict[str, float] = {"case_id": case_id}
-
-        if isinstance(data, dict):
-            for _, group in data.items():
-                if not isinstance(group, dict):
-                    continue
-                for vessel_name, items in group.items():
-                    if not isinstance(items, list):
-                        continue
-                    per_item_vals: dict[str, list[float]] = {}
-                    for item in items:
-                        if not isinstance(item, dict):
-                            continue
-                        for k, v in item.items():
-                            if isinstance(v, dict):
-                                for kk, vv in v.items():
-                                    if isinstance(vv, list):
-                                        nums = [to_num(t) for t in vv]
-                                        nums = [t for t in nums if t is not None]
-                                        if nums:
-                                            per_item_vals.setdefault(
-                                                f"{k}__{kk}", []
-                                            ).extend(nums)
-                                    else:
-                                        num = to_num(vv)
-                                        if num is not None:
-                                            per_item_vals.setdefault(
-                                                f"{k}__{kk}", []
-                                            ).append(num)
-                            elif isinstance(v, list):
-                                nums = [to_num(t) for t in v]
-                                nums = [t for t in nums if t is not None]
-                                if nums:
-                                    per_item_vals.setdefault(k, []).extend(nums)
-                            else:
-                                num = to_num(v)
-                                if num is not None:
-                                    per_item_vals.setdefault(k, []).append(num)
-
-                    vprefix = vessel_name.replace(" ", "_")
-                    for fld, vals in per_item_vals.items():
-                        if not vals:
-                            continue
-                        vals = [float(x) for x in vals]
-                        base = f"{vprefix}__{fld}"
-                        feats[f"{base}__mean"] = float(np.mean(vals))
-                        feats[f"{base}__std"] = (
-                            float(np.std(vals)) if len(vals) > 1 else 0.0
-                        )
-                        feats[f"{base}__min"] = float(np.min(vals))
-                        feats[f"{base}__max"] = float(np.max(vals))
-                        feats[f"{base}__count"] = float(len(vals))
-
+def build_modular_features(config):
+    feature_dir = Path(config['data_paths']['feature_dir'])
+    rows = []
+    
+    for p in sorted(feature_dir.glob("*.json")):
+        with open(p, 'r') as f:
+            data = json.load(f)
+            
+        case_id = data.get("patient_id")
+        feats = {"case_id": case_id}
+        
+        if config['feature_toggles']['use_clinical']:
+            c_data = data.get("clinical_data", {})
+            feats["age"] = c_data.get("age")
+            feats["pcr_label"] = data.get("primary_lesion", {}).get("pcr")
+            feats["subtype"] = data.get("primary_lesion", {}).get("tumor_subtype")
+            
+        if config['feature_toggles']['use_vascular']:
+            pass 
+            
         rows.append(feats)
-
-    df_rows = pd.DataFrame(rows)
-    num = df_rows.select_dtypes(include=["number"]).copy()
-    if "case_id" in df_rows.columns and "case_id" not in num.columns:
-        num = pd.concat([df_rows["case_id"], num], axis=1)
-    num = num.dropna(axis=1, how="all")
-
-    cols_no_id = [c for c in num.columns if c != "case_id"]
-    if cols_no_id:
-        const_mask = num[cols_no_id].apply(lambda s: s.eq(s.iloc[0]).all())
-        constant = [c for c, is_const in const_mask.items() if is_const]
-        num = num.drop(columns=constant, errors="ignore")
-
-    return num
-
+    return pd.DataFrame(rows)
 
 def find_binary_label_columns(df_labels: pd.DataFrame) -> list[str]:
     """Identify columns in a DataFrame that contain only binary (0/1) values."""
@@ -947,90 +863,73 @@ def run_ensemble(
 
     print("[ok] Ensemble -> ensemble_metrics.json")
 
+def build_modular_features(config):
+    """Refactored loader for model framework and clinical features."""
+    feature_dir = Path(config['data_paths']['feature_dir'])
+    rows = []
+    
+    for p in sorted(feature_dir.glob("*.json")):
+        with open(p, 'r') as f:
+            data = json.load(f)
+            
+        case_id = data.get("patient_id")
+        feats = {"case_id": case_id}
+        
+        # Clinical Extraction Logic
+        if config['feature_toggles']['use_clinical']:
+            c_data = data.get("clinical_data", {})
+            feats["age"] = c_data.get("age")
+            feats["pcr_label"] = data.get("primary_lesion", {}).get("pcr")
+            feats["subtype"] = data.get("primary_lesion", {}).get("tumor_subtype")
+            
+        # Vascular Extraction
+        if config['feature_toggles']['use_vascular']:
+            pass 
+            
+        rows.append(feats)
+    return pd.DataFrame(rows)
 
 def main() -> None:
-    """Run the main entry point."""
-    args = parse_args()
-    args.outdir.mkdir(parents=True, exist_ok=True)
+    """For args, config, output dir, feature building, training."""
+    config_path = "ML-Pipeline/config_pcr.yaml"
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
 
-    # Build features from JSONs
-    feats = build_features_from_feature_jsons(args.feature_dir)
+    # Output Directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    outdir = Path(config['experiment_setup']['base_outdir']) / f"{config['experiment_setup']['name']}_{timestamp}"
+    outdir.mkdir(parents=True, exist_ok=True)
+    
+    # Save copy of config
+    shutil.copy(config_path, outdir / "config_used.yaml")
 
-    feats_path = args.outdir / "features.csv"
+    # Feature Building
+    feats = build_modular_features(config)
+
+    # Integrate Clinical Features from Excel/CSV
+    if config['feature_toggles']['use_clinical']:
+        clinical_df = get_clinical_features(config)
+        feats = feats.merge(clinical_data, left_on='case_id', right_on='patient_id', how='inner')
+        logging.info(f"Integrated clinical features. New shape: {feats.shape}")
+
+    feats_path = outdir / "features.csv"
     feats.to_csv(feats_path, index=False)
-    print(f"[ok] features -> {feats_path} (n={len(feats)})")
-
-    eng_path = args.outdir / "features_engineered.csv"
+    
+    eng_path = outdir / "features_engineered.csv"
     engineer_features(feats_path, eng_path)
 
-    if args.labels and args.label_column:
-        labels_for_preview = args.labels
-        if labels_for_preview.is_dir():
-            labels_for_preview = args.outdir / "labels_from_json.csv"
-            rows = []
-            for jp in sorted(Path(args.labels).glob("*.json")):
-                try:
-                    obj = json.loads(jp.read_text())
-                except Exception as e:
-                    logging.warning(
-                        "Skipping label JSON %s due to parse error: %s", jp, e
-                    )
-                    continue
-                case_id = jp.stem
-                val = obj.get(args.label_column)
-                try:
-                    rows.append(
-                        {"case_id": case_id, args.label_column: to_int_label(val)}
-                    )
-                except Exception as e:
-                    logging.warning(
-                        "Skipping label JSON %s missing/invalid '%s': %s",
-                        jp,
-                        args.label_column,
-                        e,
-                    )
-                    continue
-            pd.DataFrame(rows).to_csv(labels_for_preview, index=False)
-
-        labels_df = pd.read_csv(labels_for_preview)
-        if args.id_column != "case_id" and args.id_column in labels_df.columns:
-            labels_df = labels_df.rename(columns={args.id_column: "case_id"})
-        preview = feats.merge(labels_df, on="case_id", how="inner")
-        prev_path = args.outdir / "features_join_preview.csv"
-        preview.head(50).to_csv(prev_path, index=False)
-        print(f"Join preview -> {prev_path} (rows={len(preview)})")
-
-        train_baseline(
-            feats_engineered_csv=eng_path,
-            labels_source=labels_for_preview,
-            id_col=args.id_column,
-            label_col=args.label_column,
-            outdir=args.outdir,
-            test_size=args.test_size,
-            random_state=args.random_state,
-            model=args.model,
-            val_size=args.val_size,
-            run_random_baseline=args.random_baseline,
-            bootstrap_n=args.bootstrap_n,
-            make_plots=args.plots,
-            run_delong=args.delong,
-        )
-
-        if args.ensemble_runs and args.ensemble_runs > 0:
-            run_ensemble(
-                feats_engineered_csv=eng_path,
-                labels_source=labels_for_preview,
-                id_col=args.id_column,
-                label_col=args.label_column,
-                outdir=args.outdir,
-                base_random_state=args.random_state,
-                model=args.model,
-                test_size=args.test_size,
-                val_size=args.val_size,
-                runs=args.ensemble_runs,
-                make_plots=args.ensemble_hist,
-            )
-
+    train_baseline(
+        feats_engineered_csv=eng_path,
+        labels_source=Path(config['data_paths']['labels_csv']),
+        id_col=config['data_paths']['id_column'],
+        label_col=config['data_paths']['label_column'],
+        outdir=outdir,
+        test_size=config['model_params']['test_size'],
+        random_state=config['model_params']['random_state'],
+        model=config['model_params']['model'],
+        val_size=config['model_params']['val_size'],
+        bootstrap_n=config['model_params']['bootstrap_n']
+    )
 
 if __name__ == "__main__":
     main()
