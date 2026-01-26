@@ -170,3 +170,7 @@ test_outputs/
 *.vtk
 *-out/
 logs/
+
+# local work (do not commit)
+Curvature.ipynb
+.Rhistory
