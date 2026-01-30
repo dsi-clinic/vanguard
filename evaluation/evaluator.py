@@ -44,7 +44,11 @@ def _print_validation_summary(
         print(f"  AUC (overall): {overall['auc']:.3f}")
     for i, (stratum_name, metrics) in enumerate(by_group.items(), start=1):
         auc_val = metrics.get("auc", float("nan"))
-        auc_str = f"{auc_val:.3f}" if not (isinstance(auc_val, float) and np.isnan(auc_val)) else "nan"
+        auc_str = (
+            f"{auc_val:.3f}"
+            if not (isinstance(auc_val, float) and np.isnan(auc_val))
+            else "nan"
+        )
         print(f"  AUC (Strata {i} / {stratum_name}): {auc_str}")
     print()
 

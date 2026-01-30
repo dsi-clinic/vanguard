@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Baseline Model Example for Centralized Evaluation System (Phase 2).
+r"""Baseline Model Example for Centralized Evaluation System (Phase 2).
 
 This script demonstrates the complete workflow for using the evaluation system:
 1. Data preparation and loading (synthetic by default, or from CSV)
@@ -42,8 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from evaluation import Evaluator, FoldResults, FoldSplit, TrainTestResults
-
+from evaluation import Evaluator, FoldResults, TrainTestResults  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Section 1: Synthetic data generation
@@ -72,7 +70,7 @@ def generate_synthetic_data(
     random_state : int
         Seed for reproducibility
 
-    Returns
+    Returns:
     -------
     X : np.ndarray
         Feature matrix (n_samples, n_features)
@@ -88,7 +86,8 @@ def generate_synthetic_data(
     threshold = np.percentile(X[:, 0], 70)
     y = (X[:, 0] > threshold).astype(np.int64)
     # Flip a few to add noise
-    flip = rng.random(n_samples) < 0.1
+    noise_flip_prob = 0.1
+    flip = rng.random(n_samples) < noise_flip_prob
     y[flip] = 1 - y[flip]
     patient_ids = np.array([f"patient_{i:04d}" for i in range(n_samples)])
     return X, y, patient_ids
@@ -105,7 +104,7 @@ def load_data_from_csv(
         - labels_path: CSV with columns 'patient_id' (or index), 'label' (0/1),
           and optionally 'stratum' or 'subtype' for subgroup reporting
 
-    Returns
+    Returns:
     -------
     X, y, patient_ids, stratum
         stratum is None if labels have no 'stratum' or 'subtype' column.
@@ -138,9 +137,7 @@ def load_data_from_csv(
         y = y_df.iloc[:, 0].to_numpy().astype(np.int64)
 
     if len(y) != len(X):
-        raise ValueError(
-            f"Features and labels length mismatch: {len(X)} vs {len(y)}"
-        )
+        raise ValueError(f"Features and labels length mismatch: {len(X)} vs {len(y)}")
     if len(patient_ids) != len(X):
         patient_ids = np.array([f"sample_{i}" for i in range(len(X))])
     return X, y, patient_ids, stratum
@@ -172,7 +169,7 @@ def predict_random(
     random_state : int
         Seed for reproducibility
 
-    Returns
+    Returns:
     -------
     y_pred : np.ndarray
         Random class labels (0 or 1)
@@ -223,21 +220,23 @@ def run_kfold_random(
         y_pred, y_prob = predict_random(n_val, random_state=fold_seed)
 
         y_true = y[split.val_indices]
-        pid = split.val_patient_ids if split.val_patient_ids is not None else np.array(
-            [f"val_{i}" for i in range(n_val)]
+        pid = (
+            split.val_patient_ids
+            if split.val_patient_ids is not None
+            else np.array([f"val_{i}" for i in range(n_val)])
         )
 
-        pred_df = pd.DataFrame({
-            "patient_id": pid,
-            "y_true": y_true,
-            "y_pred": y_pred,
-            "y_prob": y_prob,
-        })
+        pred_df = pd.DataFrame(
+            {
+                "patient_id": pid,
+                "y_true": y_true,
+                "y_pred": y_pred,
+                "y_prob": y_prob,
+            }
+        )
         if stratum is not None:
             pred_df["stratum"] = stratum[split.val_indices]
-        fold_results.append(
-            FoldResults(fold_idx=split.fold_idx, predictions=pred_df)
-        )
+        fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
     return fold_results
 
 
@@ -271,20 +270,22 @@ def run_kfold_logistic(
         y_pred = model.predict(X_val)
         y_prob = model.predict_proba(X_val)[:, 1]
 
-        pid = split.val_patient_ids if split.val_patient_ids is not None else np.array(
-            [f"val_{i}" for i in range(len(y_val))]
+        pid = (
+            split.val_patient_ids
+            if split.val_patient_ids is not None
+            else np.array([f"val_{i}" for i in range(len(y_val))])
         )
-        pred_df = pd.DataFrame({
-            "patient_id": pid,
-            "y_true": y_val,
-            "y_pred": y_pred,
-            "y_prob": y_prob,
-        })
+        pred_df = pd.DataFrame(
+            {
+                "patient_id": pid,
+                "y_true": y_val,
+                "y_pred": y_pred,
+                "y_prob": y_prob,
+            }
+        )
         if stratum is not None:
             pred_df["stratum"] = stratum[split.val_indices]
-        fold_results.append(
-            FoldResults(fold_idx=split.fold_idx, predictions=pred_df)
-        )
+        fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
     return fold_results
 
 
@@ -307,17 +308,20 @@ def run_train_test_random(
     y_pred, y_prob = predict_random(n, random_state=random_state)
     if patient_ids_test is None:
         patient_ids_test = np.array([f"test_{i}" for i in range(n)])
-    pred_df = pd.DataFrame({
-        "patient_id": patient_ids_test,
-        "y_true": y_test,
-        "y_pred": y_pred,
-        "y_prob": y_prob,
-    })
+    pred_df = pd.DataFrame(
+        {
+            "patient_id": patient_ids_test,
+            "y_true": y_test,
+            "y_pred": y_pred,
+            "y_prob": y_prob,
+        }
+    )
     if stratum_test is not None:
         pred_df["stratum"] = stratum_test
     # Compute metrics via evaluator's method (we need an evaluator instance for save_results later;
     # for TrainTestResults we pass metrics from compute_metrics)
     from evaluation.metrics import compute_binary_metrics
+
     metrics = compute_binary_metrics(y_test, y_pred, y_prob)
     return TrainTestResults(
         metrics=metrics,
@@ -338,6 +342,7 @@ def run_train_test_logistic(
 ) -> TrainTestResults:
     """Train/test evaluation with LogisticRegression."""
     from sklearn.linear_model import LogisticRegression
+
     from evaluation.metrics import compute_binary_metrics
 
     model = LogisticRegression(random_state=random_state, max_iter=500)
@@ -346,12 +351,14 @@ def run_train_test_logistic(
     y_prob = model.predict_proba(X_test)[:, 1]
     if patient_ids_test is None:
         patient_ids_test = np.array([f"test_{i}" for i in range(len(y_test))])
-    pred_df = pd.DataFrame({
-        "patient_id": patient_ids_test,
-        "y_true": y_test,
-        "y_pred": y_pred,
-        "y_prob": y_prob,
-    })
+    pred_df = pd.DataFrame(
+        {
+            "patient_id": patient_ids_test,
+            "y_true": y_test,
+            "y_pred": y_pred,
+            "y_prob": y_prob,
+        }
+    )
     if stratum_test is not None:
         pred_df["stratum"] = stratum_test
     metrics = compute_binary_metrics(y_test, y_pred, y_prob)
@@ -369,6 +376,7 @@ def run_train_test_logistic(
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the baseline model example."""
     parser = argparse.ArgumentParser(
         description="Baseline model example for the evaluation system (Phase 2). "
         "Demonstrates random model and optional logistic baseline with k-fold and train/test."
@@ -417,11 +425,14 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
     if (args.features is None) != (args.labels is None):
-        parser.error("Either provide both --features and --labels or neither (synthetic data).")
+        parser.error(
+            "Either provide both --features and --labels or neither (synthetic data)."
+        )
     return args
 
 
 def main() -> None:
+    """Run the baseline model example (random or logistic) with k-fold and optional train/test."""
     args = parse_args()
 
     # --- Data preparation ---
@@ -436,9 +447,13 @@ def main() -> None:
         X, y, patient_ids = generate_synthetic_data(random_state=args.random_state)
         n = len(y)
         from sklearn.model_selection import train_test_split
+
         idx = np.arange(n)
         train_idx, test_idx = train_test_split(
-            idx, test_size=args.train_test_split, stratify=y, random_state=args.random_state
+            idx,
+            test_size=args.train_test_split,
+            stratify=y,
+            random_state=args.random_state,
         )
         X_train, X_test = X[train_idx], X[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
@@ -461,7 +476,9 @@ def main() -> None:
     train_pids = patient_ids if not do_train_test else patient_ids[train_idx]
     if args.model == "random":
         fold_results = run_kfold_random(
-            evaluator, X_train, y_train,
+            evaluator,
+            X_train,
+            y_train,
             train_pids,
             n_splits=args.n_splits,
             random_state=args.random_state,
@@ -469,7 +486,9 @@ def main() -> None:
         )
     else:
         fold_results = run_kfold_logistic(
-            evaluator, X_train, y_train,
+            evaluator,
+            X_train,
+            y_train,
             train_pids,
             n_splits=args.n_splits,
             random_state=args.random_state,
@@ -483,21 +502,30 @@ def main() -> None:
     print(f"  Aggregated AUC: {kfold_results.aggregated_metrics.get('auc', {})}")
 
     # --- Train/test evaluation (only when we have a test set) ---
-    stratum_test = stratum[test_idx] if (do_train_test and stratum is not None) else None
+    stratum_test = (
+        stratum[test_idx] if (do_train_test and stratum is not None) else None
+    )
     if do_train_test and X_test is not None:
         if args.model == "random":
             tt_results = run_train_test_random(
-                y_test, pid_test, random_state=args.random_state,
+                y_test,
+                pid_test,
+                random_state=args.random_state,
                 stratum_test=stratum_test,
             )
         else:
             tt_results = run_train_test_logistic(
-                X_train, y_train, X_test, y_test, pid_test, args.random_state,
+                X_train,
+                y_train,
+                X_test,
+                y_test,
+                pid_test,
+                args.random_state,
                 stratum_test=stratum_test,
             )
         tt_results.model_name = model_name
         evaluator.save_results(tt_results, args.output, run_name="train_test")
-        print(f"Train/test results saved (run_name=train_test)")
+        print("Train/test results saved (run_name=train_test)")
         print(f"  AUC: {tt_results.metrics.get('auc', 'N/A')}")
 
     print(f"Output directory: {args.output.resolve()}")

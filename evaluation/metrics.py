@@ -124,14 +124,16 @@ def compute_metrics_by_group(
     metrics_to_compute : list[str], optional
         Metric names to compute. If None, uses all registered metrics.
 
-    Returns
+    Returns:
     -------
     dict
         - "overall": dict of metric name -> value for full validation set
         - "by_group": dict of group_value -> dict of metric name -> value
     """
     if group_col not in predictions.columns:
-        raise ValueError(f"Group column {group_col!r} not in predictions: {list(predictions.columns)}")
+        raise ValueError(
+            f"Group column {group_col!r} not in predictions: {list(predictions.columns)}"
+        )
 
     required = ["y_true", "y_pred", "y_prob"]
     for col in required:
@@ -156,7 +158,8 @@ def compute_metrics_by_group(
             )
         except Exception:
             by_group[str(group_val)] = {
-                k: float("nan") for k in (metrics_to_compute or list(METRIC_REGISTRY.keys()))
+                k: float("nan")
+                for k in (metrics_to_compute or list(METRIC_REGISTRY.keys()))
             }
 
     return {"overall": overall, "by_group": by_group}
