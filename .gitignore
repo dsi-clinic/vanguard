@@ -170,3 +170,6 @@ test_outputs/
 *.vtk
 *-out/
 logs/
+
+# Results shouldn't be commited as they can be regenerated easily
+results/**

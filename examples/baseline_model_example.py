@@ -1,0 +1,478 @@
+#!/usr/bin/env python3
+"""
+Baseline Model Example for Centralized Evaluation System (Phase 2).
+
+This script demonstrates the complete workflow for using the evaluation system:
+1. Data preparation and loading (synthetic by default, or from CSV)
+2. Model definition: random predictor baseline and optional logistic model
+3. K-fold cross-validation evaluation
+4. Train/test split evaluation
+5. Results interpretation and saving
+
+The random model is a sanity-check baseline that outputs random class labels
+and random probabilities (no training). It should yield AUC ~0.5 and validates
+that the evaluation pipeline works correctly.
+
+Usage:
+    # Run random model with default synthetic data (recommended for testing)
+    python examples/baseline_model_example.py --model random
+
+    # Run logistic regression baseline with synthetic data
+    python examples/baseline_model_example.py --model logistic
+
+    # Run with custom data
+    python examples/baseline_model_example.py \\
+        --model random \\
+        --features path/to/features.csv \\
+        --labels path/to/labels.csv \\
+        --output results/baseline_example
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+# Add project root so we can import evaluation
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from evaluation import Evaluator, FoldResults, FoldSplit, TrainTestResults
+
+
+# ---------------------------------------------------------------------------
+# Section 1: Synthetic data generation
+# ---------------------------------------------------------------------------
+# The evaluation system is configuration-agnostic: it accepts (X, y, patient_ids)
+# regardless of how they were loaded (synthetic, CSV, config, etc.). Model systems
+# are responsible for loading data; the evaluator only consumes arrays.
+
+
+def generate_synthetic_data(
+    n_samples: int = 200,
+    n_features: int = 10,
+    random_state: int = 42,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Generate synthetic binary classification data for testing.
+
+    Why: Enables running the example without external data. The evaluation
+    system accepts (X, y, patient_ids) regardless of source.
+
+    Parameters
+    ----------
+    n_samples : int
+        Number of samples
+    n_features : int
+        Number of features (ignored for random model; useful for logistic)
+    random_state : int
+        Seed for reproducibility
+
+    Returns
+    -------
+    X : np.ndarray
+        Feature matrix (n_samples, n_features)
+    y : np.ndarray
+        Binary labels (0 or 1)
+    patient_ids : np.ndarray
+        Patient IDs (e.g. "patient_000", ...)
+    """
+    rng = np.random.default_rng(random_state)
+    # Simple separable-ish data: random features, label from threshold on first feature
+    X = rng.standard_normal((n_samples, n_features))
+    # Create class imbalance ~30% positive for realism
+    threshold = np.percentile(X[:, 0], 70)
+    y = (X[:, 0] > threshold).astype(np.int64)
+    # Flip a few to add noise
+    flip = rng.random(n_samples) < 0.1
+    y[flip] = 1 - y[flip]
+    patient_ids = np.array([f"patient_{i:04d}" for i in range(n_samples)])
+    return X, y, patient_ids
+
+
+def load_data_from_csv(
+    features_path: Path,
+    labels_path: Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load features and labels from CSV files.
+
+    Expects:
+        - features_path: CSV with one row per sample, optional 'patient_id' column
+        - labels_path: CSV with columns 'patient_id' (or index) and 'label' (0/1)
+
+    Returns
+    -------
+    X, y, patient_ids
+    """
+    X_df = pd.read_csv(features_path)
+    y_df = pd.read_csv(labels_path)
+
+    if "patient_id" in X_df.columns:
+        patient_ids = X_df["patient_id"].to_numpy()
+        X = X_df.drop(columns=["patient_id"]).to_numpy()
+    else:
+        patient_ids = np.array([f"sample_{i}" for i in range(len(X_df))])
+        X = X_df.to_numpy()
+
+    if "patient_id" in y_df.columns and "label" in y_df.columns:
+        # Align by patient_id if present in both
+        merged = X_df.merge(y_df, on="patient_id", how="inner")
+        if "patient_id" in merged.columns:
+            patient_ids = merged["patient_id"].to_numpy()
+            X = merged.drop(columns=["patient_id", "label"]).to_numpy()
+        y = merged["label"].to_numpy().astype(np.int64)
+    else:
+        y = y_df.iloc[:, 0].to_numpy().astype(np.int64)
+
+    if len(y) != len(X):
+        raise ValueError(
+            f"Features and labels length mismatch: {len(X)} vs {len(y)}"
+        )
+    if len(patient_ids) != len(X):
+        patient_ids = np.array([f"sample_{i}" for i in range(len(X))])
+    return X, y, patient_ids
+
+
+# ---------------------------------------------------------------------------
+# Section 2: Random model (Phase 2 baseline)
+# ---------------------------------------------------------------------------
+# The random model produces random class labels and random probabilities with no
+# training. Use it as a sanity-check baseline: AUC should be ~0.5. If your real
+# model does not beat the random baseline, something is wrong (data, pipeline, or
+# metric). Reproducibility is ensured by passing random_state into the RNG.
+
+
+def predict_random(
+    n_samples: int,
+    random_state: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Produce random binary predictions and probabilities (no training).
+
+    This is the random model: for each sample we output a random class (0 or 1)
+    and a random probability in [0, 1]. Used as a sanity-check baseline (AUC ~0.5)
+    and to validate the evaluation pipeline.
+
+    Parameters
+    ----------
+    n_samples : int
+        Number of predictions to generate
+    random_state : int
+        Seed for reproducibility
+
+    Returns
+    -------
+    y_pred : np.ndarray
+        Random class labels (0 or 1)
+    y_prob : np.ndarray
+        Random probabilities for positive class in [0, 1]
+    """
+    rng = np.random.default_rng(random_state)
+    y_pred = rng.integers(0, 2, size=n_samples)
+    y_prob = rng.random(size=n_samples).astype(np.float64)
+    return y_pred, y_prob
+
+
+# ---------------------------------------------------------------------------
+# Section 3: K-fold evaluation
+# ---------------------------------------------------------------------------
+# K-fold: evaluator creates splits; we produce predictions per fold and pass
+# FoldResults to aggregate_kfold_results(). Use k-fold when you have limited
+# data and want stable metric estimates (mean ± std across folds). The evaluator
+# never trains the model—we do. We only use split indices to get train/val data.
+
+
+def run_kfold_random(
+    evaluator: Evaluator,
+    X: np.ndarray,
+    y: np.ndarray,
+    patient_ids: np.ndarray | None,
+    n_splits: int,
+    random_state: int,
+) -> list[FoldResults]:
+    """Run k-fold evaluation using the random model (no training).
+
+    For each fold we only need the validation indices. We generate random
+    predictions for the validation set and collect FoldResults. The evaluator
+    then aggregates metrics across folds.
+    """
+    splits = evaluator.create_kfold_splits(
+        n_splits=n_splits,
+        stratify=True,
+        shuffle=True,
+    )
+    fold_results = []
+    for split in splits:
+        n_val = len(split.val_indices)
+        # Use fold index in seed so different folds get different random predictions
+        fold_seed = random_state + split.fold_idx
+        y_pred, y_prob = predict_random(n_val, random_state=fold_seed)
+
+        y_true = y[split.val_indices]
+        pid = split.val_patient_ids if split.val_patient_ids is not None else np.array(
+            [f"val_{i}" for i in range(n_val)]
+        )
+
+        pred_df = pd.DataFrame({
+            "patient_id": pid,
+            "y_true": y_true,
+            "y_pred": y_pred,
+            "y_prob": y_prob,
+        })
+        fold_results.append(
+            FoldResults(fold_idx=split.fold_idx, predictions=pred_df)
+        )
+    return fold_results
+
+
+def run_kfold_logistic(
+    evaluator: Evaluator,
+    X: np.ndarray,
+    y: np.ndarray,
+    patient_ids: np.ndarray | None,
+    n_splits: int,
+    random_state: int,
+) -> list[FoldResults]:
+    """Run k-fold evaluation with LogisticRegression (for comparison)."""
+    from sklearn.linear_model import LogisticRegression
+
+    model = LogisticRegression(random_state=random_state, max_iter=500)
+    splits = evaluator.create_kfold_splits(
+        n_splits=n_splits,
+        stratify=True,
+        shuffle=True,
+    )
+    fold_results = []
+    for split in splits:
+        # Train on this fold
+        X_train = X[split.train_indices]
+        y_train = y[split.train_indices]
+        X_val = X[split.val_indices]
+        y_val = y[split.val_indices]
+
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_val)
+        y_prob = model.predict_proba(X_val)[:, 1]
+
+        pid = split.val_patient_ids if split.val_patient_ids is not None else np.array(
+            [f"val_{i}" for i in range(len(y_val))]
+        )
+        pred_df = pd.DataFrame({
+            "patient_id": pid,
+            "y_true": y_val,
+            "y_pred": y_pred,
+            "y_prob": y_prob,
+        })
+        fold_results.append(
+            FoldResults(fold_idx=split.fold_idx, predictions=pred_df)
+        )
+    return fold_results
+
+
+# ---------------------------------------------------------------------------
+# Section 4: Train/test evaluation
+# ---------------------------------------------------------------------------
+# Train/test: single split, train on train set, predict on test set. Use when
+# you have a fixed test set (e.g. temporal or external cohort). We save with
+# run_name="train_test" so results go to output_dir / model_name / train_test /.
+
+
+def run_train_test_random(
+    y_test: np.ndarray,
+    patient_ids_test: np.ndarray | None,
+    random_state: int,
+) -> TrainTestResults:
+    """Train/test evaluation with random model (no training, random predictions on test set)."""
+    n = len(y_test)
+    y_pred, y_prob = predict_random(n, random_state=random_state)
+    if patient_ids_test is None:
+        patient_ids_test = np.array([f"test_{i}" for i in range(n)])
+    pred_df = pd.DataFrame({
+        "patient_id": patient_ids_test,
+        "y_true": y_test,
+        "y_pred": y_pred,
+        "y_prob": y_prob,
+    })
+    # Compute metrics via evaluator's method (we need an evaluator instance for save_results later;
+    # for TrainTestResults we pass metrics from compute_metrics)
+    from evaluation.metrics import compute_binary_metrics
+    metrics = compute_binary_metrics(y_test, y_pred, y_prob)
+    return TrainTestResults(
+        metrics=metrics,
+        predictions=pred_df,
+        model_name="baseline_example",  # overwritten when saving
+        run_name=None,
+    )
+
+
+def run_train_test_logistic(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    patient_ids_test: np.ndarray | None,
+    random_state: int,
+) -> TrainTestResults:
+    """Train/test evaluation with LogisticRegression."""
+    from sklearn.linear_model import LogisticRegression
+    from evaluation.metrics import compute_binary_metrics
+
+    model = LogisticRegression(random_state=random_state, max_iter=500)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
+    if patient_ids_test is None:
+        patient_ids_test = np.array([f"test_{i}" for i in range(len(y_test))])
+    pred_df = pd.DataFrame({
+        "patient_id": patient_ids_test,
+        "y_true": y_test,
+        "y_pred": y_pred,
+        "y_prob": y_prob,
+    })
+    metrics = compute_binary_metrics(y_test, y_pred, y_prob)
+    return TrainTestResults(
+        metrics=metrics,
+        predictions=pred_df,
+        model_name="baseline_example",
+        run_name=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Section 5: Main entry and CLI
+# ---------------------------------------------------------------------------
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Baseline model example for the evaluation system (Phase 2). "
+        "Demonstrates random model and optional logistic baseline with k-fold and train/test."
+    )
+    parser.add_argument(
+        "--model",
+        choices=["random", "logistic"],
+        default="random",
+        help="Model to run: 'random' (no training, random predictions, AUC ~0.5) or 'logistic'",
+    )
+    parser.add_argument(
+        "--features",
+        type=Path,
+        default=None,
+        help="Path to features CSV (optional). If not set, use synthetic data.",
+    )
+    parser.add_argument(
+        "--labels",
+        type=Path,
+        default=None,
+        help="Path to labels CSV (optional). Required if --features is set.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("results/baseline_example"),
+        help="Output directory for metrics, predictions, and plots.",
+    )
+    parser.add_argument(
+        "--n-splits",
+        type=int,
+        default=5,
+        help="Number of folds for k-fold CV.",
+    )
+    parser.add_argument(
+        "--random-state",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility.",
+    )
+    parser.add_argument(
+        "--train-test-split",
+        type=float,
+        default=0.2,
+        help="Fraction of data for test set when doing train/test evaluation (only with synthetic data).",
+    )
+    args = parser.parse_args()
+    if (args.features is None) != (args.labels is None):
+        parser.error("Either provide both --features and --labels or neither (synthetic data).")
+    return args
+
+
+def main() -> None:
+    args = parse_args()
+
+    # --- Data preparation ---
+    if args.features is not None and args.labels is not None:
+        X, y, patient_ids = load_data_from_csv(args.features, args.labels)
+        # For train/test we'd need a fixed split; with CSV we only do k-fold here for simplicity
+        do_train_test = False
+        X_train, X_test = X, None
+        y_train, y_test = y, None
+        pid_test = None
+    else:
+        X, y, patient_ids = generate_synthetic_data(random_state=args.random_state)
+        n = len(y)
+        from sklearn.model_selection import train_test_split
+        idx = np.arange(n)
+        train_idx, test_idx = train_test_split(
+            idx, test_size=args.train_test_split, stratify=y, random_state=args.random_state
+        )
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        pid_test = patient_ids[test_idx]
+        do_train_test = True
+
+    model_name = "random_baseline" if args.model == "random" else "logistic_baseline"
+
+    # --- Evaluator (same API for any model) ---
+    evaluator = Evaluator(
+        X=X_train,
+        y=y_train,
+        patient_ids=patient_ids if not do_train_test else patient_ids[train_idx],
+        model_name=model_name,
+        random_state=args.random_state,
+    )
+
+    # --- K-fold evaluation ---
+    if args.model == "random":
+        fold_results = run_kfold_random(
+            evaluator, X_train, y_train,
+            patient_ids if not do_train_test else patient_ids[train_idx],
+            n_splits=args.n_splits,
+            random_state=args.random_state,
+        )
+    else:
+        fold_results = run_kfold_logistic(
+            evaluator, X_train, y_train,
+            patient_ids if not do_train_test else patient_ids[train_idx],
+            n_splits=args.n_splits,
+            random_state=args.random_state,
+        )
+
+    kfold_results = evaluator.aggregate_kfold_results(fold_results)
+    evaluator.save_results(kfold_results, args.output)
+
+    print(f"K-fold results saved for {model_name}")
+    print(f"  Aggregated AUC: {kfold_results.aggregated_metrics.get('auc', {})}")
+
+    # --- Train/test evaluation (only when we have a test set) ---
+    if do_train_test and X_test is not None:
+        if args.model == "random":
+            tt_results = run_train_test_random(
+                y_test, pid_test, random_state=args.random_state
+            )
+        else:
+            tt_results = run_train_test_logistic(
+                X_train, y_train, X_test, y_test, pid_test, args.random_state
+            )
+        tt_results.model_name = model_name
+        evaluator.save_results(tt_results, args.output, run_name="train_test")
+        print(f"Train/test results saved (run_name=train_test)")
+        print(f"  AUC: {tt_results.metrics.get('auc', 'N/A')}")
+
+    print(f"Output directory: {args.output.resolve()}")
+
+
+if __name__ == "__main__":
+    main()
