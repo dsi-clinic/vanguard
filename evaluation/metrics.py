@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 # Constants
@@ -105,6 +106,60 @@ def compute_binary_metrics(
                 results[metric_name] = float("nan")
 
     return results
+
+
+def compute_metrics_by_group(
+    predictions: pd.DataFrame,
+    group_col: str,
+    metrics_to_compute: list[str] | None = None,
+) -> dict[str, dict[str, float] | dict[str, dict[str, float]]]:
+    """Compute metrics on full set and per group (e.g. stratum/subtype).
+
+    Parameters
+    ----------
+    predictions : pd.DataFrame
+        Must have columns: y_true, y_pred, y_prob, and the group column.
+    group_col : str
+        Column name for grouping (e.g. "stratum" or "subtype").
+    metrics_to_compute : list[str], optional
+        Metric names to compute. If None, uses all registered metrics.
+
+    Returns
+    -------
+    dict
+        - "overall": dict of metric name -> value for full validation set
+        - "by_group": dict of group_value -> dict of metric name -> value
+    """
+    if group_col not in predictions.columns:
+        raise ValueError(f"Group column {group_col!r} not in predictions: {list(predictions.columns)}")
+
+    required = ["y_true", "y_pred", "y_prob"]
+    for col in required:
+        if col not in predictions.columns:
+            raise ValueError(f"Predictions missing column {col!r}")
+
+    y_true = predictions["y_true"].to_numpy()
+    y_pred = predictions["y_pred"].to_numpy()
+    y_prob = predictions["y_prob"].to_numpy()
+
+    overall = compute_binary_metrics(y_true, y_pred, y_prob, metrics_to_compute)
+
+    by_group: dict[str, dict[str, float]] = {}
+    for group_val in sorted(predictions[group_col].dropna().unique(), key=str):
+        mask = predictions[group_col] == group_val
+        yt = predictions.loc[mask, "y_true"].to_numpy()
+        yp = predictions.loc[mask, "y_pred"].to_numpy()
+        ypr = predictions.loc[mask, "y_prob"].to_numpy()
+        try:
+            by_group[str(group_val)] = compute_binary_metrics(
+                yt, yp, ypr, metrics_to_compute
+            )
+        except Exception:
+            by_group[str(group_val)] = {
+                k: float("nan") for k in (metrics_to_compute or list(METRIC_REGISTRY.keys()))
+            }
+
+    return {"overall": overall, "by_group": by_group}
 
 
 def aggregate_fold_metrics(

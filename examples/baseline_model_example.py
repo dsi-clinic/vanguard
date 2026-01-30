@@ -97,16 +97,18 @@ def generate_synthetic_data(
 def load_data_from_csv(
     features_path: Path,
     labels_path: Path,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
     """Load features and labels from CSV files.
 
     Expects:
         - features_path: CSV with one row per sample, optional 'patient_id' column
-        - labels_path: CSV with columns 'patient_id' (or index) and 'label' (0/1)
+        - labels_path: CSV with columns 'patient_id' (or index), 'label' (0/1),
+          and optionally 'stratum' or 'subtype' for subgroup reporting
 
     Returns
     -------
-    X, y, patient_ids
+    X, y, patient_ids, stratum
+        stratum is None if labels have no 'stratum' or 'subtype' column.
     """
     X_df = pd.read_csv(features_path)
     y_df = pd.read_csv(labels_path)
@@ -118,12 +120,19 @@ def load_data_from_csv(
         patient_ids = np.array([f"sample_{i}" for i in range(len(X_df))])
         X = X_df.to_numpy()
 
+    stratum = None
     if "patient_id" in y_df.columns and "label" in y_df.columns:
         # Align by patient_id if present in both
         merged = X_df.merge(y_df, on="patient_id", how="inner")
         if "patient_id" in merged.columns:
             patient_ids = merged["patient_id"].to_numpy()
-            X = merged.drop(columns=["patient_id", "label"]).to_numpy()
+            drop_cols = ["patient_id", "label"]
+            for col in ("stratum", "subtype"):
+                if col in merged.columns:
+                    stratum = merged[col].astype(str).to_numpy()
+                    drop_cols.append(col)
+                    break
+            X = merged.drop(columns=drop_cols).to_numpy()
         y = merged["label"].to_numpy().astype(np.int64)
     else:
         y = y_df.iloc[:, 0].to_numpy().astype(np.int64)
@@ -134,7 +143,7 @@ def load_data_from_csv(
         )
     if len(patient_ids) != len(X):
         patient_ids = np.array([f"sample_{i}" for i in range(len(X))])
-    return X, y, patient_ids
+    return X, y, patient_ids, stratum
 
 
 # ---------------------------------------------------------------------------
@@ -192,12 +201,14 @@ def run_kfold_random(
     patient_ids: np.ndarray | None,
     n_splits: int,
     random_state: int,
+    stratum: np.ndarray | None = None,
 ) -> list[FoldResults]:
     """Run k-fold evaluation using the random model (no training).
 
     For each fold we only need the validation indices. We generate random
     predictions for the validation set and collect FoldResults. The evaluator
-    then aggregates metrics across folds.
+    then aggregates metrics across folds. If stratum is provided (aligned to X/y),
+    it is added to predictions for subgroup (stratum-specific) reporting.
     """
     splits = evaluator.create_kfold_splits(
         n_splits=n_splits,
@@ -222,6 +233,8 @@ def run_kfold_random(
             "y_pred": y_pred,
             "y_prob": y_prob,
         })
+        if stratum is not None:
+            pred_df["stratum"] = stratum[split.val_indices]
         fold_results.append(
             FoldResults(fold_idx=split.fold_idx, predictions=pred_df)
         )
@@ -235,6 +248,7 @@ def run_kfold_logistic(
     patient_ids: np.ndarray | None,
     n_splits: int,
     random_state: int,
+    stratum: np.ndarray | None = None,
 ) -> list[FoldResults]:
     """Run k-fold evaluation with LogisticRegression (for comparison)."""
     from sklearn.linear_model import LogisticRegression
@@ -266,6 +280,8 @@ def run_kfold_logistic(
             "y_pred": y_pred,
             "y_prob": y_prob,
         })
+        if stratum is not None:
+            pred_df["stratum"] = stratum[split.val_indices]
         fold_results.append(
             FoldResults(fold_idx=split.fold_idx, predictions=pred_df)
         )
@@ -284,6 +300,7 @@ def run_train_test_random(
     y_test: np.ndarray,
     patient_ids_test: np.ndarray | None,
     random_state: int,
+    stratum_test: np.ndarray | None = None,
 ) -> TrainTestResults:
     """Train/test evaluation with random model (no training, random predictions on test set)."""
     n = len(y_test)
@@ -296,6 +313,8 @@ def run_train_test_random(
         "y_pred": y_pred,
         "y_prob": y_prob,
     })
+    if stratum_test is not None:
+        pred_df["stratum"] = stratum_test
     # Compute metrics via evaluator's method (we need an evaluator instance for save_results later;
     # for TrainTestResults we pass metrics from compute_metrics)
     from evaluation.metrics import compute_binary_metrics
@@ -315,6 +334,7 @@ def run_train_test_logistic(
     y_test: np.ndarray,
     patient_ids_test: np.ndarray | None,
     random_state: int,
+    stratum_test: np.ndarray | None = None,
 ) -> TrainTestResults:
     """Train/test evaluation with LogisticRegression."""
     from sklearn.linear_model import LogisticRegression
@@ -332,6 +352,8 @@ def run_train_test_logistic(
         "y_pred": y_pred,
         "y_prob": y_prob,
     })
+    if stratum_test is not None:
+        pred_df["stratum"] = stratum_test
     metrics = compute_binary_metrics(y_test, y_pred, y_prob)
     return TrainTestResults(
         metrics=metrics,
@@ -404,7 +426,7 @@ def main() -> None:
 
     # --- Data preparation ---
     if args.features is not None and args.labels is not None:
-        X, y, patient_ids = load_data_from_csv(args.features, args.labels)
+        X, y, patient_ids, stratum = load_data_from_csv(args.features, args.labels)
         # For train/test we'd need a fixed split; with CSV we only do k-fold here for simplicity
         do_train_test = False
         X_train, X_test = X, None
@@ -421,6 +443,7 @@ def main() -> None:
         X_train, X_test = X[train_idx], X[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
         pid_test = patient_ids[test_idx]
+        stratum = None  # no stratum for synthetic data unless added
         do_train_test = True
 
     model_name = "random_baseline" if args.model == "random" else "logistic_baseline"
@@ -435,19 +458,22 @@ def main() -> None:
     )
 
     # --- K-fold evaluation ---
+    train_pids = patient_ids if not do_train_test else patient_ids[train_idx]
     if args.model == "random":
         fold_results = run_kfold_random(
             evaluator, X_train, y_train,
-            patient_ids if not do_train_test else patient_ids[train_idx],
+            train_pids,
             n_splits=args.n_splits,
             random_state=args.random_state,
+            stratum=stratum,
         )
     else:
         fold_results = run_kfold_logistic(
             evaluator, X_train, y_train,
-            patient_ids if not do_train_test else patient_ids[train_idx],
+            train_pids,
             n_splits=args.n_splits,
             random_state=args.random_state,
+            stratum=stratum,
         )
 
     kfold_results = evaluator.aggregate_kfold_results(fold_results)
@@ -457,14 +483,17 @@ def main() -> None:
     print(f"  Aggregated AUC: {kfold_results.aggregated_metrics.get('auc', {})}")
 
     # --- Train/test evaluation (only when we have a test set) ---
+    stratum_test = stratum[test_idx] if (do_train_test and stratum is not None) else None
     if do_train_test and X_test is not None:
         if args.model == "random":
             tt_results = run_train_test_random(
-                y_test, pid_test, random_state=args.random_state
+                y_test, pid_test, random_state=args.random_state,
+                stratum_test=stratum_test,
             )
         else:
             tt_results = run_train_test_logistic(
-                X_train, y_train, X_test, y_test, pid_test, args.random_state
+                X_train, y_train, X_test, y_test, pid_test, args.random_state,
+                stratum_test=stratum_test,
             )
         tt_results.model_name = model_name
         evaluator.save_results(tt_results, args.output, run_name="train_test")

@@ -12,12 +12,41 @@ from evaluation.kfold import create_kfold_splits
 from evaluation.metrics import (
     aggregate_fold_metrics,
     compute_binary_metrics,
+    compute_metrics_by_group,
 )
 from evaluation.utils import (
     align_data,
     validate_inputs,
 )
 from evaluation.visualizations import VISUALIZATION_REGISTRY
+
+# Column name(s) used for stratum/subgroup reporting (first present in predictions is used)
+STRATUM_COLUMN_ALIASES = ("stratum", "subtype")
+
+
+def _stratum_column(predictions: pd.DataFrame) -> str | None:
+    """Return the first stratum column name present in predictions, or None."""
+    for col in STRATUM_COLUMN_ALIASES:
+        if col in predictions.columns:
+            return col
+    return None
+
+
+def _print_validation_summary(
+    validation_summary: dict,
+    stratum_col: str,
+) -> None:
+    """Print overall and stratum-specific metrics (e.g. AUC) to stdout."""
+    overall = validation_summary.get("overall", {})
+    by_group = validation_summary.get("by_group", {})
+    print("Validation summary:")
+    if "auc" in overall:
+        print(f"  AUC (overall): {overall['auc']:.3f}")
+    for i, (stratum_name, metrics) in enumerate(by_group.items(), start=1):
+        auc_val = metrics.get("auc", float("nan"))
+        auc_str = f"{auc_val:.3f}" if not (isinstance(auc_val, float) and np.isnan(auc_val)) else "nan"
+        print(f"  AUC (Strata {i} / {stratum_name}): {auc_str}")
+    print()
 
 
 @dataclass
@@ -315,12 +344,24 @@ class Evaluator:
             if results.run_name:
                 metrics_dict["run_name"] = results.run_name
 
+        # Subgroup (stratum) metrics: compute, add to dict, and print summary
+        stratum_col = _stratum_column(results.predictions)
+        if stratum_col is not None:
+            validation_summary = compute_metrics_by_group(
+                results.predictions, stratum_col
+            )
+            metrics_dict["validation_summary"] = validation_summary
+
         # Save metrics
         metrics_path = final_output_dir / "metrics.json"
         import json
 
         with metrics_path.open("w") as f:
             json.dump(metrics_dict, f, indent=2)
+
+        # Print validation summary (full set + stratum-specific)
+        if stratum_col is not None and "validation_summary" in metrics_dict:
+            _print_validation_summary(metrics_dict["validation_summary"], stratum_col)
 
         # Generate and save visualizations
         plots_dir = final_output_dir / "plots"
