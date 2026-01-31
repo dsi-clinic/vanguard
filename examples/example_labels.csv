@@ -1,0 +1,21 @@
+patient_id,label,stratum
+patient_001,0,HR+ HER2-
+patient_002,1,HR+ HER2-
+patient_003,0,HR- HER2+
+patient_004,1,HR- HER2+
+patient_005,0,TNBC
+patient_006,1,TNBC
+patient_007,0,HR+ HER2-
+patient_008,1,HR- HER2+
+patient_009,0,TNBC
+patient_010,1,HR+ HER2-
+patient_011,0,HR- HER2+
+patient_012,1,TNBC
+patient_013,0,HR+ HER2-
+patient_014,1,HR+ HER2-
+patient_015,0,HR- HER2+
+patient_016,1,TNBC
+patient_017,0,TNBC
+patient_018,1,HR- HER2+
+patient_019,0,HR+ HER2-
+patient_020,1,TNBC

@@ -171,5 +171,5 @@ test_outputs/
 *-out/
 logs/
 
-# local work (do not commit)
-.Rhistory
+# Results shouldn't be commited as they can be regenerated easily
+results/**
