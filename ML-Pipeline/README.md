@@ -15,7 +15,6 @@ The `pcr_prediction.py` script trains and evaluates machine learning models to p
 ## Requirements
 - Python 3.8+
 - All required Python packages are installed via the project’s `environment.yml`
-- Do **not** run `pip install -r requirements.txt`
 
 ## Running the Code
 
