@@ -172,5 +172,4 @@ test_outputs/
 logs/
 
 # local work (do not commit)
-Curvature.ipynb
 .Rhistory
