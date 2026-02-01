@@ -63,7 +63,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
-import yaml
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
@@ -80,19 +79,7 @@ logging.basicConfig(level=logging.WARNING)
 logging.getLogger("radiomics").setLevel(logging.ERROR)
 
 
-# ---------------------------------------------------------------------
 # small helpers
-# ---------------------------------------------------------------------
-def read_yaml(path: str | None) -> dict[str, Any]:
-    """Load a YAML file if ``path`` is not None; otherwise return an empty dict."""
-    if not path:
-        return {}
-    yaml_path = Path(path)
-    with yaml_path.open() as f:
-        data = yaml.safe_load(f)
-    return data or {}
-
-
 def load_csv(path: str) -> pd.DataFrame:
     """Load a CSV file and ensure it contains a ``patient_id`` column."""
     csv_path = Path(path)
@@ -134,106 +121,37 @@ def ensure_exists(path: Path, what: str) -> None:
         raise FileNotFoundError(msg)
 
 
-# ---------------------------------------------------------------------
 # radiomics extractor builder
-# ---------------------------------------------------------------------
 def build_extractor(
-    params: dict[str, Any],
+    params_path: str | None = None,
     label_override: int | None = None,
 ) -> featureextractor.RadiomicsFeatureExtractor:
-    """Build and configure a :class:`RadiomicsFeatureExtractor` from parameters.
+    """Build a :class:`RadiomicsFeatureExtractor` from a PyRadiomics YAML file.
 
     Parameters
     ----------
-    params:
-        Dictionary with PyRadiomics settings and feature-class configuration.
-        Expected keys include ``setting``, ``param``, and ``featureClasses``.
+    params_path:
+        Path to a PyRadiomics YAML parameter file.  When *None* the extractor
+        is created with default settings.  The file is parsed by PyRadiomics
+        itself, so ``setting``, ``imageType``, and ``featureClass`` are all
+        honoured automatically.
     label_override:
-        Optional integer label to force all featureClasses to use for the mask.
+        Optional integer label to force as the mask value, overriding whatever
+        ``label`` is set in the YAML ``setting`` block.
     """
-    setting = params.get("setting") or {}
-    extractor = featureextractor.RadiomicsFeatureExtractor(**setting)
-
-    # General enables / disables (attributes on the extractor)
-    for key, value in params.get("param", {}).items():
-        try:
-            setattr(extractor, key, value)
-        except Exception:  # pragma: no cover - defensive
-            print(
-                f"[WARN] could not set extractor param '{key}'",
-                file=sys.stderr,
-            )
-
-    feature_classes = params.get("featureClasses")
-    if feature_classes:
-        # Optionally override label (PyRadiomics uses ``label`` for mask values)
-        if label_override is not None:
-            for spec in feature_classes.values():
-                if isinstance(spec, dict):
-                    spec["label"] = label_override
-
-        # New-style per-class enablement
-        try:
-            extractor.enableAllFeatures()
-        except Exception:  # pragma: no cover - defensive
-            # If this fails we still try to enable/disable below.
-            print(
-                "[WARN] enableAllFeatures() failed; continuing with partial config.",
-                file=sys.stderr,
-            )
-
-        for fcls, spec in feature_classes.items():
-            ok = False
-            try:
-                if spec is False:
-                    extractor.disableFeatureClassByName(fcls)
-                    ok = True
-                elif spec is True:
-                    extractor.enableFeatureClassByName(fcls)
-                    ok = True
-                elif isinstance(spec, dict):
-                    # Disable all features, then re-enable the subset.
-                    extractor.disableFeatureClassByName(fcls)
-                    for fname, flag in spec.items():
-                        if flag:
-                            extractor.enableFeatureByName(fcls, fname)
-                    ok = True
-            except Exception as exc:  # pragma: no cover - defensive
-                print(
-                    f"[WARN] error configuring feature class {fcls}: {exc}",
-                    file=sys.stderr,
-                )
-            if not ok:
-                print(
-                    f"[WARN] could not enable feature class {fcls}",
-                    file=sys.stderr,
-                )
+    if params_path:
+        extractor = featureextractor.RadiomicsFeatureExtractor(paramsFile=params_path)
     else:
-        # Default to a standard set of feature classes.
-        default_classes = (
-            "firstorder",
-            "shape",
-            "glcm",
-            "glrlm",
-            "glszm",
-            "gldm",
-            "ngtdm",
-        )
-        for fcls in default_classes:
-            try:
-                extractor.enableFeatureClassByName(fcls)
-            except Exception as exc:  # pragma: no cover - defensive
-                print(
-                    f"[WARN] could not enable feature class {fcls}: {exc}",
-                    file=sys.stderr,
-                )
+        extractor = featureextractor.RadiomicsFeatureExtractor()
+
+    if label_override is not None:
+        extractor.settings["label"] = label_override
 
     return extractor
 
 
-# ---------------------------------------------------------------------
+
 # peritumor mask creation (cast to UInt8)
-# ---------------------------------------------------------------------
 def make_peritumor_mask(mask_path: Path, radius_mm: float) -> sitk.Image | None:
     """Dilate a binary tumor mask to create a peritumor shell of given radius.
 
@@ -268,9 +186,7 @@ def make_peritumor_mask(mask_path: Path, radius_mm: float) -> sitk.Image | None:
     return shell
 
 
-# ---------------------------------------------------------------------
 # flatten radiomics output
-# ---------------------------------------------------------------------
 def _is_number(value: object) -> bool:
     """Return True if ``value`` can be cast to ``float`` without error."""
     try:
@@ -314,9 +230,7 @@ def flatten_radiomics_result(
     return out
 
 
-# ---------------------------------------------------------------------
 # feature extraction for one patient (multi-phase)
-# ---------------------------------------------------------------------
 def extract_for_pid(
     pid: str,
     images_dir: str,
@@ -364,9 +278,8 @@ def extract_for_pid(
     return out_row
 
 
-# ---------------------------------------------------------------------
+
 # extract for split
-# ---------------------------------------------------------------------
 def extract_split_features(
     pids: list[str],
     images_dir: str,
@@ -411,9 +324,7 @@ def extract_split_features(
     return pd.DataFrame(rows).set_index("patient_id")
 
 
-# ---------------------------------------------------------------------
 # simple numeric sanitizer for extractor (so trainer finds *_final.csv)
-# ---------------------------------------------------------------------
 def sanitize_numeric(data: pd.DataFrame, tag: str) -> pd.DataFrame:
     """Keep only numeric columns and drop degenerate ones, with debug logging."""
     raw_shape = data.shape
@@ -432,9 +343,7 @@ def sanitize_numeric(data: pd.DataFrame, tag: str) -> pd.DataFrame:
     return num
 
 
-# ---------------------------------------------------------------------
 # main
-# ---------------------------------------------------------------------
 def main() -> None:
     """Entry point: run extraction for train and test splits and write CSVs."""
     ap = argparse.ArgumentParser(description="Extract radiomics features only.")
@@ -485,10 +394,8 @@ def main() -> None:
     # Load metadata
     labels = load_csv(args.labels)[["patient_id", "pcr"]].set_index("patient_id")
     splits = load_csv(args.splits).set_index("patient_id")
-    params = read_yaml(args.params)
-
     # Build extractor (optionally overriding mask label)
-    extractor = build_extractor(params, label_override=args.label_override)
+    extractor = build_extractor(args.params, label_override=args.label_override)
 
     # Identify train/test patient IDs
     if "split" not in splits.columns:
