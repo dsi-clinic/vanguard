@@ -1,0 +1,37 @@
+# ---------------------------------------------------------------------------
+# Experiment: peri-5 mm · multi-phase · logistic regression (elastic net)
+#
+# This config reproduces the "peri5_multiphase + logistic" run that was
+# previously driven by the sbatch + bash scripts.
+# ---------------------------------------------------------------------------
+experiment_name: NEW_peri5_multiphase_logreg
+
+paths:
+  images:      /net/projects2/vanguard/MAMA-MIA-syn60868042/images
+  masks:       /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert
+  labels:      /home/summe/vanguard/radiomics_baseline/labels.csv
+  splits:      /home/summe/vanguard/radiomics_baseline/splits_train_test_ready.csv
+  outdir:      /home/summe/vanguard/radiomics_baseline/outputs/NEW_peri5_multiphase_logreg
+  params_yaml: /home/summe/vanguard/radiomics_baseline/pyradiomics_params.yaml
+  # extract_outdir is optional.  If omitted it defaults to {outdir}/extraction.
+  # The ablation runner sets this explicitly so that experiments sharing the
+  # same extraction parameters reuse one extraction output directory.
+
+extract:
+  image_patterns:
+    - "{pid}/{pid}_0001.nii.gz"
+    - "{pid}/{pid}_0002.nii.gz"
+  mask_pattern:    "{pid}.nii.gz"
+  peri_radius_mm:  5
+  n_jobs:          8
+  label_override:  1          # optional — omit to use whatever is in params_yaml
+
+train:
+  classifier:      logistic
+  logreg_penalty:  elasticnet
+  logreg_l1_ratio: 0.5
+  corr_threshold:  0.9
+  k_best:          50
+  grid_search:     true
+  cv_folds:        5
+  include_subtype: true
