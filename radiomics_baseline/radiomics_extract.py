@@ -4,8 +4,7 @@
 Stage 1: Run PyRadiomics over all patients in a split and
 write feature tables to disk.
 
-Inputs
-------
+Inputs:
 - --images : CSV from radiomics_extract.py (rows = patients, cols = features)
 - --masks  : CSV from radiomics_extract.py
 - --labels : CSV with at least columns: patient_id,pcr[,subtype]
@@ -16,8 +15,7 @@ Inputs
 - --peri-radius-mm : Optional peritumoral shell width in millimeters (0 = tumor only).
 - --n-proc 8       : Number of worker processes.
 
-What this script does
----------------------
+What this script does:
 1) Loads labels and train/test split
 2) Checks that each patient has (at least) the first image phase + mask
 3) For each patient:
@@ -33,8 +31,7 @@ What this script does
 
 You can then feed these files to radiomics_train.py to build models.
 
-Example Usage
----------------------
+Example Usage:
 
 # 1 peri 5mm, multi-phase
 python $SCRIPTS/radiomics_extract.py \
@@ -77,6 +74,12 @@ except Exception:
 warnings.filterwarnings("ignore", category=UserWarning)
 logging.basicConfig(level=logging.WARNING)
 logging.getLogger("radiomics").setLevel(logging.ERROR)
+
+# Tracks which non-scalar feature keys have already been logged in this process
+# so the debug message fires once per unique key rather than once per patient.
+# Note: joblib Parallel spawns separate processes, so each worker logs its first
+# patient independently — that is expected and acceptable.
+_LOGGED_NON_SCALAR_KEYS: set[str] = set()
 
 
 # small helpers
@@ -128,8 +131,7 @@ def build_extractor(
 ) -> featureextractor.RadiomicsFeatureExtractor:
     """Build a :class:`RadiomicsFeatureExtractor` from a PyRadiomics YAML file.
 
-    Parameters
-    ----------
+    Parameters:
     params_path:
         Path to a PyRadiomics YAML parameter file.  When *None* the extractor
         is created with default settings.  The file is parsed by PyRadiomics
@@ -199,12 +201,47 @@ def _is_number(value: object) -> bool:
 def flatten_radiomics_result(
     res: dict[str, Any],
     prefix: str = "",
+    non_scalar_handling: str = "concat",
+    aggregate_stats: list[str] | None = None,
+    hybrid_concat_threshold: int = 5,
 ) -> dict[str, Any]:
     """Flatten the (possibly nested) PyRadiomics result dict into a 1D mapping.
 
-    Diagnostics keys are skipped. Nested dicts, lists, and tuples are expanded
-    into separate scalar entries, with keys prefixed by ``prefix``.
+    Diagnostics keys are skipped.  Nested dicts are always expanded by sub-key.
+    The treatment of list/tuple values (the 13-element angle vectors returned by
+    GLCM, GLRLM, and GLDM) is controlled by *non_scalar_handling*:
+
+    * ``"concat"``    – each element becomes its own column
+      (``feature_0`` … ``feature_12``).  This is the original behaviour and the
+      default.
+    * ``"aggregate"`` – each vector is summarised into one column per stat in
+      *aggregate_stats* (e.g. ``feature_mean``, ``feature_std``).
+    * ``"hybrid"``    – vectors with length ≤ *hybrid_concat_threshold* are
+      concatenated; longer vectors are aggregated.
+
+    Parameters:
+    res:
+        Raw dict returned by ``RadiomicsFeatureExtractor.execute``.
+    prefix:
+        String prepended to every output key.
+    non_scalar_handling:
+        Strategy for list/tuple values (see above).
+    aggregate_stats:
+        Stats to compute in aggregate/hybrid mode.  Defaults to
+        ``["mean", "std", "min", "max"]``.
+    hybrid_concat_threshold:
+        Length cutoff for hybrid mode.
     """
+    if aggregate_stats is None:
+        aggregate_stats = ["mean", "std", "min", "max"]
+
+    _STAT_FUNCS: dict[str, Any] = {
+        "mean": np.mean,
+        "std":  np.std,
+        "min":  np.min,
+        "max":  np.max,
+    }
+
     out: dict[str, Any] = {}
     for key, value in res.items():
         if key.startswith("diagnostics_"):
@@ -212,6 +249,7 @@ def flatten_radiomics_result(
 
         colkey = f"{prefix}{key}"
 
+        # nested dict (named sub-features) — always expand by sub-key
         if isinstance(value, dict):
             for subkey, subval in value.items():
                 full_key = f"{colkey}_{subkey}"
@@ -221,9 +259,50 @@ def flatten_radiomics_result(
         if value is None:
             continue
 
+        # list / tuple (angle vectors from GLCM/GLRLM/GLDM)
         if isinstance(value, list | tuple):
-            for idx, elem in enumerate(value):
-                out[f"{colkey}_{idx}"] = float(elem) if _is_number(elem) else elem
+            # Log once per unique key so the user can see which features are
+            # non-scalar without drowning in repeated lines.
+            if colkey not in _LOGGED_NON_SCALAR_KEYS:
+                print(
+                    f"[DEBUG] non-scalar feature: {colkey} "
+                    f"-> list of length {len(value)}",
+                    file=sys.stderr,
+                )
+                _LOGGED_NON_SCALAR_KEYS.add(colkey)
+
+            # Decide whether to aggregate this particular vector
+            use_aggregate = False
+            if non_scalar_handling == "aggregate":
+                use_aggregate = True
+            elif non_scalar_handling == "hybrid":
+                use_aggregate = len(value) > hybrid_concat_threshold
+
+            if use_aggregate:
+                # Only aggregate if every element is numeric; otherwise fall
+                # back to concat so we don't silently drop data.
+                numeric_vals = [float(v) for v in value if _is_number(v)]
+                if len(numeric_vals) == len(value):
+                    arr = np.array(numeric_vals)
+                    for stat_name in aggregate_stats:
+                        if stat_name in _STAT_FUNCS:
+                            out[f"{colkey}_{stat_name}"] = float(
+                                _STAT_FUNCS[stat_name](arr),
+                            )
+                else:
+                    # Non-numeric elements present — fall back to concat
+                    for idx, elem in enumerate(value):
+                        out[f"{colkey}_{idx}"] = (
+                            float(elem) if _is_number(elem) else elem
+                        )
+            else:
+                # concat: original behaviour
+                for idx, elem in enumerate(value):
+                    out[f"{colkey}_{idx}"] = (
+                        float(elem) if _is_number(elem) else elem
+                    )
+
+        # scalar
         else:
             out[colkey] = float(value) if _is_number(value) else value
 
@@ -239,6 +318,9 @@ def extract_for_pid(
     mask_pattern: str,
     extractor: featureextractor.RadiomicsFeatureExtractor,
     peri_radius_mm: float = 0.0,
+    non_scalar_handling: str = "concat",
+    aggregate_stats: list[str] | None = None,
+    hybrid_concat_threshold: int = 5,
 ) -> dict[str, Any]:
     """Extract radiomics features for a single patient across all phases."""
     base_mask_path = path_from_pattern(masks_dir, pid, mask_pattern)
@@ -248,6 +330,12 @@ def extract_for_pid(
     except Exception as exc:  # pragma: no cover - I/O defensive
         msg = f"Could not read mask for {pid}: {exc}"
         raise RuntimeError(msg) from exc
+
+    flatten_kwargs: dict[str, Any] = {
+        "non_scalar_handling":    non_scalar_handling,
+        "aggregate_stats":        aggregate_stats,
+        "hybrid_concat_threshold": hybrid_concat_threshold,
+    }
 
     out_row: dict[str, Any] = {"patient_id": pid}
 
@@ -263,7 +351,9 @@ def extract_for_pid(
         # Run on tumor mask
         res_tumor = extractor.execute(img, mask_img)
         tumor_prefix = f"{pat}_tumor_"
-        out_row.update(flatten_radiomics_result(res_tumor, prefix=tumor_prefix))
+        out_row.update(
+            flatten_radiomics_result(res_tumor, prefix=tumor_prefix, **flatten_kwargs),
+        )
 
         # Optional peritumor shell
         if peri_radius_mm > 0:
@@ -272,8 +362,10 @@ def extract_for_pid(
                 res_peri = extractor.execute(img, peri_mask)
                 peri_prefix = f"{pat}_peri{int(peri_radius_mm)}mm_"
                 out_row.update(
-                    flatten_radiomics_result(res_peri, prefix=peri_prefix),
+                    flatten_radiomics_result(res_peri, prefix=peri_prefix, **flatten_kwargs),
                 )
+
+    return out_row
 
     return out_row
 
@@ -289,6 +381,9 @@ def extract_split_features(
     extractor: featureextractor.RadiomicsFeatureExtractor,
     peri_radius_mm: float = 0.0,
     n_jobs: int = 1,
+    non_scalar_handling: str = "concat",
+    aggregate_stats: list[str] | None = None,
+    hybrid_concat_threshold: int = 5,
 ) -> pd.DataFrame:
     """Extract features for a list of patients and return as a DataFrame."""
     rows: list[dict[str, Any]] = []
@@ -303,6 +398,9 @@ def extract_split_features(
                     mask_pattern,
                     extractor,
                     peri_radius_mm=peri_radius_mm,
+                    non_scalar_handling=non_scalar_handling,
+                    aggregate_stats=aggregate_stats,
+                    hybrid_concat_threshold=hybrid_concat_threshold,
                 ),
             )
     else:
@@ -317,6 +415,9 @@ def extract_split_features(
                 mask_pattern,
                 extractor,
                 peri_radius_mm=peri_radius_mm,
+                non_scalar_handling=non_scalar_handling,
+                aggregate_stats=aggregate_stats,
+                hybrid_concat_threshold=hybrid_concat_threshold,
             )
             for pid in tqdm(pids, desc=f"Extracting radiomics (n_jobs={n_jobs})")
         )
@@ -385,6 +486,34 @@ def main() -> None:
         default=None,
         help="Optional mask label value overriding any YAML label.",
     )
+    ap.add_argument(
+        "--non-scalar-handling",
+        choices=["concat", "aggregate", "hybrid"],
+        default="concat",
+        help=(
+            "How to handle non-scalar (vector) features from PyRadiomics. "
+            "concat: each element becomes its own column (original behaviour). "
+            "aggregate: summarise each vector with aggregate_stats. "
+            "hybrid: concat short vectors, aggregate long ones.",
+        ),
+    )
+    ap.add_argument(
+        "--aggregate-stats",
+        default="mean,std,min,max",
+        help=(
+            "Comma-separated summary stats for aggregate/hybrid mode "
+            "(default: mean,std,min,max).",
+        ),
+    )
+    ap.add_argument(
+        "--hybrid-concat-threshold",
+        type=int,
+        default=5,
+        help=(
+            "For hybrid mode: vectors with length <= this value are "
+            "concatenated; longer vectors are aggregated (default: 5).",
+        ),
+    )
 
     args = ap.parse_args()
 
@@ -409,6 +538,9 @@ def main() -> None:
         pat.strip() for pat in args.image_pattern.split(",") if pat.strip()
     ]
 
+    # Parse aggregate stats from comma-separated string
+    aggregate_stats = [s.strip() for s in args.aggregate_stats.split(",") if s.strip()]
+
     # Extract features
     feat_train = extract_split_features(
         train_ids,
@@ -419,6 +551,9 @@ def main() -> None:
         extractor,
         peri_radius_mm=args.peri_radius_mm,
         n_jobs=args.n_jobs,
+        non_scalar_handling=args.non_scalar_handling,
+        aggregate_stats=aggregate_stats,
+        hybrid_concat_threshold=args.hybrid_concat_threshold,
     )
     feat_test = extract_split_features(
         test_ids,
@@ -429,6 +564,9 @@ def main() -> None:
         extractor,
         peri_radius_mm=args.peri_radius_mm,
         n_jobs=args.n_jobs,
+        non_scalar_handling=args.non_scalar_handling,
+        aggregate_stats=aggregate_stats,
+        hybrid_concat_threshold=args.hybrid_concat_threshold,
     )
 
     # Sanitize numeric-only

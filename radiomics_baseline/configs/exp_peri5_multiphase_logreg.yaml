@@ -4,14 +4,14 @@
 # This config reproduces the "peri5_multiphase + logistic" run that was
 # previously driven by the sbatch + bash scripts.
 # ---------------------------------------------------------------------------
-experiment_name: NEW_peri5_multiphase_logreg
+experiment_name: peri5_multiphase_logreg
 
 paths:
   images:      /net/projects2/vanguard/MAMA-MIA-syn60868042/images
   masks:       /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert
   labels:      /home/summe/vanguard/radiomics_baseline/labels.csv
   splits:      /home/summe/vanguard/radiomics_baseline/splits_train_test_ready.csv
-  outdir:      /home/summe/vanguard/radiomics_baseline/outputs/NEW_peri5_multiphase_logreg
+  outdir:      /home/summe/vanguard/radiomics_baseline/outputs/peri5_multiphase_logreg
   params_yaml: /home/summe/vanguard/radiomics_baseline/pyradiomics_params.yaml
   # extract_outdir is optional.  If omitted it defaults to {outdir}/extraction.
   # The ablation runner sets this explicitly so that experiments sharing the
@@ -25,6 +25,14 @@ extract:
   peri_radius_mm:  5
   n_jobs:          8
   label_override:  1          # optional — omit to use whatever is in params_yaml
+  # How to handle the 13-element angle vectors returned by GLCM/GLRLM/GLDM.
+  # See non_scalar_features.md for full explanation.
+  #   concat    – each element becomes its own column (original behaviour)
+  #   aggregate – summarise each vector with the stats listed below
+  #   hybrid    – concat short vectors, aggregate vectors longer than the threshold
+  non_scalar_handling:        concat
+  aggregate_stats:            [mean, std, min, max]
+  hybrid_concat_threshold:    5
 
 train:
   classifier:      logistic

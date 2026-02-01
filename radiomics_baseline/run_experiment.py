@@ -106,6 +106,7 @@ def validate_config(cfg: dict[str, Any], label: str = "") -> None:
 
 
 # Directory helpers
+
 def get_extract_outdir(cfg: dict[str, Any]) -> Path:
     """Return the extraction output directory.
 
@@ -154,6 +155,14 @@ def build_extract_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
         cmd.extend(["--params", paths["params_yaml"]])
     if extract.get("label_override") is not None:
         cmd.extend(["--label-override", str(extract["label_override"])])
+
+    # Non-scalar vector handling
+    if extract.get("non_scalar_handling"):
+        cmd.extend(["--non-scalar-handling", extract["non_scalar_handling"]])
+    if extract.get("aggregate_stats"):
+        cmd.extend(["--aggregate-stats", ",".join(extract["aggregate_stats"])])
+    if extract.get("hybrid_concat_threshold") is not None:
+        cmd.extend(["--hybrid-concat-threshold", str(extract["hybrid_concat_threshold"])])
 
     return cmd
 
