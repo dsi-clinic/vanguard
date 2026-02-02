@@ -13,8 +13,8 @@ Outputs:
 import yaml
 import json
 import logging
+import argparse
 import math
-import numbers
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -33,7 +33,9 @@ from sklearn.metrics import (
 from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+
 from feature_factor import get_clinical_features
+import evaluation as luna_eval 
 
 ROC_FLIP_THRESHOLD = 0.5
 DEFAULT_PROBA_THRESHOLD = 0.5
@@ -118,27 +120,30 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_modular_features(config):
+    """Extracts features from JSON and integrates clinical data."""
     feature_dir = Path(config['data_paths']['feature_dir'])
     rows = []
     
     for p in sorted(feature_dir.glob("*.json")):
         with open(p, 'r') as f:
             data = json.load(f)
-            
         case_id = data.get("patient_id")
         feats = {"case_id": case_id}
         
-        if config['feature_toggles']['use_clinical']:
-            c_data = data.get("clinical_data", {})
-            feats["age"] = c_data.get("age")
-            feats["pcr_label"] = data.get("primary_lesion", {}).get("pcr")
-            feats["subtype"] = data.get("primary_lesion", {}).get("tumor_subtype")
-            
         if config['feature_toggles']['use_vascular']:
             pass 
-            
         rows.append(feats)
-    return pd.DataFrame(rows)
+    
+    df_json = pd.DataFrame(rows)
+    
+    if config['feature_toggles']['use_clinical']:
+        logging.info("Merging clinical features...")
+        clinical_df = get_clinical_features(config)
+        df_json = df_json.merge(clinical_df, left_on='case_id', right_on='patient_id', how='inner')
+        df_json = df_json.drop(columns=['patient_id'], errors='ignore')
+        logging.info(f"Final feature shape: {df_json.shape}")
+        
+    return df_json
 
 def find_binary_label_columns(df_labels: pd.DataFrame) -> list[str]:
     """Identify columns in a DataFrame that contain only binary (0/1) values."""
@@ -202,50 +207,63 @@ def metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
 
 
 def engineer_features(in_csv: Path, out_csv: Path) -> None:
-    """Clean and select relevant morphometric features from raw extraction CSV."""
+    """Standardizes column names and handles missing values."""
     df_feats = pd.read_csv(in_csv)
-    drop_cols = [
-        "source_file",
-        "bbox_x",
-        "bbox_y",
-        "bbox_z",
-        "bbox_volume",
-        "n_points",
-        "n_cells",
-    ]
-    df_feats = df_feats.drop(columns=[c for c in drop_cols if c in df_feats.columns])
-
-    morpho_cols = [
-        c
-        for c in df_feats.columns
-        if any(
-            k in c.lower()
-            for k in [
-                "radius",
-                "length",
-                "tortuosity",
-                "curvature",
-                "angle",
-                "area",
-                "volume",
-            ]
-        )
-    ]
-    if not morpho_cols:
-        morpho_cols = df_feats.select_dtypes(
-            include=["number", "bool"]
-        ).columns.tolist()
-
-    morpho_cols = [
-        c
-        for c in morpho_cols
-        if c.lower() not in {"case_id", "label"} and not c.endswith("_variant")
-    ]
-
-    X = df_feats[morpho_cols].fillna(0.0).copy()
-    X["case_id"] = df_feats["case_id"]
+    # Simple cleanup (expand this based on EDA)
+    X = df_feats.fillna(0.0).copy()
     X.to_csv(out_csv, index=False)
-    print(f"Engineered features -> {out_csv} ({X.shape[1]} cols)")
+    print(f"Engineered features -> {out_csv}")
+
+def luna_evaluator(feats_df, label_col, config, outdir):
+    """
+    Standardized wrapper for Daniel Luna's K-Fold framework.
+    """
+    y = feats_df[[label_col]]
+    X = feats_df.drop(columns=['case_id', label_col])
+    patient_ids = feats_df['case_id']
+
+    eval_instance = luna_eval.Evaluator(
+        X=X, 
+        y=y, 
+        patient_ids=patient_ids, 
+        name=config['experiment_setup']['name']
+    )
+    
+    n_splits = config['model_params'].get('n_splits', 5)
+    splits = eval_instance.create_kfold_splits(n_splits=n_splits)
+    fold_results_list = []
+
+    logging.info(f"Running Luna's {n_splits}-fold CV...")
+
+    for split in splits:
+        X_train, y_train = X.iloc[split.train_indices], y.iloc[split.train_indices]
+        X_val, y_val = X.iloc[split.val_indices], y.iloc[split.val_indices]
+        
+        model = RandomForestClassifier(
+            n_estimators=config['model_params'].get('n_estimators', 800),
+            random_state=config['model_params']['random_state'],
+            class_weight="balanced"
+        )
+        model.fit(X_train, y_train.values.ravel())
+        
+        y_prob = model.predict_proba(X_val)[:, 1]
+        y_pred = (y_prob >= 0.5).astype(int)
+        
+        pred_df = pd.DataFrame({
+            'patient_id': patient_ids.iloc[split.val_indices].values,
+            'y_true': y_val.values.ravel(),
+            'y_pred': y_pred,
+            'y_prob': y_prob
+        })
+        
+        fold_results_list.append(luna_eval.FoldResults(
+            fold_idx=split.fold_idx,
+            predictions=pred_df
+        ))
+
+    results = eval_instance.aggregate_kfold_results(fold_results_list)
+    eval_instance.save_results(results, outdir)
+    logging.info(f"Luna Evaluator: Results saved to {outdir}")
 
 
 def bootstrap_ci(
@@ -863,53 +881,28 @@ def run_ensemble(
 
     print("[ok] Ensemble -> ensemble_metrics.json")
 
-def build_modular_features(config):
-    """Refactored loader for model framework and clinical features."""
-    feature_dir = Path(config['data_paths']['feature_dir'])
-    rows = []
-    
-    for p in sorted(feature_dir.glob("*.json")):
-        with open(p, 'r') as f:
-            data = json.load(f)
-            
-        case_id = data.get("patient_id")
-        feats = {"case_id": case_id}
-        
-        # Clinical Extraction Logic
-        if config['feature_toggles']['use_clinical']:
-            c_data = data.get("clinical_data", {})
-            feats["age"] = c_data.get("age")
-            feats["pcr_label"] = data.get("primary_lesion", {}).get("pcr")
-            feats["subtype"] = data.get("primary_lesion", {}).get("tumor_subtype")
-            
-        # Vascular Extraction
-        if config['feature_toggles']['use_vascular']:
-            pass 
-            
-        rows.append(feats)
-    return pd.DataFrame(rows)
-
 def main() -> None:
-    """For args, config, output dir, feature building, training."""
-    config_path = "ML-Pipeline/config_pcr.yaml"
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", type=str, default="ML-Pipeline/config_pcr.yaml")
+    args = ap.parse_args()
+
+    config_path = args.config
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 
-    # Output Directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = Path(config['experiment_setup']['base_outdir']) / f"{config['experiment_setup']['name']}_{timestamp}"
     outdir.mkdir(parents=True, exist_ok=True)
     
-    # Save copy of config
     shutil.copy(config_path, outdir / "config_used.yaml")
 
-    # Feature Building
     feats = build_modular_features(config)
 
-    # Integrate Clinical Features from Excel/CSV
+    # Integrate Clinical Features
     if config['feature_toggles']['use_clinical']:
         clinical_df = get_clinical_features(config)
-        feats = feats.merge(clinical_data, left_on='case_id', right_on='patient_id', how='inner')
+        feats = feats.merge(clinical_df, left_on='case_id', right_on='patient_id', how='inner')
+        feats = feats.drop(columns=['patient_id'], errors='ignore')
         logging.info(f"Integrated clinical features. New shape: {feats.shape}")
 
     feats_path = outdir / "features.csv"
@@ -933,3 +926,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
