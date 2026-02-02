@@ -26,8 +26,7 @@ import numpy as np
 import vtk
 from einops import rearrange
 from scipy.spatial import cKDTree
-from skimage.morphology import label
-from skimage.morphology import skeletonize
+from skimage.morphology import label, skeletonize
 from vtkmodules.util import numpy_support as vtknp
 from vtkmodules.vtkCommonCore import vtkTypeFloat32Array
 from vtkmodules.vtkCommonDataModel import vtkImageData, vtkPolyData
