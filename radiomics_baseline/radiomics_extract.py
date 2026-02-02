@@ -152,7 +152,6 @@ def build_extractor(
     return extractor
 
 
-
 # peritumor mask creation (cast to UInt8)
 def make_peritumor_mask(mask_path: Path, radius_mm: float) -> sitk.Image | None:
     """Dilate a binary tumor mask to create a peritumor shell of given radius.
@@ -237,9 +236,9 @@ def flatten_radiomics_result(
 
     _STAT_FUNCS: dict[str, Any] = {
         "mean": np.mean,
-        "std":  np.std,
-        "min":  np.min,
-        "max":  np.max,
+        "std": np.std,
+        "min": np.min,
+        "max": np.max,
     }
 
     out: dict[str, Any] = {}
@@ -298,9 +297,7 @@ def flatten_radiomics_result(
             else:
                 # concat: original behaviour
                 for idx, elem in enumerate(value):
-                    out[f"{colkey}_{idx}"] = (
-                        float(elem) if _is_number(elem) else elem
-                    )
+                    out[f"{colkey}_{idx}"] = float(elem) if _is_number(elem) else elem
 
         # scalar
         else:
@@ -332,8 +329,8 @@ def extract_for_pid(
         raise RuntimeError(msg) from exc
 
     flatten_kwargs: dict[str, Any] = {
-        "non_scalar_handling":    non_scalar_handling,
-        "aggregate_stats":        aggregate_stats,
+        "non_scalar_handling": non_scalar_handling,
+        "aggregate_stats": aggregate_stats,
         "hybrid_concat_threshold": hybrid_concat_threshold,
     }
 
@@ -362,13 +359,14 @@ def extract_for_pid(
                 res_peri = extractor.execute(img, peri_mask)
                 peri_prefix = f"{pat}_peri{int(peri_radius_mm)}mm_"
                 out_row.update(
-                    flatten_radiomics_result(res_peri, prefix=peri_prefix, **flatten_kwargs),
+                    flatten_radiomics_result(
+                        res_peri, prefix=peri_prefix, **flatten_kwargs
+                    ),
                 )
 
     return out_row
 
     return out_row
-
 
 
 # extract for split
