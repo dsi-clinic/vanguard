@@ -36,8 +36,8 @@ from typing import Any
 import yaml
 
 # Validation constants
-_REQUIRED_TOP     = {"experiment_name", "paths", "extract", "train"}
-_REQUIRED_PATHS   = {"images", "masks", "labels", "splits", "outdir"}
+_REQUIRED_TOP = {"experiment_name", "paths", "extract", "train"}
+_REQUIRED_PATHS = {"images", "masks", "labels", "splits", "outdir"}
 _REQUIRED_EXTRACT = {"image_patterns", "mask_pattern"}
 _VALID_CLASSIFIERS = {"logistic", "rf", "xgb"}
 
@@ -106,6 +106,7 @@ def validate_config(cfg: dict[str, Any], label: str = "") -> None:
 
 # Directory helpers
 
+
 def get_extract_outdir(cfg: dict[str, Any]) -> Path:
     """Return the extraction output directory.
 
@@ -122,11 +123,9 @@ def get_extract_outdir(cfg: dict[str, Any]) -> Path:
 def extraction_outputs_exist(cfg: dict[str, Any]) -> bool:
     """True when both final feature CSVs are already on disk."""
     d = get_extract_outdir(cfg)
-    return (
-        (d / "features_train_final.csv").exists()
-        and (d / "features_test_final.csv").exists()
-    )
-
+    return (d / "features_train_final.csv").exists() and (
+        d / "features_test_final.csv"
+    ).exists()
 
 
 # CLI command builders
@@ -134,21 +133,30 @@ def build_extract_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
     """Translate the extraction section of a config into a
     radiomics_extract.py command-line invocation.
     """  # noqa: D205
-    paths   = cfg["paths"]
+    paths = cfg["paths"]
     extract = cfg["extract"]
 
     cmd = [
         sys.executable,
         str(scripts_dir / "radiomics_extract.py"),
-        "--images",         paths["images"],
-        "--masks",          paths["masks"],
-        "--labels",         paths["labels"],
-        "--splits",         paths["splits"],
-        "--output",         str(get_extract_outdir(cfg)),
-        "--image-pattern",  ",".join(extract["image_patterns"]),
-        "--mask-pattern",   extract["mask_pattern"],
-        "--peri-radius-mm", str(extract.get("peri_radius_mm", 0)),
-        "--n-jobs",         str(extract.get("n_jobs", 1)),
+        "--images",
+        paths["images"],
+        "--masks",
+        paths["masks"],
+        "--labels",
+        paths["labels"],
+        "--splits",
+        paths["splits"],
+        "--output",
+        str(get_extract_outdir(cfg)),
+        "--image-pattern",
+        ",".join(extract["image_patterns"]),
+        "--mask-pattern",
+        extract["mask_pattern"],
+        "--peri-radius-mm",
+        str(extract.get("peri_radius_mm", 0)),
+        "--n-jobs",
+        str(extract.get("n_jobs", 1)),
     ]
 
     if paths.get("params_yaml"):
@@ -162,7 +170,9 @@ def build_extract_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
     if extract.get("aggregate_stats"):
         cmd.extend(["--aggregate-stats", ",".join(extract["aggregate_stats"])])
     if extract.get("hybrid_concat_threshold") is not None:
-        cmd.extend(["--hybrid-concat-threshold", str(extract["hybrid_concat_threshold"])])
+        cmd.extend(
+            ["--hybrid-concat-threshold", str(extract["hybrid_concat_threshold"])]
+        )
 
     return cmd
 
@@ -174,52 +184,57 @@ def build_train_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
     Train/test feature paths are derived from the extraction output directory
     so they stay consistent with wherever extraction wrote its CSVs.
     """  # noqa: D205
-    paths       = cfg["paths"]
-    train       = cfg["train"]
+    paths = cfg["paths"]
+    train = cfg["train"]
     extract_out = get_extract_outdir(cfg)
-    train_out   = Path(paths["outdir"]) / "training"
+    train_out = Path(paths["outdir"]) / "training"
 
     cmd = [
         sys.executable,
         str(scripts_dir / "radiomics_train.py"),
-        "--train-features", str(extract_out / "features_train_final.csv"),
-        "--test-features",  str(extract_out / "features_test_final.csv"),
-        "--labels",         paths["labels"],
-        "--output",         str(train_out),
-        "--classifier",     train["classifier"],
+        "--train-features",
+        str(extract_out / "features_train_final.csv"),
+        "--test-features",
+        str(extract_out / "features_test_final.csv"),
+        "--labels",
+        paths["labels"],
+        "--output",
+        str(train_out),
+        "--classifier",
+        train["classifier"],
     ]
 
     # classifier-specific flags
     if train["classifier"] == "logistic":
         for key, flag in (
-            ("logreg_penalty",  "--logreg-penalty"),
+            ("logreg_penalty", "--logreg-penalty"),
             ("logreg_l1_ratio", "--logreg-l1-ratio"),
-            ("logreg_C",        "--logreg-C"),
+            ("logreg_C", "--logreg-C"),
         ):
             if key in train:
                 cmd.extend([flag, str(train[key])])
 
     elif train["classifier"] == "rf":
         for key, flag in (
-            ("rf_n_estimators",      "--rf-n-estimators"),
-            ("rf_max_depth",         "--rf-max-depth"),
-            ("rf_min_samples_leaf",  "--rf-min-samples-leaf"),
+            ("rf_n_estimators", "--rf-n-estimators"),
+            ("rf_max_depth", "--rf-max-depth"),
+            ("rf_min_samples_leaf", "--rf-min-samples-leaf"),
             ("rf_min_samples_split", "--rf-min-samples-split"),
-            ("rf_max_features",      "--rf-max-features"),
-            ("rf_ccp_alpha",         "--rf-ccp-alpha"),
+            ("rf_max_features", "--rf-max-features"),
+            ("rf_ccp_alpha", "--rf-ccp-alpha"),
         ):
             if key in train:
                 cmd.extend([flag, str(train[key])])
 
     elif train["classifier"] == "xgb":
         for key, flag in (
-            ("xgb_n_estimators",     "--xgb-n-estimators"),
-            ("xgb_max_depth",        "--xgb-max-depth"),
-            ("xgb_learning_rate",    "--xgb-learning-rate"),
-            ("xgb_subsample",        "--xgb-subsample"),
+            ("xgb_n_estimators", "--xgb-n-estimators"),
+            ("xgb_max_depth", "--xgb-max-depth"),
+            ("xgb_learning_rate", "--xgb-learning-rate"),
+            ("xgb_subsample", "--xgb-subsample"),
             ("xgb_colsample_bytree", "--xgb-colsample-bytree"),
-            ("xgb_reg_lambda",       "--xgb-reg-lambda"),
-            ("xgb_reg_alpha",        "--xgb-reg-alpha"),
+            ("xgb_reg_lambda", "--xgb-reg-lambda"),
+            ("xgb_reg_alpha", "--xgb-reg-alpha"),
             ("xgb_scale_pos_weight", "--xgb-scale-pos-weight"),
         ):
             if key in train:
@@ -255,12 +270,11 @@ def run_cmd(cmd: list[str], label: str, *, dry_run: bool) -> int:
         print("[DRY-RUN] Skipping execution.\n")
         return 0
 
-    start  = time.time()
+    start = time.time()
     result = subprocess.run(cmd, check=False)  # noqa: S603
     elapsed = time.time() - start
     print(f"[{label}] Finished in {elapsed:.1f}s — exit code {result.returncode}\n")
     return result.returncode
-
 
 
 # Single-experiment orchestrator (also used by run_ablations.py)
@@ -268,7 +282,7 @@ def run_single_experiment(
     config_path: str,
     scripts_dir: Path,
     *,
-    force:   bool = False,
+    force: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Load, validate, and execute one experiment end-to-end.
@@ -287,7 +301,7 @@ def run_single_experiment(
     validate_config(cfg, label=config_path)
 
     exp_name = cfg["experiment_name"]
-    outdir   = Path(cfg["paths"]["outdir"])
+    outdir = Path(cfg["paths"]["outdir"])
     outdir.mkdir(parents=True, exist_ok=True)
 
     # Snapshot the exact config that produced this run
@@ -296,8 +310,8 @@ def run_single_experiment(
 
     result: dict[str, Any] = {
         "experiment_name": exp_name,
-        "config_path":     config_path,
-        "status":          "success",
+        "config_path": config_path,
+        "status": "success",
         "extract_skipped": False,
     }
 
@@ -357,7 +371,7 @@ def main() -> None:
         help="Print the commands that would run without executing them.",
     )
 
-    args       = ap.parse_args()
+    args = ap.parse_args()
     scripts_dir = Path(__file__).resolve().parent
 
     results: list[dict[str, Any]] = []
@@ -365,16 +379,21 @@ def main() -> None:
         try:
             results.append(
                 run_single_experiment(
-                    cfg_path, scripts_dir, force=args.force, dry_run=args.dry_run,
+                    cfg_path,
+                    scripts_dir,
+                    force=args.force,
+                    dry_run=args.dry_run,
                 ),
             )
         except (ValueError, FileNotFoundError) as exc:
             print(f"\n[ERROR] {exc}")
-            results.append({
-                "experiment_name": cfg_path,
-                "status": "validation_error",
-                "error": str(exc),
-            })
+            results.append(
+                {
+                    "experiment_name": cfg_path,
+                    "status": "validation_error",
+                    "error": str(exc),
+                }
+            )
 
     # summary table
     print(f"\n{'=' * 60}")

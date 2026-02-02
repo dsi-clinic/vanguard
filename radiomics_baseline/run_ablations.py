@@ -54,7 +54,6 @@ _EXTRACT_FINGERPRINT_KEYS = (
 )
 
 
-
 # Nested-dict helpers
 def deep_get(d: dict, dotted_key: str, default: Any = None) -> Any:  # noqa: ANN401
     """Retrieve a value from a nested dict via a dot-separated key path.
@@ -77,7 +76,7 @@ def deep_set(d: dict, dotted_key: str, value: Any) -> None:  # noqa: ANN401
 
     Example: ``deep_set(cfg, "train.classifier", "rf")``
     sets ``cfg["train"]["classifier"] = "rf"``.
-    """ # noqa: D205
+    """  # noqa: D205
     keys = dotted_key.split(".")
     for key in keys[:-1]:
         d = d.setdefault(key, {})
@@ -129,27 +128,25 @@ def generate_configs(
     with open(sweep["base_config"]) as fh:  # noqa: PTH123
         base_cfg = yaml.safe_load(fh)
 
-    param_keys  = list(sweep["sweep"].keys())
+    param_keys = list(sweep["sweep"].keys())
     value_lists = [sweep["sweep"][k] for k in param_keys]
-    base_name   = base_cfg.get("experiment_name", "exp")
+    base_name = base_cfg.get("experiment_name", "exp")
     base_outdir = Path(base_cfg["paths"]["outdir"])
 
     configs: list[tuple[dict[str, Any], dict[str, str]]] = []
 
     for combo in itertools.product(*value_lists):
-        cfg          = copy.deepcopy(base_cfg)
+        cfg = copy.deepcopy(base_cfg)
         label_parts: list[str] = []
 
         for key, value in zip(param_keys, combo):
             deep_set(cfg, key, value)
-            short = key.split(".")[-1]           # e.g. "peri_radius_mm"
+            short = key.split(".")[-1]  # e.g. "peri_radius_mm"
             label_parts.append(f"{short}-{_value_label(value)}")
 
         # Unique name and output directory derived from the base + overrides
         cfg["experiment_name"] = f"{base_name}_{'_'.join(label_parts)}"
-        cfg["paths"]["outdir"] = str(
-            base_outdir.parent / cfg["experiment_name"]
-        )
+        cfg["paths"]["outdir"] = str(base_outdir.parent / cfg["experiment_name"])
 
         param_values = {k: str(v) for k, v in zip(param_keys, combo)}
         configs.append((cfg, param_values))
@@ -158,7 +155,7 @@ def generate_configs(
 
 
 def assign_shared_extract_outdirs(
-    configs:     list[tuple[dict[str, Any], dict[str, str]]],
+    configs: list[tuple[dict[str, Any], dict[str, str]]],
     base_outdir: Path,
 ) -> None:
     """Group configs by extraction fingerprint and point each group at the
@@ -208,7 +205,7 @@ def main() -> None:
         ),
     )
 
-    args        = ap.parse_args()
+    args = ap.parse_args()
     scripts_dir = Path(__file__).resolve().parent
 
     # load sweep
@@ -258,37 +255,38 @@ def main() -> None:
             results.append(result)
         except (ValueError, FileNotFoundError) as exc:
             print(f"\n[ERROR] {exc}")
-            results.append({
-                "experiment_name": cfg_path,
-                "status":          "validation_error",
-                "error":           str(exc),
-                "sweep_params":    param_values,
-            })
+            results.append(
+                {
+                    "experiment_name": cfg_path,
+                    "status": "validation_error",
+                    "error": str(exc),
+                    "sweep_params": param_values,
+                }
+            )
 
     # write summary CSV
     if results and not args.dry_run:
-        all_param_keys = sorted(
-            {k for r in results for k in r.get("sweep_params", {})}
-        )
+        all_param_keys = sorted({k for r in results for k in r.get("sweep_params", {})})
         metric_keys = [
-            "auc_test", "auc_train", "auc_train_cv", "n_features_used",
+            "auc_test",
+            "auc_train",
+            "auc_train_cv",
+            "n_features_used",
         ]
-        fieldnames = (
-            ["experiment_name", "status"]
-            + all_param_keys
-            + metric_keys
-        )
+        fieldnames = ["experiment_name", "status"] + all_param_keys + metric_keys
 
         summary_path = Path(args.sweep_config).parent / "ablation_summary.csv"
         with open(summary_path, "w", newline="") as fh:  # noqa: PTH123
             writer = csv.DictWriter(
-                fh, fieldnames=fieldnames, extrasaction="ignore",
+                fh,
+                fieldnames=fieldnames,
+                extrasaction="ignore",
             )
             writer.writeheader()
             for r in results:
                 row: dict[str, Any] = {
                     "experiment_name": r.get("experiment_name", ""),
-                    "status":          r.get("status",          ""),
+                    "status": r.get("status", ""),
                 }
                 for k in all_param_keys:
                     row[k] = r.get("sweep_params", {}).get(k, "")
