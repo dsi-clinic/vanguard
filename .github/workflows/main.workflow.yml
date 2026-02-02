@@ -23,7 +23,7 @@ jobs:
         with:
           environment-file: environment.yml
           environment-name: vanguard
-          cache-environment: false
+          cache-environment: true
           init-shell: bash
 
       - name: Lint with pre-commit
