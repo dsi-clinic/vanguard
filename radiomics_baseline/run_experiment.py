@@ -35,7 +35,6 @@ from typing import Any
 
 import yaml
 
-
 # Validation constants
 _REQUIRED_TOP     = {"experiment_name", "paths", "extract", "train"}
 _REQUIRED_PATHS   = {"images", "masks", "labels", "splits", "outdir"}
@@ -133,7 +132,8 @@ def extraction_outputs_exist(cfg: dict[str, Any]) -> bool:
 # CLI command builders
 def build_extract_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
     """Translate the extraction section of a config into a
-    ``radiomics_extract.py`` command-line invocation."""
+    radiomics_extract.py command-line invocation.
+    """  # noqa: D205
     paths   = cfg["paths"]
     extract = cfg["extract"]
 
@@ -173,7 +173,7 @@ def build_train_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
 
     Train/test feature paths are derived from the extraction output directory
     so they stay consistent with wherever extraction wrote its CSVs.
-    """
+    """  # noqa: D205
     paths       = cfg["paths"]
     train       = cfg["train"]
     extract_out = get_extract_outdir(cfg)
@@ -281,7 +281,7 @@ def run_single_experiment(
     print(f"#  {config_path}")
     print(f"{'#' * 60}")
 
-    with open(config_path) as fh:
+    with open(config_path) as fh:  # noqa: PTH123
         cfg = yaml.safe_load(fh)
 
     validate_config(cfg, label=config_path)
@@ -324,7 +324,7 @@ def run_single_experiment(
     if not dry_run:
         metrics_path = outdir / "training" / "metrics.json"
         if metrics_path.exists():
-            with open(metrics_path) as fh:
+            with open(metrics_path) as fh:  # noqa: PTH123
                 metrics = json.load(fh)
             for key in ("auc_test", "auc_train", "auc_train_cv", "n_features_used"):
                 result[key] = metrics.get(key)

@@ -42,7 +42,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from run_experiment import run_single_experiment  # noqa: E402
 
-
 # Keys that fully determine the extraction output.  Two configs whose values
 # for these keys are identical can safely share one extraction directory.
 _EXTRACT_FINGERPRINT_KEYS = (
@@ -57,7 +56,7 @@ _EXTRACT_FINGERPRINT_KEYS = (
 
 
 # Nested-dict helpers
-def deep_get(d: dict, dotted_key: str, default: Any = None) -> Any:
+def deep_get(d: dict, dotted_key: str, default: Any = None) -> Any:  # noqa: ANN401
     """Retrieve a value from a nested dict via a dot-separated key path.
 
     Example: ``deep_get(cfg, "extract.peri_radius_mm")``
@@ -72,13 +71,13 @@ def deep_get(d: dict, dotted_key: str, default: Any = None) -> Any:
     return node
 
 
-def deep_set(d: dict, dotted_key: str, value: Any) -> None:
+def deep_set(d: dict, dotted_key: str, value: Any) -> None:  # noqa: ANN401
     """Set a value inside a nested dict via a dot-separated key path,
     creating intermediate dicts as needed.
 
     Example: ``deep_set(cfg, "train.classifier", "rf")``
     sets ``cfg["train"]["classifier"] = "rf"``.
-    """
+    """ # noqa: D205
     keys = dotted_key.split(".")
     for key in keys[:-1]:
         d = d.setdefault(key, {})
@@ -89,7 +88,8 @@ def deep_set(d: dict, dotted_key: str, value: Any) -> None:
 def extraction_fingerprint(cfg: dict[str, Any]) -> str:
     """Return a stable string that uniquely identifies the extraction portion
     of a config.  Configs with the same fingerprint can share one extraction
-    output directory."""
+    output directory.
+    """  # noqa: D205
     parts = []
     for key in _EXTRACT_FINGERPRINT_KEYS:
         val = deep_get(cfg, key, "")
@@ -97,7 +97,7 @@ def extraction_fingerprint(cfg: dict[str, Any]) -> str:
     return "|".join(parts)
 
 
-def _value_label(value: Any) -> str:
+def _value_label(value: Any) -> str:  # noqa: ANN401
     """Short, filesystem-safe label for a single sweep value.
 
     * Lists become their length (e.g. a 2-element image_patterns → ``2``).
@@ -126,7 +126,7 @@ def generate_configs(
     ``param_values_dict`` maps each sweep key to its string value (used later
     for the summary CSV columns).
     """
-    with open(sweep["base_config"]) as fh:
+    with open(sweep["base_config"]) as fh:  # noqa: PTH123
         base_cfg = yaml.safe_load(fh)
 
     param_keys  = list(sweep["sweep"].keys())
@@ -167,7 +167,7 @@ def assign_shared_extract_outdirs(
     The shared directory is named after the *first* experiment in each group
     so the path is human-readable.  This means extraction only runs once per
     unique set of extraction parameters across the entire sweep.
-    """
+    """  # noqa: D205
     fingerprint_to_dir: dict[str, str] = {}
 
     for cfg, _ in configs:
@@ -212,7 +212,7 @@ def main() -> None:
     scripts_dir = Path(__file__).resolve().parent
 
     # load sweep
-    with open(args.sweep_config) as fh:
+    with open(args.sweep_config) as fh:  # noqa: PTH123
         sweep = yaml.safe_load(fh)
 
     if "base_config" not in sweep:
@@ -226,7 +226,7 @@ def main() -> None:
     configs = generate_configs(sweep)
 
     # Point configs with identical extraction params at a shared extract dir
-    with open(sweep["base_config"]) as fh:
+    with open(sweep["base_config"]) as fh:  # noqa: PTH123
         base_cfg = yaml.safe_load(fh)
     base_outdir = Path(base_cfg["paths"]["outdir"]).parent
     assign_shared_extract_outdirs(configs, base_outdir)
@@ -239,7 +239,7 @@ def main() -> None:
     config_paths: list[str] = []
     for cfg, _ in configs:
         path = gen_dir / f"exp_{cfg['experiment_name']}.yaml"
-        with open(path, "w") as fh:
+        with open(path, "w") as fh:  # noqa: PTH123
             yaml.dump(cfg, fh, default_flow_style=False, sort_keys=False)
         config_paths.append(str(path))
         print(f"  {path}")
@@ -280,7 +280,7 @@ def main() -> None:
         )
 
         summary_path = Path(args.sweep_config).parent / "ablation_summary.csv"
-        with open(summary_path, "w", newline="") as fh:
+        with open(summary_path, "w", newline="") as fh:  # noqa: PTH123
             writer = csv.DictWriter(
                 fh, fieldnames=fieldnames, extrasaction="ignore",
             )
