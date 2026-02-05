@@ -89,18 +89,19 @@ def create_kfold_splits(
         - "val_patient_ids": patient IDs for validation (if available)
     """
     # Choose splitter
+    # When shuffle=False, random_state has no effect and sklearn raises an error
+    # So we only pass random_state when shuffle=True
+    splitter_kwargs = {
+        "n_splits": n_splits,
+        "shuffle": shuffle,
+    }
+    if shuffle:
+        splitter_kwargs["random_state"] = random_state
+
     if stratify:
-        splitter = StratifiedKFold(
-            n_splits=n_splits,
-            shuffle=shuffle,
-            random_state=random_state,
-        )
+        splitter = StratifiedKFold(**splitter_kwargs)
     else:
-        splitter = KFold(
-            n_splits=n_splits,
-            shuffle=shuffle,
-            random_state=random_state,
-        )
+        splitter = KFold(**splitter_kwargs)
 
     splits = []
     for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(X, y)):
@@ -412,11 +413,16 @@ def create_group_stratified_kfold_splits(
         )
 
     # Create splitter
-    splitter = StratifiedGroupKFold(
-        n_splits=n_splits,
-        shuffle=shuffle,
-        random_state=random_state,
-    )
+    # When shuffle=False, random_state has no effect and sklearn raises an error
+    # So we only pass random_state when shuffle=True
+    splitter_kwargs = {
+        "n_splits": n_splits,
+        "shuffle": shuffle,
+    }
+    if shuffle:
+        splitter_kwargs["random_state"] = random_state
+
+    splitter = StratifiedGroupKFold(**splitter_kwargs)
 
     # Generate splits
     splits = []
