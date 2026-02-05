@@ -19,6 +19,30 @@ Usage:
         --output splits.csv \
         --stratify-cols dataset subtype \
         --random-state 42
+
+Examples:
+    # Basic usage
+    python -m src.utils.export_splits \
+        --excel /net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
+        --output splits.csv \
+        --n-splits 5
+
+    # With composite stratum keys
+    python -m src.utils.export_splits \
+        --excel /net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
+        --output splits.csv \
+        --stratify-cols dataset tumor_subtype \
+        --random-state 42
+
+    # Custom configuration
+    python -m src.utils.export_splits \
+        --excel /net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
+        --output splits.csv \
+        --n-splits 3 \
+        --group-col site \
+        --stratify-cols dataset \
+        --id-col patient_id \
+        --report
 """
 
 from __future__ import annotations
