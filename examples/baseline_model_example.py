@@ -505,7 +505,8 @@ def main() -> None:
     kfold_results = evaluator.aggregate_kfold_results(fold_results)
 
     # Random baseline AUC distribution: compare model AUC to null distribution
-    distribution = evaluator.compute_random_baseline_distribution(n_runs=500)
+    # Default n_runs=1000 generates a robust distribution for statistical comparison
+    distribution = evaluator.compute_random_baseline_distribution(n_runs=1000)
     observed_auc = kfold_results.aggregated_metrics.get("auc", {}).get("mean")
     report_random_baseline(distribution, observed_auc=observed_auc)
     out_model_dir = args.output / model_name
