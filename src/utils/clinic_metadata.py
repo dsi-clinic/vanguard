@@ -61,6 +61,41 @@ def load_clinic_metadata_excel(
     return excel_df
 
 
+def get_patient_ids_from_excel(
+    excel_path: Path | str,
+    *,
+    id_col: str = "patient_id",
+    sheet_name: str | int | None = 0,
+) -> np.ndarray:
+    """Load an Excel metadata file and return the list of patient IDs (for cohort definition).
+
+    Useful when you need the Excel-defined cohort (e.g. to generate synthetic data
+    for those IDs) before creating splits.
+
+    Parameters
+    ----------
+    excel_path : Path or str
+        Path to the Excel file.
+    id_col : str, default="patient_id"
+        Column name containing patient IDs.
+    sheet_name : str or int or None, default=0
+        Sheet to read (passed to load_clinic_metadata_excel).
+
+    Returns:
+    -------
+    np.ndarray
+        One-dimensional array of patient IDs as strings, in Excel row order.
+    """
+    excel_path = Path(excel_path)
+    excel_df = load_clinic_metadata_excel(excel_path, sheet_name=sheet_name)
+    if id_col not in excel_df.columns:
+        raise ValueError(
+            f"Excel file {excel_path} has no column {id_col!r}. "
+            f"Available columns: {list(excel_df.columns)}"
+        )
+    return excel_df[id_col].astype(str).to_numpy()
+
+
 def build_split_annotations(
     metadata_df: pd.DataFrame,
     *,

@@ -20,19 +20,32 @@ Usage:
     python examples/baseline_model_example.py --model logistic
 
     # Run with custom data
-    python examples/baseline_model_example.py \\
-        --model random \\
-        --features path/to/features.csv \\
-        --labels path/to/labels.csv \\
+    python examples/baseline_model_example.py \
+        --model random \
+        --features path/to/features.csv \
+        --labels path/to/labels.csv \
         --output results/baseline_example
 
-    # Run with Excel-driven splits (site-exclusive, stratified)
-    python examples/baseline_model_example.py \\
-        --model random \\
-        --features path/to/features.csv \\
-        --labels path/to/labels.csv \\
-        --excel-metadata path/to/metadata.xlsx \\
+    # Run with Excel-driven splits (site-exclusive, stratified).
+    # --excel-metadata alone: synthetic data is generated for the Excel cohort.
+    python examples/baseline_model_example.py \
+        --model random \
+        --excel-metadata path/to/metadata.xlsx \
         --output results/baseline_example
+
+    # Excel + your own features/labels (must cover all Excel patient_ids):
+    python examples/baseline_model_example.py \
+        --model random \
+        --features path/to/features.csv \
+        --labels path/to/labels.csv \
+        --excel-metadata path/to/metadata.xlsx \
+        --output results/baseline_example
+
+Examples:
+    python examples/baseline_model_example.py \
+        --model random \
+        --excel-metadata /net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
+        --output results/baseline_example_excel
 """
 
 from __future__ import annotations
@@ -56,6 +69,7 @@ from evaluation import (  # noqa: E402
     TrainTestResults,
     create_splits_from_excel,
 )
+from src.utils.clinic_metadata import get_patient_ids_from_excel  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Section 1: Synthetic data generation
@@ -69,6 +83,7 @@ def generate_synthetic_data(
     n_samples: int = 200,
     n_features: int = 10,
     random_state: int = 42,
+    patient_ids: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Generate synthetic binary classification data for testing.
 
@@ -78,11 +93,14 @@ def generate_synthetic_data(
     Parameters
     ----------
     n_samples : int
-        Number of samples
+        Number of samples (ignored if patient_ids is provided).
     n_features : int
         Number of features (ignored for random model; useful for logistic)
     random_state : int
         Seed for reproducibility
+    patient_ids : np.ndarray or None, optional
+        If provided, generate exactly len(patient_ids) samples and use these IDs.
+        Allows aligning synthetic data to an external cohort (e.g. from Excel).
 
     Returns:
     -------
@@ -91,8 +109,12 @@ def generate_synthetic_data(
     y : np.ndarray
         Binary labels (0 or 1)
     patient_ids : np.ndarray
-        Patient IDs (e.g. "patient_000", ...)
+        Patient IDs (from argument or generated as "patient_0000", ...)
     """
+    ids_provided = patient_ids is not None
+    if ids_provided:
+        patient_ids = np.asarray(patient_ids)
+        n_samples = len(patient_ids)
     rng = np.random.default_rng(random_state)
     # Simple separable-ish data: random features, label from threshold on first feature
     X = rng.standard_normal((n_samples, n_features))
@@ -103,7 +125,8 @@ def generate_synthetic_data(
     noise_flip_prob = 0.1
     flip = rng.random(n_samples) < noise_flip_prob
     y[flip] = 1 - y[flip]
-    patient_ids = np.array([f"patient_{i:04d}" for i in range(n_samples)])
+    if not ids_provided:
+        patient_ids = np.array([f"patient_{i:04d}" for i in range(n_samples)])
     return X, y, patient_ids
 
 
@@ -505,7 +528,7 @@ def parse_args() -> argparse.Namespace:
         "--excel-metadata",
         type=Path,
         default=None,
-        help="Path to Excel metadata file. If provided, k-fold splits are generated from Excel (site-exclusive, stratified) instead of on-the-fly. Use with --features/--labels so patient_ids match.",
+        help="Path to Excel metadata file. If provided, k-fold splits are from Excel (site-exclusive, stratified). Can be used alone (synthetic data is generated for Excel cohort) or with --features/--labels.",
     )
     args = parser.parse_args()
     if (args.features is None) != (args.labels is None):
@@ -520,7 +543,23 @@ def main() -> None:
     args = parse_args()
 
     # --- Data preparation ---
-    if args.features is not None and args.labels is not None:
+    # When only --excel-metadata is set, define cohort from Excel and generate synthetic data for it.
+    if (
+        args.excel_metadata is not None
+        and args.features is None
+        and args.labels is None
+    ):
+        excel_patient_ids = get_patient_ids_from_excel(args.excel_metadata)
+        X, y, patient_ids = generate_synthetic_data(
+            random_state=args.random_state,
+            patient_ids=excel_patient_ids,
+        )
+        do_train_test = False
+        X_train, X_test = X, None
+        y_train, y_test = y, None
+        pid_test = None
+        stratum = None
+    elif args.features is not None and args.labels is not None:
         X, y, patient_ids, stratum = load_data_from_csv(args.features, args.labels)
         # For train/test we'd need a fixed split; with CSV we only do k-fold here for simplicity
         do_train_test = False

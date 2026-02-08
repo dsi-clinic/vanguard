@@ -550,6 +550,23 @@ def _create_splits_from_excel_core(
         print(f"  Unique groups: {sorted(annotations['group'].unique())}")
         print(f"  Unique strata: {sorted(annotations['stratum_key'].unique())}")
 
+    # When model provides patient_ids, Excel is the cohort definition: labels/features
+    # must cover every patient_id in the Excel file.
+    if patient_ids is not None:
+        excel_patient_ids = annotations[id_col].astype(str).unique()
+        model_ids_set = {str(pid) for pid in np.asarray(patient_ids).ravel()}
+        missing = [pid for pid in excel_patient_ids if pid not in model_ids_set]
+        if missing:
+            n_missing = len(missing)
+            n_excel = len(excel_patient_ids)
+            sample = sorted(missing)[:10]
+            raise ValueError(
+                "When using Excel metadata, labels and features must include every "
+                "patient_id in the Excel file. "
+                f"{n_missing}/{n_excel} Excel patient_ids are missing from your data. "
+                f"First missing (up to 10): {sample}"
+            )
+
     if patient_ids is None:
         patient_ids_work = annotations[id_col].to_numpy()
         groups, stratify_labels = align_metadata_to_patient_ids(
@@ -639,6 +656,10 @@ def create_splits_from_excel(
 
     Models call this to get splits without writing/reading CSV. Returns FoldSplit objects
     with train_indices/val_indices into the provided patient_ids array.
+
+    When using Excel metadata, the Excel file defines the cohort: you must provide
+    labels and features for every patient_id in the Excel. If any Excel patient_id
+    is missing from patient_ids, a ValueError is raised.
 
     Parameters
     ----------
