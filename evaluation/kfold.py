@@ -4,13 +4,26 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from sklearn.model_selection import (
     KFold,
     StratifiedGroupKFold,
     StratifiedKFold,
 )
+
+
+@dataclass
+class FoldSplit:
+    """Represents a single fold split (indices and optional patient IDs)."""
+
+    fold_idx: int
+    train_indices: np.ndarray
+    val_indices: np.ndarray
+    train_patient_ids: np.ndarray | None = None
+    val_patient_ids: np.ndarray | None = None
 
 
 @dataclass
@@ -472,3 +485,312 @@ def create_group_stratified_kfold_splits(
         return splits, report
 
     return splits
+
+
+def _create_splits_from_excel_core(
+    excel_path: Path | str,
+    patient_ids: np.ndarray | pd.Series | None = None,
+    *,
+    n_splits: int = 5,
+    random_state: int = 42,
+    shuffle: bool = True,
+    id_col: str = "patient_id",
+    group_col: str = "site",
+    stratify_cols: list[str] | None = None,
+    validate_exclusivity: bool = True,
+    return_report: bool = False,
+    verbose: bool = True,
+) -> tuple[
+    list[dict[str, np.ndarray | int]],
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    dict,
+]:
+    """Load Excel metadata, build annotations, and create group-stratified k-fold splits.
+
+    Internal core used by create_splits_from_excel() and export_splits_to_csv().
+    When patient_ids is provided, aligns to those IDs and returns splits with indices
+    into the provided array; when None, uses all patients from Excel.
+
+    Returns:
+    -------
+    splits : list of split dicts (fold_idx, train_indices, val_indices, train_patient_ids, val_patient_ids)
+    patient_ids : np.ndarray used for splitting (subset of input when provided)
+    groups : np.ndarray group labels
+    stratify_labels : np.ndarray stratum labels
+    report : dict with per_fold_site_counts, per_fold_stratum_counts, warnings, infeasible_constraints
+    """
+    from src.utils.clinic_metadata import (
+        align_metadata_to_patient_ids,
+        build_split_annotations,
+        load_clinic_metadata_excel,
+    )
+
+    excel_path = Path(excel_path)
+    if stratify_cols is None:
+        stratify_cols = ["dataset"]
+
+    if verbose:
+        print(f"Loading metadata from {excel_path}...")
+    metadata_df = load_clinic_metadata_excel(excel_path)
+    if verbose:
+        print(f"  Loaded {len(metadata_df)} rows")
+
+    if verbose:
+        print(f"Building annotations (group={group_col}, stratify={stratify_cols})...")
+    annotations = build_split_annotations(
+        metadata_df,
+        id_col=id_col,
+        group_col=group_col,
+        stratify_cols=stratify_cols,
+    )
+    if verbose:
+        print(f"  Built annotations for {len(annotations)} patients")
+        print(f"  Unique groups: {sorted(annotations['group'].unique())}")
+        print(f"  Unique strata: {sorted(annotations['stratum_key'].unique())}")
+
+    if patient_ids is None:
+        patient_ids_work = annotations[id_col].to_numpy()
+        groups, stratify_labels = align_metadata_to_patient_ids(
+            annotations, patient_ids_work, id_col=id_col, warn_missing=False
+        )
+        valid_mask = ~(pd.isna(groups) | pd.isna(stratify_labels))
+        if not valid_mask.all():
+            n_invalid = (~valid_mask).sum()
+            if verbose:
+                print(
+                    f"  Warning: Dropping {n_invalid} rows with missing group/stratum"
+                )
+            patient_ids_work = patient_ids_work[valid_mask]
+            groups = groups[valid_mask].copy()
+            stratify_labels = stratify_labels[valid_mask].copy()
+        original_indices = None
+        original_patient_ids = None
+    else:
+        original_patient_ids = np.asarray(patient_ids)
+        groups, stratify_labels = align_metadata_to_patient_ids(
+            annotations, original_patient_ids, id_col=id_col, warn_missing=True
+        )
+        valid_mask = ~(pd.isna(groups) | pd.isna(stratify_labels))
+        if not valid_mask.all():
+            n_invalid = (~valid_mask).sum()
+            if verbose:
+                print(
+                    f"  Warning: Dropping {n_invalid} rows with missing group/stratum"
+                )
+        patient_ids_work = original_patient_ids[valid_mask]
+        groups = groups[valid_mask]
+        stratify_labels = stratify_labels[valid_mask]
+        original_indices = np.where(valid_mask)[0]
+
+    if len(patient_ids_work) == 0:
+        raise ValueError(
+            "No patients with valid group/stratum. Check Excel and patient_ids."
+        )
+
+    n_samples = len(patient_ids_work)
+    X_dummy = np.zeros((n_samples, 1))
+    y_dummy = np.zeros(n_samples, dtype=int)
+
+    if verbose:
+        print(f"Generating {n_splits}-fold splits (random_state={random_state})...")
+    result = create_group_stratified_kfold_splits(
+        X=X_dummy,
+        y=y_dummy,
+        groups=groups,
+        stratify_labels=stratify_labels,
+        patient_ids=patient_ids_work,
+        n_splits=n_splits,
+        shuffle=shuffle,
+        random_state=random_state,
+        validate_exclusivity=validate_exclusivity,
+        return_report=True,
+    )
+    splits, report = result
+
+    if original_indices is not None:
+        for split in splits:
+            split["train_indices"] = original_indices[split["train_indices"]]
+            split["val_indices"] = original_indices[split["val_indices"]]
+            split["train_patient_ids"] = original_patient_ids[split["train_indices"]]
+            split["val_patient_ids"] = original_patient_ids[split["val_indices"]]
+        patient_ids_return = original_patient_ids
+    else:
+        patient_ids_return = patient_ids_work
+
+    return splits, patient_ids_return, groups, stratify_labels, report
+
+
+def create_splits_from_excel(
+    excel_path: Path | str,
+    patient_ids: np.ndarray | pd.Series,
+    *,
+    n_splits: int = 5,
+    random_state: int = 42,
+    shuffle: bool = True,
+    id_col: str = "patient_id",
+    group_col: str = "site",
+    stratify_cols: list[str] | None = None,
+    validate_exclusivity: bool = True,
+    return_report: bool = False,
+) -> list[FoldSplit] | tuple[list[FoldSplit], dict]:
+    """Create group-stratified k-fold splits from Excel metadata, aligned to model patient IDs.
+
+    Models call this to get splits without writing/reading CSV. Returns FoldSplit objects
+    with train_indices/val_indices into the provided patient_ids array.
+
+    Parameters
+    ----------
+    excel_path : Path | str
+        Path to Excel file with clinic metadata.
+    patient_ids : np.ndarray | pd.Series
+        Model's patient IDs (same order as X, y). Splits will be aligned to these.
+    n_splits : int, default=5
+        Number of folds.
+    random_state : int, default=42
+        Random seed for reproducibility.
+    shuffle : bool, default=True
+        Whether to shuffle before splitting.
+    id_col : str, default="patient_id"
+        Column name for patient IDs in Excel.
+    group_col : str, default="site"
+        Column name for grouping (e.g., site). Groups do not cross folds.
+    stratify_cols : list[str] | None, default=None
+        Columns for stratification (default: ["dataset"]).
+    validate_exclusivity : bool, default=True
+        Whether to validate site exclusivity.
+    return_report : bool, default=False
+        If True, also return report dict.
+
+    Returns:
+    -------
+    list[FoldSplit] or tuple[list[FoldSplit], dict]
+        Fold splits with indices into the provided patient_ids array.
+    """
+    splits, _, _, _, report = _create_splits_from_excel_core(
+        excel_path=excel_path,
+        patient_ids=patient_ids,
+        n_splits=n_splits,
+        random_state=random_state,
+        shuffle=shuffle,
+        id_col=id_col,
+        group_col=group_col,
+        stratify_cols=stratify_cols,
+        validate_exclusivity=validate_exclusivity,
+        return_report=True,
+        verbose=False,
+    )
+    fold_splits = [
+        FoldSplit(
+            fold_idx=s["fold_idx"],
+            train_indices=s["train_indices"],
+            val_indices=s["val_indices"],
+            train_patient_ids=s.get("train_patient_ids"),
+            val_patient_ids=s.get("val_patient_ids"),
+        )
+        for s in splits
+    ]
+    if return_report:
+        return fold_splits, report
+    return fold_splits
+
+
+def export_splits_to_csv(
+    excel_path: Path | str,
+    output_path: Path | str,
+    *,
+    n_splits: int = 5,
+    random_state: int = 42,
+    shuffle: bool = True,
+    id_col: str = "patient_id",
+    group_col: str = "site",
+    stratify_cols: list[str] | None = None,
+    validate_exclusivity: bool = True,
+    return_report: bool = False,
+    verbose: bool = True,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
+    """Generate group-stratified k-fold splits from Excel and write to CSV.
+
+    Used by the export_splits CLI script. Uses all patients from Excel.
+
+    Parameters
+    ----------
+    excel_path : Path | str
+        Path to Excel file with clinic metadata.
+    output_path : Path | str
+        Path where splits CSV will be written.
+    n_splits, random_state, shuffle, id_col, group_col, stratify_cols,
+    validate_exclusivity : same as create_splits_from_excel.
+    return_report : bool, default=False
+        If True, return (DataFrame, report).
+    verbose : bool, default=True
+        Whether to print progress and report.
+
+    Returns:
+    -------
+    pd.DataFrame or tuple[pd.DataFrame, dict]
+        DataFrame with columns patient_id, fold_idx, site, stratum_key.
+    """
+    output_path = Path(output_path)
+    splits, patient_ids_return, groups, stratify_labels, report = (
+        _create_splits_from_excel_core(
+            excel_path=excel_path,
+            patient_ids=None,
+            n_splits=n_splits,
+            random_state=random_state,
+            shuffle=shuffle,
+            id_col=id_col,
+            group_col=group_col,
+            stratify_cols=stratify_cols,
+            validate_exclusivity=validate_exclusivity,
+            return_report=True,
+            verbose=verbose,
+        )
+    )
+
+    if verbose:
+        print("\nSplit distribution summary:")
+        for fold_idx in range(n_splits):
+            site_counts = report["per_fold_site_counts"][fold_idx]
+            stratum_counts = report["per_fold_stratum_counts"][fold_idx]
+            n_val = sum(stratum_counts.values())
+            print(f"  Fold {fold_idx}: {n_val} samples")
+            print(f"    Sites: {dict(site_counts)}")
+            print(f"    Strata: {dict(stratum_counts)}")
+        if report["warnings"]:
+            print("\nWarnings:")
+            for w in report["warnings"]:
+                print(f"  - {w}")
+        if report["infeasible_constraints"]:
+            print("\nInfeasible constraints:")
+            for c in report["infeasible_constraints"]:
+                print(f"  - {c}")
+
+    rows = []
+    for split in splits:
+        fold_idx = split["fold_idx"]
+        for pid, vi in zip(split["val_patient_ids"], split["val_indices"]):
+            rows.append(
+                {
+                    id_col: pid,
+                    "fold_idx": fold_idx,
+                    group_col: groups[vi],
+                    "stratum_key": stratify_labels[vi],
+                }
+            )
+
+    splits_df = pd.DataFrame(rows)
+    splits_df = splits_df.sort_values([id_col, "fold_idx"]).reset_index(drop=True)
+
+    if verbose:
+        print(f"\nWriting splits to {output_path}...")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    splits_df.to_csv(output_path, index=False)
+    if verbose:
+        print(f"  Wrote {len(splits_df)} rows ({n_splits} folds)")
+        print(f"  Columns: {list(splits_df.columns)}")
+
+    if return_report:
+        return splits_df, report
+    return splits_df

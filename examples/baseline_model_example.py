@@ -25,6 +25,14 @@ Usage:
         --features path/to/features.csv \\
         --labels path/to/labels.csv \\
         --output results/baseline_example
+
+    # Run with Excel-driven splits (site-exclusive, stratified)
+    python examples/baseline_model_example.py \\
+        --model random \\
+        --features path/to/features.csv \\
+        --labels path/to/labels.csv \\
+        --excel-metadata path/to/metadata.xlsx \\
+        --output results/baseline_example
 """
 
 from __future__ import annotations
@@ -41,7 +49,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from evaluation import Evaluator, FoldResults, TrainTestResults  # noqa: E402
+from evaluation import (  # noqa: E402
+    Evaluator,
+    FoldResults,
+    FoldSplit,
+    TrainTestResults,
+    create_splits_from_excel,
+)
 
 # ---------------------------------------------------------------------------
 # Section 1: Synthetic data generation
@@ -240,6 +254,70 @@ def run_kfold_random(
     return fold_results
 
 
+def run_kfold_random_with_splits(
+    evaluator: Evaluator,
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[FoldSplit],
+    random_state: int,
+    stratum: np.ndarray | None = None,
+) -> list[FoldResults]:
+    """Run k-fold evaluation using the random model with pre-defined splits (e.g. from Excel)."""
+    fold_results = []
+    for split in splits:
+        n_val = len(split.val_indices)
+        fold_seed = random_state + split.fold_idx
+        y_pred, y_prob = predict_random(n_val, random_state=fold_seed)
+        y_true = y[split.val_indices]
+        pid = (
+            split.val_patient_ids
+            if split.val_patient_ids is not None
+            else np.array([f"val_{i}" for i in range(n_val)])
+        )
+        pred_df = pd.DataFrame(
+            {"patient_id": pid, "y_true": y_true, "y_pred": y_pred, "y_prob": y_prob}
+        )
+        if stratum is not None:
+            pred_df["stratum"] = stratum[split.val_indices]
+        fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
+    return fold_results
+
+
+def run_kfold_logistic_with_splits(
+    evaluator: Evaluator,
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[FoldSplit],
+    random_state: int,
+    stratum: np.ndarray | None = None,
+) -> list[FoldResults]:
+    """Run k-fold evaluation with LogisticRegression using pre-defined splits (e.g. from Excel)."""
+    from sklearn.linear_model import LogisticRegression
+
+    model = LogisticRegression(random_state=random_state, max_iter=500)
+    fold_results = []
+    for split in splits:
+        X_train = X[split.train_indices]
+        y_train = y[split.train_indices]
+        X_val = X[split.val_indices]
+        y_val = y[split.val_indices]
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_val)
+        y_prob = model.predict_proba(X_val)[:, 1]
+        pid = (
+            split.val_patient_ids
+            if split.val_patient_ids is not None
+            else np.array([f"val_{i}" for i in range(len(y_val))])
+        )
+        pred_df = pd.DataFrame(
+            {"patient_id": pid, "y_true": y_val, "y_pred": y_pred, "y_prob": y_prob}
+        )
+        if stratum is not None:
+            pred_df["stratum"] = stratum[split.val_indices]
+        fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
+    return fold_results
+
+
 def run_kfold_logistic(
     evaluator: Evaluator,
     X: np.ndarray,
@@ -423,6 +501,12 @@ def parse_args() -> argparse.Namespace:
         default=0.2,
         help="Fraction of data for test set when doing train/test evaluation (only with synthetic data).",
     )
+    parser.add_argument(
+        "--excel-metadata",
+        type=Path,
+        default=None,
+        help="Path to Excel metadata file. If provided, k-fold splits are generated from Excel (site-exclusive, stratified) instead of on-the-fly. Use with --features/--labels so patient_ids match.",
+    )
     args = parser.parse_args()
     if (args.features is None) != (args.labels is None):
         parser.error(
@@ -474,7 +558,32 @@ def main() -> None:
 
     # --- K-fold evaluation ---
     train_pids = patient_ids if not do_train_test else patient_ids[train_idx]
-    if args.model == "random":
+    if args.excel_metadata is not None:
+        splits = create_splits_from_excel(
+            excel_path=args.excel_metadata,
+            patient_ids=train_pids,
+            n_splits=args.n_splits,
+            random_state=args.random_state,
+        )
+        if args.model == "random":
+            fold_results = run_kfold_random_with_splits(
+                evaluator,
+                X_train,
+                y_train,
+                splits,
+                random_state=args.random_state,
+                stratum=stratum,
+            )
+        else:
+            fold_results = run_kfold_logistic_with_splits(
+                evaluator,
+                X_train,
+                y_train,
+                splits,
+                random_state=args.random_state,
+                stratum=stratum,
+            )
+    elif args.model == "random":
         fold_results = run_kfold_random(
             evaluator,
             X_train,

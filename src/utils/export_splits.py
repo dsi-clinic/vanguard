@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Export site-exclusive, subtype-stratified k-fold splits to CSV.
+"""CLI wrapper to export site-exclusive, subtype-stratified k-fold splits to CSV.
 
-This script reads clinic metadata from Excel, generates group-stratified k-fold
-splits (ensuring sites don't cross folds), and exports them to a CSV file that
-can be reused across all model training pipelines.
+This script calls the evaluation engine (evaluation.kfold.export_splits_to_csv)
+to read clinic metadata from Excel, generate group-stratified k-fold splits
+(ensuring sites don't cross folds), and write them to a CSV file.
 
 Usage:
     python -m src.utils.export_splits \
@@ -51,7 +51,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 # Add project root to path for imports
@@ -59,12 +58,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from evaluation.kfold import create_group_stratified_kfold_splits  # noqa: E402
-from src.utils.clinic_metadata import (  # noqa: E402
-    align_metadata_to_patient_ids,
-    build_split_annotations,
-    load_clinic_metadata_excel,
-)
+from evaluation.kfold import export_splits_to_csv  # noqa: E402
 
 
 def export_splits(
@@ -79,8 +73,10 @@ def export_splits(
     stratify_cols: list[str] | None = None,
     validate_exclusivity: bool = True,
     return_report: bool = False,
-) -> pd.DataFrame:
+) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     """Export group-stratified k-fold splits to CSV.
+
+    Wrapper around evaluation.kfold.export_splits_to_csv() for backward compatibility.
 
     Parameters
     ----------
@@ -109,123 +105,23 @@ def export_splits(
 
     Returns:
     -------
-    pd.DataFrame
+    pd.DataFrame or tuple[pd.DataFrame, dict]
         DataFrame with columns: patient_id, fold_idx, site, stratum_key.
         If return_report=True, returns tuple of (DataFrame, report_dict).
     """
-    # Load metadata from Excel
-    print(f"Loading metadata from {excel_path}...")
-    metadata_df = load_clinic_metadata_excel(excel_path)
-    print(f"  Loaded {len(metadata_df)} rows")
-
-    # Build annotations (group and stratum keys)
-    if stratify_cols is None:
-        stratify_cols = ["dataset"]
-
-    print(f"Building annotations (group={group_col}, stratify={stratify_cols})...")
-    annotations = build_split_annotations(
-        metadata_df,
+    return export_splits_to_csv(
+        excel_path=excel_path,
+        output_path=output_path,
+        n_splits=n_splits,
+        random_state=random_state,
+        shuffle=shuffle,
         id_col=id_col,
         group_col=group_col,
         stratify_cols=stratify_cols,
-    )
-    print(f"  Built annotations for {len(annotations)} patients")
-    print(f"  Unique groups: {sorted(annotations['group'].unique())}")
-    print(f"  Unique strata: {sorted(annotations['stratum_key'].unique())}")
-
-    # Get patient IDs and align metadata
-    patient_ids = annotations[id_col].to_numpy()
-    groups, stratify_labels = align_metadata_to_patient_ids(
-        annotations, patient_ids, id_col=id_col, warn_missing=False
-    )
-
-    # Filter out any NaN values (shouldn't happen, but be safe)
-    valid_mask = ~(pd.isna(groups) | pd.isna(stratify_labels))
-    if not valid_mask.all():
-        n_invalid = (~valid_mask).sum()
-        print(f"  Warning: Dropping {n_invalid} rows with missing group/stratum")
-        patient_ids = patient_ids[valid_mask]
-        groups = groups[valid_mask]
-        stratify_labels = stratify_labels[valid_mask]
-
-    # Create dummy X and y for splitting (we only need indices)
-    n_samples = len(patient_ids)
-    X_dummy = np.zeros((n_samples, 1))
-    y_dummy = np.zeros(n_samples, dtype=int)
-
-    # Generate splits
-    print(f"Generating {n_splits}-fold splits (random_state={random_state})...")
-    splits, report = create_group_stratified_kfold_splits(
-        X=X_dummy,
-        y=y_dummy,
-        groups=groups,
-        stratify_labels=stratify_labels,
-        patient_ids=patient_ids,
-        n_splits=n_splits,
-        shuffle=shuffle,
-        random_state=random_state,
         validate_exclusivity=validate_exclusivity,
-        return_report=True,
+        return_report=return_report,
+        verbose=True,
     )
-
-    # Print report summary
-    print("\nSplit distribution summary:")
-    for fold_idx in range(n_splits):
-        site_counts = report["per_fold_site_counts"][fold_idx]
-        stratum_counts = report["per_fold_stratum_counts"][fold_idx]
-        n_val = sum(stratum_counts.values())
-        print(f"  Fold {fold_idx}: {n_val} samples")
-        print(f"    Sites: {dict(site_counts)}")
-        print(f"    Strata: {dict(stratum_counts)}")
-
-    if report["warnings"]:
-        print("\nWarnings:")
-        for warning in report["warnings"]:
-            print(f"  - {warning}")
-
-    if report["infeasible_constraints"]:
-        print("\nInfeasible constraints:")
-        for constraint in report["infeasible_constraints"]:
-            print(f"  - {constraint}")
-
-    # Build output DataFrame
-    print("\nBuilding output DataFrame...")
-    rows = []
-    for split in splits:
-        fold_idx = split["fold_idx"]
-        val_patient_ids = split["val_patient_ids"]
-
-        # Get group and stratum for each patient in this fold
-        for pid in val_patient_ids:
-            # Find index of this patient
-            pid_idx = np.where(patient_ids == pid)[0]
-            if len(pid_idx) > 0:
-                idx = pid_idx[0]
-                rows.append(
-                    {
-                        id_col: pid,
-                        "fold_idx": fold_idx,
-                        group_col: groups[idx],
-                        "stratum_key": stratify_labels[idx],
-                    }
-                )
-
-    splits_df = pd.DataFrame(rows)
-
-    # Sort by fold_idx, then by patient_id for readability
-    splits_df = splits_df.sort_values([id_col, "fold_idx"]).reset_index(drop=True)
-
-    # Save to CSV
-    print(f"\nWriting splits to {output_path}...")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    splits_df.to_csv(output_path, index=False)
-    print(f"  Wrote {len(splits_df)} rows ({n_splits} folds)")
-    print(f"  Columns: {list(splits_df.columns)}")
-
-    if return_report:
-        return splits_df, report
-
-    return splits_df
 
 
 def parse_args() -> argparse.Namespace:

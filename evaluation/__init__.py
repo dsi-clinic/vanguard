@@ -7,6 +7,7 @@ from evaluation.evaluator import (
     KFoldResults,
     TrainTestResults,
 )
+from evaluation.kfold import create_splits_from_excel, export_splits_to_csv
 
 __all__ = [
     "Evaluator",
@@ -14,4 +15,6 @@ __all__ = [
     "FoldResults",
     "KFoldResults",
     "TrainTestResults",
+    "create_splits_from_excel",
+    "export_splits_to_csv",
 ]

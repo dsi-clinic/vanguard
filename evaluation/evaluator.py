@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from evaluation.kfold import (
+    FoldSplit,
     create_group_stratified_kfold_splits,
     create_kfold_splits,
 )
@@ -54,17 +55,6 @@ def _print_validation_summary(
         )
         print(f"  AUC (Strata {i} / {stratum_name}): {auc_str}")
     print()
-
-
-@dataclass
-class FoldSplit:
-    """Represents a single fold split."""
-
-    fold_idx: int
-    train_indices: np.ndarray
-    val_indices: np.ndarray
-    train_patient_ids: np.ndarray | None = None
-    val_patient_ids: np.ndarray | None = None
 
 
 @dataclass
