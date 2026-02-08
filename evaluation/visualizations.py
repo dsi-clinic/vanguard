@@ -128,7 +128,7 @@ def plot_random_auc_distribution(
     ax.text(
         0.02, 0.98, text, transform=ax.transAxes, fontsize=10, verticalalignment="top"
     )
-    ax.legend(loc="upper left")
+    ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
     ax.set_xlim([0, 1])
 
