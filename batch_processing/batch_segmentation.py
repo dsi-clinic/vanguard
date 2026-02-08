@@ -27,18 +27,17 @@ import SimpleITK as sitk
 # packages must be installed in an environment
 try:
     SCRIPT_DIR = Path(__file__).parent
-    sys.path.insert(0, str(SCRIPT_DIR / "vanguard-blood-vessel-segmentation"))
+    sys.path.insert(0, str(SCRIPT_DIR.parent / "vanguard-blood-vessel-segmentation"))
 
     from preprocessing import normalize_image, zscore_image  # noqa: E402
 
 except ImportError:
 
     def normalize_image(*args, **kwargs):  # noqa: ANN201, D103
-        raise err  # noqa: F821
+        raise ImportError("Required preprocessing function not found")  # noqa: F821
 
     def zscore_image(*args, **kwargs):  # noqa: ANN201, D103
-        raise err  # noqa: F821
-
+        raise ImportError("Required preprocessing function not found")  # noqa: F821
 
 def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
     """Find all .nii.gz files in the images directory.
@@ -80,8 +79,8 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
     """
     try:
         # Load the image
-        original_array = sitk.GetArrayFromImage(sitk.ReadImage(input_path))
-
+        original_array = sitk.GetArrayFromImage(sitk.ReadImage(str(input_path)))
+        
         # Preprocess: rotate axes and normalize
         preprocessed_array = zscore_image(
             normalize_image(np.swapaxes(np.swapaxes(original_array, 0, 2), 0, 1)[::-1])
@@ -119,7 +118,7 @@ def run_vessel_segmentation(
         # Change to the segmentation project directory
         original_cwd = Path.cwd()
         script_dir = Path(__file__).parent
-        os.chdir(script_dir / "vanguard-blood-vessel-segmentation")
+        os.chdir(script_dir.parent / "vanguard-blood-vessel-segmentation")
 
         # STEP-2: Run breast segmentation
         print("  Running breast segmentation (STEP-2)...")
@@ -290,10 +289,7 @@ def main() -> None:
     parser.add_argument(
         "--breast-model-path",
         default=str(
-            script_dir
-            / "vanguard-blood-vessel-segmentation"
-            / "trained_models"
-            / "breast_model.pth"
+             Path(__file__).parent.parent / "vanguard-blood-vessel-segmentation" / "trained_models" / "breast_model.pth"
         ),
         help="Path to the breast segmentation model (STEP-2)",
     )
@@ -301,10 +297,7 @@ def main() -> None:
     parser.add_argument(
         "--vessel-model-path",
         default=str(
-            script_dir
-            / "vanguard-blood-vessel-segmentation"
-            / "trained_models"
-            / "dv_model.pth"
+             Path(__file__).parent.parent / "vanguard-blood-vessel-segmentation" / "trained_models" / "dv_model.pth"
         ),
         help="Path to the vessel segmentation model (STEP-3)",
     )
