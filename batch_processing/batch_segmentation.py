@@ -39,6 +39,7 @@ except ImportError:
     def zscore_image(*args, **kwargs):  # noqa: ANN201, D103
         raise ImportError("Required preprocessing function not found")  # noqa: F821
 
+
 def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
     """Find all .nii.gz files in the images directory.
 
@@ -80,7 +81,7 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
     try:
         # Load the image
         original_array = sitk.GetArrayFromImage(sitk.ReadImage(str(input_path)))
-        
+
         # Preprocess: rotate axes and normalize
         preprocessed_array = zscore_image(
             normalize_image(np.swapaxes(np.swapaxes(original_array, 0, 2), 0, 1)[::-1])
@@ -289,7 +290,10 @@ def main() -> None:
     parser.add_argument(
         "--breast-model-path",
         default=str(
-             Path(__file__).parent.parent / "vanguard-blood-vessel-segmentation" / "trained_models" / "breast_model.pth"
+            Path(__file__).parent.parent
+            / "vanguard-blood-vessel-segmentation"
+            / "trained_models"
+            / "breast_model.pth"
         ),
         help="Path to the breast segmentation model (STEP-2)",
     )
@@ -297,7 +301,10 @@ def main() -> None:
     parser.add_argument(
         "--vessel-model-path",
         default=str(
-             Path(__file__).parent.parent / "vanguard-blood-vessel-segmentation" / "trained_models" / "dv_model.pth"
+            Path(__file__).parent.parent
+            / "vanguard-blood-vessel-segmentation"
+            / "trained_models"
+            / "dv_model.pth"
         ),
         help="Path to the vessel segmentation model (STEP-3)",
     )
