@@ -15,8 +15,8 @@ set -euo pipefail
 PROJ_DIR="$HOME/vanguard/radiomics_baseline"
 SCRIPTS_DIR="${PROJ_DIR}/scripts"
 
-module load python/3.11
-source "${PROJ_DIR}/venv/bin/activate"
+eval "$(micromamba shell hook --shell bash)"
+micromamba activate vanguard
 mkdir -p logs
 
 echo "[$(date)] Starting 3D peritumor sweep"
