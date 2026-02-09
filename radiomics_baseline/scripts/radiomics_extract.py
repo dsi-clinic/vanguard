@@ -5,10 +5,10 @@ Stage 1: Run PyRadiomics over all patients in a split and
 write feature tables to disk.
 
 Inputs:
-- --images : CSV from radiomics_extract.py (rows = patients, cols = features)
-- --masks  : CSV from radiomics_extract.py
+- --images : Directory path containing patient image files
+- --masks  : Directory path containing patient mask files
 - --labels : CSV with at least columns: patient_id,pcr[,subtype]
-- --split  : CSV with at least columns: patient_id,pcr[,subtype]
+- --splits : CSV with at least columns: patient_id,split
 - --output : output directory to write metrics, plots, and model
 - --params : PyRadiomics YAML configuration
 - --image-pattern  : Comma-separated template(s) for image paths relative
@@ -41,7 +41,7 @@ python $SCRIPTS/radiomics_extract.py \
   --images "$IMAGES" \
   --masks  "$MASKS" \
   --labels "$LABELS" \
-  --split  "$SPLIT" \
+  --splits "$SPLITS" \
   --output "$OUTROOT/extract_peri5_multiphase" \
   --params "$PARAMS" \
   --image-pattern "{pid}/{pid}_0001.nii.gz,{pid}/{pid}_0002.nii.gz" \

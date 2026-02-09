@@ -164,6 +164,17 @@ def build_extract_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
     if extract.get("label_override") is not None:
         cmd.extend(["--label-override", str(extract["label_override"])])
 
+    # Peritumor mode (2D in-plane vs 3D isotropic)
+    if extract.get("peri_mode"):
+        cmd.extend(["--peri-mode", str(extract["peri_mode"])])
+
+    # Force 2D texture extraction (per-slice vs volumetric)
+    if extract.get("force_2d") is not None:
+        if extract["force_2d"]:
+            cmd.append("--force-2d")
+    if extract.get("force_2d_dimension") is not None:
+        cmd.extend(["--force-2d-dimension", str(extract["force_2d_dimension"])])
+
     # Non-scalar vector handling
     if extract.get("non_scalar_handling"):
         cmd.extend(["--non-scalar-handling", extract["non_scalar_handling"]])
