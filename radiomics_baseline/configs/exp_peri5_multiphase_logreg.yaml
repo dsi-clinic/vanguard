@@ -23,13 +23,11 @@ extract:
     - "{pid}/{pid}_0002.nii.gz"
   mask_pattern:    "{pid}.nii.gz"
   peri_radius_mm:  5
+  peri_mode:       3d            # '3d' (isotropic) or '2d' (in-plane Braman-style)
+  force_2d:        false         # true → PyRadiomics computes textures per-slice
+  force_2d_dimension: 0          # 0=axial, 1=coronal, 2=sagittal (only used when force_2d: true)
   n_jobs:          8
-  label_override:  1          # optional — omit to use whatever is in params_yaml
-  # How to handle the 13-element angle vectors returned by GLCM/GLRLM/GLDM.
-  # See non_scalar_features.md for full explanation.
-  #   concat    – each element becomes its own column (original behaviour)
-  #   aggregate – summarise each vector with the stats listed below
-  #   hybrid    – concat short vectors, aggregate vectors longer than the threshold
+  label_override:  1
   non_scalar_handling:        concat
   aggregate_stats:            [mean, std, min, max]
   hybrid_concat_threshold:    5
