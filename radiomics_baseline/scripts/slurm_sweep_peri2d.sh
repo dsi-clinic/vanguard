@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=12:00:00
-#SBATCH --partition=cpu
+#SBATCH --partition=general
 # ---------------------------------------------------------------------------
 # Sweep A: 2D peritumor ring only
 #
