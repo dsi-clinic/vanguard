@@ -41,7 +41,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from evaluation import Evaluator, FoldResults, TrainTestResults  # noqa: E402
+from evaluation import (  # noqa: E402
+    Evaluator,
+    FoldResults,
+    TrainTestResults,
+    plot_random_auc_distribution,
+    report_random_baseline,
+    save_random_baseline_distribution,
+)
 
 # ---------------------------------------------------------------------------
 # Section 1: Synthetic data generation
@@ -496,7 +503,28 @@ def main() -> None:
         )
 
     kfold_results = evaluator.aggregate_kfold_results(fold_results)
-    evaluator.save_results(kfold_results, args.output)
+
+    # Random baseline AUC distribution: compare model AUC to null distribution
+    # Default n_runs=1000 generates a robust distribution for statistical comparison
+    distribution = evaluator.compute_random_baseline_distribution(n_runs=1000)
+    observed_auc = kfold_results.aggregated_metrics.get("auc", {}).get("mean")
+    report_random_baseline(distribution, observed_auc=observed_auc)
+    out_model_dir = args.output / model_name
+    out_model_dir.mkdir(parents=True, exist_ok=True)
+    save_random_baseline_distribution(
+        distribution, out_model_dir / "random_baseline_distribution.json"
+    )
+    plots_dir = out_model_dir / "plots"
+    plots_dir.mkdir(exist_ok=True)
+    plot_random_auc_distribution(
+        distribution["auc_values"],
+        plots_dir / "random_auc_distribution.png",
+        observed_auc=observed_auc,
+    )
+
+    evaluator.save_results(
+        kfold_results, args.output, random_baseline_distribution=distribution
+    )
 
     print(f"K-fold results saved for {model_name}")
     print(f"  Aggregated AUC: {kfold_results.aggregated_metrics.get('auc', {})}")

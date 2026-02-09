@@ -7,11 +7,27 @@ from evaluation.evaluator import (
     KFoldResults,
     TrainTestResults,
 )
+from evaluation.random_baseline import (
+    compute_random_auc_distribution,
+    empirical_p_value,
+    generate_random_probs,
+    report_random_baseline,
+    save_random_baseline_distribution,
+    z_score,
+)
+from evaluation.visualizations import plot_random_auc_distribution
 
 __all__ = [
     "Evaluator",
-    "FoldSplit",
     "FoldResults",
+    "FoldSplit",
     "KFoldResults",
     "TrainTestResults",
+    "compute_random_auc_distribution",
+    "empirical_p_value",
+    "generate_random_probs",
+    "plot_random_auc_distribution",
+    "report_random_baseline",
+    "save_random_baseline_distribution",
+    "z_score",
 ]
