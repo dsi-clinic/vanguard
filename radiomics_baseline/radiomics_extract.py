@@ -13,6 +13,9 @@ Inputs:
 - --params : PyRadiomics YAML configuration
 - --image-pattern  : Comma-separated template(s) for image paths relative
 - --peri-radius-mm : Optional peritumoral shell width in millimeters (0 = tumor only).
+- --peri-mode      : '3d' (isotropic, original) or '2d' (in-plane only, Braman-style).
+- --force-2d       : Enable 2D texture extraction via PyRadiomics force2D.
+- --force-2d-dimension : Slice dimension for force2D (0=axial, 1=coronal, 2=sagittal).
 - --n-proc 8       : Number of worker processes.
 
 What this script does:
@@ -44,6 +47,8 @@ python $SCRIPTS/radiomics_extract.py \
   --image-pattern "{pid}/{pid}_0001.nii.gz,{pid}/{pid}_0002.nii.gz" \
   --mask-pattern  "{pid}.nii.gz" \
   --peri-radius-mm 5 \
+  --peri-mode 2d \
+  --force-2d \
   --n-proc 8
 
 """
@@ -128,6 +133,8 @@ def ensure_exists(path: Path, what: str) -> None:
 def build_extractor(
     params_path: str | None = None,
     label_override: int | None = None,
+    force_2d: bool = False,
+    force_2d_dimension: int = 0,
 ) -> featureextractor.RadiomicsFeatureExtractor:
     """Build a :class:`RadiomicsFeatureExtractor` from a PyRadiomics YAML file.
 
@@ -140,6 +147,14 @@ def build_extractor(
     label_override:
         Optional integer label to force as the mask value, overriding whatever
         ``label`` is set in the YAML ``setting`` block.
+    force_2d:
+        If True, set ``force2D`` in extractor settings so that texture
+        matrices are computed per-slice rather than in 3D.  This is often
+        more stable when slice thickness >> in-plane spacing.
+    force_2d_dimension:
+        The dimension perpendicular to the extraction plane when
+        ``force_2d`` is True.  0 = axial (z), 1 = coronal (y),
+        2 = sagittal (x).  Default is 0 (axial).
     """
     if params_path:
         extractor = featureextractor.RadiomicsFeatureExtractor(paramsFile=params_path)
@@ -149,13 +164,27 @@ def build_extractor(
     if label_override is not None:
         extractor.settings["label"] = label_override
 
+    # --- Issue #1: force2D support ---
+    if force_2d:
+        extractor.settings["force2D"] = True
+        extractor.settings["force2Ddimension"] = force_2d_dimension
+        print(
+            f"[INFO] force2D enabled — extraction dimension = {force_2d_dimension} "
+            f"(0=axial, 1=coronal, 2=sagittal)",
+            file=sys.stderr,
+        )
+
     return extractor
 
 
-# peritumor mask creation (cast to UInt8)
+# ---------------------------------------------------------------------------
+# Peritumor mask creation
+# ---------------------------------------------------------------------------
+
 def make_peritumor_mask(mask_path: Path, radius_mm: float) -> sitk.Image | None:
     """Dilate a binary tumor mask to create a peritumor shell of given radius.
 
+    Uses mean 3D spacing for isotropic dilation (original behaviour).
     Returns a SimpleITK image with dtype UInt8 containing the shell region, or
     ``None`` if the radius is non-positive or the mask cannot be read.
     """
@@ -187,7 +216,73 @@ def make_peritumor_mask(mask_path: Path, radius_mm: float) -> sitk.Image | None:
     return shell
 
 
-# flatten radiomics output
+def make_peritumor_mask_2d(mask_path: Path, radius_mm: float) -> sitk.Image | None:
+    """Create a peritumor shell by dilating **only in the x/y plane**.
+
+    This implements the Braman-style 2D peritumor ring: the dilation kernel
+    is computed from in-plane (x, y) spacing and the z-component is set to 0,
+    so the shell never extends beyond the original tumor's slice range.
+
+    Parameters:
+    mask_path:
+        Path to the binary tumor mask (NIfTI/MHA).
+    radius_mm:
+        Desired ring width in millimetres.
+
+    Returns:
+        SimpleITK UInt8 image of the peritumor shell, or ``None`` if the
+        mask cannot be read or the requested radius is too small to produce
+        any dilation voxels.
+    """
+    try:
+        mask = sitk.ReadImage(str(mask_path))
+    except Exception as exc:  # pragma: no cover - I/O defensive
+        print(f"[WARN] could not read mask {mask_path}: {exc}", file=sys.stderr)
+        return None
+
+    spacing = mask.GetSpacing()  # (sx, sy, sz)
+    sx, sy = spacing[0], spacing[1]
+
+    # Compute per-axis voxel radii from in-plane spacing only
+    r_vox_x = int(round(radius_mm / sx))
+    r_vox_y = int(round(radius_mm / sy))
+
+    if r_vox_x <= 0 and r_vox_y <= 0:
+        print(
+            f"[WARN] 2D peri dilation radius too small for spacing "
+            f"({sx:.2f}, {sy:.2f}) mm — skipping",
+            file=sys.stderr,
+        )
+        return None
+
+    # Kernel: [x, y, z] — z is 0 so no expansion along the slice axis
+    kernel_radius = [max(r_vox_x, 1), max(r_vox_y, 1), 0]
+
+    print(
+        f"[DEBUG] 2D peri ring: requested {radius_mm:.1f} mm -> "
+        f"kernel [x={kernel_radius[0]}, y={kernel_radius[1]}, z=0] voxels "
+        f"(spacing x={sx:.2f}, y={sy:.2f} mm)",
+        file=sys.stderr,
+    )
+
+    mask_uint8 = sitk.Cast(mask, sitk.sitkUInt8)
+    dilated = sitk.BinaryDilate(mask_uint8, kernelRadius=kernel_radius)
+    shell = sitk.Subtract(dilated, mask_uint8)
+    shell = sitk.BinaryThreshold(
+        shell,
+        lowerThreshold=1,
+        upperThreshold=255,
+        insideValue=1,
+        outsideValue=0,
+    )
+    shell.CopyInformation(mask)
+    return shell
+
+
+# ---------------------------------------------------------------------------
+# Flatten radiomics output
+# ---------------------------------------------------------------------------
+
 def _is_number(value: object) -> bool:
     """Return True if ``value`` can be cast to ``float`` without error."""
     try:
@@ -315,11 +410,18 @@ def extract_for_pid(
     mask_pattern: str,
     extractor: featureextractor.RadiomicsFeatureExtractor,
     peri_radius_mm: float = 0.0,
+    peri_mode: str = "3d",
     non_scalar_handling: str = "concat",
     aggregate_stats: list[str] | None = None,
     hybrid_concat_threshold: int = 5,
 ) -> dict[str, Any]:
-    """Extract radiomics features for a single patient across all phases."""
+    """Extract radiomics features for a single patient across all phases.
+
+    Parameters:
+    peri_mode:
+        ``"3d"`` — original isotropic dilation using mean spacing.
+        ``"2d"`` — in-plane (x/y) dilation only (Braman-style ring).
+    """
     base_mask_path = path_from_pattern(masks_dir, pid, mask_pattern)
     ensure_exists(base_mask_path, "Mask")
     try:
@@ -354,7 +456,12 @@ def extract_for_pid(
 
         # Optional peritumor shell
         if peri_radius_mm > 0:
-            peri_mask = make_peritumor_mask(base_mask_path, peri_radius_mm)
+            # --- Issue #2: route to 2D or 3D peritumor builder ---
+            if peri_mode == "2d":
+                peri_mask = make_peritumor_mask_2d(base_mask_path, peri_radius_mm)
+            else:
+                peri_mask = make_peritumor_mask(base_mask_path, peri_radius_mm)
+
             if peri_mask is not None:
                 res_peri = extractor.execute(img, peri_mask)
                 peri_prefix = f"{pat}_peri{int(peri_radius_mm)}mm_"
@@ -363,8 +470,6 @@ def extract_for_pid(
                         res_peri, prefix=peri_prefix, **flatten_kwargs
                     ),
                 )
-
-    return out_row
 
     return out_row
 
@@ -378,6 +483,7 @@ def extract_split_features(
     mask_pattern: str,
     extractor: featureextractor.RadiomicsFeatureExtractor,
     peri_radius_mm: float = 0.0,
+    peri_mode: str = "3d",
     n_jobs: int = 1,
     non_scalar_handling: str = "concat",
     aggregate_stats: list[str] | None = None,
@@ -396,6 +502,7 @@ def extract_split_features(
                     mask_pattern,
                     extractor,
                     peri_radius_mm=peri_radius_mm,
+                    peri_mode=peri_mode,
                     non_scalar_handling=non_scalar_handling,
                     aggregate_stats=aggregate_stats,
                     hybrid_concat_threshold=hybrid_concat_threshold,
@@ -413,6 +520,7 @@ def extract_split_features(
                 mask_pattern,
                 extractor,
                 peri_radius_mm=peri_radius_mm,
+                peri_mode=peri_mode,
                 non_scalar_handling=non_scalar_handling,
                 aggregate_stats=aggregate_stats,
                 hybrid_concat_threshold=hybrid_concat_threshold,
@@ -473,6 +581,38 @@ def main() -> None:
         help="If > 0, build a peritumor shell of this radius (in mm).",
     )
     ap.add_argument(
+        "--peri-mode",
+        choices=["3d", "2d"],
+        default="3d",
+        help=(
+            "Peritumor dilation strategy. "
+            "'3d': isotropic dilation using mean spacing (original). "
+            "'2d': in-plane (x/y) dilation only — Braman-style ring, "
+            "preserves z slice extent."
+        ),
+    )
+    ap.add_argument(
+        "--force-2d",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable PyRadiomics force2D mode: texture matrices are computed "
+            "per-slice instead of in 3D. Useful when slice thickness >> "
+            "in-plane spacing."
+        ),
+    )
+    ap.add_argument(
+        "--force-2d-dimension",
+        type=int,
+        default=0,
+        choices=[0, 1, 2],
+        help=(
+            "Dimension perpendicular to the extraction plane when --force-2d "
+            "is set. 0 = axial (z), 1 = coronal (y), 2 = sagittal (x). "
+            "Default: 0."
+        ),
+    )
+    ap.add_argument(
         "--n-jobs",
         type=int,
         default=1,
@@ -521,8 +661,13 @@ def main() -> None:
     # Load metadata
     labels = load_csv(args.labels)[["patient_id", "pcr"]].set_index("patient_id")
     splits = load_csv(args.splits).set_index("patient_id")
-    # Build extractor (optionally overriding mask label)
-    extractor = build_extractor(args.params, label_override=args.label_override)
+    # Build extractor (optionally overriding mask label and force2D)
+    extractor = build_extractor(
+        args.params,
+        label_override=args.label_override,
+        force_2d=args.force_2d,
+        force_2d_dimension=args.force_2d_dimension,
+    )
 
     # Identify train/test patient IDs
     if "split" not in splits.columns:
@@ -548,6 +693,7 @@ def main() -> None:
         args.mask_pattern,
         extractor,
         peri_radius_mm=args.peri_radius_mm,
+        peri_mode=args.peri_mode,
         n_jobs=args.n_jobs,
         non_scalar_handling=args.non_scalar_handling,
         aggregate_stats=aggregate_stats,
@@ -561,6 +707,7 @@ def main() -> None:
         args.mask_pattern,
         extractor,
         peri_radius_mm=args.peri_radius_mm,
+        peri_mode=args.peri_mode,
         n_jobs=args.n_jobs,
         non_scalar_handling=args.non_scalar_handling,
         aggregate_stats=aggregate_stats,
