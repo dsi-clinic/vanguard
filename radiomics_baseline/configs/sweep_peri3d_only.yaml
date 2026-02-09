@@ -1,0 +1,22 @@
+# ---------------------------------------------------------------------------
+# Sweep B: 3D isotropic peritumor shell (original behaviour)
+# Submit in parallel with sweep_peri2d_only.yaml
+# ---------------------------------------------------------------------------
+base_config: configs/exp_peri5_multiphase_logreg.yaml
+
+sweep:
+  extract.peri_mode:
+    - 3d
+
+  extract.force_2d:
+    - true
+    - false
+
+  extract.peri_radius_mm:
+    - 2.5
+    - 5
+
+  train.classifier:
+    - logistic
+    - rf
+    - xgb

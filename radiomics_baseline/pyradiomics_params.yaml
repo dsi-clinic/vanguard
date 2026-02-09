@@ -7,6 +7,10 @@ setting:
   preCrop: true
   label: 1
 
+  # 2D extraction (uncomment or override via CLI --force-2d)
+  # force2D: true
+  # force2Ddimension: 0   # 0 = axial (z), 1 = coronal (y), 2 = sagittal (x)
+
 imageType:
   Original: {}
 

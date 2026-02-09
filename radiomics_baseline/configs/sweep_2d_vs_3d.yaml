@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# Ablation sweep: 2D vs 3D peritumor ring × force2D × peri radius × classifier
+#
+# This sweep tests the new Braman-style 2D in-plane ring against the original
+# isotropic 3D shell, crossed with 2D vs 3D texture extraction.
+#
+# Grid: 2 peri_mode × 2 force_2d × 2 radii × 3 classifiers = 24 configs
+#
+# Unique extractions: 2 × 2 × 2 = 8  (classifier is training-only, shared)
+# ---------------------------------------------------------------------------
+base_config: configs/exp_peri5_multiphase_logreg.yaml
+
+sweep:
+  # Issue #2: in-plane (Braman) vs isotropic 3D shell
+  extract.peri_mode:
+    - 2d
+    - 3d
+
+  # Issue #1: per-slice texture vs volumetric texture
+  extract.force_2d:
+    - true
+    - false
+
+  # Braman et al. tested 2.5–5 mm rings
+  extract.peri_radius_mm:
+    - 2.5
+    - 5
+
+  # Classifier comparison (training-only — doesn't trigger re-extraction)
+  train.classifier:
+    - logistic
+    - rf
+    - xgb

@@ -1,0 +1,43 @@
+# ---------------------------------------------------------------------------
+# Experiment: peri-5 mm · multi-phase · logistic regression (elastic net)
+#
+# This config reproduces the "peri5_multiphase + logistic" run that was
+# previously driven by the sbatch + bash scripts.
+# ---------------------------------------------------------------------------
+experiment_name: peri5_multiphase_logreg
+
+paths:
+  images:      /net/projects2/vanguard/MAMA-MIA-syn60868042/images
+  masks:       /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert
+  labels:      /home/summe/vanguard/radiomics_baseline/labels.csv
+  splits:      /home/summe/vanguard/radiomics_baseline/splits_train_test_ready.csv
+  outdir:      /home/summe/vanguard/radiomics_baseline/outputs/peri5_multiphase_logreg
+  params_yaml: /home/summe/vanguard/radiomics_baseline/pyradiomics_params.yaml
+  # extract_outdir is optional.  If omitted it defaults to {outdir}/extraction.
+  # The ablation runner sets this explicitly so that experiments sharing the
+  # same extraction parameters reuse one extraction output directory.
+
+extract:
+  image_patterns:
+    - "{pid}/{pid}_0001.nii.gz"
+    - "{pid}/{pid}_0002.nii.gz"
+  mask_pattern:    "{pid}.nii.gz"
+  peri_radius_mm:  5
+  peri_mode:       3d            # '3d' (isotropic) or '2d' (in-plane Braman-style)
+  force_2d:        false         # true → PyRadiomics computes textures per-slice
+  force_2d_dimension: 0          # 0=axial, 1=coronal, 2=sagittal (only used when force_2d: true)
+  n_jobs:          8
+  label_override:  1
+  non_scalar_handling:        concat
+  aggregate_stats:            [mean, std, min, max]
+  hybrid_concat_threshold:    5
+
+train:
+  classifier:      logistic
+  logreg_penalty:  elasticnet
+  logreg_l1_ratio: 0.5
+  corr_threshold:  0.9
+  k_best:          50
+  grid_search:     true
+  cv_folds:        5
+  include_subtype: true
