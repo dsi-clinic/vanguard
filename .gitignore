@@ -170,3 +170,9 @@ test_outputs/
 *.vtk
 *-out/
 logs/
+
+# Ignore experiment data dumps
+*.csv
+*.pkl
+features_*.csv
+predictions.csv
