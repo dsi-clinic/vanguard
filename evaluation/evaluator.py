@@ -18,6 +18,11 @@ from evaluation.metrics import (
     compute_binary_metrics,
     compute_metrics_by_group,
 )
+from evaluation.random_baseline import (
+    compute_random_auc_distribution,
+    empirical_p_value,
+    z_score,
+)
 from evaluation.utils import (
     align_data,
     validate_inputs,
@@ -342,11 +347,37 @@ class Evaluator:
         """
         return compute_binary_metrics(y_true, y_pred, y_prob)
 
+    def compute_random_baseline_distribution(
+        self: Evaluator,
+        n_runs: int = 1000,
+        random_state: int | None = None,
+    ) -> dict:
+        """Compute the distribution of AUCs from random predictors on evaluator labels.
+
+        Uses the same labels (self.y) as used for splits. Returns dict with
+        auc_values, mean, std, n_runs.
+
+        Parameters
+        ----------
+        n_runs : int, default=1000
+            Number of random predictor runs.
+        random_state : int, optional
+            Base random seed. If None, uses self.random_state.
+
+        Returns:
+        -------
+        dict
+            From compute_random_auc_distribution: auc_values, mean, std, n_runs.
+        """
+        rs = self.random_state if random_state is None else random_state
+        return compute_random_auc_distribution(self.y, n_runs=n_runs, random_state=rs)
+
     def save_results(
         self: Evaluator,
         results: KFoldResults | TrainTestResults,
         output_dir: Path,
         run_name: str | None = None,
+        random_baseline_distribution: dict | None = None,
     ) -> None:
         """Save results to output directory, organized by model name and run name.
 
@@ -362,6 +393,11 @@ class Evaluator:
             Name of this run (e.g., "run_001", "experiment_1", timestamp).
             Used for tracking multiple runs of the same model.
             If None, results saved directly under model_name.
+        random_baseline_distribution : dict, optional
+            Precomputed null distribution from compute_random_baseline_distribution.
+            If provided, adds random_baseline (mean, std, n_runs) to metrics and,
+            when results contain AUC, adds z_score_vs_random and p_value_vs_random.
+            Not computed by default (opt-in).
 
         Note: output_dir is a Path object. Model systems determine this path
         from their configuration (CLI args, config files, etc.) and pass it here.
@@ -414,6 +450,32 @@ class Evaluator:
             }
             if results.run_name:
                 metrics_dict["run_name"] = results.run_name
+
+        # Optional: random baseline comparison
+        if random_baseline_distribution is not None:
+            metrics_dict["random_baseline"] = {
+                "mean": random_baseline_distribution["mean"],
+                "std": random_baseline_distribution["std"],
+                "n_runs": random_baseline_distribution["n_runs"],
+            }
+            observed_auc = None
+            if (
+                isinstance(results, KFoldResults)
+                and "auc" in results.aggregated_metrics
+            ):
+                observed_auc = results.aggregated_metrics["auc"].get("mean")
+            elif isinstance(results, TrainTestResults) and "auc" in results.metrics:
+                observed_auc = results.metrics["auc"]
+            if observed_auc is not None and not np.isnan(observed_auc):
+                mean_r = random_baseline_distribution["mean"]
+                std_r = random_baseline_distribution["std"]
+                metrics_dict["z_score_vs_random"] = z_score(observed_auc, mean_r, std_r)
+                auc_values = random_baseline_distribution.get("auc_values", [])
+                metrics_dict["p_value_vs_random"] = (
+                    empirical_p_value(auc_values, observed_auc)
+                    if auc_values
+                    else float("nan")
+                )
 
         # Subgroup (stratum) metrics: compute, add to dict, and print summary
         stratum_col = _stratum_column(results.predictions)
