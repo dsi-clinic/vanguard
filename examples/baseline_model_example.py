@@ -68,13 +68,11 @@ from evaluation import (  # noqa: E402
     FoldSplit,
     TrainTestResults,
     create_splits_from_excel,
-)
-from src.utils.clinic_metadata import (  # noqa: E402
-    get_patient_ids_from_excel,
     plot_random_auc_distribution,
     report_random_baseline,
     save_random_baseline_distribution,
 )
+from src.utils.clinic_metadata import get_patient_ids_from_excel  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Section 1: Synthetic data generation
