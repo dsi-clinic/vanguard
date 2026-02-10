@@ -1,0 +1,13 @@
+experiment_name,status,extract.force_2d,extract.peri_mode,extract.peri_radius_mm,train.classifier,auc_test,auc_train,auc_train_cv,n_features_used
+peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-2.5_classifier-logistic,success,True,2d,2.5,logistic,0.5901053241859118,0.6550866301213042,0.5461638377033661,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-2.5_classifier-rf,success,True,2d,2.5,rf,0.6039713982027249,0.8909847434119279,0.5297712612553112,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-2.5_classifier-xgb,success,True,2d,2.5,xgb,0.5671562469803846,0.938449684080752,0.5273407744975013,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-5_classifier-logistic,success,True,2d,5,logistic,0.6068943859310079,0.6570503929727232,0.5452171807234221,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-5_classifier-rf,success,True,2d,5,rf,0.6080297613295971,0.8797129207670122,0.5252008894172555,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-5_classifier-xgb,success,True,2d,5,xgb,0.5344960865784134,0.9994760363692402,0.5449265790458577,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-2.5_classifier-logistic,success,False,2d,2.5,logistic,0.5950091796308822,0.6465975386918521,0.5364991303964951,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-2.5_classifier-rf,success,False,2d,2.5,rf,0.6258575707797855,0.8619774123241529,0.5392554432776346,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-2.5_classifier-xgb,success,False,2d,2.5,xgb,0.566286597738912,0.9954956739977544,0.5355436673051097,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-5_classifier-logistic,success,False,2d,5,logistic,0.5797420040583632,0.619782929352971,0.5547982299716003,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-5_classifier-rf,success,False,2d,5,rf,0.6186829645376366,0.877982519868789,0.5395460449551989,50
+peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-5_classifier-xgb,success,False,2d,5,xgb,0.5433858343801334,0.975611474363208,0.5351077647887634,50

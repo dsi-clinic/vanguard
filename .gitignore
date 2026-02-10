@@ -172,4 +172,6 @@ test_outputs/
 logs/
 
 # Results shouldn't be commited as they can be regenerated easily
-results/**
+results/**.claude/
+radiomics_baseline/outputs/
+*.backup
