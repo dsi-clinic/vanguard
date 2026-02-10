@@ -8,7 +8,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from evaluation.kfold import create_kfold_splits
+from evaluation.kfold import (
+    FoldSplit,
+    create_group_stratified_kfold_splits,
+    create_kfold_splits,
+)
 from evaluation.metrics import (
     aggregate_fold_metrics,
     compute_binary_metrics,
@@ -56,17 +60,6 @@ def _print_validation_summary(
         )
         print(f"  AUC (Strata {i} / {stratum_name}): {auc_str}")
     print()
-
-
-@dataclass
-class FoldSplit:
-    """Represents a single fold split."""
-
-    fold_idx: int
-    train_indices: np.ndarray
-    val_indices: np.ndarray
-    train_patient_ids: np.ndarray | None = None
-    val_patient_ids: np.ndarray | None = None
 
 
 @dataclass
@@ -150,36 +143,107 @@ class Evaluator:
         n_splits: int = 5,
         stratify: bool = True,
         shuffle: bool = True,
-    ) -> list[FoldSplit]:
+        groups: np.ndarray | None = None,
+        stratify_labels: np.ndarray | None = None,
+        validate_exclusivity: bool = True,
+        return_report: bool = False,
+    ) -> list[FoldSplit] | tuple[list[FoldSplit], dict]:
         """Create k-fold splits and return them to the model.
+
+        Supports both standard stratified k-fold and group-stratified k-fold
+        (for site-exclusive splits with subtype stratification).
 
         Parameters
         ----------
         n_splits : int, default=5
             Number of folds
         stratify : bool, default=True
-            Whether to use stratified k-fold (maintains class distribution)
+            Whether to use stratified k-fold (maintains class distribution).
+            Ignored if groups/stratify_labels are provided (uses group-stratified).
         shuffle : bool, default=True
             Whether to shuffle data before splitting
+        groups : np.ndarray | None, default=None
+            Group assignments for each sample (e.g., site names).
+            If provided along with stratify_labels, uses group-stratified splitting
+            to ensure groups do not cross folds.
+        stratify_labels : np.ndarray | None, default=None
+            Stratum labels for stratification (e.g., subtype/dataset).
+            If provided along with groups, uses group-stratified splitting.
+            If provided alone (without groups), uses standard stratified splitting
+            on these labels instead of y.
+        validate_exclusivity : bool, default=True
+            Whether to validate and warn if groups cross folds (only used when
+            groups are provided).
+        return_report : bool, default=False
+            If True, also return a report dictionary with distribution statistics
+            (only used when groups are provided).
 
         Returns:
         -------
-        list[FoldSplit]
+        list[FoldSplit] | tuple[list[FoldSplit], dict]
             List of FoldSplit objects, one per fold, containing:
             - train_indices: indices for training
             - val_indices: indices for validation
             - train_patient_ids: patient IDs for training (if available)
             - val_patient_ids: patient IDs for validation (if available)
+            If return_report=True and groups provided, returns tuple of (splits, report_dict).
+
+        Examples:
+        --------
+        >>> # Standard stratified k-fold (existing behavior)
+        >>> splits = evaluator.create_kfold_splits(n_splits=5)
+        >>>
+        >>> # Group-stratified k-fold (site-exclusive, subtype-stratified)
+        >>> splits = evaluator.create_kfold_splits(
+        ...     n_splits=5,
+        ...     groups=site_array,
+        ...     stratify_labels=subtype_array
+        ... )
         """
-        split_dicts = create_kfold_splits(
-            X=self.X,
-            y=self.y,
-            patient_ids=self.patient_ids,
-            n_splits=n_splits,
-            stratify=stratify,
-            shuffle=shuffle,
-            random_state=self.random_state,
-        )
+        # Use group-stratified splitting if both groups and stratify_labels provided
+        if groups is not None and stratify_labels is not None:
+            result = create_group_stratified_kfold_splits(
+                X=self.X,
+                y=self.y,
+                groups=groups,
+                stratify_labels=stratify_labels,
+                patient_ids=self.patient_ids,
+                n_splits=n_splits,
+                shuffle=shuffle,
+                random_state=self.random_state,
+                validate_exclusivity=validate_exclusivity,
+                return_report=return_report,
+            )
+            if return_report:
+                split_dicts, report_dict = result
+            else:
+                split_dicts = result
+                report_dict = None
+        # Use standard stratified splitting with custom stratify_labels if provided alone
+        elif stratify_labels is not None:
+            # Use stratify_labels instead of y for stratification
+            split_dicts = create_kfold_splits(
+                X=self.X,
+                y=stratify_labels,  # Use stratify_labels for stratification
+                patient_ids=self.patient_ids,
+                n_splits=n_splits,
+                stratify=True,  # Always stratify when stratify_labels provided
+                shuffle=shuffle,
+                random_state=self.random_state,
+            )
+            report_dict = None
+        # Standard behavior: use existing create_kfold_splits
+        else:
+            split_dicts = create_kfold_splits(
+                X=self.X,
+                y=self.y,
+                patient_ids=self.patient_ids,
+                n_splits=n_splits,
+                stratify=stratify,
+                shuffle=shuffle,
+                random_state=self.random_state,
+            )
+            report_dict = None
 
         # Convert to FoldSplit objects
         splits = []
@@ -193,6 +257,9 @@ class Evaluator:
                     val_patient_ids=split_dict["val_patient_ids"],
                 )
             )
+
+        if return_report and report_dict is not None:
+            return splits, report_dict
 
         return splits
 

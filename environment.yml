@@ -39,5 +39,6 @@ dependencies:
   - scikit-image=0.25.0
   - scipy=1.14.1
   - pyvista=0.45.0
+  - openpyxl=3.1.5
   - pip:
       - git+https://github.com/AIM-Harvard/pyradiomics.git@v3.1.0

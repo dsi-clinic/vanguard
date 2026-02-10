@@ -20,11 +20,32 @@ Usage:
     python examples/baseline_model_example.py --model logistic
 
     # Run with custom data
-    python examples/baseline_model_example.py \\
-        --model random \\
-        --features path/to/features.csv \\
-        --labels path/to/labels.csv \\
+    python examples/baseline_model_example.py \
+        --model random \
+        --features path/to/features.csv \
+        --labels path/to/labels.csv \
         --output results/baseline_example
+
+    # Run with Excel-driven splits (site-exclusive, stratified).
+    # --excel-metadata alone: synthetic data is generated for the Excel cohort.
+    python examples/baseline_model_example.py \
+        --model random \
+        --excel-metadata path/to/metadata.xlsx \
+        --output results/baseline_example
+
+    # Excel + your own features/labels (must cover all Excel patient_ids):
+    python examples/baseline_model_example.py \
+        --model random \
+        --features path/to/features.csv \
+        --labels path/to/labels.csv \
+        --excel-metadata path/to/metadata.xlsx \
+        --output results/baseline_example
+
+Examples:
+    python examples/baseline_model_example.py \
+        --model random \
+        --excel-metadata /net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
+        --output results/baseline_example_excel
 """
 
 from __future__ import annotations
@@ -44,11 +65,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from evaluation import (  # noqa: E402
     Evaluator,
     FoldResults,
+    FoldSplit,
     TrainTestResults,
+    create_splits_from_excel,
     plot_random_auc_distribution,
     report_random_baseline,
     save_random_baseline_distribution,
 )
+from src.utils.clinic_metadata import get_patient_ids_from_excel  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Section 1: Synthetic data generation
@@ -62,6 +86,7 @@ def generate_synthetic_data(
     n_samples: int = 200,
     n_features: int = 10,
     random_state: int = 42,
+    patient_ids: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Generate synthetic binary classification data for testing.
 
@@ -71,11 +96,14 @@ def generate_synthetic_data(
     Parameters
     ----------
     n_samples : int
-        Number of samples
+        Number of samples (ignored if patient_ids is provided).
     n_features : int
         Number of features (ignored for random model; useful for logistic)
     random_state : int
         Seed for reproducibility
+    patient_ids : np.ndarray or None, optional
+        If provided, generate exactly len(patient_ids) samples and use these IDs.
+        Allows aligning synthetic data to an external cohort (e.g. from Excel).
 
     Returns:
     -------
@@ -84,8 +112,12 @@ def generate_synthetic_data(
     y : np.ndarray
         Binary labels (0 or 1)
     patient_ids : np.ndarray
-        Patient IDs (e.g. "patient_000", ...)
+        Patient IDs (from argument or generated as "patient_0000", ...)
     """
+    ids_provided = patient_ids is not None
+    if ids_provided:
+        patient_ids = np.asarray(patient_ids)
+        n_samples = len(patient_ids)
     rng = np.random.default_rng(random_state)
     # Simple separable-ish data: random features, label from threshold on first feature
     X = rng.standard_normal((n_samples, n_features))
@@ -96,7 +128,8 @@ def generate_synthetic_data(
     noise_flip_prob = 0.1
     flip = rng.random(n_samples) < noise_flip_prob
     y[flip] = 1 - y[flip]
-    patient_ids = np.array([f"patient_{i:04d}" for i in range(n_samples)])
+    if not ids_provided:
+        patient_ids = np.array([f"patient_{i:04d}" for i in range(n_samples)])
     return X, y, patient_ids
 
 
@@ -240,6 +273,70 @@ def run_kfold_random(
                 "y_pred": y_pred,
                 "y_prob": y_prob,
             }
+        )
+        if stratum is not None:
+            pred_df["stratum"] = stratum[split.val_indices]
+        fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
+    return fold_results
+
+
+def run_kfold_random_with_splits(
+    evaluator: Evaluator,
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[FoldSplit],
+    random_state: int,
+    stratum: np.ndarray | None = None,
+) -> list[FoldResults]:
+    """Run k-fold evaluation using the random model with pre-defined splits (e.g. from Excel)."""
+    fold_results = []
+    for split in splits:
+        n_val = len(split.val_indices)
+        fold_seed = random_state + split.fold_idx
+        y_pred, y_prob = predict_random(n_val, random_state=fold_seed)
+        y_true = y[split.val_indices]
+        pid = (
+            split.val_patient_ids
+            if split.val_patient_ids is not None
+            else np.array([f"val_{i}" for i in range(n_val)])
+        )
+        pred_df = pd.DataFrame(
+            {"patient_id": pid, "y_true": y_true, "y_pred": y_pred, "y_prob": y_prob}
+        )
+        if stratum is not None:
+            pred_df["stratum"] = stratum[split.val_indices]
+        fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
+    return fold_results
+
+
+def run_kfold_logistic_with_splits(
+    evaluator: Evaluator,
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[FoldSplit],
+    random_state: int,
+    stratum: np.ndarray | None = None,
+) -> list[FoldResults]:
+    """Run k-fold evaluation with LogisticRegression using pre-defined splits (e.g. from Excel)."""
+    from sklearn.linear_model import LogisticRegression
+
+    model = LogisticRegression(random_state=random_state, max_iter=500)
+    fold_results = []
+    for split in splits:
+        X_train = X[split.train_indices]
+        y_train = y[split.train_indices]
+        X_val = X[split.val_indices]
+        y_val = y[split.val_indices]
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_val)
+        y_prob = model.predict_proba(X_val)[:, 1]
+        pid = (
+            split.val_patient_ids
+            if split.val_patient_ids is not None
+            else np.array([f"val_{i}" for i in range(len(y_val))])
+        )
+        pred_df = pd.DataFrame(
+            {"patient_id": pid, "y_true": y_val, "y_pred": y_pred, "y_prob": y_prob}
         )
         if stratum is not None:
             pred_df["stratum"] = stratum[split.val_indices]
@@ -430,6 +527,12 @@ def parse_args() -> argparse.Namespace:
         default=0.2,
         help="Fraction of data for test set when doing train/test evaluation (only with synthetic data).",
     )
+    parser.add_argument(
+        "--excel-metadata",
+        type=Path,
+        default=None,
+        help="Path to Excel metadata file. If provided, k-fold splits are from Excel (site-exclusive, stratified). Can be used alone (synthetic data is generated for Excel cohort) or with --features/--labels.",
+    )
     args = parser.parse_args()
     if (args.features is None) != (args.labels is None):
         parser.error(
@@ -443,7 +546,23 @@ def main() -> None:
     args = parse_args()
 
     # --- Data preparation ---
-    if args.features is not None and args.labels is not None:
+    # When only --excel-metadata is set, define cohort from Excel and generate synthetic data for it.
+    if (
+        args.excel_metadata is not None
+        and args.features is None
+        and args.labels is None
+    ):
+        excel_patient_ids = get_patient_ids_from_excel(args.excel_metadata)
+        X, y, patient_ids = generate_synthetic_data(
+            random_state=args.random_state,
+            patient_ids=excel_patient_ids,
+        )
+        do_train_test = False
+        X_train, X_test = X, None
+        y_train, y_test = y, None
+        pid_test = None
+        stratum = None
+    elif args.features is not None and args.labels is not None:
         X, y, patient_ids, stratum = load_data_from_csv(args.features, args.labels)
         # For train/test we'd need a fixed split; with CSV we only do k-fold here for simplicity
         do_train_test = False
@@ -481,7 +600,32 @@ def main() -> None:
 
     # --- K-fold evaluation ---
     train_pids = patient_ids if not do_train_test else patient_ids[train_idx]
-    if args.model == "random":
+    if args.excel_metadata is not None:
+        splits = create_splits_from_excel(
+            excel_path=args.excel_metadata,
+            patient_ids=train_pids,
+            n_splits=args.n_splits,
+            random_state=args.random_state,
+        )
+        if args.model == "random":
+            fold_results = run_kfold_random_with_splits(
+                evaluator,
+                X_train,
+                y_train,
+                splits,
+                random_state=args.random_state,
+                stratum=stratum,
+            )
+        else:
+            fold_results = run_kfold_logistic_with_splits(
+                evaluator,
+                X_train,
+                y_train,
+                splits,
+                random_state=args.random_state,
+                stratum=stratum,
+            )
+    elif args.model == "random":
         fold_results = run_kfold_random(
             evaluator,
             X_train,

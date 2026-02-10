@@ -7,6 +7,7 @@ from evaluation.evaluator import (
     KFoldResults,
     TrainTestResults,
 )
+from evaluation.kfold import create_splits_from_excel, export_splits_to_csv
 from evaluation.random_baseline import (
     compute_random_auc_distribution,
     empirical_p_value,
@@ -23,6 +24,8 @@ __all__ = [
     "FoldSplit",
     "KFoldResults",
     "TrainTestResults",
+    "create_splits_from_excel",
+    "export_splits_to_csv",
     "compute_random_auc_distribution",
     "empirical_p_value",
     "generate_random_probs",
