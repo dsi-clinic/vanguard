@@ -26,8 +26,8 @@ import SimpleITK as sitk
 # FIXME: this is cobbling together an installation process in the script itself
 # packages must be installed in an environment
 try:
-    SCRIPT_DIR = Path(__file__).parent.parent
-    sys.path.insert(0, str(SCRIPT_DIR / "3D-Breast-FGT-and-Blood-Vessel-Segmentation"))
+    SCRIPT_DIR = Path(__file__).parent
+    sys.path.insert(0, str(SCRIPT_DIR / "vanguard-blood-vessel-segmentation"))
 
     from preprocessing import normalize_image, zscore_image  # noqa: E402
 
@@ -118,8 +118,8 @@ def run_vessel_segmentation(
     try:
         # Change to the segmentation project directory
         original_cwd = Path.cwd()
-        script_dir = Path(__file__).parent.parent
-        os.chdir(script_dir / "3D-Breast-FGT-and-Blood-Vessel-Segmentation")
+        script_dir = Path(__file__).parent
+        os.chdir(script_dir / "vanguard-blood-vessel-segmentation")
 
         # STEP-2: Run breast segmentation
         print("  Running breast segmentation (STEP-2)...")
@@ -262,7 +262,7 @@ def collect_all_step3_files(output_dir: str) -> list[str]:
 def main() -> None:
     """Main function to run batch segmentation processing."""
     # Get script directory for relative paths
-    script_dir = Path(__file__).parent.parent
+    script_dir = Path(__file__).parent
 
     parser = argparse.ArgumentParser(
         description="Batch process all .nii.gz files and extract vessel segmentations (STEP-3)",
@@ -277,7 +277,7 @@ def main() -> None:
 
     parser.add_argument(
         "--output-dir",
-        default=str(script_dir / "vessel_segmentations"),
+        default=str(script_dir.parent / "vessel_segmentations"),
         help="Directory to save all STEP-3 vessel segmentation .npy files",
     )
 
@@ -291,7 +291,7 @@ def main() -> None:
         "--breast-model-path",
         default=str(
             script_dir
-            / "3D-Breast-FGT-and-Blood-Vessel-Segmentation"
+            / "vanguard-blood-vessel-segmentation"
             / "trained_models"
             / "breast_model.pth"
         ),
@@ -302,7 +302,7 @@ def main() -> None:
         "--vessel-model-path",
         default=str(
             script_dir
-            / "3D-Breast-FGT-and-Blood-Vessel-Segmentation"
+            / "vanguard-blood-vessel-segmentation"
             / "trained_models"
             / "dv_model.pth"
         ),

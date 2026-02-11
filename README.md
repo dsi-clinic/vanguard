@@ -32,18 +32,21 @@ Installation recipe (one time):
 ```bash
 micromamba config prepend channels conda-forge
 micromamba config set channel_priority strict
-git clone git@github.com:uchicago-dsi/vanguard.git
+git clone --recursive git@github.com:dsi-clinic/vanguard.git
 cd vanguard
-micromamba create -y -n vanguard \
-  python=3.11 \
-  pytorch-gpu=2.7.* \
-  torchvision=0.22.* \
-  cuda-version=12.6 \
-  vmtk=1.5.0 "itk=5.3.*" "libitk=5.3.*" "vtk>=9.2" \
-  numpy pandas tqdm submitit einops nibabel pynrrd imageio imageio-ffmpeg
+micromamba env create -y -n vanguard -f environment.yml
 micromamba activate vanguard
-pip install -r requirements.txt
 ```
+
+Note: All Python dependencies (including pip-only packages like PyRadiomics) are installed via `environment.yml`; you should not need to run `pip install -r requirements.txt`.
+
+To Update:
+```bash
+micromamba activate vanguard
+micromamba env update -y -n vanguard -f environment.yml
+```
+
+(Be sure to clone this repo with `--recursive` so that submodules like [dsi-clinic/vanguard-blood-vessel-segmentation](https://github.com/dsi-clinic/vanguard-blood-vessel-segmentation) are included.)
 
 ## Repository Structure and Methodologies
 

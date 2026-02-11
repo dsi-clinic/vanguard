@@ -14,11 +14,7 @@ The `pcr_prediction.py` script trains and evaluates machine learning models to p
 
 ## Requirements
 - Python 3.8+
-- Required packages (install via `pip install -r requirements.txt`):
-    - scikit-learn
-    - pandas
-    - numpy
-    - matplotlib
+- All required Python packages are installed via the project’s `environment.yml`
 
 ## Running the Code
 

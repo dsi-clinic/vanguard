@@ -4,6 +4,7 @@
 - Mama-mia dataset ([paper](https://www.nature.com/articles/s41597-025-04707-4), [code](https://github.com/LidiaGarrucho/MAMA-MIA/tree/main))
 - Segmentation model (small dataset but breast specific: [paper](https://www.nature.com/articles/s41598-024-54048-2), [code](https://github.com/mazurowski-lab/3D-Breast-FGT-and-Blood-Vessel-Segmentation))
   - Jim's fork: https://github.com/jpivarski/3D-Breast-FGT-and-Blood-Vessel-Segmentation
+  - The "official" copy in dsi-clinic: https://github.com/dsi-clinic/vanguard-blood-vessel-segmentation
   - Make a fork of this (you will end up with a fork of a fork) and uncheck "Copy the `main` branch only". You will want all branches.
   - Clone your forked repo
   - Switch to the `jpivarski/fix-issues` git branch
