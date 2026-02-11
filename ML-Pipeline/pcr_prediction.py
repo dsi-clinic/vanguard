@@ -118,7 +118,7 @@ def prepare_data(config, outdir):
     
     merged_df.to_csv(outdir / "features_engineered_labeled.csv", index=False)
     
-    logging.info(f"Data Prep Complete. Final shape: {merged_df.shape}")
+    logging.info(f"Final shape: {merged_df.shape}")
     return merged_df
 
 def run_evaluation_pipeline(df, config, outdir):
@@ -191,7 +191,7 @@ def run_evaluation_pipeline(df, config, outdir):
     evaluator.save_results(kfold_results, outdir)
     
     print("\n" + "="*40)
-    print(f"SUCCESS. Visualization plots saved in: {outdir / evaluator.model_name / 'plots'}")
+    print(f"Visualization plots saved in: {outdir / evaluator.model_name / 'plots'}")
     print("="*40 + "\n")
 
 def main() -> None:
