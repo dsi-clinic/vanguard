@@ -339,6 +339,20 @@ def main() -> None:
         help="Process only the file at this index in the sorted list (for SLURM array jobs)",
     )
 
+    parser.add_argument(
+        "--file-start",
+        type=int,
+        default=None,
+        help="Process files from this start index (inclusive) in the sorted list",
+    )
+
+    parser.add_argument(
+        "--file-end",
+        type=int,
+        default=None,
+        help="Process files up to this end index (inclusive) in the sorted list",
+    )
+
     args = parser.parse_args()
 
     # Create output directory
@@ -368,6 +382,34 @@ def main() -> None:
 
         nii_files = [nii_files[args.file_index]]
         print(f"Processing single file at index {args.file_index}: {nii_files[0][0]}")
+    elif args.file_start is not None or args.file_end is not None:
+        if args.file_start is None:
+            print("Error: file-start is required when using file-end")
+            return [], []
+
+        file_start = args.file_start
+        file_end = args.file_end if args.file_end is not None else args.file_start
+
+        if file_start < 0 or file_start >= len(nii_files):
+            print(
+                f"Error: file-start {file_start} is out of range (0-{len(nii_files)-1})"
+            )
+            return [], []
+
+        if file_end < file_start:
+            print("Error: file-end must be >= file-start")
+            return [], []
+
+        if file_end >= len(nii_files):
+            file_end = len(nii_files) - 1
+            print(
+                f"file-end exceeds max index, clamping to {file_end}"
+            )
+
+        nii_files = nii_files[file_start : file_end + 1]
+        print(
+            f"Processing file range {file_start}-{file_end} ({len(nii_files)} files)"
+        )
 
     # Filter out already processed files if resuming
     if args.resume:

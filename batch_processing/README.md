@@ -81,17 +81,20 @@ Use the array submit helper to launch one GPU job per file. This is the recommen
 
 ```bash
 cd /path/to/vanguard
-./slurm_submit_scripts/submit_batch_segmentation_array.sh
+FILES_PER_TASK=40 START_INDEX=0 END_INDEX=198 ARRAY_THROTTLE=20 \
+./slurm_submit_scripts/submit_batch_segmentation_array.sh    
 ```
 
-### Example Input 
-START_INDEX=300 END_INDEX=749 ARRAY_THROTTLE=20 ./slurm_submit_scripts/submit_batch_segmentation_array.sh (queuing rn)
-
-# Done with files # 1 - 299 (Start index)
+# Currently Processing Files
 
 # For checking status of current run
-squeue -u "$USER" -t R -o "%.18i %R"
+squeue -u "$USER" -t R,PD -o "%.18i %.20j %.2t %.10M %R"     (CHECK NODE STATUS)
 
+ls -t logs/batch-seg-array-*.out | head -n 1 | xargs -r tail -n 30 (tail job)
+
+find /net/projects2/vanguard/vessel_segmentations -type f -newermt "2026-02-12 10:30:00" | wc -l (See how many added)
+
+find /net/projects2/vanguard/vessel_segmentations -type f -mtime -1 | wc -l
 
 Optional overrides via environment variables:
 

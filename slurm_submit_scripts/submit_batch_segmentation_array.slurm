@@ -47,6 +47,9 @@ VESSEL_MODEL="${VESSEL_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation
 cd "${PROJECT_ROOT}"
 
 TASK_ID=${SLURM_ARRAY_TASK_ID}
+FILES_PER_TASK=${FILES_PER_TASK:-40}
+FILE_START=$((TASK_ID * FILES_PER_TASK))
+FILE_END=$((FILE_START + FILES_PER_TASK - 1))
 
 echo "========================================="
 echo "Batch Segmentation Array Job Started"
@@ -68,7 +71,8 @@ python -u "${PROJECT_ROOT}/batch_processing/batch_segmentation.py" \
   --temp-dir           "${TMPDIR}" \
   --breast-model-path  "${BREAST_MODEL}" \
   --vessel-model-path  "${VESSEL_MODEL}" \
-  --file-index         ${TASK_ID} \
+  --file-start         ${FILE_START} \
+  --file-end           ${FILE_END} \
   --resume \
   --cleanup
 
