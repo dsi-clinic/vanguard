@@ -402,14 +402,10 @@ def main() -> None:
 
         if file_end >= len(nii_files):
             file_end = len(nii_files) - 1
-            print(
-                f"file-end exceeds max index, clamping to {file_end}"
-            )
+            print(f"file-end exceeds max index, clamping to {file_end}")
 
         nii_files = nii_files[file_start : file_end + 1]
-        print(
-            f"Processing file range {file_start}-{file_end} ({len(nii_files)} files)"
-        )
+        print(f"Processing file range {file_start}-{file_end} ({len(nii_files)} files)")
 
     # Filter out already processed files if resuming
     if args.resume:
