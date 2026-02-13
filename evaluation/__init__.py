@@ -44,6 +44,11 @@ from evaluation.random_baseline import (
     save_random_baseline_distribution,
     z_score,
 )
+from evaluation.selection import (
+    SampleSelectionCriteria,
+    apply_selection_criteria,
+    build_selection_criteria_from_args,
+)
 from evaluation.visualizations import plot_random_auc_distribution
 
 __all__ = [
@@ -54,6 +59,9 @@ __all__ = [
     "TrainTestResults",
     "create_splits_from_excel",
     "export_splits_to_csv",
+    "SampleSelectionCriteria",
+    "apply_selection_criteria",
+    "build_selection_criteria_from_args",
     "compute_random_auc_distribution",
     "empirical_p_value",
     "generate_random_probs",

@@ -72,8 +72,15 @@ from evaluation import (  # noqa: E402
     report_random_baseline,
     save_random_baseline_distribution,
 )
+from evaluation.selection import (  # noqa: E402
+    apply_selection_criteria,
+    build_selection_criteria_from_args,
+)
 from evaluation.utils import prepare_predictions_df  # noqa: E402
-from src.utils.clinic_metadata import get_patient_ids_from_excel  # noqa: E402
+from src.utils.clinic_metadata import (  # noqa: E402
+    get_patient_ids_from_excel,
+    load_clinic_metadata_excel,
+)
 
 # ---------------------------------------------------------------------------
 # Section 1: Synthetic data generation
@@ -470,10 +477,55 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to Excel metadata file. If provided, k-fold splits are group-exclusive and stratified. Can be used alone (synthetic data for Excel cohort) or with --features/--labels.",
     )
+    parser.add_argument(
+        "--datasets",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Restrict evaluation to these datasets (e.g. iSpy2 Duke). Requires --excel-metadata.",
+    )
+    parser.add_argument(
+        "--sites",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Restrict evaluation to these sites. Requires --excel-metadata.",
+    )
+    parser.add_argument(
+        "--tumor-types",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Restrict evaluation to these tumor types/subtypes. Requires --excel-metadata.",
+    )
+    parser.add_argument(
+        "--unilateral-only",
+        action="store_true",
+        help="Include only unilateral cases. Requires --excel-metadata and laterality column.",
+    )
+    parser.add_argument(
+        "--bilateral-only",
+        action="store_true",
+        help="Include only bilateral cases. Requires --excel-metadata and laterality column.",
+    )
     args = parser.parse_args()
     if (args.features is None) != (args.labels is None):
         parser.error(
             "Either provide both --features and --labels or neither (synthetic data)."
+        )
+    has_selection = any(
+        [
+            args.datasets,
+            args.sites,
+            args.tumor_types,
+            args.unilateral_only,
+            args.bilateral_only,
+        ]
+    )
+    if has_selection and args.excel_metadata is None:
+        parser.error(
+            "Selection flags (--datasets, --sites, --tumor-types, "
+            "--unilateral-only, --bilateral-only) require --excel-metadata."
         )
     return args
 
@@ -483,13 +535,27 @@ def main() -> None:
     args = parse_args()
 
     # --- Data preparation ---
+    # Build selection criteria if any selection flags are set (requires --excel-metadata).
+    selection_criteria = build_selection_criteria_from_args(args)
+
     # When only --excel-metadata is set, define cohort from Excel and generate synthetic data for it.
     if (
         args.excel_metadata is not None
         and args.features is None
         and args.labels is None
     ):
-        excel_patient_ids = get_patient_ids_from_excel(args.excel_metadata)
+        if selection_criteria is not None:
+            metadata_df = load_clinic_metadata_excel(args.excel_metadata)
+            metadata_df = apply_selection_criteria(
+                metadata_df,
+                selection_criteria,
+                dataset_col="dataset",
+                site_col="site",
+                verbose=True,
+            )
+            excel_patient_ids = metadata_df["patient_id"].astype(str).to_numpy()
+        else:
+            excel_patient_ids = get_patient_ids_from_excel(args.excel_metadata)
         X, y, patient_ids = generate_synthetic_data(
             random_state=args.random_state,
             patient_ids=excel_patient_ids,
@@ -543,6 +609,7 @@ def main() -> None:
             patient_ids=train_pids,
             n_splits=args.n_splits,
             random_state=args.random_state,
+            selection_criteria=selection_criteria,
         )
     else:
         splits = evaluator.create_kfold_splits(

@@ -457,6 +457,7 @@ def _create_splits_from_excel_core(
     validate_exclusivity: bool = True,
     return_report: bool = False,
     verbose: bool = True,
+    selection_criteria: object | None = None,
 ) -> tuple[
     list[dict[str, np.ndarray | int]],
     np.ndarray,
@@ -478,6 +479,7 @@ def _create_splits_from_excel_core(
     stratify_labels : np.ndarray stratum labels
     report : dict with per_fold_site_counts, per_fold_stratum_counts, warnings, infeasible_constraints
     """
+    from evaluation.selection import apply_selection_criteria
     from src.utils.clinic_metadata import (
         align_metadata_to_patient_ids,
         build_split_annotations,
@@ -493,6 +495,15 @@ def _create_splits_from_excel_core(
     metadata_df = load_clinic_metadata_excel(excel_path)
     if verbose:
         print(f"  Loaded {len(metadata_df)} rows")
+
+    if selection_criteria is not None:
+        metadata_df = apply_selection_criteria(
+            metadata_df,
+            selection_criteria,
+            dataset_col="dataset",
+            site_col=group_col,
+            verbose=verbose,
+        )
 
     if verbose:
         print(f"Building annotations (group={group_col}, stratify={stratify_cols})...")
@@ -608,6 +619,7 @@ def create_splits_from_excel(
     stratify_cols: list[str] | None = None,
     validate_exclusivity: bool = True,
     return_report: bool = False,
+    selection_criteria: object | None = None,
 ) -> list[FoldSplit] | tuple[list[FoldSplit], dict]:
     """Create group-stratified k-fold splits from Excel metadata, aligned to model patient IDs.
 
@@ -640,6 +652,9 @@ def create_splits_from_excel(
         Whether to validate site exclusivity.
     return_report : bool, default=False
         If True, also return report dict.
+    selection_criteria : SampleSelectionCriteria | dict | None, default=None
+        If provided, filter metadata to included datasets/sites/tumor types/etc.
+        before building splits. Uses AND logic across criteria.
 
     Returns:
     -------
@@ -658,6 +673,7 @@ def create_splits_from_excel(
         validate_exclusivity=validate_exclusivity,
         return_report=True,
         verbose=False,
+        selection_criteria=selection_criteria,
     )
     fold_splits = [
         FoldSplit(
@@ -687,6 +703,7 @@ def export_splits_to_csv(
     validate_exclusivity: bool = True,
     return_report: bool = False,
     verbose: bool = True,
+    selection_criteria: object | None = None,
 ) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     """Generate group-stratified k-fold splits from Excel and write to CSV.
 
@@ -724,6 +741,7 @@ def export_splits_to_csv(
             validate_exclusivity=validate_exclusivity,
             return_report=True,
             verbose=verbose,
+            selection_criteria=selection_criteria,
         )
     )
 
