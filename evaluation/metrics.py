@@ -168,7 +168,7 @@ def compute_metrics_by_group(
 def aggregate_fold_metrics(
     fold_metrics_list: list[dict[str, float]],
 ) -> dict[str, dict[str, float]]:
-    """Aggregate metrics across k-fold splits (mean and std per metric).
+    """Aggregate metrics across k-fold splits (mean, std, min, max per metric).
 
     Parameters
     ----------
@@ -178,7 +178,7 @@ def aggregate_fold_metrics(
     Returns:
     -------
     dict[str, dict[str, float]]
-        For each metric: "mean" and "std" across folds.
+        For each metric: "mean", "std", "min", and "max" across folds.
     """
     if not fold_metrics_list:
         return {}
@@ -202,9 +202,21 @@ def aggregate_fold_metrics(
         if values:
             mean_val = float(np.mean(values))
             std_val = float(np.std(values))
-            aggregated[metric_name] = {"mean": mean_val, "std": std_val}
+            min_val = float(np.min(values))
+            max_val = float(np.max(values))
+            aggregated[metric_name] = {
+                "mean": mean_val,
+                "std": std_val,
+                "min": min_val,
+                "max": max_val,
+            }
         else:
             # All NaN
-            aggregated[metric_name] = {"mean": float("nan"), "std": float("nan")}
+            aggregated[metric_name] = {
+                "mean": float("nan"),
+                "std": float("nan"),
+                "min": float("nan"),
+                "max": float("nan"),
+            }
 
     return aggregated

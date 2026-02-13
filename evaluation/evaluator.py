@@ -427,6 +427,8 @@ class Evaluator:
             metrics_dict["random_baseline"] = {
                 "mean": random_baseline_distribution["mean"],
                 "std": random_baseline_distribution["std"],
+                "min": random_baseline_distribution.get("min", float("nan")),
+                "max": random_baseline_distribution.get("max", float("nan")),
                 "n_runs": random_baseline_distribution["n_runs"],
             }
             observed_auc = None
