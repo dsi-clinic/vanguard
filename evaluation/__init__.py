@@ -48,6 +48,7 @@ from evaluation.selection import (
     SampleSelectionCriteria,
     apply_selection_criteria,
     build_selection_criteria_from_args,
+    load_selection_criteria_from_yaml,
 )
 from evaluation.visualizations import plot_random_auc_distribution
 
@@ -62,6 +63,7 @@ __all__ = [
     "SampleSelectionCriteria",
     "apply_selection_criteria",
     "build_selection_criteria_from_args",
+    "load_selection_criteria_from_yaml",
     "compute_random_auc_distribution",
     "empirical_p_value",
     "generate_random_probs",

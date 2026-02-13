@@ -15,11 +15,14 @@ Usage:
     >>> filtered = apply_selection_criteria(metadata_df, criteria)
     >>> # Or from CLI args:
     >>> criteria = build_selection_criteria_from_args(args)
+    >>> # Or from YAML config:
+    >>> criteria = load_selection_criteria_from_yaml(Path("eval_config.yaml"))
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 
@@ -269,4 +272,127 @@ def build_selection_criteria_from_args(
         tumor_types=tumor_types or None,
         unilateral_only=unilateral_only,
         bilateral_only=bilateral_only,
+    )
+
+
+def load_selection_criteria_from_yaml(
+    config_path: Path | str,
+) -> SampleSelectionCriteria | None:
+    """Load selection criteria from a YAML config file.
+
+    Expects a top-level "selection" key. All fields are optional.
+    Returns None if the selection key is absent or empty.
+
+    Parameters
+    ----------
+    config_path : Path | str
+        Path to YAML file (e.g. eval_config.yaml).
+
+    Returns:
+    -------
+    SampleSelectionCriteria | None
+        Criteria if "selection" key exists and has content, else None.
+
+    Raises:
+    ------
+    FileNotFoundError
+        If the config file does not exist.
+    ValueError
+        If YAML is invalid or selection fields have wrong types.
+
+    Example:
+    -------
+    Config file (eval_config.yaml)::
+
+        selection:
+          datasets: [iSpy2, Duke]
+          sites: null
+          tumor_types: [luminal, triple_negative]
+          unilateral_only: false
+          bilateral_only: false
+          column_filters:
+            some_custom_col: [A, B]
+    """
+    import yaml
+
+    config_path = Path(config_path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with config_path.open() as f:
+        data = yaml.safe_load(f)
+
+    if data is None:
+        return None
+
+    selection = data.get("selection")
+    if selection is None or not isinstance(selection, dict):
+        return None
+
+    sel = selection
+
+    def _to_str_list(val: object, name: str) -> list[str] | None:
+        if val is None:
+            return None
+        if not isinstance(val, list):
+            raise ValueError(
+                f"selection.{name} must be a list of strings, got {type(val).__name__}"
+            )
+        result = [str(v) for v in val]
+        return result if result else None
+
+    def _to_bool(val: object, name: str) -> bool:
+        if val is None:
+            return False
+        if not isinstance(val, bool):
+            raise ValueError(
+                f"selection.{name} must be a boolean, got {type(val).__name__}"
+            )
+        return val
+
+    datasets = _to_str_list(sel.get("datasets"), "datasets")
+    sites = _to_str_list(sel.get("sites"), "sites")
+    tumor_types = _to_str_list(sel.get("tumor_types"), "tumor_types")
+    unilateral_only = _to_bool(sel.get("unilateral_only"), "unilateral_only")
+    bilateral_only = _to_bool(sel.get("bilateral_only"), "bilateral_only")
+
+    column_filters = None
+    cf_raw = sel.get("column_filters")
+    if cf_raw is not None:
+        if not isinstance(cf_raw, dict):
+            raise ValueError(
+                "selection.column_filters must be a dict of column -> list, "
+                f"got {type(cf_raw).__name__}"
+            )
+        column_filters = {}
+        for k, v in cf_raw.items():
+            if not isinstance(v, list):
+                raise ValueError(
+                    f"selection.column_filters[{k!r}] must be a list, got {type(v).__name__}"
+                )
+            column_filters[str(k)] = [str(x) for x in v]
+
+    has_any = (
+        (datasets and len(datasets) > 0)
+        or (sites and len(sites) > 0)
+        or (tumor_types and len(tumor_types) > 0)
+        or unilateral_only
+        or bilateral_only
+        or (column_filters and len(column_filters) > 0)
+    )
+    if not has_any:
+        return None
+
+    tumor_type_col = sel.get("tumor_type_col") or "subtype"
+    laterality_col = sel.get("laterality_col")
+
+    return SampleSelectionCriteria(
+        datasets=datasets,
+        sites=sites,
+        tumor_types=tumor_types,
+        tumor_type_col=str(tumor_type_col),
+        unilateral_only=unilateral_only,
+        bilateral_only=bilateral_only,
+        laterality_col=str(laterality_col) if laterality_col else None,
+        column_filters=column_filters,
     )

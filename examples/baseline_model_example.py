@@ -41,6 +41,18 @@ Usage:
         --excel-metadata path/to/metadata.xlsx \
         --output results/baseline_example
 
+    # Dataset selection (iSpy2 only; iSpy2 + Duke; iSpy2 AND unilateral):
+    python examples/baseline_model_example.py --model random \
+        --excel-metadata path/to/metadata.xlsx --datasets iSpy2 --output results/ispy2
+    python examples/baseline_model_example.py --model random \
+        --excel-metadata path/to/metadata.xlsx --datasets iSpy2 Duke --output results/ispy2_duke
+    python examples/baseline_model_example.py --model random \
+        --excel-metadata path/to/metadata.xlsx --datasets iSpy2 --unilateral-only --output results/ispy2_unilateral
+
+    # Selection from YAML config (CLI flags override config):
+    python examples/baseline_model_example.py --model random \
+        --excel-metadata path/to/metadata.xlsx --config config/eval_selection_example.yaml
+
 Examples:
     python examples/baseline_model_example.py \
         --model random \
@@ -75,6 +87,7 @@ from evaluation import (  # noqa: E402
 from evaluation.selection import (  # noqa: E402
     apply_selection_criteria,
     build_selection_criteria_from_args,
+    load_selection_criteria_from_yaml,
 )
 from evaluation.utils import prepare_predictions_df  # noqa: E402
 from src.utils.clinic_metadata import (  # noqa: E402
@@ -508,6 +521,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include only bilateral cases. Requires --excel-metadata and laterality column.",
     )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to YAML config with selection criteria. Used when no CLI selection flags. Requires --excel-metadata.",
+    )
     args = parser.parse_args()
     if (args.features is None) != (args.labels is None):
         parser.error(
@@ -527,6 +546,8 @@ def parse_args() -> argparse.Namespace:
             "Selection flags (--datasets, --sites, --tumor-types, "
             "--unilateral-only, --bilateral-only) require --excel-metadata."
         )
+    if args.config is not None and args.excel_metadata is None:
+        parser.error("--config requires --excel-metadata.")
     return args
 
 
@@ -535,8 +556,15 @@ def main() -> None:
     args = parse_args()
 
     # --- Data preparation ---
-    # Build selection criteria if any selection flags are set (requires --excel-metadata).
+    # Build selection criteria: CLI flags override; else use --config if set.
     selection_criteria = build_selection_criteria_from_args(args)
+    if selection_criteria is None and args.config is not None:
+        try:
+            selection_criteria = load_selection_criteria_from_yaml(args.config)
+        except FileNotFoundError as e:
+            raise SystemExit(f"Config file not found: {e}") from e
+        except ValueError as e:
+            raise SystemExit(f"Invalid config: {e}") from e
 
     # When only --excel-metadata is set, define cohort from Excel and generate synthetic data for it.
     if (

@@ -43,6 +43,12 @@ Examples:
         --stratify-cols dataset \
         --id-col patient_id \
         --report
+
+    # Dataset selection (CLI or config)
+    python -m src.utils.export_splits --excel metadata.xlsx --output splits.csv \
+        --datasets iSpy2 Duke
+    python -m src.utils.export_splits --excel metadata.xlsx --output splits.csv \
+        --config config/eval_selection_example.yaml
 """
 
 from __future__ import annotations
@@ -59,7 +65,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from evaluation.kfold import export_splits_to_csv  # noqa: E402
-from evaluation.selection import build_selection_criteria_from_args  # noqa: E402
+from evaluation.selection import (  # noqa: E402
+    build_selection_criteria_from_args,
+    load_selection_criteria_from_yaml,
+)
 
 
 def export_splits(
@@ -236,6 +245,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include only bilateral cases (requires laterality column)",
     )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to YAML config with selection criteria. Used when no CLI selection flags.",
+    )
 
     return parser.parse_args()
 
@@ -249,8 +264,17 @@ def main() -> None:
         print(f"Error: Excel file not found: {args.excel}", file=sys.stderr)
         sys.exit(1)
 
-    # Build selection criteria from CLI if any selection flags are set
+    # Build selection criteria: CLI flags override; else use --config if set
     selection_criteria = build_selection_criteria_from_args(args)
+    if selection_criteria is None and args.config is not None:
+        try:
+            selection_criteria = load_selection_criteria_from_yaml(args.config)
+        except FileNotFoundError as e:
+            print(f"Error: Config file not found: {e}", file=sys.stderr)
+            sys.exit(1)
+        except ValueError as e:
+            print(f"Error: Invalid config: {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Export splits
     try:
