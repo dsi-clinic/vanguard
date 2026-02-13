@@ -1,4 +1,8 @@
-"""K-fold cross-validation split generation and aggregation."""
+"""K-fold cross-validation split generation.
+
+Provides standard stratified k-fold and group-stratified k-fold (group-exclusive
+folds with stratification), plus helpers for Excel-driven splits.
+"""
 
 from __future__ import annotations
 
@@ -26,43 +30,6 @@ class FoldSplit:
     val_patient_ids: np.ndarray | None = None
 
 
-@dataclass
-class SplitConfig:
-    """Configuration for group-stratified k-fold splitting.
-
-    Parameters
-    ----------
-    n_splits : int, default=5
-        Number of folds
-    random_state : int, default=42
-        Random seed for reproducibility
-    shuffle : bool, default=True
-        Whether to shuffle data before splitting
-    group_col : str, default="site"
-        Column name or identifier for grouping (e.g., "site").
-        Groups will not cross folds (site-exclusive splits).
-    stratify_cols : list[str], default=["dataset"]
-        List of column names to use for stratification.
-        If multiple columns, they will be combined into a composite key.
-    pinned_groups : dict[str, int] | None, default=None
-        Optional mapping of group values to fold indices.
-        If provided, these groups will be assigned to specific folds.
-        Reserved for future use (not yet implemented).
-    """
-
-    n_splits: int = 5
-    random_state: int = 42
-    shuffle: bool = True
-    group_col: str = "site"
-    stratify_cols: list[str] | None = None
-    pinned_groups: dict[str, int] | None = None
-
-    def __post_init__(self: SplitConfig) -> None:
-        """Set default stratify_cols if None."""
-        if self.stratify_cols is None:
-            self.stratify_cols = ["dataset"]
-
-
 def create_kfold_splits(
     X: np.ndarray,
     y: np.ndarray,
@@ -74,32 +41,31 @@ def create_kfold_splits(
 ) -> list[dict[str, np.ndarray | int]]:
     """Create k-fold splits and return them as a list of dictionaries.
 
+    Uses stratified k-fold by default so class distribution is maintained
+    across folds.
+
     Parameters
     ----------
     X : np.ndarray
-        Feature matrix
+        Feature matrix.
     y : np.ndarray
-        Target labels
+        Target labels (used for stratification when stratify=True).
     patient_ids : np.ndarray, optional
-        Patient IDs for tracking
+        Patient IDs for tracking.
     n_splits : int, default=5
-        Number of folds
+        Number of folds.
     stratify : bool, default=True
-        Whether to use stratified k-fold (maintains class distribution)
+        Whether to use stratified k-fold (maintains class distribution).
     shuffle : bool, default=True
-        Whether to shuffle data before splitting
+        Whether to shuffle data before splitting.
     random_state : int, default=42
-        Random seed for reproducibility
+        Random seed for reproducibility.
 
     Returns:
     -------
     list[dict[str, np.ndarray | int]]
-        List of dictionaries, one per fold, each containing:
-        - "fold_idx": fold number (0-indexed)
-        - "train_indices": indices for training
-        - "val_indices": indices for validation
-        - "train_patient_ids": patient IDs for training (if available)
-        - "val_patient_ids": patient IDs for validation (if available)
+        One dict per fold with fold_idx, train_indices, val_indices,
+        train_patient_ids, val_patient_ids (latter two optional).
     """
     # Choose splitter
     # When shuffle=False, random_state has no effect and sklearn raises an error
@@ -200,19 +166,20 @@ def validate_site_exclusivity(
     splits: list[dict[str, np.ndarray | int]],
     groups: np.ndarray,
 ) -> bool:
-    """Verify that no group (e.g., site) appears in multiple validation folds.
+    """Verify that no group appears in multiple validation folds.
 
     Parameters
     ----------
     splits : list[dict[str, np.ndarray | int]]
         List of split dictionaries, each with "val_indices" key.
     groups : np.ndarray
-        Group assignments for each sample (e.g., site names).
+        Group assignments for each sample (e.g. site).
 
     Returns:
     -------
     bool
-        True if site exclusivity is maintained (no site in multiple val folds).
+        True if group exclusivity is maintained (each group in at most one
+        validation fold).
     """
     # Track which groups appear in which folds
     group_to_folds: dict[str, set[int]] = {}
@@ -239,7 +206,7 @@ def validate_site_exclusivity(
         for group, folds in violations:
             warnings.warn(
                 f"Group '{group}' appears in multiple validation folds: {sorted(folds)}. "
-                "This violates site exclusivity.",
+                "This violates group exclusivity.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -260,18 +227,15 @@ def generate_split_report(
     splits : list[dict[str, np.ndarray | int]]
         List of split dictionaries, each with "val_indices" key.
     groups : np.ndarray
-        Group assignments for each sample (e.g., site names).
+        Group assignments for each sample (e.g. site).
     stratify_labels : np.ndarray
-        Stratum labels for each sample (for stratification reporting).
+        Stratification labels for each sample (stratum values for reporting).
 
     Returns:
     -------
     dict
-        Report dictionary with keys:
-        - "per_fold_site_counts": dict mapping fold_idx -> dict of site -> count
-        - "per_fold_stratum_counts": dict mapping fold_idx -> dict of stratum -> count
-        - "warnings": list of warning messages
-        - "infeasible_constraints": list of constraint violations
+        Keys: per_fold_site_counts, per_fold_stratum_counts, warnings,
+        infeasible_constraints.
     """
     n_splits = len(splits)
     per_fold_site_counts: dict[int, dict[str, int]] = {}
@@ -310,8 +274,8 @@ def generate_split_report(
 
         if len(stratum_groups) == 1:
             infeasible_constraints.append(
-                f"Stratum '{stratum}' exists only in site '{stratum_groups[0]}'. "
-                "Cannot stratify across folds without splitting this site."
+                f"Stratum '{stratum}' exists only in group '{stratum_groups[0]}'. "
+                "Cannot stratify across folds without splitting this group."
             )
 
     # 2. Check for highly imbalanced distributions
@@ -356,50 +320,43 @@ def create_group_stratified_kfold_splits(
 ) -> list[dict[str, np.ndarray | int]] | tuple[list[dict[str, np.ndarray | int]], dict]:
     """Create k-fold splits with group exclusivity and stratification.
 
-    Uses StratifiedGroupKFold to ensure:
-    - Groups (e.g., sites) do not cross folds (site-exclusive)
-    - Stratum distribution is approximately balanced across folds
+    Uses StratifiedGroupKFold so that groups do not cross folds and
+    stratum distribution is approximately balanced across folds.
 
     Parameters
     ----------
     X : np.ndarray
-        Feature matrix (used only for shape validation)
+        Feature matrix (used for shape only).
     y : np.ndarray
-        Target labels (used only for shape validation)
+        Target labels (used for shape only).
     groups : np.ndarray
-        Group assignments for each sample (e.g., site names).
-        Must have same length as X.
+        Group assignments per sample (e.g. site). Same length as X.
     stratify_labels : np.ndarray
-        Stratum labels for stratification (e.g., subtype/dataset).
-        Must have same length as X.
+        Stratification labels per sample (e.g. subtype/dataset). Same length as X.
     patient_ids : np.ndarray, optional
-        Patient IDs for tracking
+        Patient IDs for tracking.
     n_splits : int, default=5
-        Number of folds
+        Number of folds.
     shuffle : bool, default=True
-        Whether to shuffle data before splitting
+        Whether to shuffle before splitting.
     random_state : int, default=42
-        Random seed for reproducibility
+        Random seed for reproducibility.
     validate_exclusivity : bool, default=True
-        Whether to validate and warn if groups cross folds
+        Whether to validate and warn if groups cross folds.
     return_report : bool, default=False
-        If True, also return a report dictionary with distribution statistics
+        If True, also return a report dict with per-fold counts and warnings.
 
     Returns:
     -------
-    list[dict[str, np.ndarray | int]] | tuple[list[dict[str, np.ndarray | int]], dict]
-        List of dictionaries, one per fold, each containing:
-        - "fold_idx": fold number (0-indexed)
-        - "train_indices": indices for training
-        - "val_indices": indices for validation
-        - "train_patient_ids": patient IDs for training (if available)
-        - "val_patient_ids": patient IDs for validation (if available)
-        If return_report=True, returns tuple of (splits, report_dict).
+    list[dict] or tuple[list[dict], dict]
+        List of split dicts (fold_idx, train_indices, val_indices,
+        train_patient_ids, val_patient_ids). If return_report=True, returns
+        (splits, report).
 
     Raises:
     ------
     ValueError
-        If input arrays have inconsistent lengths or if constraints are invalid.
+        If input lengths differ or constraints are invalid.
     """
     # Validate inputs
     n_samples = len(X)
