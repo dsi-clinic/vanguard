@@ -6,6 +6,7 @@ This CLI is intended for quick experimentation:
   one consensus 3D skeleton for the exam.
 - Outputs: masks and one XY/XZ/YZ comparison plot for side-by-side inspection.
 """
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -23,13 +24,26 @@ if str(REPO_ROOT) not in sys.path:
 
 from graph_extraction.processing import (
     DEFAULT_SEGMENTATION_DIR,
+)
+from graph_extraction.processing import (
     baseline_3d_mask as _shared_baseline_3d_mask,
+)
+from graph_extraction.processing import (
     collapse_4d_to_exam_skeleton as _shared_collapse_4d_to_exam_skeleton,
+)
+from graph_extraction.processing import (
     discover_study_timepoints as _shared_discover_study_timepoints,
+)
+from graph_extraction.processing import (
     load_time_series_from_files as _shared_load_time_series_from_files,
 )
 
-DEFAULT_TUMOR_MASK_DIR = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert")
+DEFAULT_TUMOR_MASK_DIR = Path(
+    "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
+)
+NDIM_3D = 3
+NDIM_4D = 4
+NDIM_5D = 5
 
 
 def _load_time_series_from_files(paths: list[Path], npy_channel: int) -> np.ndarray:
@@ -51,14 +65,14 @@ def _load_time_series_from_single_npy(
     arr = np.load(path)
 
     if layout == "tzyx":
-        if arr.ndim != 4:
+        if arr.ndim != NDIM_4D:
             raise ValueError(
                 f"layout=tzyx expects 4D array, got shape {arr.shape} from {path}"
             )
         return arr.astype(np.float32, copy=False)
 
     if layout == "ctzyx":
-        if arr.ndim != 5:
+        if arr.ndim != NDIM_5D:
             raise ValueError(
                 f"layout=ctzyx expects 5D array, got shape {arr.shape} from {path}"
             )
@@ -69,7 +83,7 @@ def _load_time_series_from_single_npy(
         return arr[npy_channel].astype(np.float32, copy=False)
 
     if layout == "tczyx":
-        if arr.ndim != 5:
+        if arr.ndim != NDIM_5D:
             raise ValueError(
                 f"layout=tczyx expects 5D array, got shape {arr.shape} from {path}"
             )
@@ -82,7 +96,9 @@ def _load_time_series_from_single_npy(
     raise ValueError(f"Unsupported layout: {layout}")
 
 
-def _compute_projections(mask_zyx: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _compute_projections(
+    mask_zyx: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute XY, XZ, and YZ max-intensity style binary projections."""
     proj_xy = (mask_zyx > 0).any(axis=0)  # (y, x)
     proj_xz = (mask_zyx > 0).any(axis=1)  # (z, x)
@@ -149,13 +165,13 @@ def _load_tumor_mask_npy(
     arr = np.load(path)
     expected = tuple(int(v) for v in expected_shape_zyx)
 
-    if arr.ndim == 3:
+    if arr.ndim == NDIM_3D:
         if tuple(arr.shape) != expected:
             raise ValueError(
                 f"Tumor mask shape mismatch: expected {expected}, got {arr.shape} from {path}"
             )
         mask = arr > threshold
-    elif arr.ndim == 4:
+    elif arr.ndim == NDIM_4D:
         if tuple(arr.shape[1:]) != expected:
             raise ValueError(
                 "Unsupported 4D tumor mask layout. Expected either (t,z,y,x) "
@@ -169,7 +185,7 @@ def _load_tumor_mask_npy(
                     f"Requested tumor npy-channel={npy_channel} but array has {arr.shape[0]} channels."
                 )
             mask = arr[npy_channel] > threshold
-    elif arr.ndim == 5:
+    elif arr.ndim == NDIM_5D:
         if tuple(arr.shape[2:]) != expected:
             raise ValueError(
                 "Unsupported 5D tumor mask layout. Expected (t,c,z,y,x) or (c,t,z,y,x) "
@@ -220,11 +236,17 @@ def _load_tumor_mask_volume(
             threshold=threshold,
         )
 
-    if path_str.endswith(".nii") or path_str.endswith(".nii.gz") or path_str.endswith(".nrrd"):
+    if (
+        path_str.endswith(".nii")
+        or path_str.endswith(".nii.gz")
+        or path_str.endswith(".nrrd")
+    ):
         import SimpleITK as sitk
 
-        arr = sitk.GetArrayFromImage(sitk.ReadImage(str(path))).astype(np.float32, copy=False)
-        if arr.ndim != 3:
+        arr = sitk.GetArrayFromImage(sitk.ReadImage(str(path))).astype(
+            np.float32, copy=False
+        )
+        if arr.ndim != NDIM_3D:
             raise ValueError(
                 f"Tumor mask NIfTI/NRRD must be 3D, got shape {arr.shape} from {path}"
             )
@@ -281,7 +303,7 @@ def _save_rotating_3d_comparison_mp4(
     import matplotlib.pyplot as plt
     from matplotlib import animation
 
-    if mask_3d.ndim != 3 or mask_4d_skeleton.ndim != 3:
+    if mask_3d.ndim != NDIM_3D or mask_4d_skeleton.ndim != NDIM_3D:
         raise ValueError(
             f"Expected two 3D masks, got {mask_3d.shape=} and {mask_4d_skeleton.shape=}"
         )
@@ -299,7 +321,7 @@ def _save_rotating_3d_comparison_mp4(
     if tumor_mask_zyx is not None:
         from scipy import ndimage
 
-        if tumor_mask_zyx.ndim != 3:
+        if tumor_mask_zyx.ndim != NDIM_3D:
             raise ValueError(f"Tumor mask must be 3D, got shape {tumor_mask_zyx.shape}")
         if tuple(tumor_mask_zyx.shape) != tuple(mask_3d.shape):
             raise ValueError(
@@ -361,7 +383,9 @@ def _save_rotating_3d_comparison_mp4(
         ax.set_xticks([])
         ax.set_yticks([])
         ax.set_zticks([])
-        ax.set_box_aspect((x_max - x_min + 1.0, y_max - y_min + 1.0, z_max - z_min + 1.0))
+        ax.set_box_aspect(
+            (x_max - x_min + 1.0, y_max - y_min + 1.0, z_max - z_min + 1.0)
+        )
 
     if (
         tx_fill is not None
@@ -401,7 +425,7 @@ def _save_rotating_3d_comparison_mp4(
         title += " (+ tumor overlay)"
     fig.suptitle(title, fontsize=13)
 
-    def _update(frame_idx: int):
+    def _update(frame_idx: int) -> tuple[()]:
         azim = 360.0 * float(frame_idx) / float(n_frames)
         ax_l.view_init(elev=elev, azim=azim)
         ax_r.view_init(elev=elev, azim=azim)
@@ -415,8 +439,7 @@ def _save_rotating_3d_comparison_mp4(
     )
     save_start = time.perf_counter()
     print(
-        "[mp4] starting render: "
-        f"frames={n_frames}, fps={fps}, output={output_path}"
+        "[mp4] starting render: " f"frames={n_frames}, fps={fps}, output={output_path}"
     )
 
     def _progress(frame_idx: int, total_frames: int) -> None:
@@ -525,8 +548,7 @@ def main() -> None:
         type=float,
         default=0.85,
         help=(
-            "Optional high threshold for undeletable anchor voxels "
-            "(default: 0.85)."
+            "Optional high threshold for undeletable anchor voxels " "(default: 0.85)."
         ),
     )
     parser.add_argument(
@@ -638,7 +660,7 @@ def main() -> None:
         files = sorted(args.input_files)
         priority_4d = _load_time_series_from_files(files, npy_channel=args.npy_channel)
 
-    if priority_4d.ndim != 4:
+    if priority_4d.ndim != NDIM_4D:
         raise ValueError(f"Expected (t,z,y,x) array, got shape {priority_4d.shape}")
 
     t_dim = priority_4d.shape[0]
@@ -661,9 +683,7 @@ def main() -> None:
     selected_priority = priority_4d[args.time_index]
     t_baseline_start = time.perf_counter()
     mask_3d = _baseline_3d_mask(selected_priority, threshold_low=args.threshold_low)
-    print(
-        f"[timing] baseline_3d_seconds={time.perf_counter() - t_baseline_start:.2f}"
-    )
+    print(f"[timing] baseline_3d_seconds={time.perf_counter() - t_baseline_start:.2f}")
 
     t_4d_start = time.perf_counter()
     mask_4d = skeletonize4d(
@@ -716,9 +736,7 @@ def main() -> None:
 
     out_cmp = args.output_dir / f"projection_compare_t{args.time_index:03d}_vs_exam.png"
     out_rot = args.output_dir / f"rotation_compare_t{args.time_index:03d}_vs_exam.mp4"
-    title_study = (
-        f" | Study: {args.study_id}" if args.study_id is not None else ""
-    )
+    title_study = f" | Study: {args.study_id}" if args.study_id is not None else ""
     if not args.no_plots:
         t_plot_start = time.perf_counter()
         _save_projection_comparison(
@@ -762,7 +780,9 @@ def main() -> None:
         "min_anchor_fraction": float(args.min_anchor_fraction),
         "min_anchor_voxels": int(args.min_anchor_voxels),
         "min_temporal_support": int(args.min_temporal_support),
-        "max_candidates": None if args.max_candidates is None else int(args.max_candidates),
+        "max_candidates": None
+        if args.max_candidates is None
+        else int(args.max_candidates),
         "3d_selected_time_voxels": int(np.count_nonzero(mask_3d)),
         "4d_exam_skeleton_voxels": int(np.count_nonzero(exam_skeleton)),
         "4d_exam_support_voxels": int(np.count_nonzero(support_mask)),
@@ -787,13 +807,17 @@ def main() -> None:
                 0 if tumor_mask_zyx is None else int(np.count_nonzero(tumor_mask_zyx))
             ),
             "auto_resolved_from_study_id": bool(
-                args.tumor_mask is None and resolved_tumor_path is not None and has_study_mode
+                args.tumor_mask is None
+                and resolved_tumor_path is not None
+                and has_study_mode
             ),
         },
         "study_mode": {
             "study_id": args.study_id,
             "input_dir": str(args.input_dir) if has_study_mode else None,
-            "timepoints": discovered_timepoints if discovered_timepoints is not None else None,
+            "timepoints": discovered_timepoints
+            if discovered_timepoints is not None
+            else None,
             "files": (
                 [str(p) for p in discovered_files]
                 if discovered_files is not None

@@ -28,14 +28,20 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     parser_3d = subparsers.add_parser("3d", help="Process one 3D segmentation file.")
-    parser_3d.add_argument("--input-file", type=Path, required=True, help="Input .npy file.")
-    parser_3d.add_argument("--output-dir", type=Path, required=True, help="Output directory.")
+    parser_3d.add_argument(
+        "--input-file", type=Path, required=True, help="Input .npy file."
+    )
+    parser_3d.add_argument(
+        "--output-dir", type=Path, required=True, help="Output directory."
+    )
     parser_3d.add_argument("--threshold-low", type=float, default=0.5)
     parser_3d.add_argument("--npy-channel", type=int, default=1)
     parser_3d.add_argument("--force-skeleton", action="store_true")
     parser_3d.add_argument("--force-features", action="store_true")
 
-    parser_4d = subparsers.add_parser("4d", help="Process one exam across all timepoints.")
+    parser_4d = subparsers.add_parser(
+        "4d", help="Process one exam across all timepoints."
+    )
     parser_4d.add_argument("--study-id", type=str, required=True)
     parser_4d.add_argument(
         "--input-dir",
@@ -43,7 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_SEGMENTATION_DIR,
         help="Directory containing per-timepoint .npy segmentation files.",
     )
-    parser_4d.add_argument("--output-dir", type=Path, required=True, help="Output directory.")
+    parser_4d.add_argument(
+        "--output-dir", type=Path, required=True, help="Output directory."
+    )
     parser_4d.add_argument("--npy-channel", type=int, default=1)
     parser_4d.add_argument("--threshold-low", type=float, default=0.5)
     parser_4d.add_argument("--threshold-high", type=float, default=0.85)

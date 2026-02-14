@@ -9,7 +9,6 @@ from pathlib import Path
 import numpy as np
 
 from graph_extraction.skeleton3d import skeletonize3d
-from graph_extraction.visuals import edges_to_segments
 from graph_extraction.skeleton4d import skeletonize4d
 from graph_extraction.skeleton_to_graph import (
     assign_component_labels,
@@ -19,8 +18,11 @@ from graph_extraction.skeleton_to_graph import (
     obtain_radius_map,
     segments_to_graph,
 )
+from graph_extraction.visuals import edges_to_segments
 
 DEFAULT_SEGMENTATION_DIR = Path("/net/projects2/vanguard/vessel_segmentations")
+NDIM_3D = 3
+NDIM_4D = 4
 
 _OFFSETS_3D = np.array(
     [
@@ -36,9 +38,9 @@ _OFFSETS_3D = np.array(
 
 def extract_single_timepoint_volume(arr: np.ndarray, npy_channel: int) -> np.ndarray:
     """Extract one `(z, y, x)` probability volume from per-timepoint arrays."""
-    if arr.ndim == 3:
+    if arr.ndim == NDIM_3D:
         return arr.astype(np.float32, copy=False)
-    if arr.ndim == 4:
+    if arr.ndim == NDIM_4D:
         if npy_channel < 0 or npy_channel >= arr.shape[0]:
             raise ValueError(
                 f"Requested channel {npy_channel} but array has {arr.shape[0]} channels."
@@ -153,7 +155,7 @@ def collapse_4d_to_exam_skeleton(
     """Collapse a 4D manifold to one 3D exam-level skeleton."""
     from scipy import ndimage
 
-    if mask_4d.ndim != 4:
+    if mask_4d.ndim != NDIM_4D:
         raise ValueError(f"Expected 4D mask (t,z,y,x), got shape {mask_4d.shape}")
 
     t_dim = int(mask_4d.shape[0])
@@ -170,18 +172,22 @@ def collapse_4d_to_exam_skeleton(
             "Lower min-temporal-support or adjust pruning thresholds."
         )
 
-    priority = ndimage.distance_transform_edt(support_mask).astype(np.float32, copy=False)
+    priority = ndimage.distance_transform_edt(support_mask).astype(
+        np.float32, copy=False
+    )
     exam_skeleton = skeletonize3d(priority, threshold=0.0) > 0
     exam_skeleton = largest_component_3d(exam_skeleton)
     if not np.any(exam_skeleton):
-        raise ValueError("Exam-level skeleton is empty after largest-component filtering.")
+        raise ValueError(
+            "Exam-level skeleton is empty after largest-component filtering."
+        )
 
     return exam_skeleton, support_mask, support_count
 
 
 def mask_to_edges_bitmask(mask_zyx: np.ndarray) -> np.ndarray:
     """Convert a binary skeleton mask to the 26-neighbor edge bitmask format."""
-    if mask_zyx.ndim != 3:
+    if mask_zyx.ndim != NDIM_3D:
         raise ValueError(f"Expected 3D mask, got shape {mask_zyx.shape}")
 
     nodes = mask_zyx.astype(bool, copy=False)
@@ -208,9 +214,9 @@ def build_morphometry_from_skeleton(
     output_json_path: Path,
 ) -> dict[str, int]:
     """Build morphometry JSON from a skeleton mask and vessel reference volume."""
-    if skeleton_mask_zyx.ndim != 3:
+    if skeleton_mask_zyx.ndim != NDIM_3D:
         raise ValueError(f"Skeleton mask must be 3D, got {skeleton_mask_zyx.shape}")
-    if vessel_reference_zyx.ndim != 3:
+    if vessel_reference_zyx.ndim != NDIM_3D:
         raise ValueError(
             f"Vessel reference must be 3D, got {vessel_reference_zyx.shape}"
         )
@@ -425,7 +431,9 @@ def process_4d_study(
         "manifold_path": str(manifold_path) if save_center_manifold_mask else None,
         "morphometry_path": str(morphometry_path),
         "feature_stats": feature_stats,
-        "study_files": None if discovered_files is None else [str(p) for p in discovered_files],
+        "study_files": None
+        if discovered_files is None
+        else [str(p) for p in discovered_files],
         "study_timepoints": discovered_timepoints,
         "retained_per_timepoint_4d": retained_per_t,
         "timing_seconds": {

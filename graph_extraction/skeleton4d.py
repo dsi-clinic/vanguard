@@ -7,6 +7,7 @@ import numpy as np
 
 EXPECTED_DIMENSIONS_4D = 4
 SPATIAL_NEIGHBOR_RADIUS_SQ = 3  # full 26-neighborhood in 3D when dt == 0
+DIRECT_NEIGHBOR_COUNT = 2
 
 
 def _build_offsets_4d(max_temporal_radius: int) -> np.ndarray:
@@ -124,9 +125,7 @@ def _collect_neighbors_4d(
 
 
 @nb.njit
-def _offset_exists(
-    offsets: np.ndarray, dt: int, dz: int, dy: int, dx: int
-) -> bool:
+def _offset_exists(offsets: np.ndarray, dt: int, dz: int, dy: int, dx: int) -> bool:
     for b in range(offsets.shape[0]):
         if (
             offsets[b, 0] == dt
@@ -158,7 +157,7 @@ def _neighbors_connected_after_removal(
 ) -> tuple[bool, np.int32]:
     # Fast path: with exactly two neighbors, a direct edge guarantees
     # connectivity and avoids a full BFS.
-    if n_neighbors == 2:
+    if n_neighbors == DIRECT_NEIGHBOR_COUNT:
         dt = n_t[1] - n_t[0]
         dz = n_z[1] - n_z[0]
         dy = n_y[1] - n_y[0]
@@ -203,12 +202,7 @@ def _neighbors_connected_after_removal(
             for ti in range(1, n_neighbors):
                 if target_found[ti] == 1:
                     continue
-                if (
-                    nt == n_t[ti]
-                    and nz == n_z[ti]
-                    and ny == n_y[ti]
-                    and nx == n_x[ti]
-                ):
+                if nt == n_t[ti] and nz == n_z[ti] and ny == n_y[ti] and nx == n_x[ti]:
                     target_found[ti] = 1
                     remaining -= 1
                     break
