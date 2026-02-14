@@ -44,6 +44,8 @@ DEFAULT_TUMOR_MASK_DIR = Path(
 NDIM_3D = 3
 NDIM_4D = 4
 NDIM_5D = 5
+GRID_ROWS = 2
+METHOD_4D_LABEL = "4D exam-level skeleton"
 
 
 def _load_time_series_from_files(paths: list[Path], npy_channel: int) -> np.ndarray:
@@ -106,13 +108,25 @@ def _compute_projections(
     return proj_xy, proj_xz, proj_yz
 
 
+def _select_projection_plane(mask_zyx: np.ndarray, plane: str) -> np.ndarray:
+    """Return one projection image from a 3D skeleton mask."""
+    proj_xy, proj_xz, proj_yz = _compute_projections(mask_zyx)
+    if plane == "xy":
+        return proj_xy
+    if plane == "xz":
+        return proj_xz
+    if plane == "yz":
+        return proj_yz
+    raise ValueError(f"Unsupported plane: {plane}")
+
+
 def _save_projection_comparison(
     projections_3d: tuple[np.ndarray, np.ndarray, np.ndarray],
     projections_4d: tuple[np.ndarray, np.ndarray, np.ndarray],
     output_path: Path,
     title: str,
 ) -> None:
-    """Save a 2x3 figure comparing 3D baseline and 4D method projections."""
+    """Save a 2x3 figure comparing selected 3D and 4D projections."""
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(2, 3, figsize=(12, 8))
@@ -126,9 +140,88 @@ def _save_projection_comparison(
 
     for col, (name, img) in enumerate(zip(names, projections_4d)):
         axes[1, col].imshow(img.astype(np.uint8), cmap="gray", vmin=0, vmax=1)
-        axes[1, col].set_title(f"4D {name}")
+        axes[1, col].set_title(f"{METHOD_4D_LABEL} {name}")
         axes[1, col].axis("off")
 
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _save_all_timepoint_projection_grid(
+    masks_tzyx: np.ndarray,
+    output_path: Path,
+    title: str,
+) -> None:
+    """Save XY/XZ/YZ projections for every 3D timepoint skeleton."""
+    import matplotlib.pyplot as plt
+
+    if masks_tzyx.ndim != NDIM_4D:
+        raise ValueError(
+            f"Expected 4D mask stack (t,z,y,x), got shape {masks_tzyx.shape}"
+        )
+
+    t_dim = int(masks_tzyx.shape[0])
+    fig, axes = plt.subplots(t_dim, 3, figsize=(12, max(3, 3 * t_dim)))
+    fig.suptitle(title, fontsize=13)
+
+    if t_dim == 1:
+        axes = np.expand_dims(axes, axis=0)
+
+    names = ("XY", "XZ", "YZ")
+    for t in range(t_dim):
+        proj_xy, proj_xz, proj_yz = _compute_projections(masks_tzyx[t])
+        for col, (name, img) in enumerate(zip(names, (proj_xy, proj_xz, proj_yz))):
+            axes[t, col].imshow(img.astype(np.uint8), cmap="gray", vmin=0, vmax=1)
+            axes[t, col].set_title(f"t{t:03d} {name}")
+            axes[t, col].axis("off")
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _save_ordered_projection_grid(
+    *,
+    exam_4d_mask: np.ndarray,
+    masks_3d_tzyx: np.ndarray,
+    plane: str,
+    output_path: Path,
+    title: str,
+) -> None:
+    """Save ordered grid: top row 4D, bottom row all 3D timepoints."""
+    import matplotlib.pyplot as plt
+
+    if masks_3d_tzyx.ndim != NDIM_4D:
+        raise ValueError(
+            f"Expected 4D masks (t,z,y,x), got shape {masks_3d_tzyx.shape}"
+        )
+
+    t_dim = int(masks_3d_tzyx.shape[0])
+    nrows = GRID_ROWS
+    ncols = t_dim
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(max(8.0, 2.8 * ncols), 7), squeeze=False
+    )
+    fig.suptitle(title, fontsize=13)
+
+    axes[0, 0].imshow(
+        _select_projection_plane(exam_4d_mask, plane=plane).astype(np.uint8),
+        cmap="gray",
+        vmin=0,
+        vmax=1,
+    )
+    axes[0, 0].set_title(METHOD_4D_LABEL)
+    axes[0, 0].axis("off")
+    for col in range(1, ncols):
+        axes[0, col].axis("off")
+
+    for col in range(ncols):
+        mask = masks_3d_tzyx[col]
+        img = _select_projection_plane(mask, plane=plane)
+        axes[1, col].imshow(img.astype(np.uint8), cmap="gray", vmin=0, vmax=1)
+        axes[1, col].set_title(f"3D t{col:03d}")
+        axes[1, col].axis("off")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -374,7 +467,7 @@ def _save_rotating_3d_comparison_mp4(
 
     for ax, title in (
         (ax_l, "3D baseline (selected timepoint)"),
-        (ax_r, "4D exam-level skeleton"),
+        (ax_r, METHOD_4D_LABEL),
     ):
         ax.set_title(title, fontsize=11)
         ax.set_xlim(x_min, x_max)
@@ -418,7 +511,7 @@ def _save_rotating_3d_comparison_mp4(
 
     ax_l.scatter(x0, y0, z0, s=marker_size, c="#1f77b4", alpha=0.85, marker="o")
     ax_r.scatter(x1, y1, z1, s=marker_size, c="#d62728", alpha=0.85, marker="o")
-    title = "3D baseline vs 4D exam-level skeleton"
+    title = f"3D baseline vs {METHOD_4D_LABEL}"
     if study_label is not None:
         title = f"{title} | Study: {study_label}"
     if tumor_mask_zyx is not None:
@@ -438,9 +531,7 @@ def _save_rotating_3d_comparison_mp4(
         fps=fps, metadata={"artist": "vanguard"}, bitrate=2200
     )
     save_start = time.perf_counter()
-    print(
-        "[mp4] starting render: " f"frames={n_frames}, fps={fps}, output={output_path}"
-    )
+    print(f"[mp4] starting render: frames={n_frames}, fps={fps}, output={output_path}")
 
     def _progress(frame_idx: int, total_frames: int) -> None:
         if frame_idx == 0 or frame_idx + 1 == total_frames or frame_idx % 10 == 0:
@@ -482,6 +573,226 @@ def _collapse_4d_to_exam_skeleton(
         mask_4d=mask_4d,
         min_temporal_support=min_temporal_support,
     )
+
+
+def _save_rotating_3d_4d_plus_timepoints_mp4(
+    mask_4d_exam: np.ndarray,
+    masks_3d_tzyx: np.ndarray,
+    output_path: Path,
+    *,
+    tumor_mask_zyx: np.ndarray | None = None,
+    study_label: str | None = None,
+    n_frames: int = 50,
+    fps: int = 24,
+    elev: float = 20.0,
+    marker_size: float = 1.0,
+) -> None:
+    """Save rotating MP4 with top row 4D and bottom row all 3D timepoints."""
+    import matplotlib.pyplot as plt
+    from matplotlib import animation
+
+    if mask_4d_exam.ndim != NDIM_3D:
+        raise ValueError(f"Expected 3D 4D-exam mask, got shape {mask_4d_exam.shape}")
+    if masks_3d_tzyx.ndim != NDIM_4D:
+        raise ValueError(
+            f"Expected 4D stack of 3D timepoints (t,z,y,x), got {masks_3d_tzyx.shape}"
+        )
+
+    t_dim = int(masks_3d_tzyx.shape[0])
+    if t_dim < 1:
+        raise ValueError("Need at least one 3D timepoint for video.")
+
+    shape_zyx = tuple(int(v) for v in mask_4d_exam.shape)
+    for idx in range(t_dim):
+        mask = masks_3d_tzyx[idx]
+        if mask.ndim != NDIM_3D:
+            raise ValueError(f"Mask at panel {idx} is not 3D: {mask.shape}")
+        if tuple(mask.shape) != shape_zyx:
+            raise ValueError(
+                "All masks must share the same shape. "
+                f"Expected {shape_zyx}, got {mask.shape} at panel {idx}"
+            )
+        if not np.any(mask):
+            raise ValueError(f"Mask at panel {idx} is empty; cannot render MP4.")
+    if not np.any(mask_4d_exam):
+        raise ValueError("4D exam-level mask is empty; cannot render MP4.")
+
+    if "ffmpeg" not in animation.writers.list():
+        raise RuntimeError("Matplotlib ffmpeg writer is unavailable. Install ffmpeg.")
+
+    z4d, y4d, x4d = np.nonzero(mask_4d_exam)
+    x4d_f = x4d.astype(np.float32)
+    y4d_f = y4d.astype(np.float32)
+    z4d_f = z4d.astype(np.float32)
+    coords_per_timepoint: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    x_parts: list[np.ndarray] = []
+    y_parts: list[np.ndarray] = []
+    z_parts: list[np.ndarray] = []
+    x_parts.append(x4d_f)
+    y_parts.append(y4d_f)
+    z_parts.append(z4d_f)
+    for t in range(t_dim):
+        mask = masks_3d_tzyx[t]
+        z, y, x = np.nonzero(mask)
+        xf = x.astype(np.float32)
+        yf = y.astype(np.float32)
+        zf = z.astype(np.float32)
+        coords_per_timepoint.append((xf, yf, zf))
+        x_parts.append(xf)
+        y_parts.append(yf)
+        z_parts.append(zf)
+
+    tx_fill = ty_fill = tz_fill = None
+    tx_shell = ty_shell = tz_shell = None
+    if tumor_mask_zyx is not None:
+        from scipy import ndimage
+
+        if tumor_mask_zyx.ndim != NDIM_3D:
+            raise ValueError(f"Tumor mask must be 3D, got shape {tumor_mask_zyx.shape}")
+        if tuple(tumor_mask_zyx.shape) != shape_zyx:
+            raise ValueError(
+                "Tumor mask shape mismatch with skeleton masks: "
+                f"{tumor_mask_zyx.shape} vs {shape_zyx}"
+            )
+        if not np.any(tumor_mask_zyx):
+            raise ValueError("Tumor mask is empty; cannot overlay.")
+
+        tz_all, ty_all, tx_all = np.nonzero(tumor_mask_zyx)
+        tx_fill, ty_fill, tz_fill = _subsample_xyz(
+            tx_all.astype(np.float32),
+            ty_all.astype(np.float32),
+            tz_all.astype(np.float32),
+            max_points=6000,
+        )
+        tumor_eroded = ndimage.binary_erosion(
+            tumor_mask_zyx, structure=np.ones((3, 3, 3), dtype=bool), border_value=0
+        )
+        tumor_shell = tumor_mask_zyx & ~tumor_eroded
+        if np.any(tumor_shell):
+            tz_s, ty_s, tx_s = np.nonzero(tumor_shell)
+        else:
+            tz_s, ty_s, tx_s = tz_all, ty_all, tx_all
+        tx_shell, ty_shell, tz_shell = _subsample_xyz(
+            tx_s.astype(np.float32),
+            ty_s.astype(np.float32),
+            tz_s.astype(np.float32),
+            max_points=9000,
+        )
+        x_parts.append(tx_shell)
+        y_parts.append(ty_shell)
+        z_parts.append(tz_shell)
+
+    x_all = np.concatenate(x_parts)
+    y_all = np.concatenate(y_parts)
+    z_all = np.concatenate(z_parts)
+    x_min, x_max = float(x_all.min()), float(x_all.max())
+    y_min, y_max = float(y_all.min()), float(y_all.max())
+    z_min, z_max = float(z_all.min()), float(z_all.max())
+
+    nrows = GRID_ROWS
+    ncols = t_dim
+    fig = plt.figure(figsize=(4.8 * ncols, 8.4), constrained_layout=True)
+    axes = [
+        [
+            fig.add_subplot(nrows, ncols, row * ncols + col + 1, projection="3d")
+            for col in range(ncols)
+        ]
+        for row in range(nrows)
+    ]
+
+    used_axes: list = [axes[0][0]]
+    for col in range(1, ncols):
+        axes[0][col].set_axis_off()
+    for col in range(ncols):
+        used_axes.append(axes[1][col])
+
+    axes[0][0].set_title(METHOD_4D_LABEL, fontsize=11)
+    for col in range(ncols):
+        axes[1][col].set_title(f"3D t{col:03d}", fontsize=11)
+
+    for ax in used_axes:
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        ax.set_zlim(z_min, z_max)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_zticks([])
+        ax.set_box_aspect(
+            (x_max - x_min + 1.0, y_max - y_min + 1.0, z_max - z_min + 1.0)
+        )
+
+    if (
+        tx_fill is not None
+        and ty_fill is not None
+        and tz_fill is not None
+        and tx_shell is not None
+        and ty_shell is not None
+        and tz_shell is not None
+    ):
+        for ax in used_axes:
+            ax.scatter(
+                tx_fill,
+                ty_fill,
+                tz_fill,
+                s=0.5,
+                c="#f4a261",
+                alpha=0.035,
+                marker="o",
+            )
+            ax.scatter(
+                tx_shell,
+                ty_shell,
+                tz_shell,
+                s=0.8,
+                c="#ff8c00",
+                alpha=0.16,
+                marker="o",
+            )
+
+    axes[0][0].scatter(
+        x4d_f, y4d_f, z4d_f, s=marker_size, c="#d62728", alpha=0.85, marker="o"
+    )
+    for col, (x, y, z) in enumerate(coords_per_timepoint):
+        axes[1][col].scatter(
+            x, y, z, s=marker_size, c="#1f77b4", alpha=0.85, marker="o"
+        )
+
+    title = "4D + All 3D Timepoints"
+    if study_label is not None:
+        title = f"{title} | Study: {study_label}"
+    if tumor_mask_zyx is not None:
+        title += " (+ tumor overlay)"
+    fig.suptitle(title, fontsize=13)
+
+    def _update(frame_idx: int) -> tuple[()]:
+        azim = 360.0 * float(frame_idx) / float(n_frames)
+        for ax in used_axes:
+            ax.view_init(elev=elev, azim=azim)
+        return ()
+
+    anim = animation.FuncAnimation(
+        fig, _update, frames=n_frames, interval=1000.0 / float(fps), blit=False
+    )
+    writer = animation.FFMpegWriter(
+        fps=fps, metadata={"artist": "vanguard"}, bitrate=2200
+    )
+    save_start = time.perf_counter()
+    print(
+        "[mp4] starting render: "
+        f"grid={nrows}x{ncols}, panels={1 + t_dim}, "
+        f"frames={n_frames}, fps={fps}, output={output_path}"
+    )
+
+    def _progress(frame_idx: int, total_frames: int) -> None:
+        if frame_idx == 0 or frame_idx + 1 == total_frames or frame_idx % 10 == 0:
+            print(f"[mp4] rendered frame {frame_idx + 1}/{total_frames}")
+
+    anim.save(str(output_path), writer=writer, dpi=140, progress_callback=_progress)
+    print(
+        "[mp4] render complete: "
+        f"{output_path} ({time.perf_counter() - save_start:.2f} seconds)"
+    )
+    plt.close(fig)
 
 
 def main() -> None:
@@ -547,9 +858,7 @@ def main() -> None:
         "--threshold-high",
         type=float,
         default=0.85,
-        help=(
-            "Optional high threshold for undeletable anchor voxels " "(default: 0.85)."
-        ),
+        help=("Optional high threshold for undeletable anchor voxels (default: 0.85)."),
     )
     parser.add_argument(
         "--max-temporal-radius",
@@ -625,6 +934,20 @@ def main() -> None:
             "contributing to the exam-level skeleton."
         ),
     )
+    parser.add_argument(
+        "--save-all-3d-projection-grid",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Save a projection grid showing 3D skeletons for every timepoint.",
+    )
+    parser.add_argument(
+        "--auto-tumor-mask",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Auto-resolve tumor mask from study id when --tumor-mask is not provided."
+        ),
+    )
     args = parser.parse_args()
 
     from graph_extraction.skeleton4d import skeletonize4d
@@ -680,10 +1003,30 @@ def main() -> None:
         f"total={active_total}, fraction={active_fraction:.6f}, per_timepoint={active_per_t}"
     )
 
-    selected_priority = priority_4d[args.time_index]
-    t_baseline_start = time.perf_counter()
-    mask_3d = _baseline_3d_mask(selected_priority, threshold_low=args.threshold_low)
-    print(f"[timing] baseline_3d_seconds={time.perf_counter() - t_baseline_start:.2f}")
+    t_baseline_all_start = time.perf_counter()
+    masks_3d_all = np.stack(
+        [
+            _baseline_3d_mask(priority_4d[t], threshold_low=args.threshold_low)
+            for t in range(t_dim)
+        ],
+        axis=0,
+    )
+    print(
+        f"[timing] baseline_3d_all_timepoints_seconds="
+        f"{time.perf_counter() - t_baseline_all_start:.2f}"
+    )
+    voxels_3d_all = [int(v) for v in np.count_nonzero(masks_3d_all, axis=(1, 2, 3))]
+    comps_3d_all = [_count_components(masks_3d_all[t]) for t in range(t_dim)]
+    best_t = int(np.argmax(np.asarray(voxels_3d_all, dtype=np.int64)))
+    print(f"[info] 3D skeleton voxels per timepoint: {voxels_3d_all}")
+    print(f"[info] 3D skeleton components per timepoint: {comps_3d_all}")
+    for t, (vox, comp) in enumerate(zip(voxels_3d_all, comps_3d_all)):
+        print(f"[3d-timepoint] t={t:03d} voxels={vox}, components_26={comp}")
+    print(
+        "[info] 3D baseline comparison is using "
+        f"time-index={args.time_index}; best 3D by voxels is t={best_t}"
+    )
+    mask_3d = masks_3d_all[args.time_index]
 
     t_4d_start = time.perf_counter()
     mask_4d = skeletonize4d(
@@ -706,9 +1049,14 @@ def main() -> None:
     print(
         f"[timing] collapse_to_exam_seconds={time.perf_counter() - t_collapse_start:.2f}"
     )
+    print(
+        f"[{METHOD_4D_LABEL.lower()}] exam_voxels={int(np.count_nonzero(exam_skeleton))}, "
+        f"components_26={_count_components(exam_skeleton)}, "
+        f"support_voxels={int(np.count_nonzero(support_mask))}"
+    )
 
     resolved_tumor_path: Path | None = args.tumor_mask
-    if resolved_tumor_path is None and has_study_mode:
+    if resolved_tumor_path is None and has_study_mode and args.auto_tumor_mask:
         candidate = args.tumor_mask_dir / f"{args.study_id}.nii.gz"
         if not candidate.exists():
             raise ValueError(
@@ -735,7 +1083,11 @@ def main() -> None:
     projections_4d = _compute_projections(mask_zyx=exam_skeleton)
 
     out_cmp = args.output_dir / f"projection_compare_t{args.time_index:03d}_vs_exam.png"
-    out_rot = args.output_dir / f"rotation_compare_t{args.time_index:03d}_vs_exam.mp4"
+    out_all_3d = args.output_dir / "projection_3d_all_timepoints.png"
+    out_ordered_xy = args.output_dir / "projection_ordered_4d_vs_3d_xy.png"
+    out_ordered_xz = args.output_dir / "projection_ordered_4d_vs_3d_xz.png"
+    out_ordered_yz = args.output_dir / "projection_ordered_4d_vs_3d_yz.png"
+    out_rot = args.output_dir / "rotation_compare_4d_and_all_3d.mp4"
     title_study = f" | Study: {args.study_id}" if args.study_id is not None else ""
     if not args.no_plots:
         t_plot_start = time.perf_counter()
@@ -743,11 +1095,40 @@ def main() -> None:
             projections_3d,
             projections_4d,
             out_cmp,
-            title=f"3D timepoint {args.time_index} vs 4D exam-level skeleton{title_study}",
+            title=(f"3D timepoint {args.time_index} vs {METHOD_4D_LABEL}{title_study}"),
         )
-        _save_rotating_3d_comparison_mp4(
-            mask_3d=mask_3d,
-            mask_4d_skeleton=exam_skeleton,
+
+        if args.save_all_3d_projection_grid:
+            _save_all_timepoint_projection_grid(
+                masks_3d_all.astype(np.uint8),
+                out_all_3d,
+                title=f"3D skeleton projections for all timepoints{title_study}",
+            )
+
+        _save_ordered_projection_grid(
+            exam_4d_mask=exam_skeleton,
+            masks_3d_tzyx=masks_3d_all.astype(bool, copy=False),
+            plane="xy",
+            output_path=out_ordered_xy,
+            title=f"Ordered comparison XY{title_study}",
+        )
+        _save_ordered_projection_grid(
+            exam_4d_mask=exam_skeleton,
+            masks_3d_tzyx=masks_3d_all.astype(bool, copy=False),
+            plane="xz",
+            output_path=out_ordered_xz,
+            title=f"Ordered comparison XZ{title_study}",
+        )
+        _save_ordered_projection_grid(
+            exam_4d_mask=exam_skeleton,
+            masks_3d_tzyx=masks_3d_all.astype(bool, copy=False),
+            plane="yz",
+            output_path=out_ordered_yz,
+            title=f"Ordered comparison YZ{title_study}",
+        )
+        _save_rotating_3d_4d_plus_timepoints_mp4(
+            mask_4d_exam=exam_skeleton,
+            masks_3d_tzyx=masks_3d_all.astype(bool, copy=False),
             output_path=out_rot,
             tumor_mask_zyx=tumor_mask_zyx,
             study_label=args.study_id,
@@ -755,6 +1136,10 @@ def main() -> None:
         print(f"[timing] plot_mp4_seconds={time.perf_counter() - t_plot_start:.2f}")
 
     np.save(args.output_dir / "center_manifold_4d_mask.npy", mask_4d.astype(np.uint8))
+    np.save(
+        args.output_dir / "skeleton_3d_all_timepoints_tzyx.npy",
+        masks_3d_all.astype(np.uint8),
+    )
     np.save(
         args.output_dir / "skeleton_4d_exam_mask.npy",
         exam_skeleton.astype(np.uint8),
@@ -784,15 +1169,22 @@ def main() -> None:
         if args.max_candidates is None
         else int(args.max_candidates),
         "3d_selected_time_voxels": int(np.count_nonzero(mask_3d)),
+        "3d_all_time_voxels": voxels_3d_all,
+        "3d_all_time_components_26": comps_3d_all,
+        "3d_best_timepoint_by_voxels": {
+            "time_index": best_t,
+            "voxels": int(voxels_3d_all[best_t]),
+            "components_26": int(comps_3d_all[best_t]),
+        },
         "4d_exam_skeleton_voxels": int(np.count_nonzero(exam_skeleton)),
         "4d_exam_support_voxels": int(np.count_nonzero(support_mask)),
         "4d_all_time_voxels": int(np.count_nonzero(mask_4d)),
         "3d_selected_time_components_26": _count_components(mask_3d),
         "4d_exam_skeleton_components_26": _count_components(exam_skeleton),
-        "retained_voxels_per_timepoint_4d": [
+        "4d_retained_voxels_per_timepoint": [
             int(x) for x in np.count_nonzero(mask_4d, axis=(1, 2, 3))
         ],
-        "retained_support_count_histogram": {
+        "4d_support_count_histogram": {
             str(k): int(v)
             for k, v in enumerate(
                 np.bincount(support_count.ravel(), minlength=priority_4d.shape[0] + 1)
@@ -808,6 +1200,7 @@ def main() -> None:
             ),
             "auto_resolved_from_study_id": bool(
                 args.tumor_mask is None
+                and args.auto_tumor_mask
                 and resolved_tumor_path is not None
                 and has_study_mode
             ),
@@ -826,7 +1219,17 @@ def main() -> None:
         },
         "outputs": {
             "projection_compare": None if args.no_plots else str(out_cmp),
-            "rotation_compare_3d_mp4": None if args.no_plots else str(out_rot),
+            "projection_3d_all_timepoints": (
+                None
+                if args.no_plots or not args.save_all_3d_projection_grid
+                else str(out_all_3d)
+            ),
+            "projection_ordered_xy": None if args.no_plots else str(out_ordered_xy),
+            "projection_ordered_xz": None if args.no_plots else str(out_ordered_xz),
+            "projection_ordered_yz": None if args.no_plots else str(out_ordered_yz),
+            "rotation_compare_4d_and_3d_all_mp4": (
+                None if args.no_plots else str(out_rot)
+            ),
         },
     }
     elapsed_seconds = float(time.perf_counter() - start_time)
@@ -838,6 +1241,11 @@ def main() -> None:
     print("[done] Wrote outputs:")
     if not args.no_plots:
         print(f"  - {out_cmp}")
+        if args.save_all_3d_projection_grid:
+            print(f"  - {out_all_3d}")
+        print(f"  - {out_ordered_xy}")
+        print(f"  - {out_ordered_xz}")
+        print(f"  - {out_ordered_yz}")
         print(f"  - {out_rot}")
     print(f"  - {summary_path}")
     print(f"[done] Total time: {elapsed_seconds:.2f} seconds")
