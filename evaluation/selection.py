@@ -11,7 +11,7 @@ Usage:
     ...     apply_selection_criteria,
     ...     build_selection_criteria_from_args,
     ... )
-    >>> criteria = SampleSelectionCriteria(datasets=["iSpy2", "Duke"])
+    >>> criteria = SampleSelectionCriteria(datasets=["ISPY2", "DUKE"])
     >>> filtered = apply_selection_criteria(metadata_df, criteria)
     >>> # Or from CLI args:
     >>> criteria = build_selection_criteria_from_args(args)
