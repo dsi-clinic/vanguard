@@ -155,82 +155,14 @@ class Evaluator:
         n_splits: int = 5,
         stratify: bool = True,
         shuffle: bool = True,
-    ) -> list[FoldSplit]:
-        """Create k-fold splits and return them to the model.
-
         groups: np.ndarray | None = None,
         stratify_labels: np.ndarray | None = None,
         validate_exclusivity: bool = True,
         return_report: bool = False,
     ) -> list[FoldSplit] | tuple[list[FoldSplit], dict]:
         """Create k-fold splits and return them to the model.
-
-        Supports both standard stratified k-fold and group-stratified k-fold
-        (for site-exclusive splits with subtype stratification).
-
-        Parameters
-        ----------
-        n_splits : int, default=5
-            Number of folds
-        stratify : bool, default=True
-            Whether to use stratified k-fold (maintains class distribution)
-        shuffle : bool, default=True
-            Whether to shuffle data before splitting
-
-        Returns:
-        -------
-        list[FoldSplit]
-            Whether to use stratified k-fold (maintains class distribution).
-            Ignored if groups/stratify_labels are provided (uses group-stratified).
-        shuffle : bool, default=True
-            Whether to shuffle data before splitting
-        groups : np.ndarray | None, default=None
-            Group assignments for each sample (e.g., site names).
-            If provided along with stratify_labels, uses group-stratified splitting
-            to ensure groups do not cross folds.
-        stratify_labels : np.ndarray | None, default=None
-            Stratum labels for stratification (e.g., subtype/dataset).
-            If provided along with groups, uses group-stratified splitting.
-            If provided alone (without groups), uses standard stratified splitting
-            on these labels instead of y.
-        validate_exclusivity : bool, default=True
-            Whether to validate and warn if groups cross folds (only used when
-            groups are provided).
-        return_report : bool, default=False
-            If True, also return a report dictionary with distribution statistics
-            (only used when groups are provided).
-
-        Returns:
-        -------
-        list[FoldSplit] | tuple[list[FoldSplit], dict]
-            List of FoldSplit objects, one per fold, containing:
-            - train_indices: indices for training
-            - val_indices: indices for validation
-            - train_patient_ids: patient IDs for training (if available)
-            - val_patient_ids: patient IDs for validation (if available)
-        """
-        split_dicts = create_kfold_splits(
-            X=self.X,
-            y=self.y,
-            patient_ids=self.patient_ids,
-            n_splits=n_splits,
-            stratify=stratify,
-            shuffle=shuffle,
-            random_state=self.random_state,
-        )
-            If return_report=True and groups provided, returns tuple of (splits, report_dict).
-
-        Examples:
-        --------
-        >>> # Standard stratified k-fold (existing behavior)
-        >>> splits = evaluator.create_kfold_splits(n_splits=5)
-        >>>
-        >>> # Group-stratified k-fold (site-exclusive, subtype-stratified)
-        >>> splits = evaluator.create_kfold_splits(
-        ...     n_splits=5,
-        ...     groups=site_array,
-        ...     stratify_labels=subtype_array
-        ... )
+        
+        Supports both standard stratified k-fold and group-stratified k-fold.
         """
         # Use group-stratified splitting if both groups and stratify_labels provided
         if groups is not None and stratify_labels is not None:

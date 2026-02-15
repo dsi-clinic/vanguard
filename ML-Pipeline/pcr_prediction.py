@@ -20,7 +20,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from evaluation import Evaluator, FoldResults
-from feature_factor import get_clinical_features
+from .feature_factor import get_clinical_features
 
 
 def parse_args() -> argparse.Namespace:
