@@ -106,6 +106,12 @@ def apply_selection_criteria(
     verbose : bool, default=False
         If True, print how many rows were excluded per criterion.
 
+    Notes:
+    -----
+    If a requested selection column (dataset, site, tumor type, laterality, or
+    any column_filters key) is missing from the metadata, that criterion is
+    skipped without raising an error; runs may be unfiltered for that criterion.
+
     Returns:
     -------
     pd.DataFrame
