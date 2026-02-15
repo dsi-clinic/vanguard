@@ -311,7 +311,7 @@ def test_stratum_confined_to_one_site() -> None:
     # Report should indicate infeasible constraints
     assert len(report["infeasible_constraints"]) > 0
     assert any(
-        "only in site" in str(c).lower() for c in report["infeasible_constraints"]
+        "only in group" in str(c).lower() for c in report["infeasible_constraints"]
     )
 
 
