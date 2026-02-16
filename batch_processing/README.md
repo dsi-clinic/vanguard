@@ -92,7 +92,9 @@ squeue -u "$USER" -t R,PD -o "%.18i %.20j %.2t %.10M %R"     (CHECK NODE STATUS)
 
 ls -t logs/batch-seg-array-*.out | head -n 1 | xargs -r tail -n 30 (tail job)
 
-find /net/projects2/vanguard/vessel_segmentations -type f -newermt "2026-02-12 10:30:00" | wc -l (See how many added)
+find /net/projects2/vanguard/vessel_segmentations -type f -newermt "2026-02-12 10:30:00" | wc -l (Round 1)
+
+find /net/projects2/vanguard/vessel_segmentations -type f -newermt "2026-02-15 18:00:00" | wc -l (Round 2)
 
 find /net/projects2/vanguard/vessel_segmentations -type f -mtime -1 | wc -l
 
