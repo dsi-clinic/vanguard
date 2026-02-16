@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Return segmentation files matching pattern under input_dir."""
     parser = argparse.ArgumentParser(
         description=(
             "Run graph pruning centerline extraction on vessel segmentation .npy files."
@@ -66,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
 def list_segmentation_files(
     input_dir: Path, pattern: str, recursive: bool
 ) -> list[Path]:
+    """Return segmentation files matching pattern under input_dir."""
     if recursive:
         files = sorted(input_dir.rglob(pattern))
     else:
@@ -76,6 +78,7 @@ def list_segmentation_files(
 def select_files(
     files: list[Path], file_index: int | None, file_start: int | None, file_end: int | None
 ) -> list[Path]:
+    """Select a subset of files based on index/range arguments."""
     if not files:
         return []
 
@@ -100,10 +103,12 @@ def select_files(
 
 
 def output_json_path(output_dir: Path, input_file: Path) -> Path:
+    """Compute the output JSON path for a given input file."""
     return output_dir / f"{input_file.stem}_morphometry.json"
 
 
 def main() -> int:
+    """Main entry point for batch graph pruning centerline extraction."""
     args = build_parser().parse_args()
 
     project_root = Path(__file__).resolve().parents[1]
