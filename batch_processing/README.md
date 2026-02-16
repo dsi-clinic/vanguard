@@ -96,6 +96,8 @@ find /net/projects2/vanguard/vessel_segmentations -type f -newermt "2026-02-12 1
 
 find /net/projects2/vanguard/vessel_segmentations -type f -newermt "2026-02-15 18:00:00" | wc -l (Round 2)
 
+find /net/projects2/vanguard/vessel_segmentations -type f -newermt "2026-02-16 13:00:00" | wc -l (Round 3)
+
 find /net/projects2/vanguard/vessel_segmentations -type f -mtime -1 | wc -l
 
 Optional overrides via environment variables:
