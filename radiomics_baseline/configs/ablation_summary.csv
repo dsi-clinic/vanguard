@@ -1,13 +1,25 @@
-experiment_name,status,extract.force_2d,extract.peri_mode,extract.peri_radius_mm,train.classifier,auc_test,auc_train,auc_train_cv,n_features_used
-peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-2.5_classifier-logistic,success,True,2d,2.5,logistic,0.5901053241859118,0.6550866301213042,0.5461638377033661,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-2.5_classifier-rf,success,True,2d,2.5,rf,0.6039713982027249,0.8909847434119279,0.5297712612553112,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-2.5_classifier-xgb,success,True,2d,2.5,xgb,0.5671562469803846,0.938449684080752,0.5273407744975013,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-5_classifier-logistic,success,True,2d,5,logistic,0.6068943859310079,0.6570503929727232,0.5452171807234221,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-5_classifier-rf,success,True,2d,5,rf,0.6080297613295971,0.8797129207670122,0.5252008894172555,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-True_peri_radius_mm-5_classifier-xgb,success,True,2d,5,xgb,0.5344960865784134,0.9994760363692402,0.5449265790458577,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-2.5_classifier-logistic,success,False,2d,2.5,logistic,0.5950091796308822,0.6465975386918521,0.5364991303964951,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-2.5_classifier-rf,success,False,2d,2.5,rf,0.6258575707797855,0.8619774123241529,0.5392554432776346,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-2.5_classifier-xgb,success,False,2d,2.5,xgb,0.566286597738912,0.9954956739977544,0.5355436673051097,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-5_classifier-logistic,success,False,2d,5,logistic,0.5797420040583632,0.619782929352971,0.5547982299716003,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-5_classifier-rf,success,False,2d,5,rf,0.6186829645376366,0.877982519868789,0.5395460449551989,50
-peri5_multiphase_logreg_peri_mode-2d_force_2d-False_peri_radius_mm-5_classifier-xgb,success,False,2d,5,xgb,0.5433858343801334,0.975611474363208,0.5351077647887634,50
+experiment_name,status,extract.image_patterns,extract.peri_radius_mm,train.classifier,auc_test,auc_train,auc_train_cv,n_features_used
+peri5_multiphase_logreg_peri_radius_mm-0_image_patterns-1_classifier-logistic,success,['{pid}/{pid}_0001.nii.gz'],0,logistic,0.5845250748864624,0.6199810668604011,0.5456927107412545,32
+peri5_multiphase_logreg_peri_radius_mm-0_image_patterns-1_classifier-rf,success,['{pid}/{pid}_0001.nii.gz'],0,rf,0.7095613102715238,0.8555357418048125,0.6248464434317416,32
+peri5_multiphase_logreg_peri_radius_mm-0_image_patterns-1_classifier-xgb,success,['{pid}/{pid}_0001.nii.gz'],0,xgb,0.6748961252294907,0.9698302622019682,0.6160623472690048,32
+peri5_multiphase_logreg_peri_radius_mm-0_image_patterns-2_classifier-logistic,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",0,logistic,0.5955647888684897,0.6282235871694958,0.5474407238623605,39
+peri5_multiphase_logreg_peri_radius_mm-0_image_patterns-2_classifier-rf,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",0,rf,0.7156246980384577,0.8632234770931027,0.6182770842965017,39
+peri5_multiphase_logreg_peri_radius_mm-0_image_patterns-2_classifier-xgb,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",0,xgb,0.6630833896994879,0.9761178257710852,0.6068951852585693,39
+peri5_multiphase_logreg_peri_radius_mm-2.5_image_patterns-1_classifier-logistic,success,['{pid}/{pid}_0001.nii.gz'],2.5,logistic,0.6134650690888008,0.6424410540915395,0.54185324615283,50
+peri5_multiphase_logreg_peri_radius_mm-2.5_image_patterns-1_classifier-rf,success,['{pid}/{pid}_0001.nii.gz'],2.5,rf,0.7048507102135472,0.8822182594720737,0.6223851352838871,50
+peri5_multiphase_logreg_peri_radius_mm-2.5_image_patterns-1_classifier-xgb,success,['{pid}/{pid}_0001.nii.gz'],2.5,xgb,0.6593390665764809,0.977161349976884,0.6241199392378309,50
+peri5_multiphase_logreg_peri_radius_mm-2.5_image_patterns-2_classifier-logistic,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",2.5,logistic,0.6230312107449996,0.6540034784140193,0.5595755454285274,50
+peri5_multiphase_logreg_peri_radius_mm-2.5_image_patterns-2_classifier-rf,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",2.5,rf,0.6328630785583147,0.9378288532241376,0.53764832793959,50
+peri5_multiphase_logreg_peri_radius_mm-2.5_image_patterns-2_classifier-xgb,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",2.5,xgb,0.5803217702193448,0.9352530656275456,0.5219338220725184,50
+peri5_multiphase_logreg_peri_radius_mm-5_image_patterns-1_classifier-logistic,success,['{pid}/{pid}_0001.nii.gz'],5,logistic,0.5811914194608175,0.6226845430728927,0.5430068467516457,50
+peri5_multiphase_logreg_peri_radius_mm-5_image_patterns-1_classifier-rf,success,['{pid}/{pid}_0001.nii.gz'],5,rf,0.6998502270750797,0.8771855667833477,0.6162957092222001,50
+peri5_multiphase_logreg_peri_radius_mm-5_image_patterns-1_classifier-xgb,success,['{pid}/{pid}_0001.nii.gz'],5,xgb,0.6812493960769156,0.9230345860026858,0.6065209255223125,50
+peri5_multiphase_logreg_peri_radius_mm-5_image_patterns-2_classifier-logistic,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",5,logistic,0.5801768286790995,0.6122713162935076,0.5471765405191202,50
+peri5_multiphase_logreg_peri_radius_mm-5_image_patterns-2_classifier-rf,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",5,rf,0.6122572229200889,0.956229223080818,0.5193448253087644,50
+peri5_multiphase_logreg_peri_radius_mm-5_image_patterns-2_classifier-xgb,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",5,xgb,0.568001739298483,0.9384364749135901,0.5021156682737821,50
+peri5_multiphase_logreg_peri_radius_mm-10_image_patterns-1_classifier-logistic,success,['{pid}/{pid}_0001.nii.gz'],10,logistic,0.5825200502464006,0.624533826475574,0.5482024525020365,50
+peri5_multiphase_logreg_peri_radius_mm-10_image_patterns-1_classifier-rf,success,['{pid}/{pid}_0001.nii.gz'],10,rf,0.6963957870325634,0.8776346784668559,0.6191797107192392,50
+peri5_multiphase_logreg_peri_radius_mm-10_image_patterns-1_classifier-xgb,success,['{pid}/{pid}_0001.nii.gz'],10,xgb,0.6614407189100396,0.9097857913391894,0.6159038372630605,50
+peri5_multiphase_logreg_peri_radius_mm-10_image_patterns-2_classifier-logistic,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",10,logistic,0.5777852932650498,0.6078066177927481,0.553587389648416,50
+peri5_multiphase_logreg_peri_radius_mm-10_image_patterns-2_classifier-rf,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",10,rf,0.6070634843946274,0.9008784096162736,0.5327873544239703,50
+peri5_multiphase_logreg_peri_radius_mm-10_image_patterns-2_classifier-xgb,success,"['{pid}/{pid}_0001.nii.gz', '{pid}/{pid}_0002.nii.gz']",10,xgb,0.5620832930717944,0.9679941879664486,0.5157299165620941,50

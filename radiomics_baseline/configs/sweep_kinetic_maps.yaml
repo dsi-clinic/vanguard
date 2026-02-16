@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# Ablation sweep: kinetic maps vs raw phases vs combined × classifier
+#
+# 3 image_pattern configs × 3 classifiers = 9 experiments
+# 3 unique extractions + 6 training-only runs
+#
+# Requires: generate_kinetic_maps.py has been run for all patients.
+# ---------------------------------------------------------------------------
+base_config: configs/exp_kinetic_maps.yaml
+
+sweep:
+  extract.image_patterns:
+    # Raw phases only (baseline — same as existing experiments)
+    - ["{pid}/{pid}_0001.nii.gz", "{pid}/{pid}_0002.nii.gz"]
+    # Kinetic maps only
+    - ["{pid}/{pid}_kinetic_E_early.nii.gz",
+       "{pid}/{pid}_kinetic_E_peak.nii.gz",
+       "{pid}/{pid}_kinetic_slope_in.nii.gz",
+       "{pid}/{pid}_kinetic_slope_out.nii.gz",
+       "{pid}/{pid}_kinetic_AUC.nii.gz"]
+    # Combined: raw phases + kinetic maps
+    - ["{pid}/{pid}_0001.nii.gz",
+       "{pid}/{pid}_0002.nii.gz",
+       "{pid}/{pid}_kinetic_E_early.nii.gz",
+       "{pid}/{pid}_kinetic_E_peak.nii.gz",
+       "{pid}/{pid}_kinetic_slope_in.nii.gz",
+       "{pid}/{pid}_kinetic_slope_out.nii.gz",
+       "{pid}/{pid}_kinetic_AUC.nii.gz"]
+
+  train.classifier:
+    - logistic
+    - rf
+    - xgb
