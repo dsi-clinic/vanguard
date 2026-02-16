@@ -76,7 +76,10 @@ def list_segmentation_files(
 
 
 def select_files(
-    files: list[Path], file_index: int | None, file_start: int | None, file_end: int | None
+    files: list[Path],
+    file_index: int | None,
+    file_start: int | None,
+    file_end: int | None,
 ) -> list[Path]:
     """Select a subset of files based on index/range arguments."""
     if not files:
