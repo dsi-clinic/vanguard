@@ -154,7 +154,7 @@ python radiomics_baseline/radiomics_train.py \
 
 ## 3. Centerline Extraction Methods
 
-### 3.1 Graph Pruning (`graph_pruning_centerline_extraction/`)
+### 3.1 Graph Extraction (`graph_extraction/`)
 
 **Purpose**: Topology-preserving 3D skeletonization algorithm for vessel segmentation volumes using graph pruning methodology.
 
@@ -169,7 +169,7 @@ python radiomics_baseline/radiomics_train.py \
 - Can export to JSON or other formats for downstream analysis
 - Includes visualization utilities for skeleton inspection
 
-**Usage**: See [`graph_pruning_centerline_extraction/README.md`](graph_pruning_centerline_extraction/README.md) for implementation details and API
+**Usage**: See [`graph_extraction/README.md`](graph_extraction/README.md) for implementation details and API
 
 **When to use**: When you need a topology-preserving skeletonization with graph-based pruning for downstream analysis.
 
