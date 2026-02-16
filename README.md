@@ -38,7 +38,7 @@ micromamba env create -y -n vanguard -f environment.yml
 micromamba activate vanguard
 ```
 
-Note: All Python dependencies (including pip-only packages like PyRadiomics) are installed via `environment.yml`; you should not need to run `pip install -r requirements.txt`.
+Note: All Python dependencies (including pip-only packages like PyRadiomics) are installed via `environment.yml`.
 
 To Update:
 ```bash
