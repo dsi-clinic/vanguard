@@ -6,6 +6,7 @@ Skeleton extraction and skeleton-to-graph feature code for 3D and 4D vessel segm
 
 - `run_skeleton_processing.py`: main processing pipeline (3D or 4D), with skeleton extraction + morphometry generation.
 - `run_compare_3d_4d_debug.py`: debugging/visualization script for side-by-side 3D vs 4D comparison.
+- `run_compare_legacy_pipeline_debug.py`: debugging/visualization script for side-by-side legacy vs primary 3D pipeline comparison.
 - `processing.py`: shared 3D/4D loading, extraction, collapse, and morphometry helpers.
 - `skeleton3d.py`, `skeleton4d.py`, `visuals.py`, `skeleton_to_graph.py`: core extraction and graph/morphometry modules.
 
@@ -57,3 +58,14 @@ Notes:
 - Tumor overlay is auto-resolved in study mode from:
   `/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert/{study_id}.nii.gz`
 - MP4 frame count is reduced for faster render.
+
+Use this for legacy-vs-primary 3D QC plots and rotating MP4:
+
+```bash
+python graph_extraction/run_compare_legacy_pipeline_debug.py \
+  --input-dir /net/projects2/vanguard/vessel_segmentations \
+  --study-id ISPY2_202539 \
+  --time-index 0 \
+  --legacy-threshold-low 0.45 \
+  --output-dir debug_legacy_vs_primary
+```
