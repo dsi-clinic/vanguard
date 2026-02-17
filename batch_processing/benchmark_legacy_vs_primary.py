@@ -301,7 +301,14 @@ def extract_metrics(summary: dict[str, Any]) -> dict[str, float | int | None]:
             )
         ),
         "overlap_voxels": coerce_int(
-            first_value(summary, ["overlap.voxels", "overlap_voxels"])
+            first_value(
+                summary,
+                [
+                    "overlap.intersection_voxels",
+                    "overlap.voxels",
+                    "overlap_voxels",
+                ],
+            )
         ),
         "overlap_dice": coerce_float(
             first_value(summary, ["overlap.dice", "overlap_dice"])
@@ -310,7 +317,14 @@ def extract_metrics(summary: dict[str, Any]) -> dict[str, float | int | None]:
             first_value(summary, ["overlap.jaccard", "overlap_jaccard"])
         ),
         "compare_elapsed_seconds": coerce_float(
-            first_value(summary, ["elapsed_seconds", "runtime_seconds"])
+            first_value(
+                summary,
+                [
+                    "timing_seconds.total",
+                    "elapsed_seconds",
+                    "runtime_seconds",
+                ],
+            )
         ),
     }
 
@@ -323,6 +337,7 @@ def resolve_visualization_path(
     mp4_path = first_value(
         summary,
         [
+            "outputs.rotation_compare_legacy_vs_primary_mp4",
             "outputs.rotation_compare_legacy_and_primary_mp4",
             "outputs.rotation_compare_4d_and_3d_all_mp4",
             "outputs.rotation_compare_4d_and_all_3d_mp4",
