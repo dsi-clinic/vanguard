@@ -285,34 +285,30 @@ python ML-Pipeline/pcr_prediction.py \
 
 ### 6.1 Batch Processing (`batch_processing/`)
 
-**Purpose**: Automated batch processing scripts for large-scale vessel segmentation and centerline extraction.
+**Purpose**: Automated scripts for large-scale processing and benchmarking.
 
 **Key Scripts**:
 - `batch_segmentation.py`: Batch vessel segmentation from `.nii.gz` files
-  - Preprocesses images (normalization, axis rotation)
-  - Runs 3-step segmentation pipeline (preprocessing → breast mask → vessel segmentation)
-  - Supports parallel processing and resume functionality
 - `batch_extract_centerlines.py`: Batch centerline extraction from vessel segmentations
-- `batch_process_centerlines.py`: Batch processing that extracts centerlines and converts to JSON with proper spacing extraction
-- `batch_convert_vtp_to_json.py`: Converts VTP centerline files to JSON format
+- `batch_process_centerlines.py`: End-to-end centerline extraction + JSON conversion
+- `batch_convert_vtp_to_json.py`: VTP-to-JSON conversion utility
+- `benchmark_legacy_vs_primary.py`: Per-study benchmark runner for legacy-vs-primary comparisons
+- `reduce_legacy_vs_primary.py`: Summary reducer for benchmark record aggregation
 
 **Usage**:
 ```bash
-# Batch vessel segmentation
-python batch_processing/batch_segmentation.py \
-  --images-dir /path/to/images \
-  --output-dir /path/to/vessel_segmentations \
-  --max-workers 8 \
-  --resume
+# Build benchmark manifest only
+python batch_processing/benchmark_legacy_vs_primary.py \
+  --segmentation-dir /net/projects2/vanguard/vessel_segmentations \
+  --output-dir /net/projects2/vanguard/benchmarks/legacy_vs_primary/run_001 \
+  --manifest-only
 
-# Batch centerline extraction
-python batch_processing/batch_extract_centerlines.py
-
-# Batch process centerlines to JSON
-python batch_processing/batch_process_centerlines.py
+# Reduce benchmark records
+python batch_processing/reduce_legacy_vs_primary.py \
+  --benchmark-dir /net/projects2/vanguard/benchmarks/legacy_vs_primary/run_001
 ```
 
-**See**: [`batch_processing/README.md`](batch_processing/README.md) for detailed documentation
+**See**: [`batch_processing/README.md`](batch_processing/README.md) for full examples
 
 ---
 
@@ -324,20 +320,15 @@ python batch_processing/batch_process_centerlines.py
 - `submit_vessel_segmentation.slurm`: Main vessel segmentation job (1 GPU, 16 CPUs, 128GB RAM)
 - `submit_vessel_segmentation_array.slurm`: Array job for parallel processing (one file per task)
 - `submit_vessel_segmentation_optimized.slurm`: High-resource version for faster processing
-- `submit_centerline_extraction.slurm`: Centerline extraction job
-- `submit_vtp_to_json_conversion.slurm`: VTP to JSON conversion job
+- `submit_legacy_vs_primary_benchmark.sh`: Head-node helper for benchmark suite submission
+- `submit_legacy_vs_primary_benchmark_array.slurm`: Array worker for per-study benchmark runs
+- `submit_legacy_vs_primary_benchmark_reduce.slurm`: Reducer job for benchmark summary outputs
 
 **Usage**:
 ```bash
-# Submit vessel segmentation
-sbatch slurm_submit_scripts/submit_vessel_segmentation.slurm
-
-# Submit array job (processes all files in parallel)
-sbatch slurm_submit_scripts/submit_vessel_segmentation_array.slurm
-
-# Monitor jobs
-squeue -u $USER
-tail -f logs/vessel-seg-<JOB_ID>.out
+# Submit full legacy-vs-primary benchmark suite from head node
+OUT_DIR="/net/projects2/vanguard/benchmarks/legacy_vs_primary/run_$(date +%Y%m%d_%H%M%S)"
+slurm_submit_scripts/submit_legacy_vs_primary_benchmark.sh "${OUT_DIR}"
 ```
 
 **See**: [`slurm_submit_scripts/README.md`](slurm_submit_scripts/README.md) for all available scripts and monitoring commands
@@ -505,14 +496,10 @@ For HPC clusters, use SLURM submit scripts:
    sbatch slurm_submit_scripts/submit_vessel_segmentation.slurm
    ```
 
-2. **Centerline Extraction**:
+2. **Legacy-vs-Primary Benchmark Suite**:
    ```bash
-   sbatch slurm_submit_scripts/submit_centerline_extraction.slurm
-   ```
-
-3. **Convert to JSON**:
-   ```bash
-   sbatch slurm_submit_scripts/submit_vtp_to_json_conversion.slurm
+   OUT_DIR="/net/projects2/vanguard/benchmarks/legacy_vs_primary/run_$(date +%Y%m%d_%H%M%S)"
+   slurm_submit_scripts/submit_legacy_vs_primary_benchmark.sh "${OUT_DIR}"
    ```
 
 See [`slurm_submit_scripts/README.md`](slurm_submit_scripts/README.md) for detailed SLURM usage.
@@ -542,6 +529,7 @@ pre-commit run --all-files
 
 - All scripts support `--resume` flags to safely restart interrupted jobs
 - Use SLURM array jobs (`submit_vessel_segmentation_array.slurm`) for maximum parallelization
+- For legacy-vs-primary study sweeps, use `submit_legacy_vs_primary_benchmark.sh` (head-node orchestrated array + reducer)
 - Check individual README files in each folder for detailed usage and options
 - Compare baseline models (non-imaging, radiomics) against graph-based methods to assess improvement
 - Use `clinical_and_imaging_exploration/` to understand data distributions before modeling

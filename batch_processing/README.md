@@ -1,129 +1,79 @@
-# Batch Segmentation Processing Guide
+# Batch Processing Guide
 
-This guide explains how to process all `.nii.gz` files in the `/images` directory and extract STEP-2 breast mask segmentations (`.npy` files).
+This directory contains batch utilities for segmentation/centerline processing and the
+legacy-vs-primary benchmark suite.
 
-## Overview
+## Scripts
 
-The batch processing pipeline:
-1. **Finds all `.nii.gz` files** in patient subdirectories
-2. **Preprocesses each file** (STEP-1): normalization, axis rotation, z-scoring
-3. **Runs breast segmentation** (STEP-2): generates breast masks using trained model
-4. **Collects all `.npy` files** for further processing (e.g., centerline extraction)
+### Segmentation and Centerline Utilities
 
-## Files Structure
+- `batch_segmentation.py`
+  - Batch vessel segmentation from MRI `.nii.gz` inputs.
+- `batch_extract_centerlines.py`
+  - Batch centerline extraction from vessel segmentation `.npy` files.
+- `batch_process_centerlines.py`
+  - End-to-end centerline extraction + JSON conversion with spacing handling.
+- `batch_convert_vtp_to_json.py`
+  - Convert centerline `.vtp` files to JSON format.
 
-```
-/net/projects2/vanguard/MAMA-MIA-syn60868042/images/
-├── DUKE_001/
-│   ├── DUKE_001_0000.nii.gz
-│   ├── DUKE_001_0001.nii.gz
-│   └── ...
-├── DUKE_002/
-│   ├── DUKE_002_0000.nii.gz
-│   └── ...
-└── ...
-```
+### Legacy-vs-Primary Benchmark Suite
 
-## Scripts Available
+- `benchmark_legacy_vs_primary.py`
+  - Benchmark runner that executes one compare-job per study and writes per-study records.
+  - Supports manifest generation (`--manifest-only`) for Slurm head-node orchestration.
+  - Works in Slurm arrays (`--manifest-file` + `--task-index`) so each array task handles one study.
+- `reduce_legacy_vs_primary.py`
+  - Reducer that aggregates per-study benchmark records into summary CSV/JSON artifacts.
 
-### `batch_segmentation.py` - Batch Processing
-Processes all files with parallel processing and progress tracking.
+## Legacy-vs-Primary Benchmark Usage
+
+### 1. Build a study manifest from segmentation files
 
 ```bash
-cd /path/to/vanguard
-python batch_processing/batch_segmentation.py --help
+micromamba run -n vanguard python batch_processing/benchmark_legacy_vs_primary.py \
+  --segmentation-dir /net/projects2/vanguard/vessel_segmentations \
+  --output-dir /net/projects2/vanguard/benchmarks/legacy_vs_primary/run_001 \
+  --manifest-only
 ```
 
-**Key Options**:
-- `--images-dir`: Source directory (default: `/net/projects2/vanguard/MAMA-MIA-syn60868042/images`)
-- `--output-dir`: Output directory (default: `vessel_segmentations` relative to project root)
-- `--max-workers`: Parallel workers (default: 4)
-- `--patient-limit`: Limit for testing (e.g., `--patient-limit 10`)
-- `--cleanup`: Clean temporary files
+This writes:
+- `study_ids.txt`
 
-**Example Usage**:
+### 2. Run benchmark locally (single process)
+
 ```bash
-# Quick test with 3 patients (similar to quick_batch_test.py)
-python batch_processing/batch_segmentation.py --patient-limit 3 --output-dir test_breast_masks
-
-# Test with 10 patients
-python batch_processing/batch_segmentation.py --patient-limit 10 --output-dir test_masks
-
-# Full processing with 8 parallel workers
-python batch_processing/batch_segmentation.py --max-workers 8 --cleanup
-
-# Custom paths
-python batch_processing/batch_segmentation.py \
-    --images-dir /path/to/images \
-    --output-dir /path/to/output \
-    --breast-model-path /path/to/breast_model.pth \
-    --vessel-model-path /path/to/vessel_model.pth
+micromamba run -n vanguard python batch_processing/benchmark_legacy_vs_primary.py \
+  --manifest-file /net/projects2/vanguard/benchmarks/legacy_vs_primary/run_001/study_ids.txt \
+  --output-dir /net/projects2/vanguard/benchmarks/legacy_vs_primary/run_001 \
+  --segmentation-dir /net/projects2/vanguard/vessel_segmentations \
+  --compare-script graph_extraction/run_compare_legacy_pipeline_debug.py
 ```
 
-## Output Format
+Per-study outputs are written under:
+- `studies/<study_id>/artifacts/` (includes rotating 3D MP4 and summary JSON from compare script)
+- `studies/<study_id>/benchmark_record.json`
 
-### STEP-2 .npy Files
-- **Format**: NumPy arrays with shape `(x, y, z)`
-- **Values**: Binary mask (0 = background, 1 = breast tissue)
-- **Naming**: `{patient_id}_{filename}_breast_mask.npy`
+Top-level outputs (non-array runs):
+- `benchmark_records.jsonl`
+- `benchmark_records.csv`
+- `runner_summary.json`
 
-### Example Output Structure
-```
-breast_masks/
-├── DUKE_001_DUKE_001_0000_breast_mask.npy
-├── DUKE_001_DUKE_001_0001_breast_mask.npy
-├── DUKE_002_DUKE_002_0000_breast_mask.npy
-└── ...
-```
+### 3. Reduce benchmark records
 
-## Performance Estimates
-
-Based on the notebook example:
-- **Single file processing**: ~4-5 seconds
-- **Total files**: ~1000+ files in the dataset
-- **Estimated total time**: 1-2 hours with parallel processing
-- **Storage**: ~50-100 MB per `.npy` file
-
-## Next Steps for Centerline Extraction
-
-Once you have all the breast mask `.npy` files:
-
-1. **Convert to 3D Slicer format**: Convert `.npy` to `.nii.gz` or `.vtk`
-2. **Load in 3D Slicer**: Import the breast masks
-3. **Extract centerlines**: Use VMTK extension for centerline extraction
-4. **Automate**: Create Python script to automate the VMTK workflow
-
-## Troubleshooting
-
-### Common Issues:
-1. **Memory errors**: Reduce `--max-workers` or process in smaller batches
-2. **Model not found**: Check `--model-path` points to `breast_model.pth`
-3. **Permission errors**: Ensure write access to output directories
-4. **CUDA errors**: The model may require GPU; check PyTorch installation
-
-### Monitoring Progress:
-- The script shows real-time progress with ✓/✗ indicators
-- Check the summary at the end for success/failure counts
-- Failed files are listed for debugging
-
-## Integration with 3D Slicer
-
-The generated `.npy` files can be used as input for your 3D Slicer centerline extraction:
-
-```python
-# Example: Convert .npy to .nii.gz for 3D Slicer
-import numpy as np
-import SimpleITK as sitk
-
-# Load the breast mask
-mask = np.load('breast_mask.npy')
-
-# Convert to SimpleITK image
-image = sitk.GetImageFromArray(mask.astype(np.uint8))
-
-# Save as .nii.gz
-sitk.WriteImage(image, 'breast_mask.nii.gz')
+```bash
+micromamba run -n vanguard python batch_processing/reduce_legacy_vs_primary.py \
+  --benchmark-dir /net/projects2/vanguard/benchmarks/legacy_vs_primary/run_001
 ```
 
-This workflow provides you with all the breast mask segmentations needed for the next phase of centerline extraction in 3D Slicer.
+Reducer outputs:
+- `benchmark_reduced_per_study.csv`
+- `benchmark_reduced_summary.json`
 
+## Slurm Usage
+
+For cluster execution, use the scripts in `slurm_submit_scripts/`:
+- `submit_legacy_vs_primary_benchmark.sh` (head-node orchestrator)
+- `submit_legacy_vs_primary_benchmark_array.slurm` (array worker)
+- `submit_legacy_vs_primary_benchmark_reduce.slurm` (reducer)
+
+See `slurm_submit_scripts/README.md` for exact commands.
