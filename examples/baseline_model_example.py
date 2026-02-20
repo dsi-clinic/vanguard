@@ -26,7 +26,7 @@ Usage:
         --labels path/to/labels.csv \
         --output results/baseline_example
 
-    # Run with Excel-driven splits (site-exclusive, stratified).
+    # Run with Excel-driven splits (group-exclusive, stratified).
     # --excel-metadata alone: synthetic data is generated for the Excel cohort.
     python examples/baseline_model_example.py \
         --model random \
@@ -40,6 +40,18 @@ Usage:
         --labels path/to/labels.csv \
         --excel-metadata path/to/metadata.xlsx \
         --output results/baseline_example
+
+    # Dataset selection (iSpy2 only; iSpy2 + Duke; iSpy2 AND unilateral):
+    python examples/baseline_model_example.py --model random \
+        --excel-metadata path/to/metadata.xlsx --datasets iSpy2 --output results/ispy2
+    python examples/baseline_model_example.py --model random \
+        --excel-metadata path/to/metadata.xlsx --datasets iSpy2 Duke --output results/ispy2_duke
+    python examples/baseline_model_example.py --model random \
+        --excel-metadata path/to/metadata.xlsx --datasets iSpy2 --unilateral-only --output results/ispy2_unilateral
+
+    # Selection from YAML config (CLI flags override config):
+    python examples/baseline_model_example.py --model random \
+        --excel-metadata path/to/metadata.xlsx --config config/eval_selection_example.yaml
 
 Examples:
     python examples/baseline_model_example.py \
@@ -72,7 +84,16 @@ from evaluation import (  # noqa: E402
     report_random_baseline,
     save_random_baseline_distribution,
 )
-from src.utils.clinic_metadata import get_patient_ids_from_excel  # noqa: E402
+from evaluation.selection import (  # noqa: E402
+    apply_selection_criteria,
+    build_selection_criteria_from_args,
+    load_selection_criteria_from_yaml,
+)
+from evaluation.utils import prepare_predictions_df  # noqa: E402
+from src.utils.clinic_metadata import (  # noqa: E402
+    get_patient_ids_from_excel,
+    load_clinic_metadata_excel,
+)
 
 # ---------------------------------------------------------------------------
 # Section 1: Synthetic data generation
@@ -223,56 +244,96 @@ def predict_random(
 
 
 # ---------------------------------------------------------------------------
-# Section 3: K-fold evaluation
+# Section 3: K-fold and train/test runners
 # ---------------------------------------------------------------------------
-# K-fold: evaluator creates splits; we produce predictions per fold and pass
-# FoldResults to aggregate_kfold_results(). Use k-fold when you have limited
-# data and want stable metric estimates (mean ± std across folds). The evaluator
-# never trains the model—we do. We only use split indices to get train/val data.
+# Generic run_kfold: takes splits and a predictor that returns (y_true, y_pred,
+# y_prob, patient_ids) per fold. Generic run_train_test: takes a predictor that
+# returns (y_pred, y_prob) for the test set. Model adapters (random, logistic)
+# are built with a random_state and passed to these runners.
 
 
-def run_kfold_random(
+def _get_predictions_random(
+    split: FoldSplit,
+    X: np.ndarray,
+    y: np.ndarray,
+    stratum: np.ndarray | None,
+    random_state: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Produce random predictions for one fold's validation set."""
+    n_val = len(split.val_indices)
+    y_pred, y_prob = predict_random(n_val, random_state=random_state + split.fold_idx)
+    y_true = y[split.val_indices]
+    pid = (
+        split.val_patient_ids
+        if split.val_patient_ids is not None
+        else np.array([f"val_{i}" for i in range(n_val)])
+    )
+    return y_true, y_pred, y_prob, pid
+
+
+def _get_predictions_logistic(
+    split: FoldSplit,
+    X: np.ndarray,
+    y: np.ndarray,
+    stratum: np.ndarray | None,
+    random_state: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Fit LogisticRegression on train and predict on validation for one fold."""
+    from sklearn.linear_model import LogisticRegression
+
+    model = LogisticRegression(random_state=random_state, max_iter=500)
+    X_train, y_train = X[split.train_indices], y[split.train_indices]
+    X_val, y_val = X[split.val_indices], y[split.val_indices]
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_val)
+    y_prob = model.predict_proba(X_val)[:, 1]
+    pid = (
+        split.val_patient_ids
+        if split.val_patient_ids is not None
+        else np.array([f"val_{i}" for i in range(len(y_val))])
+    )
+    return y_val, y_pred, y_prob, pid
+
+
+def run_kfold(
     evaluator: Evaluator,
     X: np.ndarray,
     y: np.ndarray,
-    patient_ids: np.ndarray | None,
-    n_splits: int,
-    random_state: int,
+    splits: list[FoldSplit],
+    get_predictions_for_fold: callable,
     stratum: np.ndarray | None = None,
 ) -> list[FoldResults]:
-    """Run k-fold evaluation using the random model (no training).
+    """Run k-fold evaluation with a given predictor.
 
-    For each fold we only need the validation indices. We generate random
-    predictions for the validation set and collect FoldResults. The evaluator
-    then aggregates metrics across folds. If stratum is provided (aligned to X/y),
-    it is added to predictions for subgroup (stratum-specific) reporting.
+    For each split, get_predictions_for_fold(split, X, y, stratum) is called
+    and must return (y_true, y_pred, y_prob, patient_ids). Predictions are
+    assembled with prepare_predictions_df and optional stratum column.
+
+    Parameters
+    ----------
+    evaluator : Evaluator
+        Evaluator instance (used for aggregate_kfold_results later).
+    X : np.ndarray
+        Feature matrix (train set).
+    y : np.ndarray
+        Labels (train set).
+    splits : list[FoldSplit]
+        K-fold splits (from evaluator.create_kfold_splits or create_splits_from_excel).
+    get_predictions_for_fold : callable
+        (split, X, y, stratum) -> (y_true, y_pred, y_prob, patient_ids).
+    stratum : np.ndarray, optional
+        Stratum labels aligned to X/y for per-stratum reporting.
+
+    Returns:
+    -------
+    list[FoldResults]
+        One FoldResults per fold.
     """
-    splits = evaluator.create_kfold_splits(
-        n_splits=n_splits,
-        stratify=True,
-        shuffle=True,
-    )
     fold_results = []
     for split in splits:
-        n_val = len(split.val_indices)
-        # Use fold index in seed so different folds get different random predictions
-        fold_seed = random_state + split.fold_idx
-        y_pred, y_prob = predict_random(n_val, random_state=fold_seed)
-
-        y_true = y[split.val_indices]
-        pid = (
-            split.val_patient_ids
-            if split.val_patient_ids is not None
-            else np.array([f"val_{i}" for i in range(n_val)])
-        )
-
-        pred_df = pd.DataFrame(
-            {
-                "patient_id": pid,
-                "y_true": y_true,
-                "y_pred": y_pred,
-                "y_prob": y_prob,
-            }
+        y_true, y_pred, y_prob, pid = get_predictions_for_fold(split, X, y, stratum)
+        pred_df = prepare_predictions_df(
+            pid, y_true, y_pred, y_prob, fold=split.fold_idx
         )
         if stratum is not None:
             pred_df["stratum"] = stratum[split.val_indices]
@@ -280,198 +341,94 @@ def run_kfold_random(
     return fold_results
 
 
-def run_kfold_random_with_splits(
-    evaluator: Evaluator,
-    X: np.ndarray,
-    y: np.ndarray,
-    splits: list[FoldSplit],
-    random_state: int,
-    stratum: np.ndarray | None = None,
-) -> list[FoldResults]:
-    """Run k-fold evaluation using the random model with pre-defined splits (e.g. from Excel)."""
-    fold_results = []
-    for split in splits:
-        n_val = len(split.val_indices)
-        fold_seed = random_state + split.fold_idx
-        y_pred, y_prob = predict_random(n_val, random_state=fold_seed)
-        y_true = y[split.val_indices]
-        pid = (
-            split.val_patient_ids
-            if split.val_patient_ids is not None
-            else np.array([f"val_{i}" for i in range(n_val)])
-        )
-        pred_df = pd.DataFrame(
-            {"patient_id": pid, "y_true": y_true, "y_pred": y_pred, "y_prob": y_prob}
-        )
-        if stratum is not None:
-            pred_df["stratum"] = stratum[split.val_indices]
-        fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
-    return fold_results
-
-
-def run_kfold_logistic_with_splits(
-    evaluator: Evaluator,
-    X: np.ndarray,
-    y: np.ndarray,
-    splits: list[FoldSplit],
-    random_state: int,
-    stratum: np.ndarray | None = None,
-) -> list[FoldResults]:
-    """Run k-fold evaluation with LogisticRegression using pre-defined splits (e.g. from Excel)."""
-    from sklearn.linear_model import LogisticRegression
-
-    model = LogisticRegression(random_state=random_state, max_iter=500)
-    fold_results = []
-    for split in splits:
-        X_train = X[split.train_indices]
-        y_train = y[split.train_indices]
-        X_val = X[split.val_indices]
-        y_val = y[split.val_indices]
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_val)
-        y_prob = model.predict_proba(X_val)[:, 1]
-        pid = (
-            split.val_patient_ids
-            if split.val_patient_ids is not None
-            else np.array([f"val_{i}" for i in range(len(y_val))])
-        )
-        pred_df = pd.DataFrame(
-            {"patient_id": pid, "y_true": y_val, "y_pred": y_pred, "y_prob": y_prob}
-        )
-        if stratum is not None:
-            pred_df["stratum"] = stratum[split.val_indices]
-        fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
-    return fold_results
-
-
-def run_kfold_logistic(
-    evaluator: Evaluator,
-    X: np.ndarray,
-    y: np.ndarray,
-    patient_ids: np.ndarray | None,
-    n_splits: int,
-    random_state: int,
-    stratum: np.ndarray | None = None,
-) -> list[FoldResults]:
-    """Run k-fold evaluation with LogisticRegression (for comparison)."""
-    from sklearn.linear_model import LogisticRegression
-
-    model = LogisticRegression(random_state=random_state, max_iter=500)
-    splits = evaluator.create_kfold_splits(
-        n_splits=n_splits,
-        stratify=True,
-        shuffle=True,
-    )
-    fold_results = []
-    for split in splits:
-        # Train on this fold
-        X_train = X[split.train_indices]
-        y_train = y[split.train_indices]
-        X_val = X[split.val_indices]
-        y_val = y[split.val_indices]
-
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_val)
-        y_prob = model.predict_proba(X_val)[:, 1]
-
-        pid = (
-            split.val_patient_ids
-            if split.val_patient_ids is not None
-            else np.array([f"val_{i}" for i in range(len(y_val))])
-        )
-        pred_df = pd.DataFrame(
-            {
-                "patient_id": pid,
-                "y_true": y_val,
-                "y_pred": y_pred,
-                "y_prob": y_prob,
-            }
-        )
-        if stratum is not None:
-            pred_df["stratum"] = stratum[split.val_indices]
-        fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
-    return fold_results
-
-
-# ---------------------------------------------------------------------------
-# Section 4: Train/test evaluation
-# ---------------------------------------------------------------------------
-# Train/test: single split, train on train set, predict on test set. Use when
-# you have a fixed test set (e.g. temporal or external cohort). We save with
-# run_name="train_test" so results go to output_dir / model_name / train_test /.
-
-
-def run_train_test_random(
-    y_test: np.ndarray,
-    patient_ids_test: np.ndarray | None,
-    random_state: int,
-    stratum_test: np.ndarray | None = None,
-) -> TrainTestResults:
-    """Train/test evaluation with random model (no training, random predictions on test set)."""
-    n = len(y_test)
-    y_pred, y_prob = predict_random(n, random_state=random_state)
-    if patient_ids_test is None:
-        patient_ids_test = np.array([f"test_{i}" for i in range(n)])
-    pred_df = pd.DataFrame(
-        {
-            "patient_id": patient_ids_test,
-            "y_true": y_test,
-            "y_pred": y_pred,
-            "y_prob": y_prob,
-        }
-    )
-    if stratum_test is not None:
-        pred_df["stratum"] = stratum_test
-    # Compute metrics via evaluator's method (we need an evaluator instance for save_results later;
-    # for TrainTestResults we pass metrics from compute_metrics)
-    from evaluation.metrics import compute_binary_metrics
-
-    metrics = compute_binary_metrics(y_test, y_pred, y_prob)
-    return TrainTestResults(
-        metrics=metrics,
-        predictions=pred_df,
-        model_name="baseline_example",  # overwritten when saving
-        run_name=None,
-    )
-
-
-def run_train_test_logistic(
+def run_train_test(
+    get_predictions_fn: callable,
     X_train: np.ndarray,
     y_train: np.ndarray,
     X_test: np.ndarray,
     y_test: np.ndarray,
     patient_ids_test: np.ndarray | None,
+    model_name: str,
     random_state: int,
     stratum_test: np.ndarray | None = None,
 ) -> TrainTestResults:
-    """Train/test evaluation with LogisticRegression."""
-    from sklearn.linear_model import LogisticRegression
+    """Run train/test evaluation with a given predictor.
 
+    get_predictions_fn(X_train, y_train, X_test, y_test, patient_ids_test,
+    stratum_test, random_state) must return (y_pred, y_prob). Predictions
+    DataFrame and metrics are built here.
+
+    Parameters
+    ----------
+    get_predictions_fn : callable
+        Returns (y_pred, y_prob) for the test set.
+    X_train, y_train, X_test, y_test : np.ndarray
+        Train and test data.
+    patient_ids_test : np.ndarray or None
+        Test set patient IDs.
+    model_name : str
+        Model name for TrainTestResults.
+    random_state : int
+        Random seed (passed to get_predictions_fn).
+    stratum_test : np.ndarray, optional
+        Stratum for test set (per-stratum reporting).
+
+    Returns:
+    -------
+    TrainTestResults
+    """
     from evaluation.metrics import compute_binary_metrics
 
-    model = LogisticRegression(random_state=random_state, max_iter=500)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)[:, 1]
-    if patient_ids_test is None:
-        patient_ids_test = np.array([f"test_{i}" for i in range(len(y_test))])
-    pred_df = pd.DataFrame(
-        {
-            "patient_id": patient_ids_test,
-            "y_true": y_test,
-            "y_pred": y_pred,
-            "y_prob": y_prob,
-        }
+    y_pred, y_prob = get_predictions_fn(
+        X_train, y_train, X_test, y_test, patient_ids_test, stratum_test, random_state
     )
+    n = len(y_test)
+    if patient_ids_test is None:
+        patient_ids_test = np.array([f"test_{i}" for i in range(n)])
+    pred_df = prepare_predictions_df(patient_ids_test, y_test, y_pred, y_prob)
     if stratum_test is not None:
         pred_df["stratum"] = stratum_test
     metrics = compute_binary_metrics(y_test, y_pred, y_prob)
     return TrainTestResults(
         metrics=metrics,
         predictions=pred_df,
-        model_name="baseline_example",
+        model_name=model_name,
         run_name=None,
     )
+
+
+def _train_test_predictions_random(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    patient_ids_test: np.ndarray | None,
+    stratum_test: np.ndarray | None,
+    random_state: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Random predictions on test set (X_train, y_train unused)."""
+    n = len(y_test)
+    y_pred, y_prob = predict_random(n, random_state=random_state)
+    return y_pred, y_prob
+
+
+def _train_test_predictions_logistic(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    patient_ids_test: np.ndarray | None,
+    stratum_test: np.ndarray | None,
+    random_state: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """LogisticRegression fit on train, predict on test."""
+    from sklearn.linear_model import LogisticRegression
+
+    model = LogisticRegression(random_state=random_state, max_iter=500)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
+    return y_pred, y_prob
 
 
 # ---------------------------------------------------------------------------
@@ -531,13 +488,66 @@ def parse_args() -> argparse.Namespace:
         "--excel-metadata",
         type=Path,
         default=None,
-        help="Path to Excel metadata file. If provided, k-fold splits are from Excel (site-exclusive, stratified). Can be used alone (synthetic data is generated for Excel cohort) or with --features/--labels.",
+        help="Path to Excel metadata file. If provided, k-fold splits are group-exclusive and stratified. Can be used alone (synthetic data for Excel cohort) or with --features/--labels.",
+    )
+    parser.add_argument(
+        "--datasets",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Restrict evaluation to these datasets (e.g. iSpy2 Duke). Requires --excel-metadata.",
+    )
+    parser.add_argument(
+        "--sites",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Restrict evaluation to these sites. Requires --excel-metadata.",
+    )
+    parser.add_argument(
+        "--tumor-types",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Restrict evaluation to these tumor types/subtypes. Requires --excel-metadata.",
+    )
+    parser.add_argument(
+        "--unilateral-only",
+        action="store_true",
+        help="Include only unilateral cases. Requires --excel-metadata and laterality column.",
+    )
+    parser.add_argument(
+        "--bilateral-only",
+        action="store_true",
+        help="Include only bilateral cases. Requires --excel-metadata and laterality column.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to YAML config with selection criteria. Used when no CLI selection flags. Requires --excel-metadata.",
     )
     args = parser.parse_args()
     if (args.features is None) != (args.labels is None):
         parser.error(
             "Either provide both --features and --labels or neither (synthetic data)."
         )
+    has_selection = any(
+        [
+            args.datasets,
+            args.sites,
+            args.tumor_types,
+            args.unilateral_only,
+            args.bilateral_only,
+        ]
+    )
+    if has_selection and args.excel_metadata is None:
+        parser.error(
+            "Selection flags (--datasets, --sites, --tumor-types, "
+            "--unilateral-only, --bilateral-only) require --excel-metadata."
+        )
+    if args.config is not None and args.excel_metadata is None:
+        parser.error("--config requires --excel-metadata.")
     return args
 
 
@@ -546,13 +556,34 @@ def main() -> None:
     args = parse_args()
 
     # --- Data preparation ---
+    # Build selection criteria: CLI flags override; else use --config if set.
+    selection_criteria = build_selection_criteria_from_args(args)
+    if selection_criteria is None and args.config is not None:
+        try:
+            selection_criteria = load_selection_criteria_from_yaml(args.config)
+        except FileNotFoundError as e:
+            raise SystemExit(f"Config file not found: {e}") from e
+        except ValueError as e:
+            raise SystemExit(f"Invalid config: {e}") from e
+
     # When only --excel-metadata is set, define cohort from Excel and generate synthetic data for it.
     if (
         args.excel_metadata is not None
         and args.features is None
         and args.labels is None
     ):
-        excel_patient_ids = get_patient_ids_from_excel(args.excel_metadata)
+        if selection_criteria is not None:
+            metadata_df = load_clinic_metadata_excel(args.excel_metadata)
+            metadata_df = apply_selection_criteria(
+                metadata_df,
+                selection_criteria,
+                dataset_col="dataset",
+                site_col="site",
+                verbose=True,
+            )
+            excel_patient_ids = metadata_df["patient_id"].astype(str).to_numpy()
+        else:
+            excel_patient_ids = get_patient_ids_from_excel(args.excel_metadata)
         X, y, patient_ids = generate_synthetic_data(
             random_state=args.random_state,
             patient_ids=excel_patient_ids,
@@ -606,45 +637,31 @@ def main() -> None:
             patient_ids=train_pids,
             n_splits=args.n_splits,
             random_state=args.random_state,
-        )
-        if args.model == "random":
-            fold_results = run_kfold_random_with_splits(
-                evaluator,
-                X_train,
-                y_train,
-                splits,
-                random_state=args.random_state,
-                stratum=stratum,
-            )
-        else:
-            fold_results = run_kfold_logistic_with_splits(
-                evaluator,
-                X_train,
-                y_train,
-                splits,
-                random_state=args.random_state,
-                stratum=stratum,
-            )
-    elif args.model == "random":
-        fold_results = run_kfold_random(
-            evaluator,
-            X_train,
-            y_train,
-            train_pids,
-            n_splits=args.n_splits,
-            random_state=args.random_state,
-            stratum=stratum,
+            selection_criteria=selection_criteria,
         )
     else:
-        fold_results = run_kfold_logistic(
-            evaluator,
-            X_train,
-            y_train,
-            train_pids,
+        splits = evaluator.create_kfold_splits(
             n_splits=args.n_splits,
-            random_state=args.random_state,
-            stratum=stratum,
+            stratify=True,
+            shuffle=True,
         )
+
+    if args.model == "random":
+
+        def get_predictions(
+            split: FoldSplit, X: np.ndarray, y: np.ndarray, s: np.ndarray | None
+        ) -> tuple:
+            return _get_predictions_random(split, X, y, s, args.random_state)
+    else:
+
+        def get_predictions(
+            split: FoldSplit, X: np.ndarray, y: np.ndarray, s: np.ndarray | None
+        ) -> tuple:
+            return _get_predictions_logistic(split, X, y, s, args.random_state)
+
+    fold_results = run_kfold(
+        evaluator, X_train, y_train, splits, get_predictions, stratum=stratum
+    )
 
     kfold_results = evaluator.aggregate_kfold_results(fold_results)
 
@@ -678,24 +695,22 @@ def main() -> None:
         stratum[test_idx] if (do_train_test and stratum is not None) else None
     )
     if do_train_test and X_test is not None:
-        if args.model == "random":
-            tt_results = run_train_test_random(
-                y_test,
-                pid_test,
-                random_state=args.random_state,
-                stratum_test=stratum_test,
-            )
-        else:
-            tt_results = run_train_test_logistic(
-                X_train,
-                y_train,
-                X_test,
-                y_test,
-                pid_test,
-                args.random_state,
-                stratum_test=stratum_test,
-            )
-        tt_results.model_name = model_name
+        get_tt_fn = (
+            _train_test_predictions_random
+            if args.model == "random"
+            else _train_test_predictions_logistic
+        )
+        tt_results = run_train_test(
+            get_tt_fn,
+            X_train,
+            y_train,
+            X_test,
+            y_test,
+            pid_test,
+            model_name,
+            args.random_state,
+            stratum_test=stratum_test,
+        )
         evaluator.save_results(tt_results, args.output, run_name="train_test")
         print("Train/test results saved (run_name=train_test)")
         print(f"  AUC: {tt_results.metrics.get('auc', 'N/A')}")

@@ -113,22 +113,22 @@ def compute_metrics_by_group(
     group_col: str,
     metrics_to_compute: list[str] | None = None,
 ) -> dict[str, dict[str, float] | dict[str, dict[str, float]]]:
-    """Compute metrics on full set and per group (e.g. stratum/subtype).
+    """Compute metrics on full set and per stratum.
 
     Parameters
     ----------
     predictions : pd.DataFrame
-        Must have columns: y_true, y_pred, y_prob, and the group column.
+        Must have columns y_true, y_pred, y_prob, and the stratum column.
     group_col : str
-        Column name for grouping (e.g. "stratum" or "subtype").
+        Column name for stratum (e.g. "stratum" or "subtype").
     metrics_to_compute : list[str], optional
         Metric names to compute. If None, uses all registered metrics.
 
     Returns:
     -------
     dict
-        - "overall": dict of metric name -> value for full validation set
-        - "by_group": dict of group_value -> dict of metric name -> value
+        "overall": metric name -> value for full set; "by_group": stratum
+        value -> dict of metric name -> value.
     """
     if group_col not in predictions.columns:
         raise ValueError(
@@ -168,19 +168,17 @@ def compute_metrics_by_group(
 def aggregate_fold_metrics(
     fold_metrics_list: list[dict[str, float]],
 ) -> dict[str, dict[str, float]]:
-    """Aggregate metrics across k-fold splits (mean ± std).
+    """Aggregate metrics across k-fold splits (mean, std, min, max per metric).
 
     Parameters
     ----------
     fold_metrics_list : list[dict[str, float]]
-        List of metric dictionaries, one per fold
+        List of metric dictionaries, one per fold.
 
     Returns:
     -------
     dict[str, dict[str, float]]
-        Dictionary with aggregated metrics. Each metric has:
-        - "mean": mean across folds
-        - "std": standard deviation across folds
+        For each metric: "mean", "std", "min", and "max" across folds.
     """
     if not fold_metrics_list:
         return {}
@@ -204,9 +202,21 @@ def aggregate_fold_metrics(
         if values:
             mean_val = float(np.mean(values))
             std_val = float(np.std(values))
-            aggregated[metric_name] = {"mean": mean_val, "std": std_val}
+            min_val = float(np.min(values))
+            max_val = float(np.max(values))
+            aggregated[metric_name] = {
+                "mean": mean_val,
+                "std": std_val,
+                "min": min_val,
+                "max": max_val,
+            }
         else:
             # All NaN
-            aggregated[metric_name] = {"mean": float("nan"), "std": float("nan")}
+            aggregated[metric_name] = {
+                "mean": float("nan"),
+                "std": float("nan"),
+                "min": float("nan"),
+                "max": float("nan"),
+            }
 
     return aggregated

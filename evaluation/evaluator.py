@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -24,13 +23,14 @@ from evaluation.random_baseline import (
     empirical_p_value,
     z_score,
 )
+from evaluation.types import FoldResults, KFoldResults, TrainTestResults
 from evaluation.utils import (
     align_data,
     validate_inputs,
 )
 from evaluation.visualizations import VISUALIZATION_REGISTRY
 
-# Column name(s) used for stratum/subgroup reporting (first present in predictions is used)
+# Column name(s) used for stratum reporting (first present in predictions is used)
 STRATUM_COLUMN_ALIASES = ("stratum", "subtype")
 
 
@@ -46,7 +46,7 @@ def _print_validation_summary(
     validation_summary: dict,
     stratum_col: str,
 ) -> None:
-    """Print overall and stratum-specific metrics (e.g. AUC) to stdout."""
+    """Print overall and per-stratum metrics (e.g. AUC) to stdout."""
     overall = validation_summary.get("overall", {})
     by_group = validation_summary.get("by_group", {})
     print("Validation summary:")
@@ -61,48 +61,6 @@ def _print_validation_summary(
         )
         print(f"  AUC (Strata {i} / {stratum_name}): {auc_str}")
     print()
-
-
-@dataclass
-class FoldSplit:
-    """Represents a single fold split."""
-
-    fold_idx: int
-    train_indices: np.ndarray
-    val_indices: np.ndarray
-    train_patient_ids: np.ndarray | None = None
-    val_patient_ids: np.ndarray | None = None
-
-
-@dataclass
-class FoldResults:
-    """Results from a single fold."""
-
-    fold_idx: int
-    predictions: pd.DataFrame  # columns: patient_id, y_true, y_pred, y_prob
-    metrics: dict[str, float] | None = None  # Optional pre-computed metrics
-
-
-@dataclass
-class KFoldResults:
-    """Aggregated results from k-fold cross-validation."""
-
-    fold_metrics: list[dict[str, float]]
-    aggregated_metrics: dict[str, dict[str, float]]
-    predictions: pd.DataFrame  # columns: patient_id, fold, y_true, y_pred, y_prob
-    n_splits: int
-    model_name: str
-    run_name: str | None = None
-
-
-@dataclass
-class TrainTestResults:
-    """Results from train/test evaluation."""
-
-    metrics: dict[str, float]
-    predictions: pd.DataFrame  # columns: patient_id, y_true, y_pred, y_prob
-    model_name: str
-    run_name: str | None = None
 
 
 class Evaluator:
@@ -161,8 +119,54 @@ class Evaluator:
         return_report: bool = False,
     ) -> list[FoldSplit] | tuple[list[FoldSplit], dict]:
         """Create k-fold splits and return them to the model.
-        
-        Supports both standard stratified k-fold and group-stratified k-fold.
+
+        Supports both standard stratified k-fold and group-stratified k-fold
+        (group-exclusive folds with stratification by stratify_labels).
+
+        Parameters
+        ----------
+        n_splits : int, default=5
+            Number of folds.
+        stratify : bool, default=True
+            Whether to use stratified k-fold (maintains class distribution).
+            Ignored if groups/stratify_labels are provided (uses group-stratified).
+        shuffle : bool, default=True
+            Whether to shuffle data before splitting.
+        groups : np.ndarray | None, default=None
+            Group assignments for each sample (e.g. site). If provided along with
+            stratify_labels, uses group-stratified k-fold so groups do not cross folds.
+        stratify_labels : np.ndarray | None, default=None
+            Stratification labels (e.g. subtype/dataset). If provided along with
+            groups, used for group-stratified splitting. If provided alone,
+            used for standard stratified splitting instead of y.
+        validate_exclusivity : bool, default=True
+            Whether to validate and warn if groups cross folds (only used when
+            groups are provided).
+        return_report : bool, default=False
+            If True, also return a report dictionary with distribution statistics
+            (only used when groups are provided).
+
+        Returns:
+        -------
+        list[FoldSplit] | tuple[list[FoldSplit], dict]
+            List of FoldSplit objects, one per fold, containing:
+            - train_indices: indices for training
+            - val_indices: indices for validation
+            - train_patient_ids: patient IDs for training (if available)
+            - val_patient_ids: patient IDs for validation (if available)
+            If return_report=True and groups provided, returns tuple of (splits, report_dict).
+
+        Examples:
+        --------
+        >>> # Standard stratified k-fold (existing behavior)
+        >>> splits = evaluator.create_kfold_splits(n_splits=5)
+        >>>
+        >>> # Group-stratified k-fold (site-exclusive, subtype-stratified)
+        >>> splits = evaluator.create_kfold_splits(
+        ...     n_splits=5,
+        ...     groups=site_array,
+        ...     stratify_labels=subtype_array
+        ... )
         """
         # Use group-stratified splitting if both groups and stratify_labels provided
         if groups is not None and stratify_labels is not None:
@@ -345,26 +349,30 @@ class Evaluator:
     ) -> None:
         """Save results to output directory, organized by model name and run name.
 
+        Writes predictions CSV, metrics JSON (with per-fold metrics for k-fold),
+        and registered visualizations. If results.predictions has a stratum
+        column (e.g. "stratum" or "subtype"), per-stratum metrics are computed,
+        added to metrics, and printed.
+
         Parameters
         ----------
         results : KFoldResults | TrainTestResults
-            Evaluation results to save
+            Evaluation results to save.
         output_dir : Path
-            Base output directory. Results will be saved to:
-            output_dir / model_name / run_name / (if run_name provided)
-            output_dir / model_name / (if no run_name)
+            Base output directory. Results are saved to
+            output_dir / model_name / run_name (if run_name provided), else
+            output_dir / model_name.
         run_name : str, optional
-            Name of this run (e.g., "run_001", "experiment_1", timestamp).
-            Used for tracking multiple runs of the same model.
-            If None, results saved directly under model_name.
+            Name of this run (e.g. "run_001", "experiment_1"). If None, results
+            are saved directly under model_name.
         random_baseline_distribution : dict, optional
             Precomputed null distribution from compute_random_baseline_distribution.
-            If provided, adds random_baseline (mean, std, n_runs) to metrics and,
-            when results contain AUC, adds z_score_vs_random and p_value_vs_random.
-            Not computed by default (opt-in).
+            If provided, adds random_baseline to metrics and, when results
+            contain AUC, adds z_score_vs_random and p_value_vs_random.
 
-        Note: output_dir is a Path object. Model systems determine this path
-        from their configuration (CLI args, config files, etc.) and pass it here.
+        Notes:
+        -----
+        output_dir is a Path. Model systems pass the path from their config.
         """
         output_dir = Path(output_dir)
 
@@ -420,6 +428,8 @@ class Evaluator:
             metrics_dict["random_baseline"] = {
                 "mean": random_baseline_distribution["mean"],
                 "std": random_baseline_distribution["std"],
+                "min": random_baseline_distribution.get("min", float("nan")),
+                "max": random_baseline_distribution.get("max", float("nan")),
                 "n_runs": random_baseline_distribution["n_runs"],
             }
             observed_auc = None
