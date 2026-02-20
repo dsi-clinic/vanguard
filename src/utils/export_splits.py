@@ -43,6 +43,12 @@ Examples:
         --stratify-cols dataset \
         --id-col patient_id \
         --report
+
+    # Dataset selection (CLI or config)
+    python -m src.utils.export_splits --excel metadata.xlsx --output splits.csv \
+        --datasets iSpy2 Duke
+    python -m src.utils.export_splits --excel metadata.xlsx --output splits.csv \
+        --config config/eval_selection_example.yaml
 """
 
 from __future__ import annotations
@@ -59,6 +65,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from evaluation.kfold import export_splits_to_csv  # noqa: E402
+from evaluation.selection import (  # noqa: E402
+    build_selection_criteria_from_args,
+    load_selection_criteria_from_yaml,
+)
 
 
 def export_splits(
@@ -73,6 +83,7 @@ def export_splits(
     stratify_cols: list[str] | None = None,
     validate_exclusivity: bool = True,
     return_report: bool = False,
+    selection_criteria: object | None = None,
 ) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     """Export group-stratified k-fold splits to CSV.
 
@@ -121,6 +132,7 @@ def export_splits(
         validate_exclusivity=validate_exclusivity,
         return_report=return_report,
         verbose=True,
+        selection_criteria=selection_criteria,
     )
 
 
@@ -202,6 +214,44 @@ def parse_args() -> argparse.Namespace:
         help="Print detailed split distribution report",
     )
 
+    parser.add_argument(
+        "--datasets",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Restrict to these datasets (e.g. iSpy2 Duke)",
+    )
+    parser.add_argument(
+        "--sites",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Restrict to these sites",
+    )
+    parser.add_argument(
+        "--tumor-types",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Restrict to these tumor types/subtypes",
+    )
+    parser.add_argument(
+        "--unilateral-only",
+        action="store_true",
+        help="Include only unilateral cases (requires laterality column)",
+    )
+    parser.add_argument(
+        "--bilateral-only",
+        action="store_true",
+        help="Include only bilateral cases (requires laterality column)",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to YAML config with selection criteria. Used when no CLI selection flags.",
+    )
+
     return parser.parse_args()
 
 
@@ -213,6 +263,18 @@ def main() -> None:
     if not args.excel.exists():
         print(f"Error: Excel file not found: {args.excel}", file=sys.stderr)
         sys.exit(1)
+
+    # Build selection criteria: CLI flags override; else use --config if set
+    selection_criteria = build_selection_criteria_from_args(args)
+    if selection_criteria is None and args.config is not None:
+        try:
+            selection_criteria = load_selection_criteria_from_yaml(args.config)
+        except FileNotFoundError as e:
+            print(f"Error: Config file not found: {e}", file=sys.stderr)
+            sys.exit(1)
+        except ValueError as e:
+            print(f"Error: Invalid config: {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Export splits
     try:
@@ -227,6 +289,7 @@ def main() -> None:
             stratify_cols=args.stratify_cols,
             validate_exclusivity=not args.no_validate,
             return_report=args.report,
+            selection_criteria=selection_criteria,
         )
 
         print(f"\n✓ Successfully exported splits to {args.output}")
