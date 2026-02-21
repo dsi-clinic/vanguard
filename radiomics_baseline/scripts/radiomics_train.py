@@ -24,9 +24,12 @@ What this script does
 1) Load train/test feature CSVs and align with labels.
 2) (Optional) Append a numeric subtype code as an extra feature.
 3) Sanitize to numeric-only; drop all-NaN and zero-variance columns.
-4) (Optional) Correlation prune (train-only), then align test columns.
-5) (Optional) SelectKBest K features (train-only), then align test columns.
-6) Train the chosen classifier (logistic, RF, or XGBoost), optionally via GridSearchCV.
+4) Build a sklearn Pipeline that includes — in order — median imputation,
+   (optional) CorrelationPruner, (optional) SelectKBest, (optional) scaling,
+   and the classifier.  Feature selection lives inside the pipeline so that it
+   is re-fitted on only the training rows of every k-fold split, preventing
+   label leakage into cross-validated AUC estimates.
+5) Train the chosen classifier (logistic, RF, or XGBoost), optionally via GridSearchCV.
 7) Run the evaluation framework:
    - Build a predictions DataFrame (with subtype column for automatic
      per-subtype AUC via evaluation.metrics.compute_metrics_by_group).
@@ -79,7 +82,7 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from sklearn.base import clone
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.model_selection import (
     GridSearchCV,
     StratifiedKFold,
@@ -141,49 +144,43 @@ def sanitize_numeric(df: pd.DataFrame, tag: str) -> pd.DataFrame:
     return num
 
 
-def corr_prune(X: pd.DataFrame, thr: float) -> tuple[pd.DataFrame, list[str]]:
-    """Drop one of any pair of features with |rho| >= thr (train-only)."""
-    if thr <= 0 or thr >= 1 or X.shape[1] < MIN_CLASS_COUNT:
-        return X, []
-    corr = X.corr(method="pearson").abs()
-    upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
-    drop_cols = [c for c in upper.columns if (upper[c] >= thr).any()]
-    X_kept = X.drop(columns=drop_cols, errors="ignore")
-    print(
-        f"[DEBUG] corr-prune @ {thr:.2f}: "
-        f"dropped={len(drop_cols)}, kept={X_kept.shape[1]}",
-    )
-    return X_kept, drop_cols
+class CorrelationPruner(BaseEstimator, TransformerMixin):
+    """Drop one of any highly-correlated pair of features (fit on train only).
 
+    Operates on numpy arrays (i.e. after the imputer step) so NaNs are already
+    filled.  Uses a greedy column-scan: for each pair (i, j) with i < j whose
+    absolute Pearson correlation >= threshold, column j is marked for removal
+    unless it has already been marked.
+    """
 
-def apply_kbest(
-    Xtr: pd.DataFrame,
-    ytr: np.ndarray,
-    Xte: pd.DataFrame,
-    k: int,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Select top-k features on TRAIN only using ANOVA F-test, handling NaNs via median imputation."""
-    if not k or k >= Xtr.shape[1]:
-        return Xtr, Xte
+    def __init__(self, threshold: float = 0.9) -> None:
+        self.threshold = threshold
 
-    # For feature scoring, fill NaNs in TRAIN with column medians
-    Xtr_for_kbest = Xtr.copy()
-    if Xtr_for_kbest.isna().to_numpy().any():
-        col_medians = Xtr_for_kbest.median(axis=0)
-        Xtr_for_kbest = Xtr_for_kbest.fillna(col_medians)
-        print(
-            "[DEBUG] apply_kbest: filled NaNs in Xtr with column "
-            "medians for k-best selection.",
+    def fit(self, X: np.ndarray, y: np.ndarray | None = None) -> "CorrelationPruner":
+        if self.threshold <= 0 or self.threshold >= 1 or X.shape[1] < MIN_CLASS_COUNT:
+            self.keep_mask_ = np.ones(X.shape[1], dtype=bool)
+            return self
+
+        corr = np.abs(np.corrcoef(X.T))
+        to_drop: set[int] = set()
+        for i in range(corr.shape[0]):
+            if i in to_drop:
+                continue
+            for j in range(i + 1, corr.shape[1]):
+                if j not in to_drop and corr[i, j] >= self.threshold:
+                    to_drop.add(j)
+
+        self.keep_mask_ = np.array(
+            [idx not in to_drop for idx in range(X.shape[1])], dtype=bool
         )
+        print(
+            f"[DEBUG] CorrelationPruner @ {self.threshold:.2f}: "
+            f"dropped={len(to_drop)}, kept={self.keep_mask_.sum()}",
+        )
+        return self
 
-    sel = SelectKBest(score_func=f_classif, k=k)
-    sel.fit(Xtr_for_kbest, ytr)
-
-    keep_cols = Xtr.columns[sel.get_support()]
-    Xtr_k = Xtr[keep_cols]
-    Xte_k = Xte.reindex(columns=keep_cols, fill_value=np.nan)
-    print(f"[DEBUG] k-best={k}: Xtr -> {Xtr_k.shape}, Xte -> {Xte_k.shape}")
-    return Xtr_k, Xte_k
+    def transform(self, X: np.ndarray, y: np.ndarray | None = None) -> np.ndarray:
+        return X[:, self.keep_mask_]
 
 
 # ---------------------------
@@ -507,17 +504,17 @@ def main() -> None:
     # column-align test to train
     Xte = Xte.reindex(columns=Xtr.columns, fill_value=np.nan)
 
-    # ---------------- Corr prune (train only) ----------------
-    Xtr, _dropped = corr_prune(Xtr, args.corr_threshold)
-    Xte = Xte.reindex(columns=Xtr.columns, fill_value=np.nan)
+    print(f"[DEBUG] sanitized train/test shapes: {Xtr.shape} / {Xte.shape}")
 
-    # ---------------- K-best (train only) ----------------
-    Xtr, Xte = apply_kbest(Xtr, ytr, Xte, args.k_best)
-
-    print(f"[DEBUG] final train/test shapes: {Xtr.shape} / {Xte.shape}")
-
-    # ---------------- Build pipeline ----------------
+    # ---------------- Build pipeline (feature selection runs inside each fit) --
+    # CorrelationPruner and SelectKBest are included as pipeline steps so that
+    # they are re-fitted on only the training rows of every k-fold split,
+    # preventing label leakage into cross-validated AUC estimates.
     steps: list[tuple[str, object]] = [("impute", SimpleImputer(strategy="median"))]
+    if args.corr_threshold > 0:
+        steps.append(("corr_prune", CorrelationPruner(threshold=args.corr_threshold)))
+    if args.k_best > 0:
+        steps.append(("kbest", SelectKBest(score_func=f_classif, k=args.k_best)))
     if args.classifier == "logistic":
         steps.append(("scale", StandardScaler()))
     steps.append(("clf", build_estimator(args)))
@@ -525,6 +522,16 @@ def main() -> None:
 
     # ---------------- Train ----------------
     pipe.fit(Xtr, ytr)
+
+    # Number of features reaching the classifier after pipeline selection steps.
+    if "kbest" in pipe.named_steps:
+        n_features_used = int(pipe.named_steps["kbest"].get_support().sum())
+    elif "corr_prune" in pipe.named_steps:
+        n_features_used = int(pipe.named_steps["corr_prune"].keep_mask_.sum())
+    else:
+        n_features_used = int(Xtr.shape[1])
+    print(f"[DEBUG] n_features_used (entering classifier): {n_features_used}")
+
     clf_step = pipe.named_steps["clf"]
 
     # predict_proba and classes_ should be available (GridSearchCV delegates)
@@ -575,11 +582,13 @@ def main() -> None:
     auc_cv = float("nan")
     auc_cv_by_subtype: dict[str, float] | None = None
     if args.cv_folds and args.cv_folds > 1:
-        # Each fold gets a fresh clone of the fitted pipeline so that its
-        # imputer, scaler, and classifier are trained independently on that
-        # fold's training rows only.  Note: if --grid-search is enabled, each
-        # fold runs its own GridSearchCV (correct but slower than the old
-        # cross_val_predict approach, which ran one grid search on all of Xtr).
+        # Each fold gets a fresh clone of the full pipeline (imputer,
+        # CorrelationPruner, SelectKBest, scaler, classifier) so that every
+        # step — including feature selection — is fitted on only that fold's
+        # training rows.  This prevents label leakage through feature selection.
+        # Note: if --grid-search is enabled, each fold runs its own
+        # GridSearchCV (correct but slower than the old cross_val_predict
+        # approach, which ran one grid search on all of Xtr).
         fold_splits = evaluator.create_kfold_splits(
             n_splits=args.cv_folds,
             stratify=True,
@@ -731,7 +740,7 @@ def main() -> None:
             "auc_test": auc_te,
             "auc_train": auc_tr,
             "auc_train_cv": auc_cv,
-            "n_features_used": int(Xtr.shape[1]),
+            "n_features_used": n_features_used,
             # Additional radiomics diagnostics
             "auc_train_cv_by_subtype": auc_cv_by_subtype,
             "auc_test_by_subtype": auc_test_by_subtype,
