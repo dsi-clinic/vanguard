@@ -13,19 +13,19 @@ sweep:
     # Raw phases only (baseline — same as existing experiments)
     - ["{pid}/{pid}_0001.nii.gz", "{pid}/{pid}_0002.nii.gz"]
     # Kinetic maps only
-    - ["{pid}/{pid}_kinetic_E_early.nii.gz",
-       "{pid}/{pid}_kinetic_E_peak.nii.gz",
-       "{pid}/{pid}_kinetic_slope_in.nii.gz",
-       "{pid}/{pid}_kinetic_slope_out.nii.gz",
-       "{pid}/{pid}_kinetic_AUC.nii.gz"]
+    - ["/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",
+       "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_peak.nii.gz",
+       "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_in.nii.gz",
+       "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz",
+       "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz"]
     # Combined: raw phases + kinetic maps
     - ["{pid}/{pid}_0001.nii.gz",
        "{pid}/{pid}_0002.nii.gz",
-       "{pid}/{pid}_kinetic_E_early.nii.gz",
-       "{pid}/{pid}_kinetic_E_peak.nii.gz",
-       "{pid}/{pid}_kinetic_slope_in.nii.gz",
-       "{pid}/{pid}_kinetic_slope_out.nii.gz",
-       "{pid}/{pid}_kinetic_AUC.nii.gz"]
+       "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",
+       "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_peak.nii.gz",
+       "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_in.nii.gz",
+       "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz",
+       "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz"]
 
   train.classifier:
     - logistic

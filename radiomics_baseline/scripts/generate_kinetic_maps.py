@@ -11,6 +11,7 @@ Usage
         --images /net/projects2/vanguard/MAMA-MIA-syn60868042/images \
         --masks  /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert \
         --splits /home/summe/vanguard/radiomics_baseline/splits_train_test_ready.csv \
+        --output-dir /home/summe/vanguard/radiomics_baseline/kinetic_maps \
         --mask-pattern "{pid}.nii.gz" \
         --n-jobs 8 \
         --generate-tpeak-voxel \
@@ -252,26 +253,32 @@ def generate_maps_for_pid(
     images_dir: str,
     masks_dir: str,
     mask_pattern: str,
+    output_dir: str | None = None,
     min_post_contrast: int = 1,
     generate_tpeak_voxel: bool = False,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Generate and save all kinetic parameter maps for one patient.
 
-    Saves maps as ``{images_dir}/{pid}/{pid}_kinetic_{name}.nii.gz``.
+    Saves maps as ``{output_dir}/{pid}/{pid}_kinetic_{name}.nii.gz``.
+    If *output_dir* is ``None``, falls back to *images_dir*.
 
     Returns a summary dict with pid, n_phases, maps_generated, status.
     """
     result: dict[str, Any] = {"patient_id": pid, "status": "success", "error": ""}
 
     try:
+        # Determine where to write maps
+        out_root = Path(output_dir) if output_dir else Path(images_dir)
+        patient_out_dir = out_root / pid
+        patient_out_dir.mkdir(parents=True, exist_ok=True)
+
         # Check if already generated (skip unless overwrite)
-        patient_dir = Path(images_dir) / pid
         if not overwrite:
             existing = [
                 name
                 for name in CORE_MAP_NAMES
-                if (patient_dir / f"{pid}_kinetic_{name}.nii.gz").exists()
+                if (patient_out_dir / f"{pid}_kinetic_{name}.nii.gz").exists()
             ]
             if len(existing) == len(CORE_MAP_NAMES):
                 result["status"] = "skipped"
@@ -328,7 +335,7 @@ def generate_maps_for_pid(
         maps_saved = 0
         for name, arr in kinetic_maps.items():
             clean = sanitize_map(arr, mask)
-            out_path = patient_dir / f"{pid}_kinetic_{name}.nii.gz"
+            out_path = patient_out_dir / f"{pid}_kinetic_{name}.nii.gz"
             save_map_as_nifti(clean, ref_img, out_path)
             maps_saved += 1
 
@@ -389,6 +396,12 @@ def main() -> None:
         help="Generate voxel-wise time-to-peak map (requires >=4 post-contrast phases).",
     )
     ap.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Directory to write kinetic maps (default: same as --images).",
+    )
+    ap.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite existing kinetic maps.",
@@ -413,6 +426,7 @@ def main() -> None:
             images_dir=args.images,
             masks_dir=args.masks,
             mask_pattern=args.mask_pattern,
+            output_dir=args.output_dir,
             generate_tpeak_voxel=args.generate_tpeak_voxel,
             overwrite=args.overwrite,
         )

@@ -3,6 +3,15 @@
 
 Stage 2: Train a classifier on already-extracted radiomics features.
 
+Uses the centralized evaluation framework (evaluation/) for metric
+computation, per-subtype validation-summary reporting, and standard output
+artefacts (metrics.json, predictions.csv, plots/roc_curve.png).
+Radiomics-specific outputs (model.pkl, pr_curve.png, calibration_curve.png,
+predictions_cv_train.csv) and extra metric fields (auc_train, auc_train_cv,
+threshold, sensitivity/specificity, confusion matrix, etc.) are written
+alongside the framework outputs so that run_experiment.py and the ablation
+runner remain fully backward-compatible.
+
 Inputs
 ------
 - --train-features : CSV from radiomics_extract.py (rows = patients, cols = features)
@@ -18,7 +27,18 @@ What this script does
 4) (Optional) Correlation prune (train-only), then align test columns.
 5) (Optional) SelectKBest K features (train-only), then align test columns.
 6) Train the chosen classifier (logistic, RF, or XGBoost), optionally via GridSearchCV.
-7) Save metrics.json, predictions.csv, ROC/PR/Calibration plots, and model.pkl.
+7) Run the evaluation framework:
+   - Build a predictions DataFrame (with subtype column for automatic
+     per-subtype AUC via evaluation.metrics.compute_metrics_by_group).
+   - Call evaluator.save_results() to write:
+       <output>/metrics.json          (framework structure + radiomics extras)
+       <output>/predictions.csv       (patient_id, y_true, y_pred, y_prob[, subtype])
+       <output>/plots/roc_curve.png   (seaborn ROC curve)
+8) Augment metrics.json with all radiomics-specific fields so that
+   run_experiment.py can still read flat keys (auc_test, auc_train,
+   auc_train_cv, n_features_used) from the top level of the file.
+9) Save additional radiomics outputs: pr_curve.png, calibration_curve.png, model.pkl.
+   If --cv-folds > 1, also save predictions_cv_train.csv.
 
 Example Usage
 ---------------------
@@ -41,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import joblib
@@ -58,13 +79,24 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
+from sklearn.base import clone
 from sklearn.model_selection import (
     GridSearchCV,
     StratifiedKFold,
-    cross_val_predict,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+
+# ---------------------------------------------------------------------------
+# Centralized evaluation framework (evaluation/)
+# ---------------------------------------------------------------------------
+# Add the project root (/home/summe/vanguard) to sys.path so that
+# `from evaluation import ...` resolves regardless of working directory.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from evaluation import Evaluator, FoldResults, TrainTestResults  # noqa: E402
 
 MIN_CLASS_COUNT = 2
 CONF_MATRIX_SIZE = 4
@@ -155,29 +187,9 @@ def apply_kbest(
 
 
 # ---------------------------
-# Plotting
+# Additional plots
+# (beyond what the evaluation framework's VISUALIZATION_REGISTRY provides)
 # ---------------------------
-def plot_roc(
-    y_true: np.ndarray,
-    y_prob: np.ndarray,
-    outpath: Path,
-) -> None:
-    """Plot ROC curve and save to disk."""
-    if len(np.unique(y_true)) < MIN_CLASS_COUNT:
-        return
-    fpr, tpr, _ = roc_curve(y_true, y_prob)
-    auc = roc_auc_score(y_true, y_prob)
-    plt.figure()
-    plt.plot(fpr, tpr, label=f"AUC={auc:.3f}")
-    plt.plot([0, 1], [0, 1], "--")
-    plt.legend()
-    plt.xlabel("FPR")
-    plt.ylabel("TPR")
-    plt.tight_layout()
-    plt.savefig(outpath, dpi=200)
-    plt.close()
-
-
 def plot_pr(
     y_true: np.ndarray,
     y_prob: np.ndarray,
@@ -545,49 +557,97 @@ def main() -> None:
     else:
         tn = fp = fn = tp = sens = spec = None
 
-    # ---------------- Optional K-fold CV on training set ----------------
+    # ---------------- Evaluator (shared by CV k-fold and test evaluation) -----
+    # Created here so evaluator.create_kfold_splits() can be used in the CV
+    # block below, and evaluator.save_results() used for both outputs later.
+    # model_name=outdir.name drives the output path:
+    #   save_results(..., outdir.parent)          → outdir/  (test results)
+    #   save_results(..., outdir.parent, run_name="cv") → outdir/cv/ (k-fold)
+    evaluator = Evaluator(
+        X=Xtr,
+        y=ytr,
+        patient_ids=Xtr.index,
+        model_name=outdir.name,
+        random_state=42,
+    )
+
+    # ---------------- K-fold CV on training set (evaluation framework) -------
     auc_cv = float("nan")
     auc_cv_by_subtype: dict[str, float] | None = None
     if args.cv_folds and args.cv_folds > 1:
-        cv = StratifiedKFold(n_splits=args.cv_folds, shuffle=True, random_state=42)
-        # cross-validated train predictions for the positive class (label=1)
-        p_cv = cross_val_predict(
-            pipe,
-            Xtr,
-            ytr,
-            cv=cv,
-            method="predict_proba",
-            n_jobs=-1,
-        )[:, 1]
-        auc_cv = (
-            float(roc_auc_score(ytr, p_cv))
-            if len(np.unique(ytr)) > MIN_CLASS_COUNT - 1
-            else float("nan")
+        # Each fold gets a fresh clone of the fitted pipeline so that its
+        # imputer, scaler, and classifier are trained independently on that
+        # fold's training rows only.  Note: if --grid-search is enabled, each
+        # fold runs its own GridSearchCV (correct but slower than the old
+        # cross_val_predict approach, which ran one grid search on all of Xtr).
+        fold_splits = evaluator.create_kfold_splits(
+            n_splits=args.cv_folds,
+            stratify=True,
+            shuffle=True,
+        )
+        fold_results_list = []
+        for split in fold_splits:
+            X_fold_tr = Xtr.iloc[split.train_indices]
+            y_fold_tr = ytr[split.train_indices]
+            X_fold_val = Xtr.iloc[split.val_indices]
+            y_fold_val = ytr[split.val_indices]
+
+            fold_pipe = clone(pipe)
+            fold_pipe.fit(X_fold_tr, y_fold_tr)
+
+            fold_clf = fold_pipe.named_steps["clf"]
+            fold_pos_idx = int(np.where(fold_clf.classes_ == 1)[0][0])
+            y_prob_val = fold_pipe.predict_proba(X_fold_val)[:, fold_pos_idx]
+            # Use 0.5 threshold for per-fold binary predictions; the Youden-J
+            # threshold is only meaningful on the full training set.
+            y_pred_val = (y_prob_val >= 0.5).astype(int)
+
+            fold_pred_df = pd.DataFrame(
+                {
+                    "patient_id": split.val_patient_ids,
+                    "y_true": y_fold_val,
+                    "y_pred": y_pred_val,
+                    "y_prob": y_prob_val,
+                }
+            )
+            if subtype_col is not None:
+                fold_pred_df["subtype"] = labels.loc[
+                    Xtr.index[split.val_indices], subtype_col
+                ].to_numpy()
+
+            fold_results_list.append(
+                FoldResults(fold_idx=split.fold_idx, predictions=fold_pred_df)
+            )
+
+        kfold_results = evaluator.aggregate_kfold_results(fold_results_list)
+
+        # Save framework k-fold outputs to outdir/cv/:
+        #   outdir/cv/metrics.json          (mean ± std AUC, per-fold metrics,
+        #                                    validation_summary if subtype present)
+        #   outdir/cv/metrics_per_fold.json (per-fold AUC list)
+        #   outdir/cv/predictions.csv       (all OOF predictions, fold-labelled)
+        #   outdir/cv/plots/roc_curve.png
+        evaluator.save_results(kfold_results, outdir.parent, run_name="cv")
+
+        auc_cv = kfold_results.aggregated_metrics.get("auc", {}).get(
+            "mean", float("nan")
         )
 
-        # per-subtype CV AUC, if subtype labels exist
+        # Per-subtype CV AUC computed from the pooled OOF predictions
+        # (kfold_results.predictions concatenates all fold val rows).
         if subtype_col is not None:
-            sub_tr = labels.loc[Xtr.index, subtype_col]
+            cv_preds = kfold_results.predictions
             auc_cv_by_subtype = {}
-            for sub_val in sorted(sub_tr.dropna().unique()):
-                mask = sub_tr == sub_val
-                mask_array = mask.to_numpy()
-                y_true_sub = ytr[mask_array]
-                y_prob_sub = p_cv[mask_array]
-                if len(np.unique(y_true_sub)) < MIN_CLASS_COUNT:
-                    auc_sub = float("nan")
+            for sub_val in sorted(cv_preds["subtype"].dropna().unique()):
+                mask = cv_preds["subtype"] == sub_val
+                y_sub = cv_preds.loc[mask, "y_true"].to_numpy()
+                p_sub = cv_preds.loc[mask, "y_prob"].to_numpy()
+                if len(np.unique(y_sub)) < MIN_CLASS_COUNT:
+                    auc_cv_by_subtype[str(sub_val)] = float("nan")
                 else:
-                    auc_sub = float(roc_auc_score(y_true_sub, y_prob_sub))
-                auc_cv_by_subtype[str(sub_val)] = auc_sub
-
-        # save CV predictions
-        pd.DataFrame(
-            {
-                "patient_id": Xtr.index,
-                "y_true": ytr,
-                "y_prob_cv": p_cv,
-            },
-        ).to_csv(outdir / "predictions_cv_train.csv", index=False)
+                    auc_cv_by_subtype[str(sub_val)] = float(
+                        roc_auc_score(y_sub, p_sub)
+                    )
 
     # ---------------- AUC by subtype on test set ----------------
     auc_test_by_subtype: dict[str, float] | None = None
@@ -605,19 +665,9 @@ def main() -> None:
                 auc_sub_test = float(roc_auc_score(y_true_sub, y_prob_sub))
             auc_test_by_subtype[str(sub_val)] = auc_sub_test
 
-    # ---------------- Save outputs ----------------
-    # predictions
-    pd.DataFrame(
-        {
-            "patient_id": Xte.index,
-            "y_true": yte,
-            "y_prob": p_te,
-            "y_pred": ypred_te,
-        },
-    ).to_csv(outdir / "predictions.csv", index=False)
-
-    # plots
-    plot_roc(yte, p_te, outdir / "roc_test.png")
+    # ---------------- Additional radiomics-specific plots ----------------
+    # pr_curve.png and calibration_curve.png are not produced by the evaluation
+    # framework's VISUALIZATION_REGISTRY and are saved here as extra outputs.
     plot_pr(yte, p_te, outdir / "pr_curve.png")
     try:
         plot_calib(yte, p_te, outdir / "calibration_curve.png")
@@ -625,45 +675,98 @@ def main() -> None:
     except Exception:  # noqa: BLE001
         calib_status = "none"
 
-    # metrics
-    metrics: dict[str, object] = {
-        "auc_train": auc_tr,
-        "auc_test": auc_te,
-        "auc_train_cv": auc_cv,
-        "auc_train_cv_by_subtype": auc_cv_by_subtype,
-        "auc_test_by_subtype": auc_test_by_subtype,
-        "n_features_used": int(Xtr.shape[1]),
-        "classifier_type": {
-            "logistic": "logistic",
-            "rf": "random_forest",
-            "xgb": "xgboost",
-        }.get(args.classifier, str(args.classifier)),
-        "class_order": classes_.tolist(),
-        "threshold_train_youdenJ": thr_opt,
-        "sensitivity_test": sens,
-        "specificity_test": spec,
-        "tn_fp_fn_tp_test": [
-            int(x) if x is not None else None for x in [tn, fp, fn, tp]
-        ],
-        "calibration": calib_status,
-        "corr_threshold": args.corr_threshold,
-        "k_best": int(args.k_best),
-        "grid_search": bool(args.grid_search),
-        "cv_folds": int(args.cv_folds),
-    }
+    # ---------------- Evaluation framework outputs ----------------
+    # Build the predictions DataFrame. Including the subtype column (when
+    # available) causes evaluator.save_results() to automatically call
+    # evaluation.metrics.compute_metrics_by_group(), which computes overall
+    # and per-subtype AUC and writes them to metrics.json under
+    # "validation_summary". This is the evaluation framework's canonical
+    # mechanism for subgroup reporting.
+    predictions_df = pd.DataFrame(
+        {
+            "patient_id": Xte.index,
+            "y_true": yte,
+            "y_pred": ypred_te,
+            "y_prob": p_te,
+        }
+    )
+    if subtype_col is not None:
+        predictions_df["subtype"] = labels.loc[Xte.index, subtype_col].to_numpy()
+
+    # TrainTestResults holds the framework-standard metrics dict. The
+    # evaluation framework currently computes AUC only; the full radiomics
+    # metrics are added to metrics.json in the augmentation step below.
+    tt_results = TrainTestResults(
+        metrics={"auc": auc_te},
+        predictions=predictions_df,
+        # model_name drives the output subdirectory inside outdir.parent:
+        #   evaluator.save_results(tt_results, outdir.parent)
+        #   → writes to outdir.parent / outdir.name = outdir  ✓
+        model_name=outdir.name,
+        run_name=None,  # no extra subdirectory layer
+    )
+
+    # save_results writes to outdir.parent / model_name = outdir:
+    #   outdir/metrics.json          — framework structure (evaluation_type,
+    #                                  model_name, metrics:{auc}, n_samples,
+    #                                  n_features, validation_summary)
+    #   outdir/predictions.csv       — patient_id, y_true, y_pred, y_prob[, subtype]
+    #   outdir/plots/roc_curve.png   — seaborn ROC curve
+    evaluator.save_results(tt_results, outdir.parent)
+
+    # ---------------- Augment metrics.json with radiomics-specific fields ------
+    # The framework's metrics.json contains only the AUC inside "metrics".
+    # We load the file and add all the flat keys that run_experiment.py reads
+    # (auc_test, auc_train, auc_train_cv, n_features_used) at the top level,
+    # along with the full set of radiomics diagnostic fields.  The framework
+    # structure (evaluation_type, model_name, metrics, validation_summary, etc.)
+    # is preserved intact.
+    metrics_path = outdir / "metrics.json"
+    with metrics_path.open(encoding="utf-8") as f:
+        augmented = json.load(f)
+
+    augmented.update(
+        {
+            # Keys read by run_experiment.py and run_ablations.py
+            "auc_test": auc_te,
+            "auc_train": auc_tr,
+            "auc_train_cv": auc_cv,
+            "n_features_used": int(Xtr.shape[1]),
+            # Additional radiomics diagnostics
+            "auc_train_cv_by_subtype": auc_cv_by_subtype,
+            "auc_test_by_subtype": auc_test_by_subtype,
+            "classifier_type": {
+                "logistic": "logistic",
+                "rf": "random_forest",
+                "xgb": "xgboost",
+            }.get(args.classifier, str(args.classifier)),
+            "class_order": classes_.tolist(),
+            "threshold_train_youdenJ": thr_opt,
+            "sensitivity_test": sens,
+            "specificity_test": spec,
+            "tn_fp_fn_tp_test": [
+                int(x) if x is not None else None for x in [tn, fp, fn, tp]
+            ],
+            "calibration": calib_status,
+            "corr_threshold": args.corr_threshold,
+            "k_best": int(args.k_best),
+            "grid_search": bool(args.grid_search),
+            "cv_folds": int(args.cv_folds),
+        }
+    )
 
     if not (auc_te > AUC_BASELINE):
-        metrics["commentary"] = (
+        augmented["commentary"] = (
             "AUC_test ≤ 0.5. Try stronger regularization (Elastic-Net), "
             "correlation pruning, K-best, or DCE kinetic deltas."
         )
 
-    metrics_path = outdir / "metrics.json"
     with metrics_path.open("w", encoding="utf-8") as f:
-        json.dump(metrics, f, indent=2)
+        json.dump(augmented, f, indent=2)
 
+    # ---------------- Remaining radiomics-specific outputs ----------------
     joblib.dump(pipe, outdir / "model.pkl")
-    print(json.dumps(metrics, indent=2))
+    print(json.dumps(augmented, indent=2))
 
 
 if __name__ == "__main__":

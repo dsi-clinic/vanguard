@@ -2,7 +2,7 @@
 # Experiment: kinetic parameter maps + raw phases · logistic regression
 #
 # Requires: generate_kinetic_maps.py has already been run for all patients.
-# The kinetic maps live at images/{pid}/{pid}_kinetic_*.nii.gz
+# Kinetic maps live at ~/vanguard/radiomics_baseline/kinetic_maps/{pid}/
 # ---------------------------------------------------------------------------
 experiment_name: kinetic_maps_logreg
 
@@ -18,11 +18,11 @@ extract:
   image_patterns:
     - "{pid}/{pid}_0001.nii.gz"
     - "{pid}/{pid}_0002.nii.gz"
-    - "{pid}/{pid}_kinetic_E_early.nii.gz"
-    - "{pid}/{pid}_kinetic_E_peak.nii.gz"
-    - "{pid}/{pid}_kinetic_slope_in.nii.gz"
-    - "{pid}/{pid}_kinetic_slope_out.nii.gz"
-    - "{pid}/{pid}_kinetic_AUC.nii.gz"
+    - "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz"
+    - "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_peak.nii.gz"
+    - "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_in.nii.gz"
+    - "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz"
+    - "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz"
   mask_pattern:    "{pid}.nii.gz"
   peri_radius_mm:  5
   peri_mode:       3d

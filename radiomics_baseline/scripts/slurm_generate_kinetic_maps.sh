@@ -21,6 +21,7 @@ SCRIPTS_DIR="${PROJ_DIR}/scripts"
 IMAGES="/net/projects2/vanguard/MAMA-MIA-syn60868042/images"
 MASKS="/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
 SPLITS="${PROJ_DIR}/splits_train_test_ready.csv"
+KINETIC_OUT="${PROJ_DIR}/kinetic_maps"
 
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate vanguard
@@ -34,6 +35,7 @@ python "${SCRIPTS_DIR}/generate_kinetic_maps.py" \
     --images "${IMAGES}" \
     --masks  "${MASKS}" \
     --splits "${SPLITS}" \
+    --output-dir "${KINETIC_OUT}" \
     --mask-pattern "{pid}.nii.gz" \
     --n-jobs 8 \
     --generate-tpeak-voxel \
