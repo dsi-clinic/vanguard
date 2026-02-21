@@ -36,8 +36,13 @@ from tqdm import tqdm
 # Regex for matching phase files — reused from visualize_dce_tumor_bbox.py
 _PHASE_RE = re.compile(r"_(\d{4})\.nii(?:\.gz)?$")
 
-# The 5 core kinetic maps generated for every patient.
-CORE_MAP_NAMES = ("E_early", "E_peak", "slope_in", "slope_out", "AUC")
+# The 5 core kinetic parameter maps generated for every patient.
+KINETIC_MAP_NAMES = ("E_early", "E_peak", "slope_in", "slope_out", "AUC")
+
+# Subtraction images generated when --generate-subtraction is requested.
+# wash_in  = I_peak − I_early  (incremental late enhancement; distinct from E_peak)
+# wash_out = I_last − I_peak   (signed: negative = washout, positive = persistent)
+SUBTRACTION_MAP_NAMES = ("wash_in", "wash_out")
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +173,7 @@ def compute_kinetic_maps(
     post_indices: list[int],
     mask: np.ndarray,
     generate_tpeak_voxel: bool = False,
+    peak_list_idx: int | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute all kinetic parameter maps.
 
@@ -178,6 +184,8 @@ def compute_kinetic_maps(
     post_indices : list of integer phase indices (1, 2, 3, …)
     mask : binary 3D array of the tumor ROI
     generate_tpeak_voxel : generate voxel-wise time-to-peak (requires ≥4 phases)
+    peak_list_idx : pre-computed tumor peak list index; auto-computed if None.
+        Pass when sharing peak detection with ``compute_subtraction_maps``.
 
     Returns
     -------
@@ -191,8 +199,9 @@ def compute_kinetic_maps(
     # E_early: first post-contrast enhancement
     E_early = enhancements[0].copy()
 
-    # Tumor-level peak phase
-    peak_list_idx = find_tumor_peak_phase(enhancements, post_indices, mask)
+    # Tumor-level peak phase (use pre-computed index if provided)
+    if peak_list_idx is None:
+        peak_list_idx = find_tumor_peak_phase(enhancements, post_indices, mask)
     E_peak = enhancements[peak_list_idx].copy()
 
     # slope_in = E_early / Δt_early
@@ -236,6 +245,38 @@ def compute_kinetic_maps(
     return maps
 
 
+def compute_subtraction_maps(
+    post_volumes: list[np.ndarray],
+    peak_list_idx: int,
+) -> dict[str, np.ndarray]:
+    """Compute subtraction images following Braman et al. convention.
+
+    Parameters
+    ----------
+    post_volumes : list of 3D post-contrast arrays ordered by acquisition time.
+        Index 0 is the first post-contrast phase (_0001).
+    peak_list_idx : list index of the tumor-level peak phase, as returned by
+        ``find_tumor_peak_phase``.
+
+    Returns
+    -------
+    dict with keys:
+
+    ``wash_in``
+        ``I_peak − I_early``: incremental enhancement from the first
+        post-contrast phase to the peak.  Captures delayed kinetics and is
+        distinct from ``E_peak`` (which uses pre-contrast as baseline).
+        Zero when the peak coincides with the first post-contrast phase.
+    ``wash_out``
+        ``I_last − I_peak``: signed change after the peak.  Negative values
+        indicate washout (BI-RADS type III kinetics); positive values indicate
+        a persistent pattern (type I).
+    """
+    wash_in = (post_volumes[peak_list_idx] - post_volumes[0]).astype(np.float32)
+    wash_out = (post_volumes[-1] - post_volumes[peak_list_idx]).astype(np.float32)
+    return {"wash_in": wash_in, "wash_out": wash_out}
+
+
 def sanitize_map(arr: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Replace NaN/inf with 0, zero values outside the ROI mask."""
     out = arr.copy()
@@ -256,6 +297,7 @@ def generate_maps_for_pid(
     output_dir: str | None = None,
     min_post_contrast: int = 1,
     generate_tpeak_voxel: bool = False,
+    generate_subtraction: bool = False,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Generate and save all kinetic parameter maps for one patient.
@@ -275,12 +317,15 @@ def generate_maps_for_pid(
 
         # Check if already generated (skip unless overwrite)
         if not overwrite:
-            existing = [
-                name
-                for name in CORE_MAP_NAMES
-                if (patient_out_dir / f"{pid}_kinetic_{name}.nii.gz").exists()
-            ]
-            if len(existing) == len(CORE_MAP_NAMES):
+            kinetic_done = all(
+                (patient_out_dir / f"{pid}_kinetic_{name}.nii.gz").exists()
+                for name in KINETIC_MAP_NAMES
+            )
+            sub_done = (not generate_subtraction) or all(
+                (patient_out_dir / f"{pid}_subtraction_{name}.nii.gz").exists()
+                for name in SUBTRACTION_MAP_NAMES
+            )
+            if kinetic_done and sub_done:
                 result["status"] = "skipped"
                 result["n_phases"] = -1
                 result["maps_generated"] = 0
@@ -322,22 +367,42 @@ def generate_maps_for_pid(
                 f"pre-contrast {pre_contrast.shape}"
             )
 
-        # Compute kinetic maps
+        # Pre-compute enhancement series and tumor peak once; shared across maps.
+        enhancements = compute_enhancement_series(post_volumes, pre_contrast)
+        peak_list_idx = find_tumor_peak_phase(enhancements, post_indices, mask)
+
+        # Compute and save kinetic parameter maps.
         kinetic_maps = compute_kinetic_maps(
             pre_contrast=pre_contrast,
             post_volumes=post_volumes,
             post_indices=post_indices,
             mask=mask,
             generate_tpeak_voxel=generate_tpeak_voxel,
+            peak_list_idx=peak_list_idx,
         )
 
-        # Sanitize and save
         maps_saved = 0
         for name, arr in kinetic_maps.items():
             clean = sanitize_map(arr, mask)
             out_path = patient_out_dir / f"{pid}_kinetic_{name}.nii.gz"
             save_map_as_nifti(clean, ref_img, out_path)
             maps_saved += 1
+
+        # Compute and save subtraction images (Braman et al. convention).
+        if generate_subtraction:
+            if len(post_volumes) < 2:
+                warnings.warn(
+                    f"[{pid}] Subtraction maps require ≥2 post-contrast phases "
+                    f"({len(post_volumes)} found); skipping subtraction.",
+                    stacklevel=2,
+                )
+            else:
+                sub_maps = compute_subtraction_maps(post_volumes, peak_list_idx)
+                for name, arr in sub_maps.items():
+                    clean = sanitize_map(arr, mask)
+                    out_path = patient_out_dir / f"{pid}_subtraction_{name}.nii.gz"
+                    save_map_as_nifti(clean, ref_img, out_path)
+                    maps_saved += 1
 
         result["maps_generated"] = maps_saved
 
@@ -396,6 +461,15 @@ def main() -> None:
         help="Generate voxel-wise time-to-peak map (requires >=4 post-contrast phases).",
     )
     ap.add_argument(
+        "--generate-subtraction",
+        action="store_true",
+        help=(
+            "Generate wash_in and wash_out subtraction images following Braman et al. "
+            "wash_in = I_peak - I_early; wash_out = I_last - I_peak. "
+            "Requires >=2 post-contrast phases."
+        ),
+    )
+    ap.add_argument(
         "--output-dir",
         type=str,
         default=None,
@@ -428,6 +502,7 @@ def main() -> None:
             mask_pattern=args.mask_pattern,
             output_dir=args.output_dir,
             generate_tpeak_voxel=args.generate_tpeak_voxel,
+            generate_subtraction=args.generate_subtraction,
             overwrite=args.overwrite,
         )
         for pid in tqdm(pids, desc="Generating kinetic maps")
