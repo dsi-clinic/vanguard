@@ -85,7 +85,7 @@ Use `--skip-existing` to skip studies that already have morphometry JSON, and `-
 **Phase 1.2 – feature extraction + metadata join:**
 ```bash
 python graph_extraction/build_features_with_metadata.py \
-  --morphometry-dir report/4d_morphometry \
+  --morphometry-dir /net/projects2/vanguard/report/4d_morphometry \
   --patient-info-dir /net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files \
   --output-dir report
 ```
@@ -94,7 +94,7 @@ python graph_extraction/build_features_with_metadata.py \
 ```bash
 python graph_extraction/run_feature_qc.py \
   --features-csv report/features_with_metadata.csv \
-  --morphometry-dir report/4d_morphometry \
+  --morphometry-dir /net/projects2/vanguard/report/4d_morphometry \
   --output-dir report
 ```
 

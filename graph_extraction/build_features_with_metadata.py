@@ -56,13 +56,13 @@ def get_dataset(js: dict[str, Any]) -> str:
 
 def get_manufacturer(js: dict[str, Any]) -> str:
     """Extract manufacturer; 'UNKNOWN' if unavailable."""
-    m = js.get("imaging_data", {}).get("manufacturer", "")
+    m = js.get("imaging_data", {}).get("scanner_manufacturer", "")
     return str(m).strip() if m else "UNKNOWN"
 
 
 def get_model(js: dict[str, Any]) -> str:
     """Extract scanner model; 'UNKNOWN' if unavailable."""
-    m = js.get("imaging_data", {}).get("model", "")
+    m = js.get("imaging_data", {}).get("scanner_model", "")
     return str(m).strip() if m else "UNKNOWN"
 
 
