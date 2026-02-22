@@ -481,6 +481,16 @@ def main() -> None:
             "Case-sensitive; must match a value in the labels subtype column."
         ),
     )
+    ap.add_argument(
+        "--site-filter",
+        type=str,
+        default=None,
+        help=(
+            "If set, restrict train and test sets to patients whose clinical site "
+            "matches this value exactly (e.g. 'DUKE', 'ISPY2'). "
+            "Case-sensitive; must match a value in the labels 'site' column."
+        ),
+    )
 
     ap.add_argument(
         "--corr-threshold",
@@ -542,6 +552,9 @@ def main() -> None:
             subtype_col = candidate
             break
 
+    # Identify site column if present
+    site_col: str | None = "site" if "site" in labels.columns else None
+
     # Optional: restrict to a single subtype
     if args.subtype_filter:
         if subtype_col is None:
@@ -557,6 +570,24 @@ def main() -> None:
             yte = labels.loc[Xte_raw.index, "pcr"].astype(int).to_numpy()
             print(
                 f"[DEBUG] subtype_filter='{args.subtype_filter}': "
+                f"train={len(Xtr_raw)}, test={len(Xte_raw)}",
+            )
+
+    # Optional: restrict to a single clinical site
+    if args.site_filter:
+        if site_col is None:
+            print(
+                "[WARN] --site-filter set but no 'site' column found in labels; ignoring.",
+            )
+        else:
+            tr_mask = (labels.loc[Xtr_raw.index, site_col] == args.site_filter).to_numpy()
+            te_mask = (labels.loc[Xte_raw.index, site_col] == args.site_filter).to_numpy()
+            Xtr_raw = Xtr_raw.iloc[tr_mask]
+            Xte_raw = Xte_raw.iloc[te_mask]
+            ytr = labels.loc[Xtr_raw.index, "pcr"].astype(int).to_numpy()
+            yte = labels.loc[Xte_raw.index, "pcr"].astype(int).to_numpy()
+            print(
+                f"[DEBUG] site_filter='{args.site_filter}': "
                 f"train={len(Xtr_raw)}, test={len(Xte_raw)}",
             )
 
@@ -760,6 +791,22 @@ def main() -> None:
                 auc_sub_test = float(roc_auc_score(y_true_sub, y_prob_sub))
             auc_test_by_subtype[str(sub_val)] = auc_sub_test
 
+    # ---------------- AUC by site on test set ----------------
+    auc_test_by_site: dict[str, float] | None = None
+    if site_col is not None:
+        site_te = labels.loc[Xte.index, site_col]
+        auc_test_by_site = {}
+        for site_val in sorted(site_te.dropna().unique()):
+            mask = site_te == site_val
+            mask_array = mask.to_numpy()
+            y_true_site = yte[mask_array]
+            y_prob_site = p_te[mask_array]
+            if len(np.unique(y_true_site)) < MIN_CLASS_COUNT:
+                auc_site_test = float("nan")
+            else:
+                auc_site_test = float(roc_auc_score(y_true_site, y_prob_site))
+            auc_test_by_site[str(site_val)] = auc_site_test
+
     # ---------------- Additional radiomics-specific plots ----------------
     # pr_curve.png and calibration_curve.png are not produced by the evaluation
     # framework's VISUALIZATION_REGISTRY and are saved here as extra outputs.
@@ -830,6 +877,7 @@ def main() -> None:
             # Additional radiomics diagnostics
             "auc_train_cv_by_subtype": auc_cv_by_subtype,
             "auc_test_by_subtype": auc_test_by_subtype,
+            "auc_test_by_site": auc_test_by_site,
             "classifier_type": {
                 "logistic": "logistic",
                 "rf": "random_forest",
@@ -844,6 +892,7 @@ def main() -> None:
             ],
             "calibration": calib_status,
             "subtype_filter": args.subtype_filter,
+            "site_filter": args.site_filter,
             "corr_threshold": args.corr_threshold,
             "k_best": int(args.k_best),
             "feature_selection": args.feature_selection,

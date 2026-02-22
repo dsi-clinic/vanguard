@@ -266,6 +266,8 @@ def build_train_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
         cmd.append("--include-subtype")
     if train.get("subtype_filter"):
         cmd.extend(["--subtype-filter", str(train["subtype_filter"])])
+    if train.get("site_filter"):
+        cmd.extend(["--site-filter", str(train["site_filter"])])
 
     return cmd
 

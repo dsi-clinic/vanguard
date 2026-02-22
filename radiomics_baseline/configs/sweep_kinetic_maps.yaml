@@ -1,32 +1,37 @@
 # ---------------------------------------------------------------------------
 # Sweep: image-type comparison  (logistic / elasticnet only)
 #
-# Five image-type conditions, sharing the same base extraction settings.
+# Four image-type conditions beyond the raw-phases baseline.
 # Requires: generate_kinetic_maps.py has been run for all patients.
 #
-# Grid:  5 image-type configs = 5 configs  (5 unique extractions)
+# The raw-phases-only baseline is covered by exp_peri5_multiphase_logreg.yaml
+# and is omitted here to avoid a naming collision (both raw phases and
+# subtraction have 2 images → both would get suffix "-2", with the second
+# overwriting the first).
+#
+# Grid:  4 image-type configs = 4 configs  (4 unique extractions)
+#   suffix -2  → subtraction images only
+#   suffix -5  → kinetic maps only
+#   suffix -7  → raw phases + kinetic maps
+#   suffix -9  → all (raw phases + kinetic maps + subtraction)
 # ---------------------------------------------------------------------------
 base_config: configs/exp_kinetic_maps.yaml
 
 sweep:
   extract.image_patterns:
 
-    # 1. Raw DCE phases only (baseline)
-    - ["{pid}/{pid}_0001.nii.gz",
-       "{pid}/{pid}_0002.nii.gz"]
-
-    # 2. Kinetic maps only (E_early, E_peak, slope_in, slope_out, AUC)
+    # 1. Kinetic maps only (E_early, E_peak, slope_in, slope_out, AUC)
     - ["/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",
        "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_peak.nii.gz",
        "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_in.nii.gz",
        "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz",
        "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz"]
 
-    # 3. Subtraction images only (Braman-style wash_in, wash_out)
+    # 2. Subtraction images only (Braman-style wash_in, wash_out)
     - ["/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_subtraction_wash_in.nii.gz",
        "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_subtraction_wash_out.nii.gz"]
 
-    # 4. Raw phases + kinetic maps
+    # 3. Raw phases + kinetic maps
     - ["{pid}/{pid}_0001.nii.gz",
        "{pid}/{pid}_0002.nii.gz",
        "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",
@@ -35,7 +40,7 @@ sweep:
        "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz",
        "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz"]
 
-    # 5. All: raw phases + kinetic maps + subtraction images
+    # 4. All: raw phases + kinetic maps + subtraction images
     - ["{pid}/{pid}_0001.nii.gz",
        "{pid}/{pid}_0002.nii.gz",
        "/home/summe/vanguard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",

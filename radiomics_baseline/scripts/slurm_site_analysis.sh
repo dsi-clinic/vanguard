@@ -31,7 +31,7 @@ SCRIPTS_DIR="${PROJ_DIR}/scripts"
 
 # Point at whichever extraction you want to analyse by site.
 # The shared extraction from the feature-sel / subtypes sweep lives here:
-FEATURES_DIR="${PROJ_DIR}/outputs/shared_extraction/peri5_multiphase"
+FEATURES_DIR="${PROJ_DIR}/outputs/shared_extraction/peri5_multiphase_logreg_feature_selection-kbest_k_best-10"
 
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate vanguard
