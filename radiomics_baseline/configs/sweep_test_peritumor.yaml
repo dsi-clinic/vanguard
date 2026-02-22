@@ -1,0 +1,29 @@
+# ---------------------------------------------------------------------------
+# Sweep: peritumor configuration  (logistic / elasticnet only)
+#
+# Tests three orthogonal extraction choices:
+#   peri_mode    — 3d (isotropic sphere) vs 2d (Braman-style in-plane ring)
+#   force_2d     — volumetric PyRadiomics textures vs per-slice (force_2d=true)
+#   peri_radius  — 0 mm (tumor only), 2.5 mm, 5 mm
+#
+# Grid:  2 × 2 × 3 = 12 configs  (12 unique extractions — all three params
+#        affect extraction, so no sharing is possible)
+#
+# Note: peri_radius_mm=0 disables the peritumoral shell entirely; peri_mode
+#       is ignored in that case but is swept for completeness.
+# ---------------------------------------------------------------------------
+base_config: configs/exp_peri5_multiphase_logreg.yaml
+
+sweep:
+  extract.peri_mode:
+    - 3d
+    - 2d
+
+  extract.force_2d:
+    - false
+    - true
+
+  extract.peri_radius_mm:
+    - 0      # tumor mask only — no peritumoral shell
+    - 2.5
+    - 5

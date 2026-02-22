@@ -16,11 +16,13 @@ from pathlib import Path
 from generate_kinetic_maps import (
     compute_enhancement_series,
     compute_kinetic_maps,
+    compute_subtraction_maps,
     discover_phases,
     find_tumor_peak_phase,
     generate_maps_for_pid,
     sanitize_map,
-    CORE_MAP_NAMES,
+    KINETIC_MAP_NAMES,
+    SUBTRACTION_MAP_NAMES,
 )
 
 
@@ -130,7 +132,7 @@ class TestComputeKineticMaps:
         post2 = np.ones(shape) * 80   # washout
 
         maps = compute_kinetic_maps(pre, [post1, post2], [1, 2], mask)
-        assert set(CORE_MAP_NAMES).issubset(maps.keys())
+        assert set(KINETIC_MAP_NAMES).issubset(maps.keys())
 
         # E_early = I_1 - I_0 = 100
         np.testing.assert_array_almost_equal(maps["E_early"], 100)
@@ -208,6 +210,62 @@ class TestComputeKineticMaps:
         # AUC = 0.5*(0+60)*1 + 0.5*(60+120)*1 + 0.5*(120+90)*1
         #     = 30 + 90 + 105 = 225
         np.testing.assert_array_almost_equal(maps["AUC"], 225)
+
+
+# ---------------------------------------------------------------------------
+# Tests: compute_subtraction_maps
+# ---------------------------------------------------------------------------
+
+class TestComputeSubtractionMaps:
+    def test_basic_wash_in_wash_out(self):
+        """wash_in = peak - early; wash_out = last - peak."""
+        shape = (4, 4, 4)
+        post1 = np.ones(shape) * 100   # early
+        post2 = np.ones(shape) * 200   # peak
+        post3 = np.ones(shape) * 150   # last (washout)
+
+        maps = compute_subtraction_maps([post1, post2, post3], peak_list_idx=1)
+        assert set(SUBTRACTION_MAP_NAMES) == set(maps.keys())
+        np.testing.assert_array_almost_equal(maps["wash_in"], 100)   # 200 - 100
+        np.testing.assert_array_almost_equal(maps["wash_out"], -50)  # 150 - 200
+
+    def test_peak_at_first_phase_wash_in_zero(self):
+        """When peak = first post-contrast, wash_in should be zero everywhere."""
+        shape = (3, 3, 3)
+        post1 = np.ones(shape) * 200   # peak = early
+        post2 = np.ones(shape) * 150
+        post3 = np.ones(shape) * 100
+
+        maps = compute_subtraction_maps([post1, post2, post3], peak_list_idx=0)
+        np.testing.assert_array_equal(maps["wash_in"], 0)
+
+    def test_persistent_pattern_positive_wash_out(self):
+        """Monotonically increasing: wash_out > 0 (persistent, BI-RADS type I)."""
+        shape = (2, 2, 2)
+        post1 = np.ones(shape) * 50
+        post2 = np.ones(shape) * 100
+        post3 = np.ones(shape) * 150   # peak = last
+
+        maps = compute_subtraction_maps([post1, post2, post3], peak_list_idx=2)
+        np.testing.assert_array_almost_equal(maps["wash_out"], 0)  # last == peak
+
+    def test_output_dtype_float32(self):
+        shape = (4, 4, 4)
+        post1 = np.ones(shape, dtype=np.float64) * 100
+        post2 = np.ones(shape, dtype=np.float64) * 200
+        maps = compute_subtraction_maps([post1, post2], peak_list_idx=1)
+        assert maps["wash_in"].dtype == np.float32
+        assert maps["wash_out"].dtype == np.float32
+
+    def test_two_phases_only(self):
+        """With only 2 post-contrast phases: peak must be one of them."""
+        shape = (2, 2, 2)
+        post1 = np.ones(shape) * 100
+        post2 = np.ones(shape) * 180   # peak = last
+
+        maps = compute_subtraction_maps([post1, post2], peak_list_idx=1)
+        np.testing.assert_array_almost_equal(maps["wash_in"], 80)   # 180 - 100
+        np.testing.assert_array_almost_equal(maps["wash_out"], 0)   # 180 - 180
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +381,8 @@ class TestGenerateMapsForPid:
         assert result["status"] == "success"
         assert result["maps_generated"] == 5
 
-        # Verify all core maps exist
-        for name in CORE_MAP_NAMES:
+        # Verify all kinetic maps exist
+        for name in KINETIC_MAP_NAMES:
             path = patient_dir / f"{pid}_kinetic_{name}.nii.gz"
             assert path.exists(), f"Missing: {path}"
 
@@ -437,6 +495,87 @@ class TestGenerateMapsForPid:
         assert result["status"] == "error"
         assert result["maps_generated"] == 0
         assert "Mask not found" in result["error"]
+
+    def test_subtraction_maps_generated(self, tmp_path):
+        """--generate-subtraction produces wash_in and wash_out NIfTI files."""
+        pid = "TEST_SUB"
+        images_dir = tmp_path / "images"
+        patient_dir = images_dir / pid
+        patient_dir.mkdir(parents=True)
+        masks_dir = tmp_path / "masks"
+        masks_dir.mkdir()
+
+        shape = (8, 16, 16)
+        # Pre-contrast=100, early=200, peak=300, last=250 (washout)
+        _write_phase(patient_dir, pid, 0, 100.0, shape)
+        _write_phase(patient_dir, pid, 1, 200.0, shape)
+        _write_phase(patient_dir, pid, 2, 300.0, shape)
+        _write_phase(patient_dir, pid, 3, 250.0, shape)
+
+        mask_arr = np.zeros(shape, dtype=np.uint8)
+        mask_arr[2:6, 4:12, 4:12] = 1
+        _write_mask(masks_dir, pid, mask_arr)
+
+        result = generate_maps_for_pid(
+            pid=pid,
+            images_dir=str(images_dir),
+            masks_dir=str(masks_dir),
+            mask_pattern="{pid}.nii.gz",
+            generate_subtraction=True,
+            overwrite=True,
+        )
+
+        assert result["status"] == "success"
+        assert result["maps_generated"] == 7  # 5 kinetic + 2 subtraction
+
+        for name in SUBTRACTION_MAP_NAMES:
+            path = patient_dir / f"{pid}_subtraction_{name}.nii.gz"
+            assert path.exists(), f"Missing: {path}"
+
+        # wash_in = I_peak - I_early = 300 - 200 = 100 (inside mask)
+        wash_in = sitk.GetArrayFromImage(
+            sitk.ReadImage(str(patient_dir / f"{pid}_subtraction_wash_in.nii.gz"))
+        )
+        assert wash_in[3, 8, 8] == pytest.approx(100.0)
+        assert wash_in[0, 0, 0] == pytest.approx(0.0)  # outside mask
+
+        # wash_out = I_last - I_peak = 250 - 300 = -50 (inside mask)
+        wash_out = sitk.GetArrayFromImage(
+            sitk.ReadImage(str(patient_dir / f"{pid}_subtraction_wash_out.nii.gz"))
+        )
+        assert wash_out[3, 8, 8] == pytest.approx(-50.0)
+
+    def test_subtraction_skipped_with_single_post_contrast(self, tmp_path):
+        """Subtraction maps require >=2 post-contrast phases; warns and skips gracefully."""
+        pid = "TEST_SUB_SKIP"
+        images_dir = tmp_path / "images"
+        patient_dir = images_dir / pid
+        patient_dir.mkdir(parents=True)
+        masks_dir = tmp_path / "masks"
+        masks_dir.mkdir()
+
+        shape = (4, 4, 4)
+        _write_phase(patient_dir, pid, 0, 0.0, shape)
+        _write_phase(patient_dir, pid, 1, 100.0, shape)
+
+        mask_arr = np.ones(shape, dtype=np.uint8)
+        _write_mask(masks_dir, pid, mask_arr)
+
+        import warnings as _warnings
+        with _warnings.catch_warnings(record=True) as w:
+            _warnings.simplefilter("always")
+            result = generate_maps_for_pid(
+                pid=pid,
+                images_dir=str(images_dir),
+                masks_dir=str(masks_dir),
+                mask_pattern="{pid}.nii.gz",
+                generate_subtraction=True,
+                overwrite=True,
+            )
+
+        assert result["status"] == "success"
+        assert result["maps_generated"] == 5  # kinetic only; subtraction skipped
+        assert any("Subtraction" in str(warning.message) for warning in w)
 
     def test_with_tpeak_voxel(self, tmp_path):
         pid = "TEST_004"

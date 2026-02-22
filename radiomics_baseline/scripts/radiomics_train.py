@@ -471,6 +471,16 @@ def main() -> None:
             "(if 'subtype' or 'tumor_subtype' present)."
         ),
     )
+    ap.add_argument(
+        "--subtype-filter",
+        type=str,
+        default=None,
+        help=(
+            "If set, restrict train and test sets to patients whose subtype "
+            "matches this value exactly (e.g. 'triple_negative', 'luminal_a'). "
+            "Case-sensitive; must match a value in the labels subtype column."
+        ),
+    )
 
     ap.add_argument(
         "--corr-threshold",
@@ -531,6 +541,24 @@ def main() -> None:
         if candidate in labels.columns:
             subtype_col = candidate
             break
+
+    # Optional: restrict to a single subtype
+    if args.subtype_filter:
+        if subtype_col is None:
+            print(
+                "[WARN] --subtype-filter set but no subtype column found in labels; ignoring.",
+            )
+        else:
+            tr_mask = (labels.loc[Xtr_raw.index, subtype_col] == args.subtype_filter).to_numpy()
+            te_mask = (labels.loc[Xte_raw.index, subtype_col] == args.subtype_filter).to_numpy()
+            Xtr_raw = Xtr_raw.iloc[tr_mask]
+            Xte_raw = Xte_raw.iloc[te_mask]
+            ytr = labels.loc[Xtr_raw.index, "pcr"].astype(int).to_numpy()
+            yte = labels.loc[Xte_raw.index, "pcr"].astype(int).to_numpy()
+            print(
+                f"[DEBUG] subtype_filter='{args.subtype_filter}': "
+                f"train={len(Xtr_raw)}, test={len(Xte_raw)}",
+            )
 
     # Optional: subtype as a numeric feature
     if args.include_subtype:
@@ -815,6 +843,7 @@ def main() -> None:
                 int(x) if x is not None else None for x in [tn, fp, fn, tp]
             ],
             "calibration": calib_status,
+            "subtype_filter": args.subtype_filter,
             "corr_threshold": args.corr_threshold,
             "k_best": int(args.k_best),
             "feature_selection": args.feature_selection,

@@ -264,6 +264,8 @@ def build_train_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
         cmd.extend(["--cv-folds", str(train["cv_folds"])])
     if train.get("include_subtype"):
         cmd.append("--include-subtype")
+    if train.get("subtype_filter"):
+        cmd.extend(["--subtype-filter", str(train["subtype_filter"])])
 
     return cmd
 
