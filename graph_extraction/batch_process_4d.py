@@ -53,6 +53,44 @@ def discover_all_study_ids(input_dir: Path) -> list[str]:
     return study_ids
 
 
+def _merge_task_manifests(output_dir: Path) -> None:
+    """Merge manifest_task_*.json files into manifest.json."""
+    task_manifests = sorted(output_dir.glob("manifest_task_*.json"))
+    if not task_manifests:
+        print("[batch] No manifest_task_*.json files found. Nothing to merge.")
+        return
+
+    completed: list[dict] = []
+    failed: list[dict] = []
+    skipped: list[dict] = []
+
+    for p in task_manifests:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        completed.extend(data.get("completed", []))
+        failed.extend(data.get("failed", []))
+        skipped.extend(data.get("skipped", []))
+
+    n_computed = sum(1 for m in completed if m.get("status") == "success")
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "completed": completed,
+                "failed": failed,
+                "skipped": skipped,
+                "n_completed": n_computed,
+                "n_skipped": len(skipped),
+                "n_failed": len(failed),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    for p in task_manifests:
+        p.unlink()
+    print(f"[batch] Merged {len(task_manifests)} task manifests -> {manifest_path}")
+
+
 def main() -> None:
     """Entry point for batch 4D morphometry extraction."""
     parser = argparse.ArgumentParser(
@@ -101,10 +139,26 @@ def main() -> None:
         default=False,
         help="Save full 4D manifold mask (large files)",
     )
+    parser.add_argument(
+        "--study-index",
+        type=int,
+        default=None,
+        help="Process only study at this index (for SLURM array jobs). Writes manifest_task_<index>.json.",
+    )
+    parser.add_argument(
+        "--merge-manifests",
+        action="store_true",
+        help="Merge manifest_task_*.json into manifest.json and remove task manifests. Run after array completes.",
+    )
     args = parser.parse_args()
 
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Handle --merge-manifests first (does not need study discovery)
+    if args.merge_manifests:
+        _merge_task_manifests(output_dir)
+        return
 
     if args.study_ids:
         study_ids = args.study_ids
@@ -116,6 +170,18 @@ def main() -> None:
     if not study_ids:
         print("[batch] No studies to process. Exiting.")
         sys.exit(0)
+
+    # Handle --study-index: process single study for SLURM array
+    if args.study_index is not None:
+        if args.study_index < 0 or args.study_index >= len(study_ids):
+            print(
+                f"[batch] study-index {args.study_index} out of range [0, {len(study_ids)-1}], exiting."
+            )
+            sys.exit(0)
+        study_ids = [study_ids[args.study_index]]
+        manifest_suffix = f"task_{args.study_index}"
+    else:
+        manifest_suffix = None
 
     manifest: list[dict] = []
     failed: list[dict] = []
@@ -167,7 +233,9 @@ def main() -> None:
             print(f"  [ERROR] {e}")
             failed.append({"study_id": study_id, "error": str(e)})
 
-    manifest_path = output_dir / "manifest.json"
+    manifest_path = output_dir / (
+        f"manifest_{manifest_suffix}.json" if manifest_suffix else "manifest.json"
+    )
     n_computed = sum(1 for m in manifest if m.get("status") == "success")
     manifest_path.write_text(
         json.dumps(
