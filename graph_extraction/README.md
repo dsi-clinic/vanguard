@@ -9,6 +9,8 @@ Skeleton extraction and skeleton-to-graph feature code for 3D and 4D vessel segm
 - `batch_process_4d.py`: batch 4D morphometry extraction for weak-signal diagnostics.
 - `build_features_with_metadata.py`: extract features from morphometry JSONs and join with patient_info.
 - `run_feature_qc.py`: per-feature QC, sanity checks, and distribution plots.
+- `run_ablation_study.py`: ablation study (Phase 4).
+- `run_fp_fn_inspection.py`: FP/FN case inspection and skeleton viz (Phase 5).
 - `feature_sanity.py`: validation helpers for morphometry values (tortuosity, angles, radii, etc.).
 - `processing.py`: shared 3D/4D loading, extraction, collapse, and morphometry helpers.
 - `skeleton3d.py`, `skeleton4d.py`, `visuals.py`, `skeleton_to_graph.py`: core extraction and graph/morphometry modules.
@@ -115,3 +117,29 @@ Outputs:
 - `report/site_prediction_metrics.json` (batch-effect indicator: AUC macro)
 - `report/plots/site_prediction_confusion.png`
 - `report/site_top_features.csv`
+
+**Phase 4 – ablation study:**
+```bash
+python graph_extraction/run_ablation_study.py \
+  --features-csv report/features_with_metadata.csv \
+  --output-dir report
+```
+
+Uses fixed 70/15/15 train/val/test split. Ablations: full, no_coordinate_like, geometry_only, count_only.
+
+Outputs: `ablation_results.csv`, `report/plots/ablation_auc_comparison.png`.
+
+**Phase 5 – FP/FN case inspection:**
+```bash
+python graph_extraction/run_fp_fn_inspection.py \
+  --features-csv report/features_with_metadata.csv \
+  --morphometry-dir /net/projects2/vanguard/report/4d_morphometry \
+  --output-dir report
+```
+
+Requires morphometry dir with `{study_id}_skeleton_4d_exam_mask.npy` (from batch_process_4d) for skeleton viz.
+
+Outputs: `fp_fn_cases.csv`, `fp_fn_outliers.csv`, `fp_fn_viz_status.csv`, `report/viz/fp_*.png`, `report/viz/fn_*.png`.
+
+**Phase 6 – report notebook:**
+Run `report/weak_signal_diagnostic_report.ipynb` to load and display all Phase 2–5 outputs and fill in the conclusion template.
