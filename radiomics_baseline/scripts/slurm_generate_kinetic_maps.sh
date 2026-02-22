@@ -39,6 +39,8 @@ python "${SCRIPTS_DIR}/generate_kinetic_maps.py" \
     --mask-pattern "{pid}.nii.gz" \
     --n-jobs 8 \
     --generate-tpeak-voxel \
+    --generate-subtraction \
+    --overwrite \
     --summary-csv "${PROJ_DIR}/outputs/kinetic_maps_summary.csv"
 
 echo "[$(date)] Kinetic map generation complete"
