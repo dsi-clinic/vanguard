@@ -99,3 +99,19 @@ python graph_extraction/run_feature_qc.py \
 ```
 
 Outputs: `qc_per_feature.csv`, `sanity_violations.csv`, `report/plots/distributions_core.png`.
+
+**Phase 3 – batch effect and nuisance analysis:**
+```bash
+python graph_extraction/run_batch_effect_analysis.py \
+  --features-csv report/features_with_metadata.csv \
+  --output-dir report
+```
+
+Use `--no-umap` to skip UMAP (faster; UMAP requires `pip install umap-learn`). Use `--qc-csv report/qc_per_feature.csv` to drop high-missing features before reduction.
+
+Outputs:
+- `report/plots/pca_colored_by_*.png`, `umap_colored_by_*.png`, `tsne_colored_by_*.png` (label, site, dataset, manufacturer)
+- `report/embedding_coords.csv` (2D coordinates for report notebook)
+- `report/site_prediction_metrics.json` (batch-effect indicator: AUC macro)
+- `report/plots/site_prediction_confusion.png`
+- `report/site_top_features.csv`
