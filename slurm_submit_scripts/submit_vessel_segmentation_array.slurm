@@ -20,8 +20,8 @@ micromamba activate vanguard-gpu
 
 # --- Make logs/temp unique per job ---
 mkdir -p logs
-# Use temp directory on /net/projects2/vanguard which has more space
-export TMPDIR="/net/projects2/vanguard/tmp/batch_vessel_seg_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+# Use local /tmp on compute node (avoids filling shared storage when jobs crash)
+export TMPDIR="/tmp/batch_vessel_seg_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "${TMPDIR}"
 
 # Cleanup function to remove temp directory on exit

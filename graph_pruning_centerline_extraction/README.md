@@ -19,7 +19,7 @@ Fill in the descriptions below to keep this README up to date.
 | `skeleton3d_usage` | (Example) Implementation of a topology-preserving 3D skeletonization algorithm. Each voxel is treated as a node with 26-connected neighbors; voxels are iteratively removed if their deletion does not break connectivity. Public entry point: `skeletonize3d(...)`. |
 | `skeleton3d_utils` | Utility functions for the skeleton3d package. |
 | `utils` | General utility functions for working ML pipelines using the MAMA MIA dataset |
-| `batch_graph_pruning_centerlines.py` | Batch runner for graph pruning centerline extraction on vessel segmentation `.npy` files. |
+| `batch_graph_pruning_centerlines.py` | Batch runner for graph pruning centerline extraction on vessel segmentation `.npz` files. |
 
 ## Typical workflow
 
@@ -32,26 +32,32 @@ Fill in the descriptions below to keep this README up to date.
    - Export nodes/edges/attributes to JSON or other formats.
    - Compute geometric features along vessel centerlines.
 
-## Batch graph pruning (SLURM array)
+## Batch 4D skeleton processing (SLURM array)
 
-Use the SLURM submit helper to run graph pruning centerline extraction on the
-vessel segmentation outputs.
+Use the SLURM submit helper to run 4D skeleton processing on vessel segmentation outputs.
+This uses `graph_extraction/run_skeleton_processing.py` with the 4d mode.
 
 ```bash
 cd /path/to/vanguard
-FILES_PER_TASK=40 START_INDEX=0 END_INDEX=198 ARRAY_THROTTLE=20 \
-./slurm_submit_scripts/submit_graph_pruning_array.sh
+STUDIES_PER_TASK=20 ARRAY_THROTTLE=20 ./slurm_submit_scripts/submit_graph_pruning_array.sh
 ```
+
+### Things to Check
+
+ls /net/projects2/vanguard/centerlines_4d/ | wc -l (How many files processed)
+
+squeue -u $USER (Current computer usage)
 
 Optional overrides via environment variables:
 
 ```bash
 INPUT_DIR=/net/projects2/vanguard/vessel_segmentations \
-OUTPUT_DIR=/net/projects2/vanguard/graph_pruning_outdir \
-THRESHOLD=0.5 \
-PATTERN="*_vessel_segmentation.npy" \
-RECURSIVE=0 \
-FILES_PER_TASK=40 \
+OUTPUT_DIR=/net/projects2/vanguard/centerlines_4d \
+THRESHOLD_LOW=0.5 \
+THRESHOLD_HIGH=0.85 \
+NPY_CHANNEL=1 \
+PATTERN="*_vessel_segmentation.npz" \
+STUDIES_PER_TASK=1 \
 ./slurm_submit_scripts/submit_graph_pruning_array.sh
 ```
 

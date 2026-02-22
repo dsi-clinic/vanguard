@@ -6,6 +6,7 @@ IMAGES_DIR="${IMAGES_DIR:-/net/projects2/vanguard/MAMA-MIA-syn60868042/images}"
 OUTPUT_DIR="${OUTPUT_DIR:-/net/projects2/vanguard/vessel_segmentations}"
 BREAST_MODEL="${BREAST_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/breast_model.pth}"
 VESSEL_MODEL="${VESSEL_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/dv_model.pth}"
+FILES_PER_TASK="${FILES_PER_TASK:-40}"
 CHUNK_SIZE="${CHUNK_SIZE:-100}"
 ARRAY_THROTTLE="${ARRAY_THROTTLE:-}"
 START_INDEX="${START_INDEX:-}"
@@ -25,7 +26,8 @@ if [[ "${COUNT}" -le 0 ]]; then
   exit 1
 fi
 
-ARRAY_MAX=$((COUNT - 1))
+TASK_COUNT=$(( (COUNT + FILES_PER_TASK - 1) / FILES_PER_TASK ))
+ARRAY_MAX=$((TASK_COUNT - 1))
 
 if [[ -n "${START_INDEX}" && -n "${END_INDEX}" ]]; then
   if [[ -n "${ARRAY_THROTTLE}" ]]; then
@@ -39,11 +41,12 @@ if [[ -n "${START_INDEX}" && -n "${END_INDEX}" ]]; then
   OUTPUT_DIR="${OUTPUT_DIR}" \
   BREAST_MODEL="${BREAST_MODEL}" \
   VESSEL_MODEL="${VESSEL_MODEL}" \
+  FILES_PER_TASK="${FILES_PER_TASK}" \
   sbatch --array=${ARRAY_SPEC} "${PROJECT_ROOT}/slurm_submit_scripts/submit_batch_segmentation_array.slurm"
   exit 0
 fi
 
-echo "Submitting array jobs for ${COUNT} files (0-${ARRAY_MAX}) in chunks of ${CHUNK_SIZE}"
+echo "Submitting array jobs for ${COUNT} files (${TASK_COUNT} tasks: 0-${ARRAY_MAX}) in chunks of ${CHUNK_SIZE}"
 
 START=0
 while [[ ${START} -le ${ARRAY_MAX} ]]; do
@@ -63,6 +66,7 @@ while [[ ${START} -le ${ARRAY_MAX} ]]; do
   OUTPUT_DIR="${OUTPUT_DIR}" \
   BREAST_MODEL="${BREAST_MODEL}" \
   VESSEL_MODEL="${VESSEL_MODEL}" \
+  FILES_PER_TASK="${FILES_PER_TASK}" \
   sbatch --array=${ARRAY_SPEC} "${PROJECT_ROOT}/slurm_submit_scripts/submit_batch_segmentation_array.slurm"
 
   START=$((END + 1))

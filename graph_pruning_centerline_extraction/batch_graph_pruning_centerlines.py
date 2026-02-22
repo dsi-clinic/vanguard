@@ -12,13 +12,13 @@ def build_parser() -> argparse.ArgumentParser:
     """Return segmentation files matching pattern under input_dir."""
     parser = argparse.ArgumentParser(
         description=(
-            "Run graph pruning centerline extraction on vessel segmentation .npy files."
+            "Run graph pruning centerline extraction on vessel segmentation .npz files."
         )
     )
     parser.add_argument(
         "--input-dir",
         default="/net/projects2/vanguard/vessel_segmentations",
-        help="Directory containing vessel segmentation .npy files.",
+        help="Directory containing vessel segmentation .npz files.",
     )
     parser.add_argument(
         "--output-dir",
@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--pattern",
-        default="*_vessel_segmentation.npy",
+        default="*_vessel_segmentation.npz",
         help="Glob pattern to match vessel segmentation files.",
     )
     parser.add_argument(

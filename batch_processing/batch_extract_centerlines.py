@@ -18,7 +18,7 @@ SCRIPT_PATH = (
 def main() -> None:
     """Extract centerlines from all vessel segmentations."""
     # Get list of segmentation files
-    seg_files = sorted(SEGMENTATION_DIR.glob("*.npy"))
+    seg_files = sorted(SEGMENTATION_DIR.rglob("*.npz"))
 
     if len(seg_files) == 0:
         print("No segmentation files found!")

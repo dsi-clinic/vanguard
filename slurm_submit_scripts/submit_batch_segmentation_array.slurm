@@ -22,7 +22,7 @@ export xml_catalog_files_libxml2=""
 
 # --- Make logs/temp unique per job ---
 mkdir -p logs
-export TMPDIR="/net/projects2/vanguard/tmp/batch_seg_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+export TMPDIR="/tmp/batch_seg_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "${TMPDIR}"
 
 cleanup() {

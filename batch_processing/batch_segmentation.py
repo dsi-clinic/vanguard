@@ -226,10 +226,8 @@ def process_single_file(
             return patient_id, False, ""
 
         # Move the STEP-3 result to output directory
-        step3_file = step3_dir / f"{base_name}.npy"
-        output_file = (
-            Path(output_dir) / f"{patient_id}_{base_name}_vessel_segmentation.npy"
-        )
+        step3_file = step3_dir / f"{base_name}.npz"
+        output_file = build_output_path(Path(output_dir), patient_id, base_name)
 
         if step3_file.exists():
             shutil.move(step3_file, output_file)
@@ -242,19 +240,37 @@ def process_single_file(
         return patient_id, False, ""
 
 
+def build_output_path(output_dir: Path, patient_id: str, base_name: str) -> Path:
+    """Build output path in a source/patient/images layout."""
+    source = patient_id.split("_")[0]
+    timepoint = (
+        base_name[len(patient_id) + 1 :]
+        if base_name.startswith(f"{patient_id}_")
+        else base_name
+    )
+    filename = (
+        f"{patient_id}_{timepoint}_vessel_segmentation.npz"
+        if timepoint
+        else f"{patient_id}_vessel_segmentation.npz"
+    )
+    output_subdir = output_dir / source / patient_id / "images"
+    output_subdir.mkdir(parents=True, exist_ok=True)
+    return output_subdir / filename
+
+
 def collect_all_step3_files(output_dir: str) -> list[str]:
-    """Collect all STEP-3 vessel segmentation .npy files from the output directory.
+    """Collect all STEP-3 vessel segmentation .npz files from the output directory.
 
     Args:
         output_dir: Directory containing the processed files
 
     Returns:
-        List of paths to all vessel segmentation .npy files
+        List of paths to all vessel segmentation .npz files
     """
     npy_files = []
     for root, _dirs, files in os.walk(output_dir):
         for file in files:
-            if file.endswith(".npy") and "vessel_segmentation" in file:
+            if file.endswith(".npz") and "vessel_segmentation" in file:
                 npy_files.append(Path(root) / file)
     return npy_files
 
@@ -278,7 +294,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         default=str(script_dir.parent / "vessel_segmentations"),
-        help="Directory to save all STEP-3 vessel segmentation .npy files",
+        help="Directory to save all STEP-3 vessel segmentation .npz files",
     )
 
     parser.add_argument(
@@ -409,13 +425,15 @@ def main() -> None:
 
     # Filter out already processed files if resuming
     if args.resume:
-        existing_files = set(os.listdir(args.output_dir))
         original_count = len(nii_files)
         nii_files = [
             (patient_id, file_path)
             for patient_id, file_path in nii_files
-            if f"{patient_id}_{Path(file_path).name.replace('.nii.gz', '')}_vessel_segmentation.npy"
-            not in existing_files
+            if not build_output_path(
+                Path(args.output_dir),
+                patient_id,
+                Path(file_path).name.replace(".nii.gz", ""),
+            ).exists()
         ]
         skipped_count = original_count - len(nii_files)
         if skipped_count > 0:
@@ -506,7 +524,7 @@ def main() -> None:
 
     # Collect all STEP-3 vessel segmentation files
     all_npy_files = collect_all_step3_files(args.output_dir)
-    print(f"\nAll STEP-3 vessel segmentation .npy files saved to: {args.output_dir}")
+    print(f"\nAll STEP-3 vessel segmentation .npz files saved to: {args.output_dir}")
     print(f"Total vessel segmentation files: {len(all_npy_files)}")
 
     # Cleanup
