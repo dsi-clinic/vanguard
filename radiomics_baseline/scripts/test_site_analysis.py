@@ -70,6 +70,7 @@ def _default_args(**overrides) -> argparse.Namespace:
         "logreg_l1_ratio": 0.0,
         "corr_threshold": 0.0,
         "k_best": 0,
+        "feature_selection": "kbest",
         "grid_search": False,
         "include_subtype": False,
         # RF defaults (not used but needed by build_estimator)

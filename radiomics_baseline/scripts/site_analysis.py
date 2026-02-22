@@ -44,9 +44,9 @@ from sklearn.metrics import confusion_matrix, roc_auc_score, roc_curve
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from radiomics_train import (  # noqa: E402
-    apply_kbest,
+    CorrelationPruner,
+    MRMRSelector,
     build_estimator,
-    corr_prune,
     load_features,
     load_labels,
     sanitize_numeric,
@@ -78,12 +78,25 @@ def assign_sites(index: pd.Index) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 def _build_pipeline(args: argparse.Namespace):
-    """Build the sklearn Pipeline (imputer → scaler → classifier)."""
+    """Build the sklearn Pipeline (imputer → [corr_prune] → [kbest/mrmr] → [scale] → classifier).
+
+    Feature selection steps are included inside the pipeline so they are
+    re-fitted on only the training rows of each LOSO fold, matching the
+    leakage-prevention approach in radiomics_train.py.
+    """
+    from sklearn.feature_selection import SelectKBest, f_classif
     from sklearn.impute import SimpleImputer
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
 
     steps: list[tuple[str, object]] = [("impute", SimpleImputer(strategy="median"))]
+    if args.corr_threshold > 0:
+        steps.append(("corr_prune", CorrelationPruner(threshold=args.corr_threshold)))
+    if args.k_best > 0:
+        if args.feature_selection == "mrmr":
+            steps.append(("mrmr", MRMRSelector(k=args.k_best)))
+        else:
+            steps.append(("kbest", SelectKBest(score_func=f_classif, k=args.k_best)))
     if args.classifier == "logistic":
         steps.append(("scale", StandardScaler()))
     steps.append(("clf", build_estimator(args)))
@@ -129,14 +142,7 @@ def train_and_evaluate(
     Xte_s = sanitize_numeric(Xte, "test")
     Xte_s = Xte_s.reindex(columns=Xtr_s.columns, fill_value=np.nan)
 
-    # Correlation prune (train only)
-    Xtr_s, _ = corr_prune(Xtr_s, args.corr_threshold)
-    Xte_s = Xte_s.reindex(columns=Xtr_s.columns, fill_value=np.nan)
-
-    # K-best (train only)
-    Xtr_s, Xte_s = apply_kbest(Xtr_s, ytr, Xte_s, args.k_best)
-
-    # Build and fit
+    # Build and fit (feature selection lives inside the pipeline)
     pipe = _build_pipeline(args)
     pipe.fit(Xtr_s, ytr)
 
@@ -328,6 +334,12 @@ def main() -> None:
     # Feature selection
     ap.add_argument("--corr-threshold", type=float, default=0.0)
     ap.add_argument("--k-best", type=int, default=0)
+    ap.add_argument(
+        "--feature-selection",
+        choices=["kbest", "mrmr"],
+        default="kbest",
+        help="Filter method after optional correlation pruning (only active when --k-best > 0).",
+    )
     ap.add_argument("--grid-search", action="store_true")
     ap.add_argument("--include-subtype", action="store_true")
 
