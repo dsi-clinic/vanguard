@@ -51,13 +51,24 @@ def extract_single_timepoint_volume(arr: np.ndarray, npy_channel: int) -> np.nda
     )
 
 
+def _load_array_from_path(path: Path) -> np.ndarray:
+    """Load a single array from .npy or .npz. NPZ files use the first stored array."""
+    data = np.load(path, allow_pickle=False)
+    if path.suffix.lower() == ".npz":
+        keys = list(data.files)
+        if not keys:
+            raise ValueError(f"NPZ file contains no arrays: {path}")
+        return np.asarray(data[keys[0]])
+    return np.asarray(data)
+
+
 def load_time_series_from_files(paths: list[Path], npy_channel: int) -> np.ndarray:
     """Load and stack per-timepoint arrays into `(t, z, y, x)`."""
     volumes: list[np.ndarray] = []
     expected_shape: tuple[int, int, int] | None = None
 
     for path in paths:
-        arr = np.load(path)
+        arr = _load_array_from_path(path)
         vol = extract_single_timepoint_volume(arr, npy_channel=npy_channel)
         if expected_shape is None:
             expected_shape = tuple(int(x) for x in vol.shape)
@@ -75,20 +86,33 @@ def load_time_series_from_files(paths: list[Path], npy_channel: int) -> np.ndarr
 def discover_study_timepoints(
     input_dir: Path, study_id: str
 ) -> tuple[list[Path], list[int]]:
-    """Discover and sort timepoint files for one study id."""
+    """Discover and sort timepoint files for one study id.
+
+    Expects layout: input_dir / [SITE] / [STUDY_ID] / images / *.npz
+    SITE is parsed from study_id as the first underscore-separated component
+    (e.g. ISPY2_202539 -> SITE=ISPY2, STUDY_ID=ISPY2_202539).
+    """
     if not input_dir.exists():
         raise ValueError(f"Input directory does not exist: {input_dir}")
     if not input_dir.is_dir():
         raise ValueError(f"Input path is not a directory: {input_dir}")
 
-    candidates = sorted(input_dir.glob(f"*{study_id}*_vessel_segmentation.npy"))
+    site = study_id.split("_")[0] if "_" in study_id else study_id
+    images_dir = input_dir / site / study_id / "images"
+    if not images_dir.exists():
+        raise ValueError(
+            f"Images directory does not exist: {images_dir} "
+            f"(input_dir={input_dir}, site={site}, study_id={study_id})"
+        )
+
+    candidates = sorted(images_dir.glob(f"*{study_id}*_vessel_segmentation.npz"))
     if not candidates:
         raise ValueError(
-            f"No candidate files found for study_id='{study_id}' in {input_dir}"
+            f"No candidate .npz files found for study_id='{study_id}' in {images_dir}"
         )
 
     patt = re.compile(
-        rf"{re.escape(study_id)}_(\d{{4}})_vessel_segmentation\.npy$",
+        rf"{re.escape(study_id)}_(\d{{4}})_vessel_segmentation\.npz$",
         flags=re.IGNORECASE,
     )
 

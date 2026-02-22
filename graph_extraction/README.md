@@ -35,6 +35,10 @@ python graph_extraction/run_skeleton_processing.py 4d \
   --threshold-high 0.85
 ```
 
+4D input layout (when using `--input-dir` and `--study-id`):
+- Traverses `{input_dir}/{SITE}/{STUDY_ID}/images/`, where SITE is the first underscore-separated component of study_id (e.g. ISPY2_202539 → SITE=ISPY2).
+- Expects `.npz` files matching `*{study_id}_{0000}_vessel_segmentation.npz` (same naming pattern as before, with .npz extension).
+
 Behavior:
 - If skeleton outputs already exist, they are reused unless `--force-skeleton` is set.
 - If morphometry JSON already exists, it is reused unless `--force-features` is set.
