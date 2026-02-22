@@ -2,8 +2,8 @@
 #SBATCH --job-name=4d-morphometry
 #SBATCH --partition=general
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=16G
-#SBATCH --time=8:00:00
+#SBATCH --mem=8G
+#SBATCH --time=30:00
 #SBATCH --array=0-9999
 #SBATCH --output=logs/4d-morphometry-%A-%a.out
 #SBATCH --error=logs/4d-morphometry-%A-%a.err

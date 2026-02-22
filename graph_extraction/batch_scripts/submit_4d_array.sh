@@ -15,7 +15,7 @@
 set -euo pipefail
 
 CHUNK_SIZE=200
-POLL_INTERVAL=60
+POLL_INTERVAL=30
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
