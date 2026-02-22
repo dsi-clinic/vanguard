@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Discover study count, submit SLURM arrays in chunks, wait for each chunk to finish
-# before submitting the next (keeps under job limit when run via srun).
+# Discover study count, submit SLURM arrays in chunks of ~200, wait for each chunk
+# to finish before submitting the next (keeps under 250 job queue limit).
+#
 # Usage: ./submit_4d_array.sh [INPUT_DIR] [OUTPUT_DIR] [--test]
 #
-# --test    Run only on first 5 studies
+#   INPUT_DIR   Base directory for vessel segmentations (default: /net/projects2/vanguard/vessel_segmentations)
+#   OUTPUT_DIR  Output directory for morphometry JSONs and manifest (default: /net/projects2/vanguard/report/4d_morphometry)
+#   --test      Run only on first 5 studies
 #
 # Run directly on head node: ./submit_4d_array.sh
 # Or via srun (waits for queue to clear between batches):
@@ -11,11 +14,12 @@
 
 set -euo pipefail
 
-CHUNK_SIZE=100
+CHUNK_SIZE=200
 POLL_INTERVAL=60
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
 TEST_MODE=false
 POSITIONAL=()
 for arg in "$@"; do
@@ -25,6 +29,8 @@ INPUT_DIR="${POSITIONAL[0]:-/net/projects2/vanguard/vessel_segmentations}"
 OUTPUT_DIR="${POSITIONAL[1]:-/net/projects2/vanguard/report/4d_morphometry}"
 
 cd "${PROJECT_ROOT}"
+mkdir -p logs
+
 COUNT=$(python -c "
 from pathlib import Path
 import sys

@@ -10,17 +10,16 @@
 #SBATCH --mail-user=lunad@uchicago.edu
 
 # Merge manifest_task_*.json into manifest.json after array job completes.
-# Submit with: sbatch --dependency=afterok:ARRAY_JOB_ID submit_4d_merge.slurm
+# Submit via submit_4d_array.sh (after array chunks finish); or manually:
+#   sbatch --dependency=afterok:ARRAY_JOB_ID --export=OUTPUT_DIR=... submit_4d_merge.slurm
 
 set -eo pipefail
 
-# Ensure HOME is set on nodes with minimal env
 export HOME="${HOME:-/home/$(whoami)}"
 source ~/.bashrc || true
 eval "$(micromamba shell hook -s bash)"
 micromamba activate vanguard
 
-# Prevent libxml2 deactivate hook from failing
 export xml_catalog_files_libxml2=""
 
 PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
