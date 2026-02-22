@@ -41,6 +41,7 @@ def load_segmentation_array(path: Path) -> np.ndarray:
             data.close()
     return data
 
+
 _OFFSETS_3D = np.array(
     [
         (dz, dy, dx)
