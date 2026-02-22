@@ -363,6 +363,7 @@ def process_4d_study(
     force_skeleton: bool,
     force_features: bool,
     save_center_manifold_mask: bool,
+    verbose: bool = True,
 ) -> dict[str, object]:
     """Run 4D exam-level skeleton extraction + morphometry for one study."""
     start = time.perf_counter()
@@ -404,7 +405,7 @@ def process_4d_study(
             min_anchor_fraction=min_anchor_fraction,
             min_anchor_voxels=min_anchor_voxels,
             max_candidates=max_candidates,
-            verbose=True,
+            verbose=verbose,
         )
         skeleton_mask, support_mask, _ = collapse_4d_to_exam_skeleton(
             mask_4d,
