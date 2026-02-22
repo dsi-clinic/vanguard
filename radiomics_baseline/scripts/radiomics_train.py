@@ -183,6 +183,48 @@ class CorrelationPruner(BaseEstimator, TransformerMixin):
         return X[:, self.keep_mask_]
 
 
+class MRMRSelector(BaseEstimator, TransformerMixin):
+    """Select top-K features using mRMR (minimum-Redundancy Maximum-Relevance).
+
+    Wraps ``mrmr-selection``'s ``mrmr_classif`` function into an
+    sklearn-compatible transformer.  Operates on numpy arrays (i.e. after the
+    imputer step); columns are addressed by integer index internally.
+
+    Parameters
+    ----------
+    k : int
+        Number of features to select.  Clamped to the actual number of
+        available features so the selector never raises on small inputs.
+    """
+
+    def __init__(self, k: int = 20) -> None:
+        self.k = k
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "MRMRSelector":
+        try:
+            from mrmr import mrmr_classif
+        except ImportError as exc:
+            msg = (
+                "mrmr-selection is not installed. "
+                "Install it with 'pip install mrmr-selection' to use "
+                "--feature-selection mrmr."
+            )
+            raise ImportError(msg) from exc
+
+        k = min(self.k, X.shape[1])
+        df = pd.DataFrame(X)
+        selected = mrmr_classif(X=df, y=pd.Series(y), K=k, show_progress=False)
+        self.selected_indices_ = np.array(selected, dtype=int)
+        print(
+            f"[DEBUG] MRMRSelector: requested k={self.k}, "
+            f"selected={len(self.selected_indices_)} features",
+        )
+        return self
+
+    def transform(self, X: np.ndarray, y: np.ndarray | None = None) -> np.ndarray:
+        return X[:, self.selected_indices_]
+
+
 # ---------------------------
 # Additional plots
 # (beyond what the evaluation framework's VISUALIZATION_REGISTRY provides)
@@ -443,6 +485,17 @@ def main() -> None:
         help="If >0, keep top-K features by ANOVA F-test on TRAIN only.",
     )
     ap.add_argument(
+        "--feature-selection",
+        choices=["kbest", "mrmr"],
+        default="kbest",
+        help=(
+            "Filter method applied after optional correlation pruning: "
+            "'kbest' = ANOVA F-test SelectKBest (default); "
+            "'mrmr' = minimum-Redundancy Maximum-Relevance. "
+            "Only active when --k-best > 0."
+        ),
+    )
+    ap.add_argument(
         "--grid-search",
         action="store_true",
         help="If set, run a small GridSearchCV on the classifier using train only.",
@@ -514,7 +567,10 @@ def main() -> None:
     if args.corr_threshold > 0:
         steps.append(("corr_prune", CorrelationPruner(threshold=args.corr_threshold)))
     if args.k_best > 0:
-        steps.append(("kbest", SelectKBest(score_func=f_classif, k=args.k_best)))
+        if args.feature_selection == "mrmr":
+            steps.append(("mrmr", MRMRSelector(k=args.k_best)))
+        else:
+            steps.append(("kbest", SelectKBest(score_func=f_classif, k=args.k_best)))
     if args.classifier == "logistic":
         steps.append(("scale", StandardScaler()))
     steps.append(("clf", build_estimator(args)))
@@ -524,7 +580,9 @@ def main() -> None:
     pipe.fit(Xtr, ytr)
 
     # Number of features reaching the classifier after pipeline selection steps.
-    if "kbest" in pipe.named_steps:
+    if "mrmr" in pipe.named_steps:
+        n_features_used = len(pipe.named_steps["mrmr"].selected_indices_)
+    elif "kbest" in pipe.named_steps:
         n_features_used = int(pipe.named_steps["kbest"].get_support().sum())
     elif "corr_prune" in pipe.named_steps:
         n_features_used = int(pipe.named_steps["corr_prune"].keep_mask_.sum())
@@ -759,6 +817,7 @@ def main() -> None:
             "calibration": calib_status,
             "corr_threshold": args.corr_threshold,
             "k_best": int(args.k_best),
+            "feature_selection": args.feature_selection,
             "grid_search": bool(args.grid_search),
             "cv_folds": int(args.cv_folds),
         }

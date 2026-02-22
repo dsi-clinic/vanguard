@@ -256,6 +256,8 @@ def build_train_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
         cmd.extend(["--corr-threshold", str(train["corr_threshold"])])
     if train.get("k_best"):
         cmd.extend(["--k-best", str(train["k_best"])])
+    if train.get("feature_selection"):
+        cmd.extend(["--feature-selection", str(train["feature_selection"])])
     if train.get("grid_search"):
         cmd.append("--grid-search")
     if train.get("cv_folds"):

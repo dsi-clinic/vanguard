@@ -1,0 +1,25 @@
+# ---------------------------------------------------------------------------
+# Sweep: mRMR vs ANOVA k-best feature selection
+#
+# Compares the two filter methods across a range of K values and two
+# classifiers.  Corr-pruning (0.9) is applied before both methods so
+# the only variable is how the surviving features are ranked/selected.
+#
+# Grid:  2 methods × 3 K values × 2 classifiers = 12 configs
+# Tip:   mRMR wins clearly at small K (10-20); the gap narrows at K=50.
+# ---------------------------------------------------------------------------
+base_config: configs/exp_peri5_multiphase_logreg.yaml
+
+sweep:
+  train.feature_selection:
+    - kbest
+    - mrmr
+
+  train.k_best:
+    - 10
+    - 20
+    - 50
+
+  train.classifier:
+    - logistic
+    - rf

@@ -33,11 +33,12 @@ extract:
   hybrid_concat_threshold:    5
 
 train:
-  classifier:      logistic
-  logreg_penalty:  elasticnet
-  logreg_l1_ratio: 0.5
-  corr_threshold:  0.9
-  k_best:          50
-  grid_search:     true
-  cv_folds:        5
-  include_subtype: true
+  classifier:        logistic
+  logreg_penalty:    elasticnet
+  logreg_l1_ratio:   0.5
+  corr_threshold:    0.9
+  k_best:            50
+  feature_selection: kbest   # 'kbest' (ANOVA F-test) or 'mrmr' (min-redundancy max-relevance)
+  grid_search:       true
+  cv_folds:          5
+  include_subtype:   true
