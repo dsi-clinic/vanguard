@@ -84,12 +84,9 @@ cd /path/to/vanguard
 FILES_PER_TASK=40 ARRAY_THROTTLE=20 ./slurm_submit_scripts/submit_batch_segmentation_array.sh
 ```
 
-# Currently Processing Files
+For checking run status
 
-# For checking status of current run
-squeue -u $USER   (CHECK NODE STATUS)
-
-find /net/projects2/vanguard/vessel_segmentations -type f -name "*_vessel_segmentation.npz" -mtime -1 | wc -l (How many files added)
+squeue -u $USER
 
 find /net/projects2/vanguard/vessel_segmentations -name "*_vessel_segmentation.npz" | wc -l
 
