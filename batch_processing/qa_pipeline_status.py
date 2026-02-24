@@ -17,14 +17,18 @@ from __future__ import annotations
 
 import argparse
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, NamedTuple
+from typing import NamedTuple
 
 try:
     import pandas as pd
 except ImportError:  # pragma: no cover
     pd = None  # type: ignore[assignment]
+
+
+BYTES_PER_KIB = 1024.0
 
 
 @dataclass
@@ -57,8 +61,8 @@ def human_bytes(n: int) -> str:
     units = ["B", "KB", "MB", "GB", "TB"]
     i = 0
     value = float(n)
-    while value >= 1024 and i < len(units) - 1:
-        value /= 1024.0
+    while value >= BYTES_PER_KIB and i < len(units) - 1:
+        value /= BYTES_PER_KIB
         i += 1
     return f"{value:.1f} {units[i]}"
 
@@ -172,6 +176,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Entry point: compute and print QA summaries."""
     args = parse_args()
 
     # Stage 0: raw images
@@ -252,19 +257,23 @@ def main() -> None:
         if id_table_path.suffix.lower() in {".xls", ".xlsx"}:
             # Use the first sheet by default if none is specified.
             sheet = args.id_table_sheet or 0
-            df = pd.read_excel(id_table_path, sheet_name=sheet)
+            id_table_df = pd.read_excel(id_table_path, sheet_name=sheet)
         else:
-            df = pd.read_csv(id_table_path)
+            id_table_df = pd.read_csv(id_table_path)
 
-        if args.id_column not in df.columns:
+        if args.id_column not in id_table_df.columns:
             raise SystemExit(
-                f"id-column '{args.id_column}' not in id-table columns: {list(df.columns)}"
+                "id-column "
+                f"'{args.id_column}' not in id-table columns: "
+                f"{list(id_table_df.columns)}"
             )
         tp_col = args.timepoint_column
 
-        if tp_col is None or tp_col not in df.columns:
+        if tp_col is None or tp_col not in id_table_df.columns:
             # Patient-level QA only.
-            expected_ids = {str(v) for v in df[args.id_column].dropna().astype(str)}
+            expected_ids = {
+                str(v) for v in id_table_df[args.id_column].dropna().astype(str)
+            }
 
             # Discover patient IDs from raw images (directory names).
             image_ids: set[str] = set()
@@ -300,8 +309,7 @@ def main() -> None:
                 f"Found in vessel segmentations:            {len(vessel_ids)}",
             )
             print(
-                "Found in 4D centerline / graph outputs:   "
-                f"{len(cl4_ids)}",
+                "Found in 4D centerline / graph outputs:   " f"{len(cl4_ids)}",
             )
             print(
                 f"Missing patient IDs from raw images:      {len(missing_in_images_ids)}",
@@ -337,7 +345,7 @@ def main() -> None:
             # Full (study_id, timepoint) QA when timepoint column is available.
             expected_pairs = {
                 StudyTimepoint(str(row[args.id_column]), str(row[tp_col]))
-                for _, row in df.iterrows()
+                for _, row in id_table_df.iterrows()
             }
 
             # Discover (study_id, timepoint) pairs from raw images.
@@ -375,15 +383,13 @@ def main() -> None:
             missing_in_vessels = sorted(expected_pairs - vessel_pairs)
 
             print(
-                "Total expected (study_id, timepoint) pairs: "
-                f"{len(expected_pairs)}",
+                "Total expected (study_id, timepoint) pairs: " f"{len(expected_pairs)}",
             )
             print(
                 f"Found in raw images:                      {len(image_pairs)}",
             )
             print(
-                "Found in vessel segmentations:            "
-                f"{len(vessel_pairs)}",
+                "Found in vessel segmentations:            " f"{len(vessel_pairs)}",
             )
             print(
                 f"Missing from raw images:                  {len(missing_in_images)}",
@@ -415,4 +421,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
