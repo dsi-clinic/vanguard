@@ -89,9 +89,9 @@ FILES_PER_TASK=40 ARRAY_THROTTLE=20 ./slurm_submit_scripts/submit_batch_segmenta
 # For checking status of current run
 squeue -u $USER   (CHECK NODE STATUS)
 
-ls -t logs/batch-seg-array-*.out | head -n 1 | xargs -r tail -n 30 (tail job)
-
 find /net/projects2/vanguard/vessel_segmentations -type f -name "*_vessel_segmentation.npz" -mtime -1 | wc -l (How many files added)
+
+find /net/projects2/vanguard/vessel_segmentations -name "*_vessel_segmentation.npz" | wc -l
 
 Optional overrides via environment variables:
 
