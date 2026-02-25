@@ -43,7 +43,7 @@ plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.legend(loc="lower right")
 plt.grid(alpha=0.3)
-plt.savefig("vanguard_roc_curve.png")
+plt.savefig("EN_roc_curve.png")
 
 print(f"\nElasticNet Results ---")
 print(f"Total Patients (N): {len(df)}")
