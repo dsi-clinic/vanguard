@@ -62,7 +62,7 @@ def compute_random_auc_distribution(
     Returns:
     -------
     dict
-        Keys: "auc_values" (list of float), "mean", "std", "n_runs".
+        Keys: "auc_values" (list of float), "mean", "std", "min", "max", "n_runs".
     """
     y_true = np.asarray(y_true)
     unique_labels = np.unique(y_true)
@@ -71,6 +71,8 @@ def compute_random_auc_distribution(
             "auc_values": [],
             "mean": float("nan"),
             "std": float("nan"),
+            "min": float("nan"),
+            "max": float("nan"),
             "n_runs": n_runs,
         }
 
@@ -89,11 +91,15 @@ def compute_random_auc_distribution(
     std_val = (
         float(np.std(valid)) if len(valid) > 1 else (0.0 if valid else float("nan"))
     )
+    min_val = float(np.min(valid)) if valid else float("nan")
+    max_val = float(np.max(valid)) if valid else float("nan")
 
     return {
         "auc_values": auc_values,
         "mean": mean_val,
         "std": std_val,
+        "min": min_val,
+        "max": max_val,
         "n_runs": n_runs,
     }
 
@@ -189,7 +195,7 @@ def report_random_baseline(
 def save_random_baseline_distribution(distribution: dict, path: Path | str) -> None:
     """Write distribution summary to JSON.
 
-    Saves mean, std, n_runs, and optionally auc_values. Caller can omit
+    Saves mean, std, min, max, n_runs, and optionally auc_values. Caller can omit
     auc_values from the dict to keep the file small (e.g. pass a copy without
     auc_values).
 
@@ -204,6 +210,8 @@ def save_random_baseline_distribution(distribution: dict, path: Path | str) -> N
     out = {
         "mean": distribution["mean"],
         "std": distribution["std"],
+        "min": distribution.get("min", float("nan")),
+        "max": distribution.get("max", float("nan")),
         "n_runs": distribution["n_runs"],
     }
     if "auc_values" in distribution and distribution["auc_values"]:
