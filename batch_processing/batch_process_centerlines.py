@@ -18,17 +18,17 @@ OUTPUT_DIR = SCRIPT_DIR / "centerline_json_outputs"
 def get_spacing_from_segmentation_file(seg_file: Path) -> tuple[float, float, float]:
     """Extract spacing from original .nii.gz file based on segmentation filename.
 
-    Segmentation files are named: {patient_id}_{base_name}_vessel_segmentation.npy
+    Segmentation files are named: {patient_id}_{base_name}_vessel_segmentation.npz
     Original files are at: {IMAGES_DIR}/{patient_id}/{base_name}.nii.gz
 
     Args:
-        seg_file: Path to segmentation .npy file
+        seg_file: Path to segmentation .npz file
 
     Returns:
         Tuple of (x, y, z) spacing in mm, or (1.0, 1.0, 1.0) if not found
     """
-    # Parse filename: {patient_id}_{base_name}_vessel_segmentation.npy
-    stem = seg_file.stem  # Remove .npy extension
+    # Parse filename: {patient_id}_{base_name}_vessel_segmentation.npz
+    stem = seg_file.stem  # Remove .npz extension
     if not stem.endswith("_vessel_segmentation"):
         return (1.0, 1.0, 1.0)
 
@@ -155,11 +155,11 @@ def process_file(input_file: Path, output_json: Path) -> bool:
 
 def main() -> None:
     """Process all files from vessel_segmentations directory."""
-    # Get list of all .npy files
-    all_files = sorted(VESSEL_SEG_DIR.glob("*.npy"))
+    # Get list of all .npz files
+    all_files = sorted(VESSEL_SEG_DIR.rglob("*.npz"))
 
     if len(all_files) == 0:
-        print("No .npy files found in vessel_segmentations directory")
+        print("No .npz files found in vessel_segmentations directory")
         return
 
     # Process all files

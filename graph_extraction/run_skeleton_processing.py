@@ -29,7 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser_3d = subparsers.add_parser("3d", help="Process one 3D segmentation file.")
     parser_3d.add_argument(
-        "--input-file", type=Path, required=True, help="Input .npy file."
+        "--input-file",
+        type=Path,
+        required=True,
+        help="Input .npy or .npz segmentation file.",
     )
     parser_3d.add_argument(
         "--output-dir", type=Path, required=True, help="Output directory."
@@ -47,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--input-dir",
         type=Path,
         default=DEFAULT_SEGMENTATION_DIR,
-        help="Directory containing per-timepoint .npy segmentation files.",
+        help="Directory containing per-timepoint .npy/.npz segmentation files.",
     )
     parser_4d.add_argument(
         "--output-dir", type=Path, required=True, help="Output directory."

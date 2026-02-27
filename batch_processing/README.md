@@ -75,6 +75,30 @@ breast_masks/
 ├── DUKE_002_DUKE_002_0000_breast_mask.npy
 └── ...
 ```
+## Cluster Submission (SLURM Array)
+
+Use the array submit helper to launch one GPU job per file. This is the recommended way to process the full MAMA-MIA dataset in parallel.
+
+```bash
+cd /path/to/vanguard
+FILES_PER_TASK=40 ARRAY_THROTTLE=20 ./slurm_submit_scripts/submit_batch_segmentation_array.sh
+```
+
+For checking run status
+
+squeue -u $USER
+
+find /net/projects2/vanguard/vessel_segmentations -name "*_vessel_segmentation.npz" | wc -l
+
+Optional overrides via environment variables:
+
+```bash
+IMAGES_DIR=/net/projects2/vanguard/MAMA-MIA-syn60868042/images \
+OUTPUT_DIR=/net/projects2/vanguard/vessel_segmentations \
+BREAST_MODEL=/path/to/breast_model.pth \
+VESSEL_MODEL=/path/to/dv_model.pth \
+./slurm_submit_scripts/submit_batch_segmentation_array.sh
+```
 
 ## Performance Estimates
 
