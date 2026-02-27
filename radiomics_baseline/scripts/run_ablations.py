@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import hashlib
 import itertools
 import re
 import sys
@@ -51,7 +52,13 @@ _EXTRACT_FINGERPRINT_KEYS = (
     "extract.peri_mode",              # NEW — 2d vs 3d peritumor ring
     "extract.force_2d",               # NEW — per-slice vs volumetric textures
     "extract.force_2d_dimension",     # NEW — which axis for force2D
-    "extract.n_jobs",
+    # Non-scalar handling changes the extracted feature matrix and must
+    # therefore produce a distinct shared extraction directory.
+    "extract.non_scalar_handling",
+    "extract.aggregate_stats",
+    "extract.hybrid_concat_threshold",
+    # n_jobs only affects runtime, not extracted values; keep it out of the
+    # extraction identity so cache reuse survives worker-count changes.
     "extract.label_override",
     "paths.params_yaml",
 )
@@ -86,6 +93,31 @@ def deep_set(d: dict, dotted_key: str, value: Any) -> None:  # noqa: ANN401
     d[keys[-1]] = value
 
 
+def resolve_base_config_path(base_config: str, sweep_dir: Path | None = None) -> Path:
+    """Resolve a base-config path from a sweep file context."""
+    path = Path(base_config)
+    if path.is_absolute():
+        return path
+
+    candidates: list[Path] = []
+    if sweep_dir is not None:
+        # Most natural interpretation: relative to the sweep file directory.
+        candidates.append(sweep_dir / path)
+        # Also support repo-root-style references (e.g. "configs/exp_*.yaml")
+        # when the sweep file itself lives in configs/.
+        candidates.append(sweep_dir.parent / path)
+
+    # Preserve existing behavior if invoked from repo root and path exists.
+    candidates.append(path)
+
+    for cand in candidates:
+        if cand.exists():
+            return cand
+
+    # Fall back to the first contextual candidate for clearer error paths.
+    return candidates[0]
+
+
 # Extraction-sharing logic
 def extraction_fingerprint(cfg: dict[str, Any]) -> str:
     """Return a stable string that uniquely identifies the extraction portion
@@ -102,18 +134,22 @@ def extraction_fingerprint(cfg: dict[str, Any]) -> str:
 def _value_label(value: Any) -> str:  # noqa: ANN401
     """Short, filesystem-safe label for a single sweep value.
 
-    * Lists become their length (e.g. a 2-element image_patterns → ``2``).
+    * Lists become ``<len>-<hash>`` so similarly sized lists don't collide.
     * Everything else is stringified and stripped of non-alphanumeric chars
       (except underscores, hyphens, and dots).
     """
     if isinstance(value, list):
-        return str(len(value))
-    return re.sub(r"[^\w.\-]", "", str(value))
+        rendered = "|".join(str(v) for v in value)
+        digest = hashlib.sha1(rendered.encode("utf-8")).hexdigest()[:8]
+        return f"{len(value)}-{digest}"
+    label = re.sub(r"[^\w.\-]", "", str(value))
+    return label or "empty"
 
 
 # Config generation
 def generate_configs(
     sweep: dict[str, Any],
+    sweep_dir: Path | None = None,
 ) -> list[tuple[dict[str, Any], dict[str, str]]]:
     """Expand a sweep definition into concrete (config, param_values) pairs.
 
@@ -128,7 +164,11 @@ def generate_configs(
     ``param_values_dict`` maps each sweep key to its string value (used later
     for the summary CSV columns).
     """
-    with open(sweep["base_config"]) as fh:  # noqa: PTH123
+    base_config_path = resolve_base_config_path(
+        sweep["base_config"],
+        sweep_dir=sweep_dir,
+    )
+    with base_config_path.open() as fh:
         base_cfg = yaml.safe_load(fh)
 
     param_keys = list(sweep["sweep"].keys())
@@ -137,6 +177,7 @@ def generate_configs(
     base_outdir = Path(base_cfg["paths"]["outdir"])
 
     configs: list[tuple[dict[str, Any], dict[str, str]]] = []
+    seen_names: set[str] = set()
 
     for combo in itertools.product(*value_lists):
         cfg = copy.deepcopy(base_cfg)
@@ -148,7 +189,15 @@ def generate_configs(
             label_parts.append(f"{short}-{_value_label(value)}")
 
         # Unique name and output directory derived from the base + overrides
-        cfg["experiment_name"] = f"{base_name}_{'_'.join(label_parts)}"
+        exp_name = f"{base_name}_{'_'.join(label_parts)}"
+        if exp_name in seen_names:
+            msg = (
+                "Generated duplicate experiment_name "
+                f"'{exp_name}'. This usually means sweep labels are colliding."
+            )
+            raise ValueError(msg)
+        seen_names.add(exp_name)
+        cfg["experiment_name"] = exp_name
         cfg["paths"]["outdir"] = str(base_outdir.parent / cfg["experiment_name"])
 
         param_values = {k: str(v) for k, v in zip(param_keys, combo)}
@@ -171,6 +220,10 @@ def assign_shared_extract_outdirs(
     fingerprint_to_dir: dict[str, str] = {}
 
     for cfg, _ in configs:
+        explicit_extract = cfg.get("paths", {}).get("extract_outdir")
+        if explicit_extract:
+            # Respect explicit extraction cache paths supplied by the config.
+            continue
         fp = extraction_fingerprint(cfg)
         if fp not in fingerprint_to_dir:
             fingerprint_to_dir[fp] = str(
@@ -212,7 +265,8 @@ def main() -> None:
     scripts_dir = Path(__file__).resolve().parent
 
     # load sweep
-    with open(args.sweep_config) as fh:  # noqa: PTH123
+    sweep_config_path = Path(args.sweep_config).resolve()
+    with sweep_config_path.open() as fh:
         sweep = yaml.safe_load(fh)
 
     if "base_config" not in sweep:
@@ -223,10 +277,14 @@ def main() -> None:
         raise ValueError(msg)
 
     # generate configs
-    configs = generate_configs(sweep)
+    configs = generate_configs(sweep, sweep_dir=sweep_config_path.parent)
 
     # Point configs with identical extraction params at a shared extract dir
-    with open(sweep["base_config"]) as fh:  # noqa: PTH123
+    base_config_path = resolve_base_config_path(
+        sweep["base_config"],
+        sweep_dir=sweep_config_path.parent,
+    )
+    with base_config_path.open() as fh:
         base_cfg = yaml.safe_load(fh)
     base_outdir = Path(base_cfg["paths"]["outdir"]).parent
     assign_shared_extract_outdirs(configs, base_outdir)
@@ -274,11 +332,12 @@ def main() -> None:
             "auc_test",
             "auc_train",
             "auc_train_cv",
+            "auc_train_cv_std",
             "n_features_used",
         ]
         fieldnames = ["experiment_name", "status"] + all_param_keys + metric_keys
 
-        summary_path = Path(args.sweep_config).parent / "ablation_summary.csv"
+        summary_path = sweep_config_path.parent / "ablation_summary.csv"
         with open(summary_path, "w", newline="") as fh:  # noqa: PTH123
             writer = csv.DictWriter(
                 fh,
@@ -304,7 +363,7 @@ def main() -> None:
     print("ABLATION SUMMARY")
     print("=" * 60)
     for r in results:
-        auc = f"  auc_test={r['auc_test']}" if r.get("auc_test") else ""
+        auc = f"  auc_test={r['auc_test']}" if r.get("auc_test") is not None else ""
         print(f"  {r.get('experiment_name', '?'):60s} [{r['status']}]{auc}")
 
 

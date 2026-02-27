@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from radiomics_train import (  # noqa: E402
     CorrelationPruner,
     MRMRSelector,
+    align_numeric_to_reference,
     build_estimator,
     load_features,
     load_labels,
@@ -71,6 +72,19 @@ def extract_site(pid: str) -> str:
 def assign_sites(index: pd.Index) -> pd.Series:
     """Return a Series mapping each patient ID to its site."""
     return pd.Series([extract_site(str(pid)) for pid in index], index=index, name="site")
+
+
+def assign_sites_from_labels(labels: pd.DataFrame, index: pd.Index) -> pd.Series:
+    """Return site labels aligned to *index*, preferring labels['site'] when present."""
+    if "site" in labels.columns:
+        sites = labels.loc[index, "site"].astype(str).copy()
+        missing_mask = sites.isna() | (sites.str.len() == 0) | (sites.str.lower() == "nan")
+        if missing_mask.any():
+            fallback = assign_sites(index[missing_mask.to_numpy()])
+            sites.loc[missing_mask] = fallback
+        sites.name = "site"
+        return sites
+    return assign_sites(index)
 
 
 # ---------------------------------------------------------------------------
@@ -139,8 +153,7 @@ def train_and_evaluate(
     """
     # Sanitise
     Xtr_s = sanitize_numeric(Xtr, "train")
-    Xte_s = sanitize_numeric(Xte, "test")
-    Xte_s = Xte_s.reindex(columns=Xtr_s.columns, fill_value=np.nan)
+    Xte_s = align_numeric_to_reference(Xte, Xtr_s.columns.tolist(), "test")
 
     # Build and fit (feature selection lives inside the pipeline)
     pipe = _build_pipeline(args)
@@ -352,12 +365,44 @@ def main() -> None:
     Xtr_raw = load_features(str(feat_dir / "features_train_final.csv"))
     Xte_raw = load_features(str(feat_dir / "features_test_final.csv"))
     labels = load_labels(args.labels)
+    splits = pd.read_csv(args.splits).copy()
+    if "patient_id" not in splits.columns or "split" not in splits.columns:
+        msg = f"{args.splits} must contain columns: patient_id, split"
+        raise ValueError(msg)
+    splits["patient_id"] = splits["patient_id"].astype(str)
+    dup = splits["patient_id"][splits["patient_id"].duplicated()].unique()
+    if len(dup) > 0:
+        preview = ", ".join(map(str, dup[:5]))
+        msg = (
+            f"{args.splits} has duplicate patient_id values (n={len(dup)}): "
+            f"{preview}{' ...' if len(dup) > 5 else ''}"
+        )
+        raise ValueError(msg)
+    split_map = splits.set_index("patient_id")["split"]
+
+    missing_tr = Xtr_raw.index.difference(split_map.index)
+    missing_te = Xte_raw.index.difference(split_map.index)
+    if len(missing_tr) > 0 or len(missing_te) > 0:
+        msg = (
+            "features contain patient IDs missing from splits file: "
+            f"missing_train={len(missing_tr)}, missing_test={len(missing_te)}"
+        )
+        raise ValueError(msg)
+
+    bad_tr = Xtr_raw.index[split_map.loc[Xtr_raw.index].to_numpy() != "train"]
+    bad_te = Xte_raw.index[split_map.loc[Xte_raw.index].to_numpy() != "test"]
+    if len(bad_tr) > 0 or len(bad_te) > 0:
+        msg = (
+            "feature files do not match split assignments in splits.csv: "
+            f"train_mismatch={len(bad_tr)}, test_mismatch={len(bad_te)}"
+        )
+        raise ValueError(msg)
 
     ytr = labels.loc[Xtr_raw.index, "pcr"].astype(int).to_numpy()
     yte = labels.loc[Xte_raw.index, "pcr"].astype(int).to_numpy()
 
-    sites_train = assign_sites(Xtr_raw.index)
-    sites_test = assign_sites(Xte_raw.index)
+    sites_train = assign_sites_from_labels(labels, Xtr_raw.index)
+    sites_test = assign_sites_from_labels(labels, Xte_raw.index)
 
     print(f"[SITE] Sites found — train: {dict(sites_train.value_counts())}")
     print(f"[SITE] Sites found — test:  {dict(sites_test.value_counts())}")
@@ -394,7 +439,7 @@ def main() -> None:
     # Combine train + test for LOSO
     X_all = pd.concat([Xtr_raw, Xte_raw])
     y_all = labels.loc[X_all.index, "pcr"].astype(int).to_numpy()
-    sites_all = assign_sites(X_all.index)
+    sites_all = assign_sites_from_labels(labels, X_all.index)
 
     loso_result = loso_analysis(X_all, y_all, sites_all, args)
 

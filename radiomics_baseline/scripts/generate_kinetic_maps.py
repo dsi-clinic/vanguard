@@ -296,6 +296,7 @@ def generate_maps_for_pid(
     mask_pattern: str,
     output_dir: str | None = None,
     min_post_contrast: int = 1,
+    fixed_post_phase_indices: list[int] | None = None,
     generate_tpeak_voxel: bool = False,
     generate_subtraction: bool = False,
     overwrite: bool = False,
@@ -317,9 +318,12 @@ def generate_maps_for_pid(
 
         # Check if already generated (skip unless overwrite)
         if not overwrite:
+            expected_kinetic_map_names = list(KINETIC_MAP_NAMES)
+            if generate_tpeak_voxel:
+                expected_kinetic_map_names.append("t_peak_voxel")
             kinetic_done = all(
                 (patient_out_dir / f"{pid}_kinetic_{name}.nii.gz").exists()
-                for name in KINETIC_MAP_NAMES
+                for name in expected_kinetic_map_names
             )
             sub_done = (not generate_subtraction) or all(
                 (patient_out_dir / f"{pid}_subtraction_{name}.nii.gz").exists()
@@ -335,20 +339,35 @@ def generate_maps_for_pid(
         phases = discover_phases(images_dir, pid)
         result["n_phases"] = len(phases)
 
-        # Need at least _0000 + min_post_contrast post-contrast phases
-        pre_phases = [(i, p) for i, p in phases if i == 0]
-        post_phases = [(i, p) for i, p in phases if i > 0]
-
-        if not pre_phases:
+        # Select the phase set used for map computation.
+        # If fixed indices are provided, kinetics are computed only from those
+        # post-contrast timepoints to avoid confounding from variable phase count.
+        idx_to_path = {idx: path for idx, path in phases}
+        if 0 not in idx_to_path:
             raise ValueError(f"No pre-contrast (_0000) phase for {pid}")
-        if len(post_phases) < min_post_contrast:
-            raise ValueError(
-                f"{pid} has {len(post_phases)} post-contrast phases, "
-                f"need at least {min_post_contrast}"
-            )
+
+        if fixed_post_phase_indices:
+            required = [0] + fixed_post_phase_indices
+            missing = [idx for idx in required if idx not in idx_to_path]
+            if missing:
+                raise ValueError(
+                    f"{pid} missing required fixed phases: {missing} "
+                    f"(requested post phases={fixed_post_phase_indices})"
+                )
+            phases_to_use = [(idx, idx_to_path[idx]) for idx in required]
+        else:
+            post_phases = [(i, p) for i, p in phases if i > 0]
+            if len(post_phases) < min_post_contrast:
+                raise ValueError(
+                    f"{pid} has {len(post_phases)} post-contrast phases, "
+                    f"need at least {min_post_contrast}"
+                )
+            phases_to_use = phases
+
+        result["n_phases_used"] = len(phases_to_use)
 
         # Load volumes
-        all_indices, all_arrays, ref_img = load_phase_volumes(phases)
+        all_indices, all_arrays, ref_img = load_phase_volumes(phases_to_use)
 
         # Separate pre-contrast from post-contrast
         pre_idx = all_indices.index(0)
@@ -456,6 +475,16 @@ def main() -> None:
         help="Number of parallel workers (default: 1).",
     )
     ap.add_argument(
+        "--fixed-post-phase-indices",
+        type=str,
+        default=None,
+        help=(
+            "Optional comma-separated post-contrast phase indices (e.g. '1,2,3'). "
+            "If set, kinetic and subtraction maps are computed only from these "
+            "timepoints plus pre-contrast phase 0000."
+        ),
+    )
+    ap.add_argument(
         "--generate-tpeak-voxel",
         action="store_true",
         help="Generate voxel-wise time-to-peak map (requires >=4 post-contrast phases).",
@@ -484,13 +513,45 @@ def main() -> None:
         "--summary-csv",
         type=str,
         default=None,
-        help="Path to write summary CSV (default: {images}/kinetic_maps_summary.csv).",
+        help=(
+            "Path to write summary CSV. Default: "
+            "{output_dir}/kinetic_maps_summary.csv when --output-dir is set, "
+            "otherwise {images}/kinetic_maps_summary.csv."
+        ),
     )
     args = ap.parse_args()
 
+    fixed_post_phase_indices: list[int] | None = None
+    if args.fixed_post_phase_indices:
+        parsed: list[int] = []
+        for tok in args.fixed_post_phase_indices.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            try:
+                idx = int(tok)
+            except ValueError as exc:
+                raise ValueError(
+                    "--fixed-post-phase-indices must be comma-separated integers"
+                ) from exc
+            if idx <= 0:
+                raise ValueError(
+                    "--fixed-post-phase-indices must contain positive phase indices"
+                )
+            parsed.append(idx)
+        if not parsed:
+            raise ValueError("--fixed-post-phase-indices parsed to an empty list")
+        if len(set(parsed)) != len(parsed):
+            raise ValueError("--fixed-post-phase-indices contains duplicates")
+        fixed_post_phase_indices = parsed
+        print(
+            "[KINETIC] fixed post phases enabled: "
+            f"{fixed_post_phase_indices} (plus pre-contrast 0000)"
+        )
+
     # Load patient list from splits
     splits = pd.read_csv(args.splits)
-    pids = sorted(splits["patient_id"].unique().tolist())
+    pids = sorted({str(pid) for pid in splits["patient_id"].dropna().tolist()})
     print(f"[KINETIC] {len(pids)} patients from {args.splits}")
 
     # Generate maps in parallel
@@ -501,6 +562,7 @@ def main() -> None:
             masks_dir=args.masks,
             mask_pattern=args.mask_pattern,
             output_dir=args.output_dir,
+            fixed_post_phase_indices=fixed_post_phase_indices,
             generate_tpeak_voxel=args.generate_tpeak_voxel,
             generate_subtraction=args.generate_subtraction,
             overwrite=args.overwrite,
@@ -521,9 +583,8 @@ def main() -> None:
             print(f"  {row['patient_id']}: {row['error']}")
 
     # Save summary
-    summary_path = args.summary_csv or str(
-        Path(args.images) / "kinetic_maps_summary.csv"
-    )
+    summary_root = Path(args.output_dir) if args.output_dir else Path(args.images)
+    summary_path = args.summary_csv or str(summary_root / "kinetic_maps_summary.csv")
     df.to_csv(summary_path, index=False)
     print(f"[KINETIC] Summary written to {summary_path}")
 

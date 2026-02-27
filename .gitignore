@@ -175,3 +175,8 @@ logs/
 results/**.claude/
 radiomics_baseline/outputs/
 *.backup
+
+# Gas Town (added by gt)
+.runtime/
+.claude/commands/
+.logs/

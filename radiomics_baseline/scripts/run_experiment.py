@@ -262,12 +262,38 @@ def build_train_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
         cmd.append("--grid-search")
     if train.get("cv_folds"):
         cmd.extend(["--cv-folds", str(train["cv_folds"])])
+    if train.get("cv_only"):
+        cmd.append("--cv-only")
     if train.get("include_subtype"):
         cmd.append("--include-subtype")
+    if train.get("include_site"):
+        cmd.append("--include-site")
+    if train.get("categorical_encoding"):
+        cmd.extend(["--categorical-encoding", str(train["categorical_encoding"])])
     if train.get("subtype_filter"):
         cmd.extend(["--subtype-filter", str(train["subtype_filter"])])
     if train.get("site_filter"):
         cmd.extend(["--site-filter", str(train["site_filter"])])
+    if train.get("harmonization_mode"):
+        cmd.extend(["--harmonization-mode", str(train["harmonization_mode"])])
+    if train.get("harmonization_batch_col"):
+        cmd.extend(
+            ["--harmonization-batch-col", str(train["harmonization_batch_col"])]
+        )
+    if train.get("harmonization_covariates"):
+        covars = train["harmonization_covariates"]
+        if isinstance(covars, list):
+            for col in covars:
+                cmd.extend(["--harmonization-covariate", str(col)])
+        else:
+            cmd.extend(["--harmonization-covariate", str(covars)])
+    if train.get("exclude_feature_regex"):
+        patterns = train["exclude_feature_regex"]
+        if isinstance(patterns, list):
+            for pattern in patterns:
+                cmd.extend(["--exclude-feature-regex", str(pattern)])
+        else:
+            cmd.extend(["--exclude-feature-regex", str(patterns)])
 
     return cmd
 
@@ -357,7 +383,13 @@ def run_single_experiment(
         if metrics_path.exists():
             with open(metrics_path) as fh:  # noqa: PTH123
                 metrics = json.load(fh)
-            for key in ("auc_test", "auc_train", "auc_train_cv", "n_features_used"):
+            for key in (
+                "auc_test",
+                "auc_train",
+                "auc_train_cv",
+                "auc_train_cv_std",
+                "n_features_used",
+            ):
                 result[key] = metrics.get(key)
 
     return result
@@ -417,7 +449,7 @@ def main() -> None:
     print("SUMMARY")
     print("=" * 60)
     for r in results:
-        auc = f"  auc_test={r['auc_test']}" if r.get("auc_test") else ""
+        auc = f"  auc_test={r['auc_test']}" if r.get("auc_test") is not None else ""
         print(f"  {r.get('experiment_name', '?'):50s} [{r['status']}]{auc}")
 
 

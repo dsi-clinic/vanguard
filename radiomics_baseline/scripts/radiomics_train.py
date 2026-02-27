@@ -64,7 +64,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+import warnings
 from pathlib import Path
 
 import joblib
@@ -104,6 +106,7 @@ from evaluation import Evaluator, FoldResults, TrainTestResults  # noqa: E402
 MIN_CLASS_COUNT = 2
 CONF_MATRIX_SIZE = 4
 AUC_BASELINE = 0.5
+COMBAT_EPS = 1e-8
 
 
 # ---------------------------
@@ -111,12 +114,35 @@ AUC_BASELINE = 0.5
 # ---------------------------
 def load_features(path: str) -> pd.DataFrame:
     """Load feature CSV with patient IDs in the index."""
-    return pd.read_csv(path, index_col=0)
+    data = pd.read_csv(path, index_col=0)
+    data.index = data.index.map(str)
+    dup = data.index[data.index.duplicated()].unique()
+    if len(dup) > 0:
+        preview = ", ".join(map(str, dup[:5]))
+        msg = (
+            f"Feature table has duplicate patient IDs (n={len(dup)}): "
+            f"{preview}{' ...' if len(dup) > 5 else ''}"
+        )
+        raise ValueError(msg)
+    return data
 
 
 def load_labels(labels_csv: str) -> pd.DataFrame:
     """Load labels CSV and ensure it contains a 'pcr' column."""
-    lab = pd.read_csv(labels_csv).set_index("patient_id")
+    lab = pd.read_csv(labels_csv).copy()
+    if "patient_id" not in lab.columns:
+        msg = "labels.csv must contain column 'patient_id'"
+        raise ValueError(msg)
+    dup = lab["patient_id"][lab["patient_id"].duplicated()].astype(str).unique()
+    if len(dup) > 0:
+        preview = ", ".join(dup[:5])
+        msg = (
+            f"labels.csv has duplicate patient_id values (n={len(dup)}): "
+            f"{preview}{' ...' if len(dup) > 5 else ''}"
+        )
+        raise ValueError(msg)
+    lab["patient_id"] = lab["patient_id"].astype(str)
+    lab = lab.set_index("patient_id")
     if "pcr" not in lab.columns:
         msg = "labels.csv must contain column 'pcr'"
         raise ValueError(msg)
@@ -127,13 +153,19 @@ def load_labels(labels_csv: str) -> pd.DataFrame:
 # Sanitization & selection
 # ---------------------------
 def sanitize_numeric(df: pd.DataFrame, tag: str) -> pd.DataFrame:
-    """Keep only numeric columns, dropping all-NaN and zero-variance features."""
+    """Build a train-time numeric feature matrix (train-only schema selection).
+
+    All columns are coerced to numeric (non-numeric values -> NaN), then
+    all-NaN and zero-variance columns are dropped. The resulting column set is
+    the reference schema that should be applied to test data.
+    """
     raw = df.shape
-    num = df.select_dtypes(include=[np.number]).copy()
-    # drop all-NaN
+    coerced = df.apply(pd.to_numeric, errors="coerce")
+    num = coerced.copy()
+    # drop all-NaN (train-only)
     all_nan = num.columns[num.isna().all()].tolist()
     num = num.drop(columns=all_nan, errors="ignore")
-    # drop zero-var
+    # drop zero-var (train-only)
     nunique = num.nunique(dropna=True)
     zero_var = nunique[nunique <= 1].index.tolist()
     num = num.drop(columns=zero_var, errors="ignore")
@@ -142,6 +174,432 @@ def sanitize_numeric(df: pd.DataFrame, tag: str) -> pd.DataFrame:
         f"(all-NaN={len(all_nan)}, zero-var={len(zero_var)})",
     )
     return num
+
+
+def align_numeric_to_reference(
+    df: pd.DataFrame,
+    reference_columns: list[str],
+    tag: str,
+) -> pd.DataFrame:
+    """Coerce to numeric and align to a train-derived column schema.
+
+    Unlike ``sanitize_numeric``, this function never drops columns based on
+    test-set variance. Any missing reference columns are added as NaN so they
+    can be imputed by the training-set pipeline.
+    """
+    raw = df.shape
+    coerced = df.apply(pd.to_numeric, errors="coerce")
+    ref = list(reference_columns)
+    extra_cols = [c for c in coerced.columns if c not in ref]
+    missing_cols = [c for c in ref if c not in coerced.columns]
+    aligned = coerced.reindex(columns=ref, fill_value=np.nan)
+    all_nan_after_align = int(aligned.isna().all(axis=0).sum())
+    print(
+        f"[DEBUG] {tag}: raw={raw} -> aligned={aligned.shape} "
+        f"(missing={len(missing_cols)}, extra_ignored={len(extra_cols)}, "
+        f"all-NaN-after-align={all_nan_after_align})",
+    )
+    return aligned
+
+
+def append_categorical_feature(
+    Xtr_raw: pd.DataFrame,
+    Xte_raw: pd.DataFrame,
+    labels: pd.DataFrame,
+    *,
+    column: str,
+    prefix: str,
+    encoding: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """Append one categorical label column as model features.
+
+    Categories are learned from the *training* split only and applied to test.
+    This avoids introducing extra columns from test-only categories.
+    """
+    tr_series = labels.loc[Xtr_raw.index, column]
+    te_series = labels.loc[Xte_raw.index, column]
+    cats = sorted(pd.Series(tr_series.dropna().unique()).tolist())
+
+    if encoding == "ordinal":
+        code_map = {cat: i for i, cat in enumerate(cats)}
+        col = f"{prefix}_code"
+        Xtr_new = Xtr_raw.assign(**{col: tr_series.map(code_map)})
+        Xte_new = Xte_raw.assign(**{col: te_series.map(code_map)})
+        return Xtr_new, Xte_new, [col]
+
+    # default: one-hot (including an explicit NaN bucket)
+    cat_dtype = pd.CategoricalDtype(categories=cats)
+    tr_cat = tr_series.astype(cat_dtype)
+    te_cat = te_series.astype(cat_dtype)
+    tr_dummies = pd.get_dummies(tr_cat, prefix=prefix, dummy_na=True).astype(float)
+    te_dummies = pd.get_dummies(te_cat, prefix=prefix, dummy_na=True).astype(float)
+    te_dummies = te_dummies.reindex(columns=tr_dummies.columns, fill_value=0.0)
+
+    Xtr_new = Xtr_raw.join(tr_dummies)
+    Xte_new = Xte_raw.join(te_dummies)
+    added_cols = tr_dummies.columns.tolist()
+    if Xtr_new[added_cols].isna().all(axis=0).any():
+        msg = (
+            "one-hot categorical join produced all-NaN columns on train; "
+            "check patient_id index alignment"
+        )
+        raise RuntimeError(msg)
+    return Xtr_new, Xte_new, tr_dummies.columns.tolist()
+
+
+def _normalize_covariate_list(values: list[str]) -> list[str]:
+    """Return a de-duplicated list of non-empty covariate names."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        if raw is None:
+            continue
+        parts = [p.strip() for p in str(raw).split(",")]
+        for p in parts:
+            if not p or p in seen:
+                continue
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def _aprior(delta: np.ndarray) -> float:
+    """Method-of-moments prior for inverse-gamma shape."""
+    m = float(np.mean(delta))
+    s2 = float(np.var(delta, ddof=1)) if len(delta) > 1 else 0.0
+    if s2 <= COMBAT_EPS:
+        return 100.0
+    return (2.0 * s2 + m * m) / s2
+
+
+def _bprior(delta: np.ndarray) -> float:
+    """Method-of-moments prior for inverse-gamma scale."""
+    m = float(np.mean(delta))
+    s2 = float(np.var(delta, ddof=1)) if len(delta) > 1 else 0.0
+    if s2 <= COMBAT_EPS:
+        return m * 99.0
+    return (m * s2 + m * m * m) / s2
+
+
+def _build_covariate_matrix(
+    labels_slice: pd.DataFrame,
+    covariate_cols: list[str],
+    *,
+    fitted_categories: dict[str, list[str]] | None = None,
+    fitted_medians: dict[str, float] | None = None,
+) -> tuple[np.ndarray, dict[str, list[str]], dict[str, float]]:
+    """Build a numeric covariate design matrix from labels."""
+    if not covariate_cols:
+        return np.zeros((len(labels_slice), 0), dtype=float), {}, {}
+
+    blocks: list[np.ndarray] = []
+    categories_out: dict[str, list[str]] = {}
+    medians_out: dict[str, float] = {}
+
+    for col in covariate_cols:
+        if col not in labels_slice.columns:
+            msg = f"Harmonization covariate '{col}' not found in labels."
+            raise ValueError(msg)
+
+        s = labels_slice[col]
+        if pd.api.types.is_numeric_dtype(s):
+            if fitted_medians is not None and col in fitted_medians:
+                med = float(fitted_medians[col])
+            else:
+                med = float(pd.to_numeric(s, errors="coerce").median())
+                if np.isnan(med):
+                    med = 0.0
+            medians_out[col] = med
+            arr = pd.to_numeric(s, errors="coerce").fillna(med).to_numpy(dtype=float)
+            blocks.append(arr.reshape(-1, 1))
+        else:
+            clean = s.fillna("__NA__").astype(str)
+            if fitted_categories is not None and col in fitted_categories:
+                cats = fitted_categories[col]
+            else:
+                cats = sorted(pd.Series(clean).dropna().unique().tolist())
+                if "__NA__" not in cats:
+                    cats.append("__NA__")
+            categories_out[col] = cats
+
+            cat_to_idx = {v: i for i, v in enumerate(cats)}
+            mat = np.zeros((len(clean), len(cats)), dtype=float)
+            for i, val in enumerate(clean.to_numpy()):
+                idx = cat_to_idx.get(val, cat_to_idx.get("__NA__", 0))
+                mat[i, idx] = 1.0
+            blocks.append(mat)
+
+    design = np.concatenate(blocks, axis=1) if blocks else np.zeros(
+        (len(labels_slice), 0), dtype=float
+    )
+    return design, categories_out, medians_out
+
+
+class FeatureHarmonizer:
+    """Fold-safe feature harmonization fitted on training rows only."""
+
+    def __init__(
+        self,
+        *,
+        mode: str,
+        batch_col: str,
+        covariate_cols: list[str],
+    ) -> None:
+        self.mode = mode
+        self.batch_col = batch_col
+        self.covariate_cols = covariate_cols
+
+    def _fit_zscore(
+        self,
+        X_fit: pd.DataFrame,
+        batch_fit: pd.Series,
+    ) -> None:
+        self.global_mean_ = X_fit.mean(axis=0).to_numpy(dtype=float)
+        self.global_std_ = (
+            X_fit.std(axis=0, ddof=1).replace(0, 1).fillna(1).to_numpy(dtype=float)
+        )
+        self.batch_stats_: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        for batch in sorted(batch_fit.unique()):
+            idx = batch_fit == batch
+            xb = X_fit.loc[idx]
+            mean = xb.mean(axis=0).to_numpy(dtype=float)
+            std = xb.std(axis=0, ddof=1).replace(0, 1).fillna(1).to_numpy(dtype=float)
+            self.batch_stats_[str(batch)] = (mean, std)
+
+    def _transform_zscore(
+        self,
+        X_apply: pd.DataFrame,
+        batch_apply: pd.Series,
+    ) -> tuple[pd.DataFrame, int]:
+        arr = X_apply.to_numpy(dtype=float).copy()
+        unknown_batches = 0
+        for batch in pd.Series(batch_apply.astype(str)).unique():
+            idx = np.where(batch_apply.astype(str).to_numpy() == str(batch))[0]
+            if str(batch) not in self.batch_stats_:
+                unknown_batches += len(idx)
+                continue
+            b_mean, b_std = self.batch_stats_[str(batch)]
+            arr[idx, :] = ((arr[idx, :] - b_mean) / b_std) * self.global_std_ + self.global_mean_
+        return pd.DataFrame(arr, index=X_apply.index, columns=X_apply.columns), unknown_batches
+
+    def _fit_combat(
+        self,
+        X_fit: pd.DataFrame,
+        labels_fit: pd.DataFrame,
+    ) -> None:
+        dat = X_fit.to_numpy(dtype=float).T  # p x n
+        p, n = dat.shape
+
+        batch_fit = labels_fit[self.batch_col].astype(str)
+        batch_levels = sorted(batch_fit.unique().tolist())
+        self.batch_levels_ = batch_levels
+        self.batch_to_idx_ = {b: i for i, b in enumerate(batch_levels)}
+
+        batch_design = np.zeros((n, len(batch_levels)), dtype=float)
+        batch_codes = batch_fit.to_numpy()
+        for i, b in enumerate(batch_codes):
+            batch_design[i, self.batch_to_idx_[str(b)]] = 1.0
+
+        covar_design, cats, meds = _build_covariate_matrix(
+            labels_fit,
+            self.covariate_cols,
+        )
+        self.covar_categories_ = cats
+        self.covar_medians_ = meds
+
+        design = np.concatenate([batch_design, covar_design], axis=1)
+        b_hat = np.linalg.pinv(design.T @ design) @ design.T @ dat.T  # k x p
+
+        n_per_batch = batch_design.sum(axis=0)
+        grand_mean = (n_per_batch / float(n)) @ b_hat[: len(batch_levels), :]  # (p,)
+        var_pooled = np.sum((dat.T - (design @ b_hat)) ** 2, axis=0) / float(n)
+        var_pooled = np.where(var_pooled <= COMBAT_EPS, 1.0, var_pooled)
+
+        if covar_design.shape[1] > 0:
+            stand_mean = grand_mean[:, None] + (covar_design @ b_hat[len(batch_levels):, :]).T
+        else:
+            stand_mean = np.repeat(grand_mean[:, None], n, axis=1)
+
+        s_data = (dat - stand_mean) / np.sqrt(var_pooled)[:, None]
+
+        gamma_hat = np.zeros((len(batch_levels), p), dtype=float)
+        delta_hat = np.zeros((len(batch_levels), p), dtype=float)
+        batch_indices: dict[str, np.ndarray] = {}
+        for bi, batch in enumerate(batch_levels):
+            idx = np.where(batch_codes == batch)[0]
+            batch_indices[batch] = idx
+            sb = s_data[:, idx]
+            gamma_hat[bi, :] = np.mean(sb, axis=1)
+            delta_hat[bi, :] = np.var(sb, axis=1, ddof=1)
+            delta_hat[bi, :] = np.where(delta_hat[bi, :] <= COMBAT_EPS, 1.0, delta_hat[bi, :])
+
+        gamma_star = np.zeros_like(gamma_hat)
+        delta_star = np.zeros_like(delta_hat)
+
+        if self.mode == "combat_nonparam":
+            # Practical non-param approximation: no EB shrinkage.
+            gamma_star = gamma_hat.copy()
+            delta_star = delta_hat.copy()
+        else:
+            for bi, batch in enumerate(batch_levels):
+                idx = batch_indices[batch]
+                n_i = len(idx)
+                g_hat = gamma_hat[bi, :]
+                d_hat = delta_hat[bi, :]
+
+                g_bar = float(np.mean(g_hat))
+                t2 = float(np.var(g_hat, ddof=1)) if len(g_hat) > 1 else 0.0
+                if t2 <= COMBAT_EPS:
+                    t2 = 1.0
+                a_prior = _aprior(d_hat)
+                b_prior = _bprior(d_hat)
+
+                g_old = g_hat.copy()
+                d_old = d_hat.copy()
+                sb = s_data[:, idx]
+                for _ in range(200):
+                    g_new = (t2 * n_i * g_hat + d_old * g_bar) / (t2 * n_i + d_old)
+                    sum2 = np.sum((sb - g_new[:, None]) ** 2, axis=1)
+                    d_new = (0.5 * sum2 + b_prior) / (n_i / 2.0 + a_prior - 1.0)
+                    d_new = np.where(d_new <= COMBAT_EPS, 1.0, d_new)
+                    if (
+                        np.max(np.abs(g_new - g_old)) < 1e-6
+                        and np.max(np.abs(d_new - d_old)) < 1e-6
+                    ):
+                        g_old, d_old = g_new, d_new
+                        break
+                    g_old, d_old = g_new, d_new
+                gamma_star[bi, :] = g_old
+                delta_star[bi, :] = d_old
+
+        self.var_pooled_ = var_pooled
+        self.grand_mean_ = grand_mean
+        self.b_hat_nonbatch_ = b_hat[len(batch_levels):, :] if covar_design.shape[1] > 0 else np.zeros((0, p))
+        self.gamma_star_ = gamma_star
+        self.delta_star_ = delta_star
+        self.n_features_ = p
+
+    def _transform_combat(
+        self,
+        X_apply: pd.DataFrame,
+        labels_apply: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, int]:
+        dat = X_apply.to_numpy(dtype=float).T  # p x n
+        n = dat.shape[1]
+        if dat.shape[0] != self.n_features_:
+            msg = "ComBat transform received mismatched feature dimension."
+            raise ValueError(msg)
+
+        covar_design, _, _ = _build_covariate_matrix(
+            labels_apply,
+            self.covariate_cols,
+            fitted_categories=getattr(self, "covar_categories_", {}),
+            fitted_medians=getattr(self, "covar_medians_", {}),
+        )
+
+        if covar_design.shape[1] > 0 and self.b_hat_nonbatch_.shape[0] == covar_design.shape[1]:
+            stand_mean = self.grand_mean_[:, None] + (covar_design @ self.b_hat_nonbatch_).T
+        else:
+            stand_mean = np.repeat(self.grand_mean_[:, None], n, axis=1)
+
+        s_data = (dat - stand_mean) / np.sqrt(self.var_pooled_)[:, None]
+
+        batch_apply = labels_apply[self.batch_col].astype(str).to_numpy()
+        unknown_batches = 0
+        adjusted = s_data.copy()
+        for b in np.unique(batch_apply):
+            idx = np.where(batch_apply == b)[0]
+            if b not in self.batch_to_idx_:
+                unknown_batches += len(idx)
+                continue
+            bi = self.batch_to_idx_[b]
+            adjusted[:, idx] = (
+                adjusted[:, idx] - self.gamma_star_[bi, :][:, None]
+            ) / np.sqrt(self.delta_star_[bi, :])[:, None]
+
+        out = adjusted * np.sqrt(self.var_pooled_)[:, None] + stand_mean
+        return pd.DataFrame(out.T, index=X_apply.index, columns=X_apply.columns), unknown_batches
+
+    def fit(
+        self,
+        X_fit: pd.DataFrame,
+        labels_fit: pd.DataFrame,
+    ) -> "FeatureHarmonizer":
+        if self.mode == "none":
+            return self
+
+        if self.batch_col not in labels_fit.columns:
+            msg = f"Harmonization batch column '{self.batch_col}' not found in labels."
+            raise ValueError(msg)
+
+        batch_fit = labels_fit[self.batch_col].astype(str)
+        if batch_fit.nunique() < 2:
+            warnings.warn(
+                f"Harmonization mode '{self.mode}' requested with <2 batches in fit data. "
+                "No harmonization will be applied.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self.mode = "none"
+            return self
+
+        if self.mode == "zscore_site":
+            self._fit_zscore(X_fit, batch_fit)
+            return self
+
+        self._fit_combat(X_fit, labels_fit)
+        return self
+
+    def transform(
+        self,
+        X_apply: pd.DataFrame,
+        labels_apply: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, int]:
+        if self.mode == "none":
+            return X_apply.copy(), 0
+
+        if self.mode == "zscore_site":
+            return self._transform_zscore(X_apply, labels_apply[self.batch_col].astype(str))
+
+        return self._transform_combat(X_apply, labels_apply)
+
+
+def fit_apply_harmonization(
+    *,
+    X_fit_raw: pd.DataFrame,
+    X_apply_raw: pd.DataFrame,
+    labels: pd.DataFrame,
+    fit_index: pd.Index,
+    apply_index: pd.Index,
+    mode: str,
+    batch_col: str,
+    covariate_cols: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
+    """Fit harmonization on fit_index and apply to fit/apply matrices."""
+    if mode == "none":
+        return X_fit_raw.copy(), X_apply_raw.copy(), {"unknown_batches_apply": 0}
+
+    # Harmonization requires complete matrices; impute with train medians only.
+    medians = X_fit_raw.median(axis=0)
+    X_fit_imp = X_fit_raw.fillna(medians)
+    X_apply_imp = X_apply_raw.fillna(medians)
+
+    labels_fit = labels.loc[fit_index]
+    labels_apply = labels.loc[apply_index]
+
+    harmonizer = FeatureHarmonizer(
+        mode=mode,
+        batch_col=batch_col,
+        covariate_cols=covariate_cols,
+    ).fit(X_fit_imp, labels_fit)
+
+    X_fit_h, unknown_fit = harmonizer.transform(X_fit_imp, labels_fit)
+    X_apply_h, unknown_apply = harmonizer.transform(X_apply_imp, labels_apply)
+    info = {
+        "unknown_batches_fit": int(unknown_fit),
+        "unknown_batches_apply": int(unknown_apply),
+    }
+    return X_fit_h, X_apply_h, info
 
 
 class CorrelationPruner(BaseEstimator, TransformerMixin):
@@ -467,8 +925,26 @@ def main() -> None:
         "--include-subtype",
         action="store_true",
         help=(
-            "Append a numeric-coded subtype column from labels "
+            "Append subtype-derived model features from labels "
             "(if 'subtype' or 'tumor_subtype' present)."
+        ),
+    )
+    ap.add_argument(
+        "--include-site",
+        action="store_true",
+        help=(
+            "Append site-derived model features from labels "
+            "(if 'site' column is present)."
+        ),
+    )
+    ap.add_argument(
+        "--categorical-encoding",
+        choices=["onehot", "ordinal"],
+        default="onehot",
+        help=(
+            "Encoding for --include-subtype/--include-site. "
+            "'onehot' (default) avoids imposing ordinal structure; "
+            "'ordinal' reproduces the old single-code behavior."
         ),
     )
     ap.add_argument(
@@ -516,6 +992,15 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--exclude-feature-regex",
+        action="append",
+        default=[],
+        help=(
+            "Regex pattern for feature names to exclude before training. "
+            "Can be passed multiple times."
+        ),
+    )
+    ap.add_argument(
         "--grid-search",
         action="store_true",
         help="If set, run a small GridSearchCV on the classifier using train only.",
@@ -529,8 +1014,52 @@ def main() -> None:
             "save cross-validated metrics."
         ),
     )
+    ap.add_argument(
+        "--harmonization-mode",
+        choices=["none", "zscore_site", "combat_param", "combat_nonparam"],
+        default="none",
+        help=(
+            "Optional feature harmonization fitted on training rows only. "
+            "'zscore_site' applies per-batch location/scale normalization; "
+            "'combat_param' uses empirical-Bayes ComBat; "
+            "'combat_nonparam' uses a non-shrinkage ComBat approximation."
+        ),
+    )
+    ap.add_argument(
+        "--harmonization-batch-col",
+        default="site",
+        help=(
+            "Column in labels.csv used as harmonization batch variable "
+            "(default: site)."
+        ),
+    )
+    ap.add_argument(
+        "--harmonization-covariate",
+        action="append",
+        default=[],
+        help=(
+            "Biological covariate column to preserve during ComBat. "
+            "Can be passed multiple times or as comma-separated values."
+        ),
+    )
+    ap.add_argument(
+        "--cv-only",
+        action="store_true",
+        help=(
+            "If set, skip test-set evaluation and write metrics from CV only. "
+            "Use this when test split is not independent from validation."
+        ),
+    )
 
     args = ap.parse_args()
+    harm_covariates = _normalize_covariate_list(args.harmonization_covariate)
+    if "pcr" in harm_covariates:
+        msg = "Do not include target label 'pcr' as a harmonization covariate."
+        raise ValueError(msg)
+    if args.cv_only and not (args.cv_folds and args.cv_folds > 1):
+        msg = "--cv-only requires --cv-folds > 1."
+        raise ValueError(msg)
+
     outdir = Path(args.output)
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -540,6 +1069,19 @@ def main() -> None:
     print(f"[DEBUG] Xtr_raw shape: {Xtr_raw.shape}, Xte_raw shape: {Xte_raw.shape}")
 
     labels = load_labels(args.labels)
+    missing_tr = Xtr_raw.index.difference(labels.index)
+    missing_te = Xte_raw.index.difference(labels.index)
+    if len(missing_tr) > 0 or len(missing_te) > 0:
+        preview_tr = ", ".join(map(str, missing_tr[:5]))
+        preview_te = ", ".join(map(str, missing_te[:5]))
+        msg = (
+            "Feature rows contain patient IDs missing from labels.csv. "
+            f"missing_train={len(missing_tr)}"
+            f"{' [' + preview_tr + (' ...' if len(missing_tr) > 5 else '') + ']' if len(missing_tr) else ''}, "
+            f"missing_test={len(missing_te)}"
+            f"{' [' + preview_te + (' ...' if len(missing_te) > 5 else '') + ']' if len(missing_te) else ''}"
+        )
+        raise ValueError(msg)
 
     # Make sure indices line up and y are extracted
     ytr = labels.loc[Xtr_raw.index, "pcr"].astype(int).to_numpy()
@@ -554,6 +1096,18 @@ def main() -> None:
 
     # Identify site column if present
     site_col: str | None = "site" if "site" in labels.columns else None
+
+    if args.harmonization_mode != "none":
+        if args.harmonization_batch_col not in labels.columns:
+            msg = (
+                f"--harmonization-batch-col '{args.harmonization_batch_col}' "
+                "not found in labels."
+            )
+            raise ValueError(msg)
+    for col in harm_covariates:
+        if col not in labels.columns:
+            msg = f"--harmonization-covariate '{col}' not found in labels."
+            raise ValueError(msg)
 
     # Optional: restrict to a single subtype
     if args.subtype_filter:
@@ -591,7 +1145,7 @@ def main() -> None:
                 f"train={len(Xtr_raw)}, test={len(Xte_raw)}",
             )
 
-    # Optional: subtype as a numeric feature
+    # Optional: subtype-derived features
     if args.include_subtype:
         if subtype_col is None:
             print(
@@ -599,24 +1153,117 @@ def main() -> None:
                 "in labels; skipping.",
             )
         else:
-            cats = labels[subtype_col].dropna().unique()
-            # stable mapping: sort for reproducibility
-            code_map = {cat: i for i, cat in enumerate(sorted(cats))}
-            Xtr_raw = Xtr_raw.assign(
-                subtype_code=labels.loc[Xtr_raw.index, subtype_col].map(code_map),
+            Xtr_raw, Xte_raw, added = append_categorical_feature(
+                Xtr_raw,
+                Xte_raw,
+                labels,
+                column=subtype_col,
+                prefix="subtype",
+                encoding=args.categorical_encoding,
             )
-            Xte_raw = Xte_raw.assign(
-                subtype_code=labels.loc[Xte_raw.index, subtype_col].map(code_map),
+            print(
+                f"[DEBUG] appended subtype features from '{subtype_col}' "
+                f"using {args.categorical_encoding}: +{len(added)} columns",
             )
-            print(f"[DEBUG] appended subtype column '{subtype_col}' → 'subtype_code'")
+
+    # Optional: site-derived features
+    if args.include_site:
+        if site_col is None:
+            print(
+                "[WARN] --include-site set but no 'site' column in labels; skipping.",
+            )
+        else:
+            Xtr_raw, Xte_raw, added = append_categorical_feature(
+                Xtr_raw,
+                Xte_raw,
+                labels,
+                column=site_col,
+                prefix="site",
+                encoding=args.categorical_encoding,
+            )
+            print(
+                f"[DEBUG] appended site features from '{site_col}' "
+                f"using {args.categorical_encoding}: +{len(added)} columns",
+            )
+
+    if args.exclude_feature_regex:
+        drop_cols: set[str] = set()
+        for pattern in args.exclude_feature_regex:
+            rx = re.compile(pattern)
+            drop_cols.update(c for c in Xtr_raw.columns if rx.search(str(c)))
+        if drop_cols:
+            cols_sorted = sorted(drop_cols)
+            Xtr_raw = Xtr_raw.drop(columns=cols_sorted, errors="ignore")
+            Xte_raw = Xte_raw.drop(columns=cols_sorted, errors="ignore")
+            print(
+                f"[DEBUG] excluded features by regex: dropped={len(cols_sorted)} "
+                f"remaining={Xtr_raw.shape[1]}",
+            )
+        else:
+            print(
+                "[DEBUG] --exclude-feature-regex provided but no matching features found.",
+            )
+
+    if len(Xtr_raw) == 0 or len(Xte_raw) == 0:
+        msg = (
+            "Empty split after filtering: "
+            f"train={len(Xtr_raw)}, test={len(Xte_raw)}"
+        )
+        raise ValueError(msg)
+
+    if len(np.unique(ytr)) < MIN_CLASS_COUNT:
+        msg = (
+            "Training split has fewer than 2 classes after filtering; "
+            "cannot train a classifier."
+        )
+        raise ValueError(msg)
+
+    if args.cv_folds and args.cv_folds > 1:
+        class_counts = np.bincount(ytr.astype(int), minlength=2)
+        nonzero_counts = class_counts[class_counts > 0]
+        min_class_count = int(nonzero_counts.min()) if len(nonzero_counts) else 0
+        if min_class_count < args.cv_folds:
+            msg = (
+                f"--cv-folds={args.cv_folds} is invalid after filtering: "
+                f"smallest training class has {min_class_count} samples"
+            )
+            raise ValueError(msg)
+
+    if len(np.unique(yte)) < MIN_CLASS_COUNT:
+        print(
+            "[WARN] test split has fewer than 2 classes after filtering; "
+            "AUC_test will be NaN.",
+        )
 
     # ---------------- Sanitize ----------------
     Xtr = sanitize_numeric(Xtr_raw, "train")
-    Xte = sanitize_numeric(Xte_raw, "test")
-    # column-align test to train
-    Xte = Xte.reindex(columns=Xtr.columns, fill_value=np.nan)
+    # Apply the train-derived schema to test; do not drop test columns by
+    # test-only variance/NaN checks.
+    Xte = align_numeric_to_reference(Xte_raw, Xtr.columns.tolist(), "test")
 
     print(f"[DEBUG] sanitized train/test shapes: {Xtr.shape} / {Xte.shape}")
+
+    # ---------------- Optional harmonization (fit on train only) ------------
+    Xtr_model = Xtr
+    Xte_model = Xte
+    harm_info = {"unknown_batches_fit": 0, "unknown_batches_apply": 0}
+    if args.harmonization_mode != "none":
+        Xtr_model, Xte_model, harm_info = fit_apply_harmonization(
+            X_fit_raw=Xtr,
+            X_apply_raw=Xte,
+            labels=labels,
+            fit_index=Xtr.index,
+            apply_index=Xte.index,
+            mode=args.harmonization_mode,
+            batch_col=args.harmonization_batch_col,
+            covariate_cols=harm_covariates,
+        )
+        print(
+            "[DEBUG] harmonization "
+            f"mode={args.harmonization_mode} batch_col={args.harmonization_batch_col} "
+            f"covariates={harm_covariates or []} "
+            f"unknown_apply_batches={harm_info['unknown_batches_apply']}",
+        )
 
     # ---------------- Build pipeline (feature selection runs inside each fit) --
     # CorrelationPruner and SelectKBest are included as pipeline steps so that
@@ -636,7 +1283,7 @@ def main() -> None:
     pipe = Pipeline(steps)
 
     # ---------------- Train ----------------
-    pipe.fit(Xtr, ytr)
+    pipe.fit(Xtr_model, ytr)
 
     # Number of features reaching the classifier after pipeline selection steps.
     if "mrmr" in pipe.named_steps:
@@ -646,7 +1293,7 @@ def main() -> None:
     elif "corr_prune" in pipe.named_steps:
         n_features_used = int(pipe.named_steps["corr_prune"].keep_mask_.sum())
     else:
-        n_features_used = int(Xtr.shape[1])
+        n_features_used = int(Xtr_model.shape[1])
     print(f"[DEBUG] n_features_used (entering classifier): {n_features_used}")
 
     clf_step = pipe.named_steps["clf"]
@@ -655,8 +1302,8 @@ def main() -> None:
     classes_ = clf_step.classes_
     pos_idx = int(np.where(classes_ == 1)[0][0])
 
-    p_tr = pipe.predict_proba(Xtr)[:, pos_idx]
-    p_te = pipe.predict_proba(Xte)[:, pos_idx]
+    p_tr = pipe.predict_proba(Xtr_model)[:, pos_idx]
+    p_te = pipe.predict_proba(Xte_model)[:, pos_idx]
 
     auc_tr = (
         float(roc_auc_score(ytr, p_tr))
@@ -671,15 +1318,6 @@ def main() -> None:
 
     fpr, tpr, thr = roc_curve(ytr, p_tr)
     thr_opt = float(thr[np.argmax(tpr - fpr)]) if len(thr) else AUC_BASELINE
-    ypred_te = (p_te >= thr_opt).astype(int)
-
-    cm = confusion_matrix(yte, ypred_te, labels=[0, 1])
-    if cm.size == CONF_MATRIX_SIZE:
-        tn, fp, fn, tp = cm.ravel()
-        sens = float(tp / (tp + fn)) if (tp + fn) > 0 else float("nan")
-        spec = float(tn / (tn + fp)) if (tn + fp) > 0 else float("nan")
-    else:
-        tn = fp = fn = tp = sens = spec = None
 
     # ---------------- Evaluator (shared by CV k-fold and test evaluation) -----
     # Created here so evaluator.create_kfold_splits() can be used in the CV
@@ -697,6 +1335,7 @@ def main() -> None:
 
     # ---------------- K-fold CV on training set (evaluation framework) -------
     auc_cv = float("nan")
+    auc_cv_std = float("nan")
     auc_cv_by_subtype: dict[str, float] | None = None
     if args.cv_folds and args.cv_folds > 1:
         # Each fold gets a fresh clone of the full pipeline (imputer,
@@ -718,12 +1357,26 @@ def main() -> None:
             X_fold_val = Xtr.iloc[split.val_indices]
             y_fold_val = ytr[split.val_indices]
 
+            X_fold_tr_model = X_fold_tr
+            X_fold_val_model = X_fold_val
+            if args.harmonization_mode != "none":
+                X_fold_tr_model, X_fold_val_model, _ = fit_apply_harmonization(
+                    X_fit_raw=X_fold_tr,
+                    X_apply_raw=X_fold_val,
+                    labels=labels,
+                    fit_index=X_fold_tr.index,
+                    apply_index=X_fold_val.index,
+                    mode=args.harmonization_mode,
+                    batch_col=args.harmonization_batch_col,
+                    covariate_cols=harm_covariates,
+                )
+
             fold_pipe = clone(pipe)
-            fold_pipe.fit(X_fold_tr, y_fold_tr)
+            fold_pipe.fit(X_fold_tr_model, y_fold_tr)
 
             fold_clf = fold_pipe.named_steps["clf"]
             fold_pos_idx = int(np.where(fold_clf.classes_ == 1)[0][0])
-            y_prob_val = fold_pipe.predict_proba(X_fold_val)[:, fold_pos_idx]
+            y_prob_val = fold_pipe.predict_proba(X_fold_val_model)[:, fold_pos_idx]
             # Use 0.5 threshold for per-fold binary predictions; the Youden-J
             # threshold is only meaningful on the full training set.
             y_pred_val = (y_prob_val >= 0.5).astype(int)
@@ -758,6 +1411,9 @@ def main() -> None:
         auc_cv = kfold_results.aggregated_metrics.get("auc", {}).get(
             "mean", float("nan")
         )
+        auc_cv_std = kfold_results.aggregated_metrics.get("auc", {}).get(
+            "std", float("nan")
+        )
 
         # Per-subtype CV AUC computed from the pooled OOF predictions
         # (kfold_results.predictions concatenates all fold val rows).
@@ -775,97 +1431,98 @@ def main() -> None:
                         roc_auc_score(y_sub, p_sub)
                     )
 
-    # ---------------- AUC by subtype on test set ----------------
     auc_test_by_subtype: dict[str, float] | None = None
-    if subtype_col is not None:
-        sub_te = labels.loc[Xte.index, subtype_col]
-        auc_test_by_subtype = {}
-        for sub_val in sorted(sub_te.dropna().unique()):
-            mask = sub_te == sub_val
-            mask_array = mask.to_numpy()
-            y_true_sub = yte[mask_array]
-            y_prob_sub = p_te[mask_array]
-            if len(np.unique(y_true_sub)) < MIN_CLASS_COUNT:
-                auc_sub_test = float("nan")
-            else:
-                auc_sub_test = float(roc_auc_score(y_true_sub, y_prob_sub))
-            auc_test_by_subtype[str(sub_val)] = auc_sub_test
-
-    # ---------------- AUC by site on test set ----------------
     auc_test_by_site: dict[str, float] | None = None
-    if site_col is not None:
-        site_te = labels.loc[Xte.index, site_col]
-        auc_test_by_site = {}
-        for site_val in sorted(site_te.dropna().unique()):
-            mask = site_te == site_val
-            mask_array = mask.to_numpy()
-            y_true_site = yte[mask_array]
-            y_prob_site = p_te[mask_array]
-            if len(np.unique(y_true_site)) < MIN_CLASS_COUNT:
-                auc_site_test = float("nan")
-            else:
-                auc_site_test = float(roc_auc_score(y_true_site, y_prob_site))
-            auc_test_by_site[str(site_val)] = auc_site_test
-
-    # ---------------- Additional radiomics-specific plots ----------------
-    # pr_curve.png and calibration_curve.png are not produced by the evaluation
-    # framework's VISUALIZATION_REGISTRY and are saved here as extra outputs.
-    plot_pr(yte, p_te, outdir / "pr_curve.png")
-    try:
-        plot_calib(yte, p_te, outdir / "calibration_curve.png")
-        calib_status = "ok"
-    except Exception:  # noqa: BLE001
-        calib_status = "none"
-
-    # ---------------- Evaluation framework outputs ----------------
-    # Build the predictions DataFrame. Including the subtype column (when
-    # available) causes evaluator.save_results() to automatically call
-    # evaluation.metrics.compute_metrics_by_group(), which computes overall
-    # and per-subtype AUC and writes them to metrics.json under
-    # "validation_summary". This is the evaluation framework's canonical
-    # mechanism for subgroup reporting.
-    predictions_df = pd.DataFrame(
-        {
-            "patient_id": Xte.index,
-            "y_true": yte,
-            "y_pred": ypred_te,
-            "y_prob": p_te,
-        }
-    )
-    if subtype_col is not None:
-        predictions_df["subtype"] = labels.loc[Xte.index, subtype_col].to_numpy()
-
-    # TrainTestResults holds the framework-standard metrics dict. The
-    # evaluation framework currently computes AUC only; the full radiomics
-    # metrics are added to metrics.json in the augmentation step below.
-    tt_results = TrainTestResults(
-        metrics={"auc": auc_te},
-        predictions=predictions_df,
-        # model_name drives the output subdirectory inside outdir.parent:
-        #   evaluator.save_results(tt_results, outdir.parent)
-        #   → writes to outdir.parent / outdir.name = outdir  ✓
-        model_name=outdir.name,
-        run_name=None,  # no extra subdirectory layer
-    )
-
-    # save_results writes to outdir.parent / model_name = outdir:
-    #   outdir/metrics.json          — framework structure (evaluation_type,
-    #                                  model_name, metrics:{auc}, n_samples,
-    #                                  n_features, validation_summary)
-    #   outdir/predictions.csv       — patient_id, y_true, y_pred, y_prob[, subtype]
-    #   outdir/plots/roc_curve.png   — seaborn ROC curve
-    evaluator.save_results(tt_results, outdir.parent)
-
-    # ---------------- Augment metrics.json with radiomics-specific fields ------
-    # The framework's metrics.json contains only the AUC inside "metrics".
-    # We load the file and add all the flat keys that run_experiment.py reads
-    # (auc_test, auc_train, auc_train_cv, n_features_used) at the top level,
-    # along with the full set of radiomics diagnostic fields.  The framework
-    # structure (evaluation_type, model_name, metrics, validation_summary, etc.)
-    # is preserved intact.
+    sens = spec = None
+    tn = fp = fn = tp = None
+    calib_status = "none"
     metrics_path = outdir / "metrics.json"
-    with metrics_path.open(encoding="utf-8") as f:
-        augmented = json.load(f)
+
+    if args.cv_only:
+        auc_te = float("nan")
+        cv_metrics_path = outdir / "cv" / "metrics.json"
+        if cv_metrics_path.exists():
+            with cv_metrics_path.open(encoding="utf-8") as f:
+                augmented = json.load(f)
+        else:
+            augmented = {
+                "evaluation_type": "cv_only",
+                "model_name": outdir.name,
+                "metrics": {"auc": auc_cv},
+                "n_samples": int(len(Xtr)),
+                "n_features": int(Xtr.shape[1]),
+            }
+        augmented["evaluation_type"] = "cv_only"
+        augmented["model_name"] = outdir.name
+        augmented["metrics"] = {"auc": auc_cv}
+        augmented["n_samples"] = int(len(Xtr))
+        augmented["n_features"] = int(Xtr.shape[1])
+    else:
+        ypred_te = (p_te >= thr_opt).astype(int)
+        cm = confusion_matrix(yte, ypred_te, labels=[0, 1])
+        if cm.size == CONF_MATRIX_SIZE:
+            tn, fp, fn, tp = cm.ravel()
+            sens = float(tp / (tp + fn)) if (tp + fn) > 0 else float("nan")
+            spec = float(tn / (tn + fp)) if (tn + fp) > 0 else float("nan")
+
+        # ---------------- AUC by subtype on test set ----------------
+        if subtype_col is not None:
+            sub_te = labels.loc[Xte.index, subtype_col]
+            auc_test_by_subtype = {}
+            for sub_val in sorted(sub_te.dropna().unique()):
+                mask = sub_te == sub_val
+                mask_array = mask.to_numpy()
+                y_true_sub = yte[mask_array]
+                y_prob_sub = p_te[mask_array]
+                if len(np.unique(y_true_sub)) < MIN_CLASS_COUNT:
+                    auc_sub_test = float("nan")
+                else:
+                    auc_sub_test = float(roc_auc_score(y_true_sub, y_prob_sub))
+                auc_test_by_subtype[str(sub_val)] = auc_sub_test
+
+        # ---------------- AUC by site on test set ----------------
+        if site_col is not None:
+            site_te = labels.loc[Xte.index, site_col]
+            auc_test_by_site = {}
+            for site_val in sorted(site_te.dropna().unique()):
+                mask = site_te == site_val
+                mask_array = mask.to_numpy()
+                y_true_site = yte[mask_array]
+                y_prob_site = p_te[mask_array]
+                if len(np.unique(y_true_site)) < MIN_CLASS_COUNT:
+                    auc_site_test = float("nan")
+                else:
+                    auc_site_test = float(roc_auc_score(y_true_site, y_prob_site))
+                auc_test_by_site[str(site_val)] = auc_site_test
+
+        # Additional radiomics-specific plots not in VISUALIZATION_REGISTRY.
+        plot_pr(yte, p_te, outdir / "pr_curve.png")
+        try:
+            plot_calib(yte, p_te, outdir / "calibration_curve.png")
+            calib_status = "ok"
+        except Exception:  # noqa: BLE001
+            calib_status = "none"
+
+        predictions_df = pd.DataFrame(
+            {
+                "patient_id": Xte.index,
+                "y_true": yte,
+                "y_pred": ypred_te,
+                "y_prob": p_te,
+            }
+        )
+        if subtype_col is not None:
+            predictions_df["subtype"] = labels.loc[Xte.index, subtype_col].to_numpy()
+
+        tt_results = TrainTestResults(
+            metrics={"auc": auc_te},
+            predictions=predictions_df,
+            model_name=outdir.name,
+            run_name=None,
+        )
+        evaluator.save_results(tt_results, outdir.parent)
+        with metrics_path.open(encoding="utf-8") as f:
+            augmented = json.load(f)
 
     augmented.update(
         {
@@ -873,6 +1530,7 @@ def main() -> None:
             "auc_test": auc_te,
             "auc_train": auc_tr,
             "auc_train_cv": auc_cv,
+            "auc_train_cv_std": auc_cv_std,
             "n_features_used": n_features_used,
             # Additional radiomics diagnostics
             "auc_train_cv_by_subtype": auc_cv_by_subtype,
@@ -898,10 +1556,16 @@ def main() -> None:
             "feature_selection": args.feature_selection,
             "grid_search": bool(args.grid_search),
             "cv_folds": int(args.cv_folds),
+            "cv_only": bool(args.cv_only),
+            "harmonization_mode": args.harmonization_mode,
+            "harmonization_batch_col": args.harmonization_batch_col,
+            "harmonization_covariates": harm_covariates,
+            "harmonization_unknown_batches_fit": harm_info["unknown_batches_fit"],
+            "harmonization_unknown_batches_apply": harm_info["unknown_batches_apply"],
         }
     )
 
-    if not (auc_te > AUC_BASELINE):
+    if not np.isnan(auc_te) and not (auc_te > AUC_BASELINE):
         augmented["commentary"] = (
             "AUC_test ≤ 0.5. Try stronger regularization (Elastic-Net), "
             "correlation pruning, K-best, or DCE kinetic deltas."

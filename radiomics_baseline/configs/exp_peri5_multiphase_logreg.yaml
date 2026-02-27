@@ -9,10 +9,10 @@ experiment_name: peri5_multiphase_logreg
 paths:
   images:      /net/projects2/vanguard/MAMA-MIA-syn60868042/images
   masks:       /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert
-  labels:      /home/summe/vanguard/radiomics_baseline/labels.csv
-  splits:      /home/summe/vanguard/radiomics_baseline/splits_train_test_ready.csv
-  outdir:      /home/summe/vanguard/radiomics_baseline/outputs/peri5_multiphase_logreg
-  params_yaml: /home/summe/vanguard/radiomics_baseline/pyradiomics_params.yaml
+  labels:      /home/annawoodard/gt/vanguard/crew/amy/radiomics_baseline/labels.csv
+  splits:      /home/annawoodard/gt/vanguard/crew/amy/radiomics_baseline/splits_train_test_ready.csv
+  outdir:      /net/projects2/vanguard/annawoodard/radiomics_baseline/outputs/peri5_multiphase_logreg
+  params_yaml: /home/annawoodard/gt/vanguard/crew/amy/radiomics_baseline/pyradiomics_params.yaml
   # extract_outdir is optional.  If omitted it defaults to {outdir}/extraction.
   # The ablation runner sets this explicitly so that experiments sharing the
   # same extraction parameters reuse one extraction output directory.
@@ -41,4 +41,4 @@ train:
   feature_selection: kbest   # 'kbest' (ANOVA F-test) or 'mrmr' (min-redundancy max-relevance)
   grid_search:       true
   cv_folds:          5
-  include_subtype:   true
+  include_subtype:   false

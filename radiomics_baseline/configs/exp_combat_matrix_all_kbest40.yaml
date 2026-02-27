@@ -1,0 +1,44 @@
+experiment_name: combat_matrix_all_kbest40
+
+paths:
+  images: /net/projects2/vanguard/MAMA-MIA-syn60868042/images
+  masks: /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert
+  labels: /home/annawoodard/gt/vanguard/crew/amy/radiomics_baseline/labels.csv
+  splits: /home/annawoodard/gt/vanguard/crew/amy/radiomics_baseline/splits_train_test_ready.csv
+  outdir: /net/projects2/vanguard/annawoodard/radiomics_baseline/outputs/combat_matrix_all_kbest40
+  params_yaml: /home/annawoodard/gt/vanguard/crew/amy/radiomics_baseline/pyradiomics_params.yaml
+  extract_outdir: /net/projects2/vanguard/annawoodard/radiomics_baseline/outputs/shared_extraction/peri5_multiphase_logreg_feature_selection-kbest_k_best-10
+
+extract:
+  image_patterns:
+    - "{pid}/{pid}_0001.nii.gz"
+    - "{pid}/{pid}_0002.nii.gz"
+  mask_pattern: "{pid}.nii.gz"
+  peri_radius_mm: 5
+  peri_mode: 3d
+  force_2d: false
+  force_2d_dimension: 0
+  n_jobs: 8
+  label_override: 1
+  non_scalar_handling: concat
+  aggregate_stats: [mean, std, min, max]
+  hybrid_concat_threshold: 5
+
+train:
+  classifier: logistic
+  logreg_penalty: elasticnet
+  logreg_l1_ratio: 0.5
+  corr_threshold: 0.9
+  k_best: 40
+  feature_selection: kbest
+  grid_search: true
+  cv_folds: 5
+  cv_only: true
+  include_subtype: false
+  include_site: false
+  exclude_feature_regex:
+    - "(^|_)shape(_|$)"
+  harmonization_mode: none
+  harmonization_batch_col: site
+  harmonization_covariates:
+    - tumor_subtype
