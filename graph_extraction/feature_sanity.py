@@ -3,8 +3,9 @@
 Validates:
 - tortuosity >= 1
 - bifurcation angles in [0, 180] degrees
-- radii > 0
-- lengths > 0
+- radius.mean/min/median/etc. > 0
+- radius.sd >= 0 (std of radii along segment; 0 for degenerate or constant-radius segments)
+- length >= 0 (degenerate segments may have length 0)
 - curvature >= 0 (radians)
 """
 
@@ -61,6 +62,24 @@ def _check_positive(
                 "value": value,
                 "violation_type": rule_name,
                 "rule": f"{feature} > 0",
+                "context": context,
+            }
+        )
+    return violations
+
+
+def _check_non_negative(
+    value: float, case_id: str, feature: str, rule_name: str, context: str
+) -> list[dict]:
+    violations = []
+    if value < 0:
+        violations.append(
+            {
+                "case_id": case_id,
+                "feature": feature,
+                "value": value,
+                "violation_type": rule_name,
+                "rule": f"{feature} >= 0",
                 "context": context,
             }
         )
@@ -133,11 +152,11 @@ def check_morphometry_json(json_path: Path) -> list[dict]:
                     v = item["length"]
                     if isinstance(v, int | float):
                         violations.extend(
-                            _check_positive(
+                            _check_non_negative(
                                 float(v),
                                 case_id,
                                 "length",
-                                "length_non_positive",
+                                "length_negative",
                                 item_ctx,
                             )
                         )
@@ -145,15 +164,27 @@ def check_morphometry_json(json_path: Path) -> list[dict]:
                 if "radius" in item and isinstance(item["radius"], dict):
                     for k, rv in item["radius"].items():
                         if isinstance(rv, int | float):
-                            violations.extend(
-                                _check_positive(
-                                    float(rv),
-                                    case_id,
-                                    f"radius.{k}",
-                                    "radius_non_positive",
-                                    item_ctx,
+                            subfeature = f"radius.{k}"
+                            if k == "sd":
+                                violations.extend(
+                                    _check_non_negative(
+                                        float(rv),
+                                        case_id,
+                                        subfeature,
+                                        "radius_sd_negative",
+                                        item_ctx,
+                                    )
                                 )
-                            )
+                            else:
+                                violations.extend(
+                                    _check_positive(
+                                        float(rv),
+                                        case_id,
+                                        subfeature,
+                                        "radius_non_positive",
+                                        item_ctx,
+                                    )
+                                )
 
                 if "curvature" in item and isinstance(item["curvature"], dict):
                     for k, cv in item["curvature"].items():
