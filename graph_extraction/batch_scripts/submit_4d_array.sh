@@ -15,6 +15,7 @@
 set -euo pipefail
 
 CHUNK_SIZE=200
+STUDIES_PER_TASK=${STUDIES_PER_TASK:-8}
 POLL_INTERVAL=30
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,17 +61,21 @@ wait_for_job() {
 }
 
 # Submit chunks one at a time, wait for each to finish before submitting the next
+# Each array task processes STUDIES_PER_TASK studies in parallel; array size = ceil(chunk_size / STUDIES_PER_TASK)
 ARRAY_JOBS=()
 for (( OFFSET=0; OFFSET < COUNT; OFFSET += CHUNK_SIZE )); do
-    CHUNK_LAST=$(( OFFSET + CHUNK_SIZE - 1 ))
-    if [ "${CHUNK_LAST}" -ge "${COUNT}" ]; then
-        CHUNK_LAST=$(( COUNT - 1 ))
+    CHUNK_END=$(( OFFSET + CHUNK_SIZE ))
+    if [ "${CHUNK_END}" -gt "${COUNT}" ]; then
+        CHUNK_END=${COUNT}
     fi
-    TASK_LAST=$(( CHUNK_LAST - OFFSET ))
-    echo "Submitting chunk: studies ${OFFSET}-${CHUNK_LAST} (array 0-${TASK_LAST})"
+    CHUNK_SIZE_ACTUAL=$(( CHUNK_END - OFFSET ))
+    TASKS_IN_CHUNK=$(( (CHUNK_SIZE_ACTUAL + STUDIES_PER_TASK - 1) / STUDIES_PER_TASK ))
+    TASK_LAST=$(( TASKS_IN_CHUNK - 1 ))
+    TASK_OFFSET=$(( OFFSET / STUDIES_PER_TASK ))
+    echo "Submitting chunk: studies ${OFFSET}-$((CHUNK_END-1)) (${CHUNK_SIZE_ACTUAL} studies, ${TASKS_IN_CHUNK} tasks x ${STUDIES_PER_TASK} workers, array 0-${TASK_LAST})"
     JOB=$(sbatch \
       --array=0-${TASK_LAST} \
-      --export=INPUT_DIR="${INPUT_DIR}",OUTPUT_DIR="${OUTPUT_DIR}",STUDY_OFFSET="${OFFSET}" \
+      --export=INPUT_DIR="${INPUT_DIR}",OUTPUT_DIR="${OUTPUT_DIR}",STUDY_OFFSET="${OFFSET}",CHUNK_END="${CHUNK_END}",STUDIES_PER_TASK="${STUDIES_PER_TASK}",TASK_OFFSET="${TASK_OFFSET}" \
       "${SCRIPT_DIR}/submit_4d_morphometry.slurm" \
       | awk '{print $4}')
     ARRAY_JOBS+=("${JOB}")

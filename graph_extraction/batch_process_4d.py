@@ -3,11 +3,18 @@
 Discovers all studies in the vessel segmentations directory, runs process_4d_study
 for each, and writes a manifest of completed studies.
 
+For SLURM array jobs with multi-study parallelization, use --study-range START END
+and --studies-per-task N to process N studies in parallel within each array task.
+
 Usage:
     python graph_extraction/batch_process_4d.py \
         --input-dir /net/projects2/vanguard/vessel_segmentations \
         --output-dir report/4d_morphometry \
         [--study-ids STUDY1 STUDY2 ...]  # Optional: restrict to specific studies
+    # SLURM: process studies START..END-1 with N parallel workers
+    python graph_extraction/batch_process_4d.py \
+        --input-dir ... --output-dir ... \
+        --study-range START END --studies-per-task N --chunk-id CHUNK_ID
 """
 
 from __future__ import annotations
@@ -15,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +32,47 @@ if str(REPO_ROOT) not in sys.path:
 from graph_extraction.processing import (  # noqa: E402
     process_4d_study,
 )
+
+
+def _run_one_study(
+    study_id: str,
+    input_dir: Path,
+    output_dir: Path,
+    skip_existing: bool,
+    kwargs: dict,
+) -> tuple[str, str, dict | str]:
+    """Run process_4d_study for one study. Used by ProcessPoolExecutor.
+
+    Returns (study_id, status, result) where status is 'success'|'skipped'|'failed'.
+    """
+    import os
+
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    morphometry_path = output_dir / f"{study_id}_morphometry.json"
+    if skip_existing and morphometry_path.exists():
+        return (
+            study_id,
+            "skipped",
+            {"morphometry_path": str(morphometry_path)},
+        )
+    try:
+        result = process_4d_study(
+            input_dir=input_dir,
+            study_id=study_id,
+            output_dir=output_dir,
+            **kwargs,
+        )
+        return (
+            study_id,
+            "success",
+            {
+                "morphometry_path": str(result["morphometry_path"]),
+                "skeleton_voxels": result.get("skeleton_voxels"),
+            },
+        )
+    except Exception as e:
+        return (study_id, "failed", str(e))
 
 
 def discover_all_study_ids(input_dir: Path) -> list[str]:
@@ -143,7 +192,27 @@ def main() -> None:
         "--study-index",
         type=int,
         default=None,
-        help="Process only study at this index (for SLURM array jobs). Writes manifest_task_<index>.json.",
+        help="Process only study at this index (for SLURM array jobs). Writes manifest_task_<index>.json. Deprecated: prefer --study-range with --chunk-id.",
+    )
+    parser.add_argument(
+        "--study-range",
+        nargs=2,
+        type=int,
+        metavar=("START", "END"),
+        default=None,
+        help="Process studies from index START to END-1 (for SLURM multi-study tasks). Requires --chunk-id for manifest filename.",
+    )
+    parser.add_argument(
+        "--studies-per-task",
+        type=int,
+        default=1,
+        help="Number of studies to run in parallel per array task (default 1). Use with --study-range.",
+    )
+    parser.add_argument(
+        "--chunk-id",
+        type=int,
+        default=None,
+        help="Chunk/task ID for manifest_task_<chunk_id>.json. Used with --study-range.",
     )
     parser.add_argument(
         "--merge-manifests",
@@ -171,8 +240,21 @@ def main() -> None:
         print("[batch] No studies to process. Exiting.")
         sys.exit(0)
 
-    # Handle --study-index: process single study for SLURM array
-    if args.study_index is not None:
+    # Handle SLURM array task modes: --study-range or --study-index
+    manifest_suffix: str | None = None
+    if args.study_range is not None:
+        start_idx, end_idx = args.study_range[0], args.study_range[1]
+        if start_idx < 0 or end_idx > len(study_ids) or start_idx >= end_idx:
+            print(
+                f"[batch] study-range {start_idx} {end_idx} out of range [0, {len(study_ids)}], exiting."
+            )
+            sys.exit(0)
+        study_ids = study_ids[start_idx:end_idx]
+        if args.chunk_id is not None:
+            manifest_suffix = f"task_{args.chunk_id}"
+        else:
+            manifest_suffix = f"task_{start_idx}"
+    elif args.study_index is not None:
         if args.study_index < 0 or args.study_index >= len(study_ids):
             print(
                 f"[batch] study-index {args.study_index} out of range [0, {len(study_ids)-1}], exiting."
@@ -180,58 +262,97 @@ def main() -> None:
             sys.exit(0)
         study_ids = [study_ids[args.study_index]]
         manifest_suffix = f"task_{args.study_index}"
-    else:
-        manifest_suffix = None
+
+    study_kwargs = {
+        "npy_channel": args.npy_channel,
+        "threshold_low": args.threshold_low,
+        "threshold_high": args.threshold_high,
+        "max_temporal_radius": args.max_temporal_radius,
+        "min_voxels_per_timepoint": args.min_voxels_per_timepoint,
+        "min_anchor_fraction": args.min_anchor_fraction,
+        "min_anchor_voxels": args.min_anchor_voxels,
+        "max_candidates": None,
+        "min_temporal_support": args.min_temporal_support,
+        "force_skeleton": args.force_skeleton,
+        "force_features": args.force_features,
+        "save_center_manifold_mask": args.save_center_manifold_mask,
+        "verbose": not args.quiet,
+    }
 
     manifest: list[dict] = []
     failed: list[dict] = []
     skipped: list[dict] = []
 
-    for i, study_id in enumerate(study_ids, start=1):
-        morphometry_path = output_dir / f"{study_id}_morphometry.json"
-        if args.skip_existing and morphometry_path.exists():
-            manifest.append(
-                {
-                    "study_id": study_id,
-                    "status": "skipped",
-                    "morphometry_path": str(morphometry_path),
-                }
-            )
-            skipped.append({"study_id": study_id})
-            print(f"[batch] {i}/{len(study_ids)}: {study_id} (skipped, exists)")
-            continue
+    max_workers = min(args.studies_per_task, len(study_ids))
+    if max_workers > 1:
+        # Parallel: run multiple studies across workers
+        print(
+            f"[batch] Processing {len(study_ids)} studies with {max_workers} parallel workers"
+        )
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    _run_one_study,
+                    study_id,
+                    args.input_dir,
+                    output_dir,
+                    args.skip_existing,
+                    study_kwargs,
+                ): study_id
+                for study_id in study_ids
+            }
+            for future in as_completed(futures):
+                study_id = futures[future]
+                try:
+                    sid, status, data = future.result()
+                    if status == "success":
+                        manifest.append({"study_id": sid, "status": "success", **data})
+                        print(f"[batch] {sid}: success")
+                    elif status == "skipped":
+                        manifest.append({"study_id": sid, "status": "skipped", **data})
+                        skipped.append({"study_id": sid})
+                        print(f"[batch] {sid}: skipped")
+                    else:
+                        failed.append({"study_id": sid, "error": str(data)})
+                        print(f"[batch] {sid}: FAILED - {data}")
+                except Exception as e:
+                    failed.append({"study_id": study_id, "error": str(e)})
+                    print(f"[batch] {study_id}: EXCEPTION - {e}")
+    else:
+        # Sequential: original loop
+        for i, study_id in enumerate(study_ids, start=1):
+            morphometry_path = output_dir / f"{study_id}_morphometry.json"
+            if args.skip_existing and morphometry_path.exists():
+                manifest.append(
+                    {
+                        "study_id": study_id,
+                        "status": "skipped",
+                        "morphometry_path": str(morphometry_path),
+                    }
+                )
+                skipped.append({"study_id": study_id})
+                print(f"[batch] {i}/{len(study_ids)}: {study_id} (skipped, exists)")
+                continue
 
-        print(f"[batch] {i}/{len(study_ids)}: {study_id}")
-        try:
-            result = process_4d_study(
-                input_dir=args.input_dir,
-                study_id=study_id,
-                output_dir=output_dir,
-                npy_channel=args.npy_channel,
-                threshold_low=args.threshold_low,
-                threshold_high=args.threshold_high,
-                max_temporal_radius=args.max_temporal_radius,
-                min_voxels_per_timepoint=args.min_voxels_per_timepoint,
-                min_anchor_fraction=args.min_anchor_fraction,
-                min_anchor_voxels=args.min_anchor_voxels,
-                max_candidates=None,
-                min_temporal_support=args.min_temporal_support,
-                force_skeleton=args.force_skeleton,
-                force_features=args.force_features,
-                save_center_manifold_mask=args.save_center_manifold_mask,
-                verbose=not args.quiet,
-            )
-            manifest.append(
-                {
-                    "study_id": study_id,
-                    "status": "success",
-                    "morphometry_path": str(result["morphometry_path"]),
-                    "skeleton_voxels": result.get("skeleton_voxels"),
-                }
-            )
-        except Exception as e:
-            print(f"  [ERROR] {e}")
-            failed.append({"study_id": study_id, "error": str(e)})
+            print(f"[batch] {i}/{len(study_ids)}: {study_id}")
+            try:
+                result = process_4d_study(
+                    input_dir=args.input_dir,
+                    study_id=study_id,
+                    output_dir=output_dir,
+                    **study_kwargs,
+                )
+                manifest.append(
+                    {
+                        "study_id": study_id,
+                        "status": "success",
+                        "morphometry_path": str(result["morphometry_path"]),
+                        "skeleton_voxels": result.get("skeleton_voxels"),
+                    }
+                )
+            except Exception as e:
+                print(f"  [ERROR] {e}")
+                failed.append({"study_id": study_id, "error": str(e)})
 
     manifest_path = output_dir / (
         f"manifest_{manifest_suffix}.json" if manifest_suffix else "manifest.json"

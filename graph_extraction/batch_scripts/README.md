@@ -1,6 +1,6 @@
 # Batch 4D Morphometry – SLURM Scripts
 
-SLURM array scripts to run `batch_process_4d.py` on a compute cluster. Workload is split into single-study array tasks to stay within job queue limits (250 max; ~200 concurrent).
+SLURM array scripts to run `batch_process_4d.py` on a compute cluster. Each array task processes `STUDIES_PER_TASK` studies in parallel (default 4) using 8 CPU cores and 16GB RAM per job, staying within queue limits (250 max; ~200 concurrent).
 
 The output is equivalent to running:
 
@@ -64,10 +64,15 @@ cd /path/to/vanguard
 | `--test`      | Limit to first 5 studies                                                              | off                                             |
 
 
+**Environment:**
+
+- `STUDIES_PER_TASK` – studies to run in parallel per array task (default 4). Override with `STUDIES_PER_TASK=8 ./submit_4d_array.sh`.
+
 **Behavior:**
 
 - Runs `discover_all_study_ids()` from `batch_process_4d.py` to get study count
-- Submits chunks of 200 array tasks (keeps queue around 200; max 250)
+- Submits chunks of 200 studies; array size = ceil(chunk_size / STUDIES_PER_TASK)
+- Each array task runs `STUDIES_PER_TASK` studies in parallel (8 cores, 16GB)
 - Waits for each chunk to finish before submitting the next
 - Submits the merge job with `--dependency=afterok:` on all array job IDs
 
@@ -84,31 +89,34 @@ cd /path/to/vanguard
 
 ### 2. `submit_4d_morphometry.slurm`
 
-**Role:** Single array task. Runs one study via `--study-index`, writes `manifest_task_<index>.json` and morphometry files.
+**Role:** Single array task. Runs `STUDIES_PER_TASK` studies in parallel via `--study-range`, writes `manifest_task_<chunk_id>.json` and morphometry files.
 
 **Exported variables (from submit_4d_array.sh):**
 
 
-| Variable       | Description                                    | Default                                         |
-| -------------- | ---------------------------------------------- | ----------------------------------------------- |
-| `INPUT_DIR`    | Base directory for vessel segmentations        | `/net/projects2/vanguard/vessel_segmentations`  |
-| `OUTPUT_DIR`   | Output directory for morphometry JSONs         | `/net/projects2/vanguard/report/4d_morphometry` |
-| `STUDY_OFFSET` | Index offset for this chunk (e.g. 0, 200, 400) | `0`                                             |
+| Variable          | Description                                         | Default                                         |
+| ----------------- | --------------------------------------------------- | ----------------------------------------------- |
+| `INPUT_DIR`       | Base directory for vessel segmentations             | `/net/projects2/vanguard/vessel_segmentations`  |
+| `OUTPUT_DIR`      | Output directory for morphometry JSONs              | `/net/projects2/vanguard/report/4d_morphometry` |
+| `STUDY_OFFSET`    | Study index offset for this chunk (e.g. 0, 200)     | `0`                                             |
+| `CHUNK_END`       | End index (exclusive) for this chunk                | set by submit_4d_array.sh                       |
+| `STUDIES_PER_TASK`| Studies to run in parallel per task                 | `4`                                             |
+| `TASK_OFFSET`     | Global task index offset for manifest naming        | `0`                                             |
 
 
 **SBATCH directives:**
 
 - `--partition=general`
-- `--cpus-per-task=1`
+- `--cpus-per-task=8`
 - `--mem=16G`
 - `--time=8:00:00`
 - Logs: `logs/4d-morphometry-%A-%a.out`, `logs/4d-morphometry-%A-%a.err`
 
-**Manual submit (for one chunk):**
+**Manual submit (for one chunk of 200 studies, 4 per task → 50 array tasks):**
 
 ```bash
-sbatch --array=0-99 \
-  --export=INPUT_DIR=/path/to/input,OUTPUT_DIR=/path/to/output,STUDY_OFFSET=0 \
+sbatch --array=0-49 \
+  --export=INPUT_DIR=/path/to/input,OUTPUT_DIR=/path/to/output,STUDY_OFFSET=0,CHUNK_END=200,STUDIES_PER_TASK=4,TASK_OFFSET=0 \
   graph_extraction/batch_scripts/submit_4d_morphometry.slurm
 ```
 

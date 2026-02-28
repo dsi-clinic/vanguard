@@ -23,8 +23,13 @@ from typing import Any
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_EXCEL_METADATA = Path(
+    "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
+)
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
+
+from src.utils.clinic_metadata import load_clinic_metadata_excel  # noqa: E402
 
 # ML-Pipeline has hyphen; load via importlib
 _spec = importlib.util.spec_from_file_location(
@@ -94,6 +99,44 @@ def get_pcr(js: dict[str, Any]) -> int | None:
         return None
 
 
+def load_excel_laterality(
+    excel_path: Path, *, id_col: str = "patient_id"
+) -> pd.DataFrame | None:
+    """Load bilateral_mri from Excel and map to laterality.
+
+    bilateral_mri: 0 -> unilateral, 1 -> bilateral, NaN/missing -> unknown.
+    Returns DataFrame with id_col and 'laterality'; None if file missing/invalid.
+    """
+    if not excel_path.exists():
+        logging.warning("Excel metadata not found: %s", excel_path)
+        return None
+    try:
+        excel_df = load_clinic_metadata_excel(excel_path)
+    except Exception as exc:
+        logging.warning("Failed to load Excel %s: %s", excel_path, exc)
+        return None
+    if "bilateral_mri" not in excel_df.columns:
+        logging.warning("Excel %s has no 'bilateral_mri' column", excel_path)
+        return None
+    if id_col not in excel_df.columns:
+        logging.warning("Excel %s has no '%s' column", excel_path, id_col)
+        return None
+
+    def _map(v: object) -> str:
+        if pd.isna(v):
+            return "unknown"
+        try:
+            n = int(float(v))
+            return "bilateral" if n == 1 else "unilateral"
+        except (TypeError, ValueError):
+            return "unknown"
+
+    laterality = excel_df["bilateral_mri"].map(_map)
+    return pd.DataFrame(
+        {id_col: excel_df[id_col].astype(str), "laterality": laterality}
+    )
+
+
 def load_patient_info_metadata(patient_info_dir: Path) -> pd.DataFrame:
     """Load patient_info JSONs into a DataFrame with metadata columns."""
     rows: list[dict[str, Any]] = []
@@ -140,6 +183,18 @@ def main() -> None:
         default=Path("report"),
         help="Output directory for features_raw.csv and features_with_metadata.csv",
     )
+    parser.add_argument(
+        "--excel-metadata",
+        type=Path,
+        default=DEFAULT_EXCEL_METADATA,
+        help="Excel file with bilateral_mri (0=unilateral, 1=bilateral). Default: MAMA-MIA clinical_and_imaging_info.xlsx",
+    )
+    parser.add_argument(
+        "--id-col",
+        type=str,
+        default="patient_id",
+        help="Excel column for patient/sample ID (default: patient_id)",
+    )
     args = parser.parse_args()
 
     output_dir = args.output_dir
@@ -176,6 +231,24 @@ def main() -> None:
     # Drop duplicate patient_id if case_id was kept
     if "patient_id" in merged.columns and "case_id" in merged.columns:
         merged = merged.drop(columns=["patient_id"])
+
+    # Phase 1.2d: Merge laterality from Excel (bilateral_mri: 0=unilateral, 1=bilateral)
+    lat_df = load_excel_laterality(args.excel_metadata, id_col=args.id_col)
+    if lat_df is not None:
+        merged = merged.merge(
+            lat_df,
+            left_on="case_id",
+            right_on=args.id_col,
+            how="left",
+            suffixes=("", "_excel"),
+        )
+        if args.id_col in merged.columns and args.id_col != "case_id":
+            merged = merged.drop(columns=[args.id_col])
+        n_with_lat = merged["laterality"].notna().sum()
+        n_lat_known = (merged["laterality"].isin(["unilateral", "bilateral"])).sum()
+        print(
+            f"[features] Laterality from Excel: {n_lat_known} with known value ({n_with_lat} non-null)"
+        )
 
     out_path = output_dir / "features_with_metadata.csv"
     merged.to_csv(out_path, index=False)
