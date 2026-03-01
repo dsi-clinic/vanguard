@@ -27,17 +27,17 @@ import SimpleITK as sitk
 # packages must be installed in an environment
 try:
     SCRIPT_DIR = Path(__file__).parent
-    sys.path.insert(0, str(SCRIPT_DIR / "vanguard-blood-vessel-segmentation"))
+    sys.path.insert(0, str(SCRIPT_DIR.parent / "vanguard-blood-vessel-segmentation"))
 
     from preprocessing import normalize_image, zscore_image  # noqa: E402
 
 except ImportError:
 
     def normalize_image(*args, **kwargs):  # noqa: ANN201, D103
-        raise err  # noqa: F821
+        raise ImportError("Required preprocessing function not found")  # noqa: F821
 
     def zscore_image(*args, **kwargs):  # noqa: ANN201, D103
-        raise err  # noqa: F821
+        raise ImportError("Required preprocessing function not found")  # noqa: F821
 
 
 def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
@@ -80,7 +80,7 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
     """
     try:
         # Load the image
-        original_array = sitk.GetArrayFromImage(sitk.ReadImage(input_path))
+        original_array = sitk.GetArrayFromImage(sitk.ReadImage(str(input_path)))
 
         # Preprocess: rotate axes and normalize
         preprocessed_array = zscore_image(
@@ -119,7 +119,7 @@ def run_vessel_segmentation(
         # Change to the segmentation project directory
         original_cwd = Path.cwd()
         script_dir = Path(__file__).parent
-        os.chdir(script_dir / "vanguard-blood-vessel-segmentation")
+        os.chdir(script_dir.parent / "vanguard-blood-vessel-segmentation")
 
         # STEP-2: Run breast segmentation
         print("  Running breast segmentation (STEP-2)...")
@@ -226,10 +226,8 @@ def process_single_file(
             return patient_id, False, ""
 
         # Move the STEP-3 result to output directory
-        step3_file = step3_dir / f"{base_name}.npy"
-        output_file = (
-            Path(output_dir) / f"{patient_id}_{base_name}_vessel_segmentation.npy"
-        )
+        step3_file = step3_dir / f"{base_name}.npz"
+        output_file = build_output_path(Path(output_dir), patient_id, base_name)
 
         if step3_file.exists():
             shutil.move(step3_file, output_file)
@@ -242,19 +240,37 @@ def process_single_file(
         return patient_id, False, ""
 
 
+def build_output_path(output_dir: Path, patient_id: str, base_name: str) -> Path:
+    """Build output path in a source/patient/images layout."""
+    source = patient_id.split("_")[0]
+    timepoint = (
+        base_name[len(patient_id) + 1 :]
+        if base_name.startswith(f"{patient_id}_")
+        else base_name
+    )
+    filename = (
+        f"{patient_id}_{timepoint}_vessel_segmentation.npz"
+        if timepoint
+        else f"{patient_id}_vessel_segmentation.npz"
+    )
+    output_subdir = output_dir / source / patient_id / "images"
+    output_subdir.mkdir(parents=True, exist_ok=True)
+    return output_subdir / filename
+
+
 def collect_all_step3_files(output_dir: str) -> list[str]:
-    """Collect all STEP-3 vessel segmentation .npy files from the output directory.
+    """Collect all STEP-3 vessel segmentation .npz files from the output directory.
 
     Args:
         output_dir: Directory containing the processed files
 
     Returns:
-        List of paths to all vessel segmentation .npy files
+        List of paths to all vessel segmentation .npz files
     """
     npy_files = []
     for root, _dirs, files in os.walk(output_dir):
         for file in files:
-            if file.endswith(".npy") and "vessel_segmentation" in file:
+            if file.endswith(".npz") and "vessel_segmentation" in file:
                 npy_files.append(Path(root) / file)
     return npy_files
 
@@ -278,7 +294,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         default=str(script_dir.parent / "vessel_segmentations"),
-        help="Directory to save all STEP-3 vessel segmentation .npy files",
+        help="Directory to save all STEP-3 vessel segmentation .npz files",
     )
 
     parser.add_argument(
@@ -290,7 +306,7 @@ def main() -> None:
     parser.add_argument(
         "--breast-model-path",
         default=str(
-            script_dir
+            Path(__file__).parent.parent
             / "vanguard-blood-vessel-segmentation"
             / "trained_models"
             / "breast_model.pth"
@@ -301,7 +317,7 @@ def main() -> None:
     parser.add_argument(
         "--vessel-model-path",
         default=str(
-            script_dir
+            Path(__file__).parent.parent
             / "vanguard-blood-vessel-segmentation"
             / "trained_models"
             / "dv_model.pth"
@@ -339,6 +355,20 @@ def main() -> None:
         help="Process only the file at this index in the sorted list (for SLURM array jobs)",
     )
 
+    parser.add_argument(
+        "--file-start",
+        type=int,
+        default=None,
+        help="Process files from this start index (inclusive) in the sorted list",
+    )
+
+    parser.add_argument(
+        "--file-end",
+        type=int,
+        default=None,
+        help="Process files up to this end index (inclusive) in the sorted list",
+    )
+
     args = parser.parse_args()
 
     # Create output directory
@@ -368,16 +398,42 @@ def main() -> None:
 
         nii_files = [nii_files[args.file_index]]
         print(f"Processing single file at index {args.file_index}: {nii_files[0][0]}")
+    elif args.file_start is not None or args.file_end is not None:
+        if args.file_start is None:
+            print("Error: file-start is required when using file-end")
+            return [], []
+
+        file_start = args.file_start
+        file_end = args.file_end if args.file_end is not None else args.file_start
+
+        if file_start < 0 or file_start >= len(nii_files):
+            print(
+                f"Error: file-start {file_start} is out of range (0-{len(nii_files)-1})"
+            )
+            return [], []
+
+        if file_end < file_start:
+            print("Error: file-end must be >= file-start")
+            return [], []
+
+        if file_end >= len(nii_files):
+            file_end = len(nii_files) - 1
+            print(f"file-end exceeds max index, clamping to {file_end}")
+
+        nii_files = nii_files[file_start : file_end + 1]
+        print(f"Processing file range {file_start}-{file_end} ({len(nii_files)} files)")
 
     # Filter out already processed files if resuming
     if args.resume:
-        existing_files = set(os.listdir(args.output_dir))
         original_count = len(nii_files)
         nii_files = [
             (patient_id, file_path)
             for patient_id, file_path in nii_files
-            if f"{patient_id}_{Path(file_path).name.replace('.nii.gz', '')}_vessel_segmentation.npy"
-            not in existing_files
+            if not build_output_path(
+                Path(args.output_dir),
+                patient_id,
+                Path(file_path).name.replace(".nii.gz", ""),
+            ).exists()
         ]
         skipped_count = original_count - len(nii_files)
         if skipped_count > 0:
@@ -468,7 +524,7 @@ def main() -> None:
 
     # Collect all STEP-3 vessel segmentation files
     all_npy_files = collect_all_step3_files(args.output_dir)
-    print(f"\nAll STEP-3 vessel segmentation .npy files saved to: {args.output_dir}")
+    print(f"\nAll STEP-3 vessel segmentation .npz files saved to: {args.output_dir}")
     print(f"Total vessel segmentation files: {len(all_npy_files)}")
 
     # Cleanup

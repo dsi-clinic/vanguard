@@ -24,6 +24,24 @@ DEFAULT_SEGMENTATION_DIR = Path("/net/projects2/vanguard/vessel_segmentations")
 NDIM_3D = 3
 NDIM_4D = 4
 
+
+def load_segmentation_array(path: Path) -> np.ndarray:
+    """Load a segmentation array from .npy or compressed .npz files."""
+    data = np.load(path)
+    if isinstance(data, np.lib.npyio.NpzFile):
+        try:
+            if "vessel" in data.files:
+                return data["vessel"]
+            if len(data.files) == 1:
+                return data[data.files[0]]
+            raise ValueError(
+                f"NPZ file {path} has multiple arrays: {data.files}; expected 'vessel'."
+            )
+        finally:
+            data.close()
+    return data
+
+
 _OFFSETS_3D = np.array(
     [
         (dz, dy, dx)
@@ -68,7 +86,7 @@ def load_time_series_from_files(paths: list[Path], npy_channel: int) -> np.ndarr
     expected_shape: tuple[int, int, int] | None = None
 
     for path in paths:
-        arr = _load_array_from_path(path)
+        arr = load_segmentation_array(path)
         vol = extract_single_timepoint_volume(arr, npy_channel=npy_channel)
         if expected_shape is None:
             expected_shape = tuple(int(x) for x in vol.shape)
@@ -97,22 +115,18 @@ def discover_study_timepoints(
     if not input_dir.is_dir():
         raise ValueError(f"Input path is not a directory: {input_dir}")
 
-    site = study_id.split("_")[0] if "_" in study_id else study_id
-    images_dir = input_dir / site / study_id / "images"
-    if not images_dir.exists():
-        raise ValueError(
-            f"Images directory does not exist: {images_dir} "
-            f"(input_dir={input_dir}, site={site}, study_id={study_id})"
-        )
-
-    candidates = sorted(images_dir.glob(f"*{study_id}*_vessel_segmentation.npz"))
+    candidates = sorted(
+        p
+        for ext in (".npy", ".npz")
+        for p in input_dir.rglob(f"*{study_id}*_vessel_segmentation{ext}")
+    )
     if not candidates:
         raise ValueError(
             f"No candidate .npz files found for study_id='{study_id}' in {images_dir}"
         )
 
     patt = re.compile(
-        rf"{re.escape(study_id)}_(\d{{4}})_vessel_segmentation\.npz$",
+        rf"{re.escape(study_id)}_(\d{{4}})_vessel_segmentation\.(npy|npz)$",
         flags=re.IGNORECASE,
     )
 
@@ -301,7 +315,7 @@ def process_3d_case(
     skeleton_took = 0.0
     features_took = 0.0
 
-    arr = np.load(input_file)
+    arr = load_segmentation_array(input_file)
     priority_zyx = extract_single_timepoint_volume(arr, npy_channel=npy_channel)
 
     if skeleton_path.exists() and not force_skeleton:

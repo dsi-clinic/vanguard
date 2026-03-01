@@ -43,3 +43,4 @@ dependencies:
   - umap-learn=0.5.11
   - pip:
       - git+https://github.com/AIM-Harvard/pyradiomics.git@v3.1.0
+      - unet
