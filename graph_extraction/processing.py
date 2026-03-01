@@ -122,7 +122,7 @@ def discover_study_timepoints(
     )
     if not candidates:
         raise ValueError(
-            f"No candidate .npz files found for study_id='{study_id}' in {images_dir}"
+            f"No candidate .npz files found for study_id='{study_id}' in {input_dir}"
         )
 
     patt = re.compile(
