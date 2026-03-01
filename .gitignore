@@ -173,3 +173,4 @@ logs/
 
 # Results shouldn't be commited as they can be regenerated easily
 results/**
+test_breast_masks/
