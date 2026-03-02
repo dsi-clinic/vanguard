@@ -292,6 +292,20 @@ def centerlines_to_json(
         seg_path = Path(segmentation_path)
         if seg_path.suffix.lower() == ".npy":
             seg_data = np.load(str(seg_path))
+        elif seg_path.suffix.lower() == ".npz":
+            with np.load(str(seg_path)) as seg_file:
+                if "vessel" in seg_file.files:
+                    seg_data = seg_file["vessel"]
+                elif len(seg_file.files) == 1:
+                    seg_data = seg_file[seg_file.files[0]]
+                else:
+                    raise ValueError(
+                        f"NPZ file {seg_path} has multiple arrays: {seg_file.files}"
+                    )
+        else:
+            seg_data = None
+
+        if seg_data is not None:
             if seg_data.ndim == 4:  # noqa: PLR2004
                 seg_data = np.argmax(seg_data, axis=0)
             # Ensure (z, y, x) order
