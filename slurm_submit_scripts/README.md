@@ -215,7 +215,7 @@ All logs are saved to `logs/` directory (relative to project root) with the form
 
 ### Temporary Files
 
-Vessel segmentation scripts use temporary directories on `/net/projects2/vanguard/tmp/` to avoid disk space issues. These are automatically cleaned up on job completion or failure.
+All scripts use temporary directories on **local `/tmp`** on each compute node (e.g. `/tmp/batch_seg_<JOB_ID>_<TASK_ID>`). This avoids filling shared storage when jobs crash or are killed before cleanup runs. Temp files are automatically cleaned up on normal job completion.
 
 ---
 
@@ -248,9 +248,9 @@ Vessel segmentation scripts use temporary directories on `/net/projects2/vanguar
 - Use the optimized version with more memory
 
 ### Disk Space Issues
-- Temporary files are stored in `/net/projects2/vanguard/tmp/`
+- Temporary files use local `/tmp` on compute nodes (no longer on shared storage)
 - Check available space: `df -h /net/projects2/vanguard`
-- Scripts automatically clean up temp files on completion
+- **Reclaiming storage:** If `/net/projects2/vanguard/tmp/` has old orphaned dirs (e.g. `batch_vessel_seg_*` from crashed jobs), remove them to free ~100–200+ GB: `rm -rf /net/projects2/vanguard/tmp/*` (requires write access; coordinate with ruochun if dirs are owned by them)
 
 ### Job Times Out
 - Increase `--time` limit in the SLURM script
