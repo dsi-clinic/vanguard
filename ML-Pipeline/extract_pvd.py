@@ -1,15 +1,11 @@
 import os
 import glob
 import pandas as pd
+import SimpleITK as sitk
 from tqdm import tqdm
 from pvd_feature import get_pvd_feature 
 
-def run_pvd_pipeline(dataset_name):
-    """
-    Reproducible PVD extraction for DUKE or ISPY2.
-    Handles the structural differences in mask storage between datasets.
-    """
-    
+def pvd_pipeline(dataset_name):
     config = {
         "DUKE": {
             "data_dir": "/net/projects2/vanguard/vessel_segmentations/DUKE",
@@ -26,32 +22,40 @@ def run_pvd_pipeline(dataset_name):
     }
 
     c = config.get(dataset_name.upper())
-    if not c:
-        print(f"Error: Dataset {dataset_name} not supported.")
-        return
-
     results = []
     patient_ids = [d for d in os.listdir(c['data_dir']) if os.path.isdir(os.path.join(c['data_dir'], d))]
 
     for p_id in tqdm(patient_ids, desc=f"Calculating {dataset_name} PVD"):
+        if dataset_name.upper() == "DUKE":
+            num_id = p_id.split('_')[-1]
+            mask_search = f"{c['mask_dir']}/Breast_MRI_{num_id}/*{c['mask_ext']}"
+            mask_files = glob.glob(mask_search)
+            if not mask_files: continue
+            tumor_path = next((f for f in mask_files if "Dense" in f), mask_files[0])
+        else: 
+            tumor_path = os.path.join(c['mask_dir'], f"{p_id}{c['mask_ext']}")
+
+        if not os.path.exists(tumor_path):
+            continue
+
         try:
             cl_path = f"{c['data_dir']}/{p_id}/images/{p_id}_0000_vessel_segmentation.npz"
-            
-            if dataset_name.upper() == "DUKE":
-                num_id = p_id.split('_')[-1]
-                mask_search = f"{c['mask_dir']}/Breast_MRI_{num_id}/*{c['mask_ext']}"
-                mask_files = glob.glob(mask_search)
-                if not mask_files: continue
-                tumor_path = next((f for f in mask_files if "Dense" in f), mask_files[0])
-            
-            else: #ISPY2
-                tumor_path = os.path.join(c['mask_dir'], f"{p_id}{c['mask_ext']}")
-
-            if not os.path.exists(cl_path) or not os.path.exists(tumor_path):
+            if not os.path.exists(cl_path):
                 continue
 
-            pvd_value = get_pvd_feature(cl_path, tumor_path, mm_dilation=10)
-            results.append({"Patient_ID": p_id, "PVD": pvd_value})
+            pvd_count = get_pvd_feature(cl_path, tumor_path, mm_dilation=10)
+            
+            tumor_img = sitk.ReadImage(tumor_path)
+            tumor_img_int = sitk.Cast(tumor_img, sitk.sitkUInt8)
+            
+            stats = sitk.LabelShapeStatisticsImageFilter()
+            stats.Execute(tumor_img_int)
+            
+            labels = stats.GetLabels()
+            tumor_volume = stats.GetNumberOfPixels(1) if 1 in labels else (stats.GetNumberOfPixels(labels[0]) if labels else 0)
+            
+            relative_pvd = pvd_count / tumor_volume if tumor_volume > 0 else 0
+            results.append({"Patient_ID": p_id, "PVD": relative_pvd})
             
         except Exception as e:
             print(f"Skipping {p_id} due to error: {e}")
@@ -61,5 +65,5 @@ def run_pvd_pipeline(dataset_name):
     print(f"\nFinished {dataset_name} - saved {len(df)} results to {c['output']}")
 
 if __name__ == "__main__":
-    run_pvd_pipeline("DUKE")
-    run_pvd_pipeline("ISPY2")
+    pvd_pipeline("DUKE")
+    pvd_pipeline("ISPY2")
