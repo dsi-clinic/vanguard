@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from evaluation.kfold import create_kfold_splits
 from evaluation.kfold import (
     FoldSplit,
     create_group_stratified_kfold_splits,
