@@ -171,6 +171,11 @@ test_outputs/
 *-out/
 logs/
 
+# Ignore experiment data dumps
+*.csv
+*.pkl
+features_*.csv
+predictions.csv
 # Results shouldn't be commited as they can be regenerated easily
 results/**
 test_breast_masks/

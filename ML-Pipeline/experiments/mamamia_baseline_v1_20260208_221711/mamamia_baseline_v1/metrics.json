@@ -1,0 +1,35 @@
+{
+  "evaluation_type": "kfold",
+  "model_name": "mamamia_baseline_v1",
+  "n_splits": 5,
+  "aggregated_metrics": {
+    "auc": {
+      "mean": 0.5320981052912332,
+      "std": 0.030327560746364543
+    }
+  },
+  "per_fold_metrics": [
+    {
+      "fold": 0,
+      "auc": 0.5128985351141749
+    },
+    {
+      "fold": 1,
+      "auc": 0.5616612554112554
+    },
+    {
+      "fold": 2,
+      "auc": 0.5710768398268398
+    },
+    {
+      "fold": 3,
+      "auc": 0.5250270562770563
+    },
+    {
+      "fold": 4,
+      "auc": 0.4898268398268398
+    }
+  ],
+  "n_samples": 1491,
+  "n_features": 1
+}
