@@ -120,6 +120,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+bin/
 
 # Spyder project settings
 .spyderproject
@@ -170,6 +171,7 @@ test_outputs/
 *.vtk
 *-out/
 logs/
+debug_output/
 
 # Results shouldn't be commited as they can be regenerated easily
 results/**
