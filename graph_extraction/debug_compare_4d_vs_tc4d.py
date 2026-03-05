@@ -37,7 +37,7 @@ from graph_extraction.core4d import (  # noqa: E402
 from graph_extraction.tc4d import (  # noqa: E402
     NDIM_3D,
     NDIM_4D,
-    _run_graph_consensus_pipeline,
+    run_tc4d_from_priority,
 )
 from graph_extraction.vessel_mip import (  # noqa: E402
     compute_hit_miss_vs_radiologist,
@@ -2127,7 +2127,7 @@ def main() -> None:
     )
 
     baseline_4d_result = _run_4d_pipeline(priority_4d)
-    tc4d_result, tc4d_params, tc4d_pipeline_diagnostics = _run_graph_consensus_pipeline(
+    tc4d_result, tc4d_params, tc4d_pipeline_diagnostics = run_tc4d_from_priority(
         priority_4d
     )
 
