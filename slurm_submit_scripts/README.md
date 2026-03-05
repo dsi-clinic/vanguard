@@ -1,91 +1,72 @@
 # SLURM Submit Scripts
 
-This directory contains cluster submit scripts for the Vanguard pipeline.
+Tracked Slurm helpers in this branch are:
 
-## Available Scripts
+- `submit_vessel_segmentation.slurm`
+- `submit_vessel_segmentation_array.slurm`
+- `submit_4d_vs_tc4d_benchmark.sh`
+- `submit_4d_vs_tc4d_benchmark_array.slurm`
+- `submit_4d_vs_tc4d_benchmark_reduce.slurm`
 
-### Vessel Segmentation
+## Rules
 
-1. `submit_vessel_segmentation.slurm`
-- Main GPU segmentation job.
+- Run heavy workloads on Slurm compute nodes, not headnode.
+- Use headnode only for edits, job submission, and monitoring.
+- Worker jobs must activate the `vanguard` environment.
 
-2. `submit_vessel_segmentation_optimized.slurm`
-- Higher-resource segmentation variant.
+## Script Roles
 
-3. `submit_vessel_segmentation_array.slurm`
-- Array segmentation job (one file index per task).
+### Vessel segmentation
 
-### 4d-vs-tc4d Benchmark Suite
+- `submit_vessel_segmentation.slurm`
+  - Single-job GPU segmentation run.
+- `submit_vessel_segmentation_array.slurm`
+  - Array version for one-file-per-task segmentation.
 
-4. `submit_4d_vs_tc4d_benchmark.sh`
-- Head-node orchestration helper.
-- Generates study manifest, submits Slurm array benchmark job, then submits reducer with `afterok` dependency.
-- Auto-tags submitted job names with the current git short hash (and `-dirty` when applicable).
+### 4d-vs-tc4d benchmark
 
-5. `submit_4d_vs_tc4d_benchmark_array.slurm`
-- Array worker script.
-- Each task runs one study through `batch_processing/benchmark_4d_vs_tc4d.py`.
-- Produces per-study metrics + 3D visualization artifacts via the compare script output.
+- `submit_4d_vs_tc4d_benchmark.sh`
+  - Headnode orchestrator: builds study manifest, submits array, then submits reducer with dependency.
+- `submit_4d_vs_tc4d_benchmark_array.slurm`
+  - Worker script: runs one compare task per study ID.
+- `submit_4d_vs_tc4d_benchmark_reduce.slurm`
+  - Reducer script: aggregates per-study records to summary CSV/JSON.
 
-6. `submit_4d_vs_tc4d_benchmark_reduce.slurm`
-- Reducer job.
-- Runs `batch_processing/reduce_4d_vs_tc4d.py` after array completion.
+## Recommended Usage
 
-## Recommended Benchmark Workflow (Head Node)
+### Benchmark suite (preferred)
 
 ```bash
-# Choose an output directory for one benchmark run
 OUT_DIR="/net/projects2/vanguard/benchmarks/4d_vs_tc4d/run_$(date +%Y%m%d_%H%M%S)"
-
-# Optional overrides:
-# export SEGMENTATION_DIR=/net/projects2/vanguard/vessel_segmentations
-# export COMPARE_SCRIPT=/path/to/graph_extraction/debug/run_compare_4d_vs_tc4d.py
-
 slurm_submit_scripts/submit_4d_vs_tc4d_benchmark.sh "${OUT_DIR}"
 ```
 
-The helper prints the submitted array/reducer job IDs and writes:
-- `${OUT_DIR}/study_ids.txt`
-- `${OUT_DIR}/studies/<study_id>/benchmark_record.json`
-- `${OUT_DIR}/benchmark_reduced_per_study.csv` (after reducer)
-- `${OUT_DIR}/benchmark_reduced_summary.json` (after reducer)
-- Per-study compare `summary.json` files include `code_version.commit` and `code_version.dirty`.
+Optional environment overrides for the orchestrator:
 
-## Direct Manual Submission (Advanced)
+- `SEGMENTATION_DIR=/net/projects2/vanguard/vessel_segmentations`
+- `COMPARE_SCRIPT=/path/to/graph_extraction/debug_compare_4d_vs_tc4d.py`
+
+### Vessel segmentation
 
 ```bash
-# 1) Build manifest first
-micromamba run -n vanguard python batch_processing/benchmark_4d_vs_tc4d.py \
-  --segmentation-dir /net/projects2/vanguard/vessel_segmentations \
-  --output-dir "${OUT_DIR}" \
-  --manifest-only
+# Single job
+sbatch slurm_submit_scripts/submit_vessel_segmentation.slurm
 
-# 2) Submit array manually
-N=$(grep -cv '^\s*$' "${OUT_DIR}/study_ids.txt")
-ARRAY_JOB_ID=$(sbatch --parsable --array "0-$((N-1))" \
-  --export=ALL,BENCH_MANIFEST="${OUT_DIR}/study_ids.txt",BENCH_OUTPUT_DIR="${OUT_DIR}" \
-  slurm_submit_scripts/submit_4d_vs_tc4d_benchmark_array.slurm)
+# Array job
+sbatch slurm_submit_scripts/submit_vessel_segmentation_array.slurm
+```
 
-# 3) Submit reducer dependency
-sbatch --dependency "afterok:${ARRAY_JOB_ID}" \
-  --export=ALL,BENCH_OUTPUT_DIR="${OUT_DIR}" \
-  slurm_submit_scripts/submit_4d_vs_tc4d_benchmark_reduce.slurm
+To run a higher-resource variant, prefer `sbatch` overrides instead of a separate script:
+
+```bash
+sbatch --cpus-per-task=32 --mem=256G slurm_submit_scripts/submit_vessel_segmentation.slurm
 ```
 
 ## Monitoring
 
 ```bash
 squeue -u "$USER"
-
-tail -f logs/4d-tc4d-bench-<ARRAY_JOB_ID>-<TASK_ID>.out
-tail -f logs/4d-tc4d-reduce-<JOB_ID>.out
-# or with commit-tagged names:
-tail -f logs/4d-tc4d-bench-*-<ARRAY_JOB_ID>-<TASK_ID>.out
-tail -f logs/4d-tc4d-reduce-*-<JOB_ID>.out
+squeue -j <JOB_ID_OR_ARRAY_ID>
+tail -f logs/<job-name>-<job-id>.out
+sacct -j <JOB_ID_OR_ARRAY_ID> --format=JobID,State,ExitCode,Elapsed
 ```
-
-## Notes
-
-- Benchmark scripts assume head-node orchestration for manifest generation and job submission.
-- Email notifications use the `#SBATCH --mail-*` settings in each `.slurm` script.
-- Paths and compare script can be overridden through environment variables in the head-node helper.

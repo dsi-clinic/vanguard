@@ -171,6 +171,10 @@ python radiomics_baseline/radiomics_train.py \
 
 **Usage**: See [`graph_extraction/README.md`](graph_extraction/README.md) for implementation details and API
 
+**Canonical run docs**:
+- Single-study and feature-only commands: [`graph_extraction/README.md`](graph_extraction/README.md)
+- All-exam Slurm workflows: [`slurm_submit_scripts/README.md`](slurm_submit_scripts/README.md)
+
 **When to use**: When you need a topology-preserving skeletonization with graph-based pruning for downstream analysis.
 
 ---
@@ -275,7 +279,6 @@ python ML-Pipeline/pcr_prediction.py \
 
 **Full paths to reproducible outputs** (if needed for reference):
 - Graph pruning results: `/net/projects2/vanguard/output/skeleton_to_graph_output/` (if regenerated)
-- Centerline JSON outputs: `/net/projects2/vanguard/centerline_json_outputs/` (if regenerated)
 
 **Note**: To reproduce results, run the pipeline with the same configuration. Output directories follow consistent structure for easy comparison across experiments.
 
@@ -285,30 +288,31 @@ python ML-Pipeline/pcr_prediction.py \
 
 ### 6.1 Batch Processing (`batch_processing/`)
 
-**Purpose**: Automated scripts for large-scale processing and benchmarking.
+**Purpose**: Automated scripts for large-scale segmentation.
 
 **Key Scripts**:
 - `batch_segmentation.py`: Batch vessel segmentation from `.nii.gz` files
-- `batch_extract_centerlines.py`: Batch centerline extraction from vessel segmentations
-- `batch_process_centerlines.py`: End-to-end centerline extraction + JSON conversion
-- `batch_convert_vtp_to_json.py`: VTP-to-JSON conversion utility
-- `benchmark_4d_vs_tc4d.py`: Per-study benchmark runner for 4d-vs-tc4d comparisons
-- `reduce_4d_vs_tc4d.py`: Summary reducer for benchmark record aggregation
+
+4d-vs-tc4d benchmark scripts now live under `graph_extraction/`:
+- `graph_extraction/benchmark_4d_vs_tc4d.py`
+- `graph_extraction/reduce_4d_vs_tc4d.py`
 
 **Usage**:
 ```bash
 # Build benchmark manifest only
-python batch_processing/benchmark_4d_vs_tc4d.py \
+python graph_extraction/benchmark_4d_vs_tc4d.py \
   --segmentation-dir /net/projects2/vanguard/vessel_segmentations \
   --output-dir /net/projects2/vanguard/benchmarks/4d_vs_tc4d/run_001 \
   --manifest-only
 
 # Reduce benchmark records
-python batch_processing/reduce_4d_vs_tc4d.py \
+python graph_extraction/reduce_4d_vs_tc4d.py \
   --benchmark-dir /net/projects2/vanguard/benchmarks/4d_vs_tc4d/run_001
 ```
 
-**See**: [`batch_processing/README.md`](batch_processing/README.md) for full examples
+**See**:
+- [`graph_extraction/README.md`](graph_extraction/README.md) for compare/graph pipeline commands
+- [`slurm_submit_scripts/README.md`](slurm_submit_scripts/README.md) for benchmark submission workflows
 
 ---
 
@@ -319,7 +323,6 @@ python batch_processing/reduce_4d_vs_tc4d.py \
 **Key Scripts**:
 - `submit_vessel_segmentation.slurm`: Main vessel segmentation job (1 GPU, 16 CPUs, 128GB RAM)
 - `submit_vessel_segmentation_array.slurm`: Array job for parallel processing (one file per task)
-- `submit_vessel_segmentation_optimized.slurm`: High-resource version for faster processing
 - `submit_4d_vs_tc4d_benchmark.sh`: Head-node helper for benchmark suite submission
 - `submit_4d_vs_tc4d_benchmark_array.slurm`: Array worker for per-study benchmark runs
 - `submit_4d_vs_tc4d_benchmark_reduce.slurm`: Reducer job for benchmark summary outputs
@@ -421,32 +424,17 @@ vanguard/
    ```
    Output: `data/vessel_segmentations/*.npy` (vessel segmentation masks)
 
-2. **Centerline Extraction** (thinning-based method):
+2. **TC4D skeleton + feature extraction**:
    ```bash
-   python batch_processing/batch_extract_centerlines.py \
-     --input-dir data/vessel_segmentations \
-     --output-dir data/centerlines_vtp \
-     --method thinning
+   python graph_extraction/run_skeleton_processing.py \
+     --study-id DUKE_041 \
+     --input-dir /net/projects2/vanguard/vessel_segmentations/DUKE \
+     --output-dir /net/projects2/vanguard/centerlines_tc4d/studies/DUKE/DUKE_041 \
+     --strict-qc
    ```
-   Or use graph pruning method:
-   ```bash
-   python batch_processing/batch_extract_centerlines.py \
-     --input-dir data/vessel_segmentations \
-     --output-dir data/centerlines_vtp \
-     --method graph_pruning
-   ```
-   Output: `data/centerlines_vtp/*.vtp` (centerline polylines)
+   Output: `*_skeleton_4d_exam_mask.npy`, `*_morphometry.json`, `*_tumor_graph_features.json`
 
-3. **Convert to JSON**:
-   ```bash
-   python batch_processing/batch_process_centerlines.py \
-     --input-dir data/centerlines_vtp \
-     --output-dir data/centerlines_json \
-     --spacing 1.0 1.0 1.0
-   ```
-   Output: `data/centerlines_json/*.json` (centerline features)
-
-4. **Train Baselines** (for comparison):
+3. **Train Baselines** (for comparison):
    ```bash
    # Non-imaging baseline
    python non_imaging_baseline/baseline_pcr_simple.py \
@@ -469,7 +457,7 @@ vanguard/
      --output outputs/radiomics_baseline
    ```
 
-5. **Train ML Models** (graph-based):
+4. **Train ML Models** (graph-based):
    ```bash
    python ML-Pipeline/pcr_prediction.py \
      --feature-dir data/centerlines_json \
@@ -483,7 +471,7 @@ vanguard/
    ```
    Output: `outputs/graph_model/metrics_rf.json`, `predictions.csv`, `feature_importance.csv`
 
-6. **Compare Results**: Compare metrics across `outputs/*` directories to assess model performance.
+5. **Compare Results**: Compare metrics across `outputs/*` directories to assess model performance.
 
 ---
 

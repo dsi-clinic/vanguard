@@ -1,13 +1,11 @@
 # Batch Processing Guide
 
-This directory is for non-graph batch utilities (segmentation and centerline extraction).
+This directory is for non-graph batch utilities (segmentation).
 
 ## Scripts
 
 - `batch_segmentation.py`
   - Batch vessel segmentation from MRI `.nii.gz` inputs.
-- `batch_extract_centerlines.py`
-  - Batch centerline extraction from vessel segmentation `.npy` files.
 
 ## Graph/TC4D Benchmark Scripts (Moved)
 
