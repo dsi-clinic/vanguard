@@ -33,7 +33,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_SEGMENTATION_DIR,
         help="Directory containing `<study-id>/images/*.npz` segmentation files.",
     )
-    parser.add_argument("--output-dir", type=Path, required=True, help="Output directory.")
+    parser.add_argument(
+        "--output-dir", type=Path, required=True, help="Output directory."
+    )
     parser.add_argument("--force-skeleton", action="store_true")
     parser.add_argument("--force-features", action="store_true")
     parser.add_argument(

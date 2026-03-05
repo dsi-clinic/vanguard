@@ -289,12 +289,8 @@ def extract_metrics(summary: dict[str, Any]) -> dict[str, float | int | str | No
                 ],
             )
         ),
-        "overlap_dice": coerce_float(
-            first_value(summary, ["overlap.dice"])
-        ),
-        "overlap_jaccard": coerce_float(
-            first_value(summary, ["overlap.jaccard"])
-        ),
+        "overlap_dice": coerce_float(first_value(summary, ["overlap.dice"])),
+        "overlap_jaccard": coerce_float(first_value(summary, ["overlap.jaccard"])),
         "compare_elapsed_seconds": coerce_float(
             first_value(
                 summary,
@@ -408,7 +404,9 @@ def load_json(path: Path) -> dict[str, Any]:
     """Load JSON object from disk."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError(f"Expected JSON object at {path}, got {type(payload).__name__}")
+        raise ValueError(
+            f"Expected JSON object at {path}, got {type(payload).__name__}"
+        )
     return payload
 
 
@@ -587,9 +585,7 @@ def write_records_csv(records: list[dict[str, Any]], output_path: Path) -> None:
                 "overlap_dice": metrics.get("overlap_dice"),
                 "overlap_jaccard": metrics.get("overlap_jaccard"),
                 "compare_elapsed_seconds": metrics.get("compare_elapsed_seconds"),
-                "radiologist_alignment_flip": metrics.get(
-                    "radiologist_alignment_flip"
-                ),
+                "radiologist_alignment_flip": metrics.get("radiologist_alignment_flip"),
                 "4d_exam_radiologist_hits": metrics.get("4d_exam_radiologist_hits"),
                 "tc4d_exam_radiologist_hits": metrics.get("tc4d_exam_radiologist_hits"),
                 "4d_exam_radiologist_hit_rate": metrics.get(

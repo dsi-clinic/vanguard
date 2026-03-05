@@ -34,7 +34,9 @@ def load_numpy_array_from_path(path: Path) -> np.ndarray:
 
     loaded = np.load(path, allow_pickle=False)
     if not isinstance(loaded, np.lib.npyio.NpzFile):
-        raise ValueError(f"Expected NPZ container at {path}, got {type(loaded).__name__}")
+        raise ValueError(
+            f"Expected NPZ container at {path}, got {type(loaded).__name__}"
+        )
 
     if "vessel" not in loaded.files:
         keys = list(loaded.files)
@@ -186,4 +188,3 @@ def collapse_4d_to_exam_skeleton(
         )
 
     return exam_skeleton, support_mask, support_count
-

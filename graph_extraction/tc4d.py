@@ -22,6 +22,10 @@ from graph_extraction.skeleton3d import skeletonize3d
 NDIM_3D = 3
 NDIM_4D = 4
 MIN_OTSU_SAMPLES = 2
+MIN_ROI_VOXELS = 16
+MIN_ROI_SEED_VOXELS = 1024
+TEMPORAL_CHAIN_LEN_SHORT = 2
+TEMPORAL_CHAIN_LEN_LONG = 3
 
 # tc4d core (graph-forward, no-learning) internal policy constants.
 TC4D_THRESHOLD_LOWER_BOUND = 0.30
@@ -213,11 +217,14 @@ def _score_filter_components_by_support(
     if total_score > 0.0:
         ranked = np.argsort(comp_scores)[::-1]
         cumulative_fraction = np.cumsum(comp_scores[ranked]) / total_score
-        n_cumulative = np.searchsorted(
-            cumulative_fraction,
-            keep_fraction,
-            side="left",
-        ) + 1
+        n_cumulative = (
+            np.searchsorted(
+                cumulative_fraction,
+                keep_fraction,
+                side="left",
+            )
+            + 1
+        )
         keep[ranked[:n_cumulative]] = True
     # Always retain the largest component for topology robustness.
     keep[np.argmax(comp_sizes)] = True
@@ -231,7 +238,6 @@ def _prune_micro_components(
     min_component_voxels: int,
 ) -> np.ndarray:
     """Drop tiny detached components while always preserving the largest one."""
-
     if mask_zyx.ndim != NDIM_3D:
         raise ValueError(f"Expected 3D mask, got shape {mask_zyx.shape}")
     if not np.any(mask_zyx):
@@ -317,7 +323,7 @@ def _compute_frangi_tubularity_3d(
     mask_roi = np.asarray(mask_zyx[roi], dtype=bool)
 
     mask_roi_voxels = np.count_nonzero(mask_roi)
-    if mask_roi_voxels < 16:
+    if mask_roi_voxels < MIN_ROI_VOXELS:
         return out
 
     vol_roi_c = np.ascontiguousarray(vol_roi.astype(np.float32, copy=False))
@@ -353,7 +359,6 @@ def _compute_tc4d_ved_preconditioner_3d(
     evidence_zyx: np.ndarray,
 ) -> np.ndarray:
     """Build a deterministic VED-like vessel continuity prior from one 3D evidence map."""
-
     out = np.zeros_like(evidence_zyx, dtype=np.float32)
     mask = np.asarray(evidence_zyx > 0.0, dtype=bool)
     sigma = max(0.25, TC4D_VED_PRECONDITION_SMOOTH_SIGMA)
@@ -379,7 +384,7 @@ def _compute_tc4d_ved_preconditioner_3d(
             )
         )
         roi_seed = mask & (evidence >= q)
-        if np.count_nonzero(roi_seed) < 1024:
+        if np.count_nonzero(roi_seed) < MIN_ROI_SEED_VOXELS:
             roi_seed = mask
     else:
         roi_seed = mask
@@ -418,7 +423,7 @@ def _compute_tc4d_ved_preconditioner_3d(
         evidence_work = np.asarray(evidence_roi[work], dtype=np.float32)
         mask_work = np.asarray(mask_roi[work], dtype=bool)
         mask_work_voxels = np.count_nonzero(mask_work)
-        if mask_work_voxels < 16:
+        if mask_work_voxels < MIN_ROI_VOXELS:
             ds = 1
             evidence_work = evidence_roi
             mask_work = mask_roi
@@ -488,7 +493,6 @@ def _build_tc4d_candidates(
     ved_precondition_zyx: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build an over-complete 4D candidate centerline manifold."""
-
     t_dim = priority_4d.shape[0]
     candidate_4d = np.zeros_like(priority_4d, dtype=bool)
     center_score_4d = np.zeros_like(priority_4d, dtype=np.float32)
@@ -623,7 +627,6 @@ def _build_tc4d_candidates(
 
 def _temporal_neighbor_support(mask_4d: np.ndarray) -> np.ndarray:
     """Count temporal neighbors using dt=+-1 with 3x3x3 spatial tolerance."""
-
     t_dim = mask_4d.shape[0]
     support = np.zeros_like(mask_4d, dtype=np.float32)
 
@@ -679,8 +682,7 @@ def _compute_spacetime_selection_prior_3d(
         np.maximum(active_count_3d, 1.0),
     )
     support_norm_3d = np.clip(
-        support_count_zyx.astype(np.float32, copy=False)
-        / max(1, mask_4d.shape[0]),
+        support_count_zyx.astype(np.float32, copy=False) / max(1, mask_4d.shape[0]),
         0.0,
         1.0,
     )
@@ -880,7 +882,7 @@ def _compute_temporal_edge_persistence_score_3d(
     out = np.zeros(support_mask_zyx.shape, dtype=np.float32)
 
     t_dim = selected_4d.shape[0]
-    if t_dim < 2:
+    if t_dim < TEMPORAL_CHAIN_LEN_SHORT:
         return out
 
     shape = support_mask_zyx.shape
@@ -932,7 +934,6 @@ def _compute_tubularity_and_blobness_from_mask(
     dynamics_score_zyx: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute low-cost tubularity and blobness proxies from local 3D occupancy."""
-
     mask_u8 = mask_zyx.astype(np.uint8, copy=False)
     neighbor_count = ndimage.convolve(
         mask_u8,
@@ -1059,9 +1060,8 @@ def _build_tc4d_node_and_traversal_fields(
         1.10,
     )
     traversal_dyn_relief = np.clip(0.75 + (0.25 * dynamics_score), 0.75, 1.0)
-    traversal_cost = (
-        (traversal_base * traversal_temporal * traversal_blob)
-        / (traversal_tube_relief * traversal_dyn_relief)
+    traversal_cost = (traversal_base * traversal_temporal * traversal_blob) / (
+        traversal_tube_relief * traversal_dyn_relief
     )
     traversal_cost[~mask] = np.inf
 
@@ -1217,12 +1217,16 @@ def _select_geodesic_connected_subtree(
     reachable_support = reachable & support_on_work
     reachable_support_count = np.count_nonzero(reachable_support)
     if reachable_support_count:
-        prize_floor = np.percentile(node_prize[reachable_support], GEODESIC_BETA_QUANTILE)
+        prize_floor = np.percentile(
+            node_prize[reachable_support], GEODESIC_BETA_QUANTILE
+        )
     else:
         prize_floor = np.percentile(node_prize[reachable], GEODESIC_BETA_QUANTILE)
     node_gain = node_prize - prize_floor
 
-    median_edge_cost = np.median(parent_edge_cost[child_ids]) if child_ids.size > 0 else 1.0
+    median_edge_cost = (
+        np.median(parent_edge_cost[child_ids]) if child_ids.size > 0 else 1.0
+    )
     median_node_prize = (
         np.median(node_prize[reachable_support])
         if reachable_support_count
@@ -1344,17 +1348,24 @@ def _apply_temporal_directed_consistency_filter(
     ).astype(np.float32, copy=False)
     consistency_score[~active] = 0.0
 
-    required_chain_len = 2 if t_dim <= 2 else 3
+    required_chain_len = (
+        TEMPORAL_CHAIN_LEN_SHORT
+        if t_dim <= TEMPORAL_CHAIN_LEN_SHORT
+        else TEMPORAL_CHAIN_LEN_LONG
+    )
     filtered = active & (chain_len >= required_chain_len)
     retain_fraction = np.count_nonzero(filtered) / active_total
 
     target_retain_fraction = np.clip(TC4D_TEMPORAL_FLOW_MIN_RETAIN_FRACTION, 0.50, 0.98)
-    if retain_fraction < target_retain_fraction and required_chain_len > 2:
-        required_chain_len = 2
+    if (
+        retain_fraction < target_retain_fraction
+        and required_chain_len > TEMPORAL_CHAIN_LEN_SHORT
+    ):
+        required_chain_len = TEMPORAL_CHAIN_LEN_SHORT
         filtered = active & (chain_len >= required_chain_len)
-    bridge_score = max(required_chain_len, 2) * inv_t_dim
+    bridge_score = max(required_chain_len, TEMPORAL_CHAIN_LEN_SHORT) * inv_t_dim
 
-    if t_dim >= 3:
+    if t_dim >= TEMPORAL_CHAIN_LEN_LONG:
         for t in range(1, t_dim - 1):
             if not np.any(active[t]):
                 continue
@@ -1375,6 +1386,7 @@ def _apply_temporal_directed_consistency_filter(
                 )
 
     return consistency_score
+
 
 def _finalize_exam_mask_topology(
     exam_mask_zyx: np.ndarray,
@@ -1518,10 +1530,9 @@ def _collapse_tc4d_with_temporal_hysteresis(
             )
 
     selected_support_voxels = np.count_nonzero(geodesic_support_mask)
-    support_selection_fraction = (
-        np.count_nonzero(geodesic_support_mask & support_mask)
-        / max(1, np.count_nonzero(support_mask))
-    )
+    support_selection_fraction = np.count_nonzero(
+        geodesic_support_mask & support_mask
+    ) / max(1, np.count_nonzero(support_mask))
     if (
         selected_support_voxels >= GEODESIC_UNION_MIN_SELECTED_SUPPORT_VOXELS
         and support_selection_fraction >= GEODESIC_MIN_SUPPORT_SELECTION_FRACTION
@@ -1601,6 +1612,7 @@ def _run_tc4d_graph_consensus_pipeline(
         },
     }
     return result, params, diagnostics
+
 
 def run_tc4d_from_priority(
     priority_4d: np.ndarray,

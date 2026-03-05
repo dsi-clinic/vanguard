@@ -7,8 +7,8 @@ processing should depend on `graph_extraction.tc4d` only.
 from __future__ import annotations
 
 import argparse
-import json
 import hashlib
+import json
 import math
 import os
 import re
@@ -20,26 +20,26 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import numba as nb
+import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from graph_extraction.core4d import (
+from graph_extraction.core4d import (  # noqa: E402
     DEFAULT_SEGMENTATION_DIR,
     collapse_4d_to_exam_skeleton,
     discover_study_timepoints,
     largest_component_3d,
     load_time_series_from_files,
 )
-from graph_extraction.tc4d import (
+from graph_extraction.tc4d import (  # noqa: E402
     NDIM_3D,
     NDIM_4D,
     _run_graph_consensus_pipeline,
 )
-from graph_extraction.vessel_mip import (
+from graph_extraction.vessel_mip import (  # noqa: E402
     compute_hit_miss_vs_radiologist,
     render_vessel_coverage_mip,
 )
@@ -60,6 +60,8 @@ TUMOR_PERITUMOR_INNER_RADIUS_VOX = 0
 TUMOR_PERITUMOR_OUTER_RADIUS_VOX = 10
 BREAST_OVERLAY_MAX_POINTS = 160_000
 TUMOR_OUTLINE_MAX_POINTS = 90_000
+BREAST_MRI_ID_PAD_WIDTH = 3
+SEG_NRRD_MAX_LAYERS = 32
 
 FOURD_BASELINE_PARAMS = {
     "threshold_low": 0.5,
@@ -74,7 +76,7 @@ FOURD_BASELINE_PARAMS = {
 def _cache_key(payload: dict[str, Any]) -> str:
     """Generate stable cache key for JSON-serializable payload."""
 
-    def _json_default(obj: Any) -> Any:
+    def _json_default(obj: object) -> object:
         if isinstance(obj, np.generic):
             return obj.item()
         if isinstance(obj, np.ndarray):
@@ -134,8 +136,7 @@ def compute_overlap_metrics(
     tc4d = np.asarray(tc4d_exam_zyx, dtype=bool)
     if baseline.shape != tc4d.shape:
         raise ValueError(
-            "Overlap shape mismatch: "
-            f"{tuple(baseline.shape)} vs {tuple(tc4d.shape)}"
+            "Overlap shape mismatch: " f"{tuple(baseline.shape)} vs {tuple(tc4d.shape)}"
         )
 
     intersection = int(np.count_nonzero(baseline & tc4d))
@@ -158,11 +159,15 @@ def compute_overlap_metrics(
         "tc4d_overlap_fraction": float(tc4d_overlap),
     }
 
+
 def _git_stdout(project_root: Path, *git_args: str) -> str | None:
     """Return stripped stdout for a git command or ``None`` on failure."""
+    git_bin = shutil.which("git")
+    if git_bin is None:
+        return None
     try:
-        proc = subprocess.run(
-            ["git", *git_args],
+        proc = subprocess.run(  # noqa: S603
+            [git_bin, *git_args],
             cwd=str(project_root),
             check=True,
             capture_output=True,
@@ -173,23 +178,26 @@ def _git_stdout(project_root: Path, *git_args: str) -> str | None:
     value = proc.stdout.strip()
     return value if value else None
 
+
 def _collect_git_metadata(project_root: Path) -> dict[str, Any]:
     """Collect lightweight git provenance for run-to-commit traceability."""
     commit = _git_stdout(project_root, "rev-parse", "HEAD")
     commit_short = _git_stdout(project_root, "rev-parse", "--short=12", "HEAD")
     branch = _git_stdout(project_root, "rev-parse", "--abbrev-ref", "HEAD")
     dirty: bool | None = None
-    try:
-        proc = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(project_root),
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        dirty = bool(proc.stdout.strip())
-    except Exception:
-        dirty = None
+    git_bin = shutil.which("git")
+    if git_bin is not None:
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [git_bin, "status", "--porcelain"],
+                cwd=str(project_root),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            dirty = bool(proc.stdout.strip())
+        except Exception:
+            dirty = None
     return {
         "project_root": str(project_root),
         "commit": commit,
@@ -244,11 +252,12 @@ def _cache_save_array(
     array_tmp = array_path.with_suffix(".npy.tmp")
     with array_tmp.open("wb") as f:
         np.save(f, np.asarray(arr), allow_pickle=False)
-    os.replace(array_tmp, array_path)
+    array_tmp.replace(array_path)
 
     meta_tmp = meta_path.with_suffix(".json.tmp")
     meta_tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    os.replace(meta_tmp, meta_path)
+    meta_tmp.replace(meta_path)
+
 
 def _load_time_series_from_single_npy(
     path: Path,
@@ -289,6 +298,7 @@ def _load_time_series_from_single_npy(
 
     raise ValueError(f"Unsupported layout: {layout}")
 
+
 def _extract_xyz(mask_zyx: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return float32 XYZ coordinates for nonzero voxels in a 3D mask."""
     z, y, x = np.nonzero(mask_zyx)
@@ -297,6 +307,7 @@ def _extract_xyz(mask_zyx: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarr
         y.astype(np.float32, copy=False),
         z.astype(np.float32, copy=False),
     )
+
 
 def _subsample_xyz(
     x: np.ndarray,
@@ -359,6 +370,7 @@ def _prepare_tumor_outline_points(
     tx, ty, tz = _extract_xyz(outline)
     return _subsample_xyz(tx, ty, tz, max_points=TUMOR_OUTLINE_MAX_POINTS)
 
+
 def _file_signature(path: Path) -> dict[str, Any]:
     """Return stable file signature fields used for cache invalidation."""
     stat = path.stat()
@@ -367,6 +379,7 @@ def _file_signature(path: Path) -> dict[str, Any]:
         "size": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
     }
+
 
 def _attach_cache_diag(
     info: dict[str, Any],
@@ -388,6 +401,7 @@ def _attach_cache_diag(
     }
     return merged
 
+
 def _to_breast_mri_case_id(token: str) -> str | None:
     """Convert common study-id tokens into a ``Breast_MRI_XXX`` case id."""
     clean = token.strip()
@@ -407,11 +421,12 @@ def _to_breast_mri_case_id(token: str) -> str | None:
         return None
 
     digits = match_suffix.group(1)
-    if len(digits) <= 3:
-        return f"Breast_MRI_{int(digits):03d}"
+    if len(digits) <= BREAST_MRI_ID_PAD_WIDTH:
+        return f"Breast_MRI_{int(digits):0{BREAST_MRI_ID_PAD_WIDTH}d}"
 
     # Last-3 fallback for ids like ISPY2_202539 -> Breast_MRI_539.
     return f"Breast_MRI_{int(digits[-3:]):03d}"
+
 
 def _resolve_radiologist_nrrd_root(annotations_dir: Path) -> Path:
     """Resolve `Segmentation_Masks_NRRD` root from a provided base path."""
@@ -419,6 +434,7 @@ def _resolve_radiologist_nrrd_root(annotations_dir: Path) -> Path:
     if candidate.exists():
         return candidate
     return annotations_dir
+
 
 def _resolve_radiologist_seg_path(
     *,
@@ -435,6 +451,7 @@ def _resolve_radiologist_seg_path(
         return None
     return matches[0]
 
+
 def _resolve_breast_seg_path(
     *,
     nrrd_root: Path,
@@ -449,6 +466,7 @@ def _resolve_breast_seg_path(
     if not matches:
         return None
     return matches[0]
+
 
 def _parse_seg_nrrd_segments(path: Path) -> dict[str, dict[str, int | None]]:
     """Parse Slicer ``.seg.nrrd`` segment metadata keyed by segment name."""
@@ -499,6 +517,7 @@ def _parse_seg_nrrd_segments(path: Path) -> dict[str, dict[str, int | None]]:
         }
     return segments_by_name
 
+
 def _load_binary_mask_nrrd(
     path: Path,
     *,
@@ -514,7 +533,9 @@ def _load_binary_mask_nrrd(
     )
     expected_shape_tuple = tuple(expected_shape_zyx)
     if arr.ndim != NDIM_3D:
-        raise ValueError(f"{label_name} NRRD must be 3D, got shape {arr.shape} from {path}")
+        raise ValueError(
+            f"{label_name} NRRD must be 3D, got shape {arr.shape} from {path}"
+        )
 
     candidates = (
         ("zyx", arr),
@@ -546,6 +567,7 @@ def _load_binary_mask_nrrd(
         "voxels": int(np.count_nonzero(mask)),
     }
 
+
 def _load_radiologist_vessel_mask_nrrd(
     path: Path,
     *,
@@ -574,9 +596,7 @@ def _load_radiologist_vessel_mask_nrrd(
             f"Found segments: {sorted(segments_by_name.keys())}"
         )
 
-    arr = sitk.GetArrayFromImage(sitk.ReadImage(str(path))).astype(
-        np.int16, copy=False
-    )
+    arr = sitk.GetArrayFromImage(sitk.ReadImage(str(path))).astype(np.int16, copy=False)
     expected_shape_tuple = tuple(expected_shape_zyx)
     selected_arr_3d: np.ndarray
     selected_layer_layout: str | None = None
@@ -586,20 +606,22 @@ def _load_radiologist_vessel_mask_nrrd(
     if arr.ndim == NDIM_3D:
         selected_arr_3d = arr
     elif arr.ndim == NDIM_4D:
-        if arr.shape[-1] <= 32:
+        if arr.shape[-1] <= SEG_NRRD_MAX_LAYERS:
             layer_count = arr.shape[-1]
             selected_layer_index = (
                 vessel_layer_index
-                if vessel_layer_index is not None and 0 <= vessel_layer_index < layer_count
+                if vessel_layer_index is not None
+                and 0 <= vessel_layer_index < layer_count
                 else 0
             )
             selected_arr_3d = arr[..., selected_layer_index]
             selected_layer_layout = "layer_last"
-        elif arr.shape[0] <= 32:
+        elif arr.shape[0] <= SEG_NRRD_MAX_LAYERS:
             layer_count = arr.shape[0]
             selected_layer_index = (
                 vessel_layer_index
-                if vessel_layer_index is not None and 0 <= vessel_layer_index < layer_count
+                if vessel_layer_index is not None
+                and 0 <= vessel_layer_index < layer_count
                 else 0
             )
             selected_arr_3d = arr[selected_layer_index, ...]
@@ -610,7 +632,8 @@ def _load_radiologist_vessel_mask_nrrd(
                 f"{arr.shape} from {path}"
             )
         selected_layer_via_header = (
-            vessel_layer_index is not None and vessel_layer_index == selected_layer_index
+            vessel_layer_index is not None
+            and vessel_layer_index == selected_layer_index
         )
     else:
         raise ValueError(
@@ -659,6 +682,7 @@ def _load_radiologist_vessel_mask_nrrd(
         "layout": selected_layout,
         "voxels": int(np.count_nonzero(vessel_mask)),
     }
+
 
 def _load_binary_mask_nrrd_cached(
     path: Path,
@@ -1369,10 +1393,7 @@ def _run_4d_pipeline(
         effective_support, exam_mask, support_mask = selected_trial
     collapse_seconds = float(time.perf_counter() - t_collapse)
     retained_per_t = np.count_nonzero(mask_4d, axis=(1, 2, 3))
-    print(
-        "[4d] retained_voxels_per_timepoint="
-        f"{retained_per_t.tolist()}"
-    )
+    print("[4d] retained_voxels_per_timepoint=" f"{retained_per_t.tolist()}")
 
     return {
         "mask_4d": mask_4d,
@@ -1382,6 +1403,7 @@ def _run_4d_pipeline(
         "manifold_seconds": manifold_seconds,
         "collapse_seconds": collapse_seconds,
     }
+
 
 def _compute_peritumoral_shell_mask(
     tumor_mask_zyx: np.ndarray | None,
@@ -1419,9 +1441,8 @@ def _compute_peritumoral_shell_mask(
         shell &= breast
     return shell.astype(bool, copy=False)
 
-def _build_case_title(
-    *, case_label: str, title_prefix: str = "4D vs"
-) -> str:
+
+def _build_case_title(*, case_label: str, title_prefix: str = "4D vs") -> str:
     """Build a consistent case-aware compare title."""
     normalized_name = "temporal consensus 4D"
     if title_prefix == "4D vs":
@@ -1522,25 +1543,29 @@ def _save_tumor_coverage_mip_png(
     if radiologist_mask_zyx is not None:
         radiologist_zone = np.asarray(radiologist_mask_zyx, dtype=bool) & zone
         radiologist_tumor_voxels = int(np.count_nonzero(radiologist_zone & tumor))
-        radiologist_peritumor_voxels = int(np.count_nonzero(radiologist_zone & peritumor))
+        radiologist_peritumor_voxels = int(
+            np.count_nonzero(radiologist_zone & peritumor)
+        )
         diagnostics.update(
             {
                 "radiologist_in_tumor_voxels": radiologist_tumor_voxels,
                 "radiologist_in_peritumor_voxels": radiologist_peritumor_voxels,
                 "tc4d_support_hit_radiologist_in_zone_voxels": int(
-                    np.count_nonzero((tc4d_support & radiologist_zone))
+                    np.count_nonzero(tc4d_support & radiologist_zone)
                 ),
                 "tc4d_exam_hit_radiologist_in_zone_voxels": int(
-                    np.count_nonzero((tc4d_exam & radiologist_zone))
+                    np.count_nonzero(tc4d_exam & radiologist_zone)
                 ),
             }
         )
     return diagnostics
 
+
 def _init_mp4_render_context(context: dict[str, Any]) -> None:
     """Pool initializer for MP4 frame rendering."""
     global _MP4_RENDER_CONTEXT
     _MP4_RENDER_CONTEXT = context
+
 
 def _render_mp4_frame_to_png(frame_idx: int) -> int:
     """Render one MP4 frame to PNG using global worker context."""
@@ -1639,6 +1664,7 @@ def _render_mp4_frame_to_png(frame_idx: int) -> int:
     plt.close(fig)
     return frame_idx
 
+
 def _encode_png_sequence_to_mp4(
     *,
     frames_dir: Path,
@@ -1673,7 +1699,8 @@ def _encode_png_sequence_to_mp4(
         "yuv420p",
         str(output_path),
     ]
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True)  # noqa: S603
+
 
 def _save_rotating_4d_tc4d_mp4(
     baseline_4d_mask_zyx: np.ndarray,
@@ -1890,6 +1917,7 @@ def _save_rotating_4d_tc4d_mp4(
     if not keep_mp4_frames:
         shutil.rmtree(frames_dir, ignore_errors=True)
 
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build CLI parser."""
     parser = argparse.ArgumentParser(
@@ -2037,6 +2065,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     return parser
 
+
 def main() -> None:
     """CLI entrypoint."""
     start_time = time.perf_counter()
@@ -2098,8 +2127,8 @@ def main() -> None:
     )
 
     baseline_4d_result = _run_4d_pipeline(priority_4d)
-    tc4d_result, tc4d_params, tc4d_pipeline_diagnostics = (
-        _run_graph_consensus_pipeline(priority_4d)
+    tc4d_result, tc4d_params, tc4d_pipeline_diagnostics = _run_graph_consensus_pipeline(
+        priority_4d
     )
 
     baseline_4d_exam = baseline_4d_result["exam_mask"].astype(bool, copy=False)
@@ -2209,11 +2238,13 @@ def main() -> None:
             cache_dir=io_cache_dir,
             use_cache=io_cache_enabled,
         )
-        radiologist_mask_zyx, radiologist_info = _load_radiologist_vessel_mask_nrrd_cached(
-            vessel_path,
-            expected_shape_zyx=expected_shape_zyx,
-            cache_dir=io_cache_dir,
-            use_cache=io_cache_enabled,
+        radiologist_mask_zyx, radiologist_info = (
+            _load_radiologist_vessel_mask_nrrd_cached(
+                vessel_path,
+                expected_shape_zyx=expected_shape_zyx,
+                cache_dir=io_cache_dir,
+                use_cache=io_cache_enabled,
+            )
         )
 
         breast_overlay.update({"resolved_case_id": resolved_case_id, **breast_info})
@@ -2355,7 +2386,9 @@ def main() -> None:
         )
 
     overlap = compute_overlap_metrics(baseline_4d_exam, tc4d_exam)
-    baseline_4d_exam_viz = _apply_flip_spec(baseline_4d_exam, COMPARE_4D_TC4D_VIZ_FLIP_SPEC)
+    baseline_4d_exam_viz = _apply_flip_spec(
+        baseline_4d_exam, COMPARE_4D_TC4D_VIZ_FLIP_SPEC
+    )
     tc4d_exam_viz = _apply_flip_spec(tc4d_exam, COMPARE_4D_TC4D_VIZ_FLIP_SPEC)
     tc4d_support_viz_zyx = _apply_flip_spec(tc4d_support, COMPARE_4D_TC4D_VIZ_FLIP_SPEC)
     radiologist_mask_viz_zyx = (
@@ -2382,8 +2415,7 @@ def main() -> None:
         else _apply_flip_spec(peritumor_mask_zyx, COMPARE_4D_TC4D_VIZ_FLIP_SPEC)
     )
     print(
-        "[viz] applied fixed 4d/tc4d/support flip: "
-        f"{COMPARE_4D_TC4D_VIZ_FLIP_SPEC}"
+        "[viz] applied fixed 4d/tc4d/support flip: " f"{COMPARE_4D_TC4D_VIZ_FLIP_SPEC}"
     )
 
     out_rot_core: Path | None = None
@@ -2396,7 +2428,9 @@ def main() -> None:
     if not args.render_mips:
         print("[mip] skipped (--no-render-mips)")
     elif tumor_mask_viz_zyx is not None and peritumor_mask_viz_zyx is not None:
-        out_tumor_coverage_mip = args.output_dir / "tumor_peritumor_coverage_mip_tc4d.png"
+        out_tumor_coverage_mip = (
+            args.output_dir / "tumor_peritumor_coverage_mip_tc4d.png"
+        )
         t_tumor_cov_start = time.perf_counter()
         try:
             tumor_zone_coverage_diag = _save_tumor_coverage_mip_png(
@@ -2457,7 +2491,8 @@ def main() -> None:
         video_core_seconds = float(time.perf_counter() - t_video_core_start)
         video_seconds = video_core_seconds
         print(
-            "[timing] mp4_seconds: " f"core={video_core_seconds:.2f}, total={video_seconds:.2f}"
+            "[timing] mp4_seconds: "
+            f"core={video_core_seconds:.2f}, total={video_seconds:.2f}"
         )
     else:
         print("[mp4] skipped (--no-render-mp4)")

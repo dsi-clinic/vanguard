@@ -18,7 +18,7 @@ def max_project_axis(volume_zyx: np.ndarray, *, axis: int) -> np.ndarray:
         return np.max(volume_zyx, axis=0)
     if axis == 1:
         return np.max(volume_zyx, axis=1)
-    if axis == 2:
+    if axis == NDIM_3D - 1:
         return np.max(volume_zyx, axis=2)
     raise ValueError(f"Axis must be one of {{0,1,2}}, got {axis}")
 
@@ -242,15 +242,27 @@ def render_vessel_coverage_mip(
             ax.set_aspect("equal", adjustable="box")
 
     legend_handles: list[Patch] = [
-        Patch(facecolor=vessel_color, edgecolor=vessel_color, alpha=0.62, label="vessels"),
+        Patch(
+            facecolor=vessel_color, edgecolor=vessel_color, alpha=0.62, label="vessels"
+        ),
     ]
     if breast_mask_zyx is not None:
         legend_handles.append(
-            Patch(facecolor="#9ca3af", edgecolor="#9ca3af", alpha=0.75, label="breast outline")
+            Patch(
+                facecolor="#9ca3af",
+                edgecolor="#9ca3af",
+                alpha=0.75,
+                label="breast outline",
+            )
         )
     if peritumor_mask_zyx is not None:
         legend_handles.append(
-            Patch(facecolor="#2dd4ff", edgecolor="#2dd4ff", alpha=0.90, label="peritumoral shell")
+            Patch(
+                facecolor="#2dd4ff",
+                edgecolor="#2dd4ff",
+                alpha=0.90,
+                label="peritumoral shell",
+            )
         )
     if tumor_mask_zyx is not None:
         legend_handles.append(

@@ -14,8 +14,6 @@ from graph_extraction.core4d import (
     discover_study_timepoints,
     load_time_series_from_files,
 )
-from graph_extraction.vessel_mip import render_vessel_coverage_mip
-from graph_extraction.tc4d import run_tc4d_from_priority
 from graph_extraction.skeleton_to_graph import (
     assign_component_labels,
     build_vessel_json,
@@ -25,6 +23,8 @@ from graph_extraction.skeleton_to_graph import (
     obtain_radius_map,
     segments_to_graph,
 )
+from graph_extraction.tc4d import run_tc4d_from_priority
+from graph_extraction.vessel_mip import render_vessel_coverage_mip
 
 DEFAULT_RADIOLOGIST_ANNOTATIONS_DIR = Path(
     "/net/projects2/vanguard/Duke-Breast-Cancer-MRI-Supplement-v3"
@@ -34,6 +34,7 @@ DEFAULT_TUMOR_MASK_DIR = Path(
 )
 PROCESSING_VIZ_FLIP_SPEC = "z"
 VIZ_FLIP_SPECS = ("none", "z", "y", "x", "zy", "zx", "yx", "zyx")
+SEG_NRRD_MAX_LAYERS = 32
 
 _OFFSETS_3D = np.array(
     [
@@ -161,10 +162,14 @@ def _resolve_tumor_mask_path(
 ) -> Path | None:
     """Resolve tumor mask path from common study-id tokens."""
     tumor_extensions = (".nii.gz", ".nii", ".nrrd")
-    candidates: list[Path] = [tumor_mask_dir / f"{study_id}{ext}" for ext in tumor_extensions]
+    candidates: list[Path] = [
+        tumor_mask_dir / f"{study_id}{ext}" for ext in tumor_extensions
+    ]
     case_id = _to_breast_mri_case_id_strict(study_id)
     if case_id is not None:
-        candidates.extend(tumor_mask_dir / f"{case_id}{ext}" for ext in tumor_extensions)
+        candidates.extend(
+            tumor_mask_dir / f"{case_id}{ext}" for ext in tumor_extensions
+        )
     for path in candidates:
         if path.exists():
             return path
@@ -229,9 +234,13 @@ def _load_binary_mask_nrrd(
     """Load binary NRRD and align to expected `(z,y,x)`."""
     import SimpleITK as sitk
 
-    arr = sitk.GetArrayFromImage(sitk.ReadImage(str(path))).astype(np.float32, copy=False)
+    arr = sitk.GetArrayFromImage(sitk.ReadImage(str(path))).astype(
+        np.float32, copy=False
+    )
     if arr.ndim != NDIM_3D:
-        raise ValueError(f"{label_name} NRRD must be 3D, got shape {arr.shape} from {path}")
+        raise ValueError(
+            f"{label_name} NRRD must be 3D, got shape {arr.shape} from {path}"
+        )
 
     selected, selected_layout = _select_zyx_layout(arr, expected_shape_zyx)
 
@@ -252,7 +261,7 @@ def _select_radiologist_vessel_layer(
     path: Path,
 ) -> tuple[np.ndarray, int | None, str | None, bool]:
     """Select radiologist vessel layer and report whether selection used header index."""
-    if arr.shape[-1] <= 32:
+    if arr.shape[-1] <= SEG_NRRD_MAX_LAYERS:
         layer_count = int(arr.shape[-1])
         selected_layer_index = (
             int(vessel_layer)
@@ -266,7 +275,7 @@ def _select_radiologist_vessel_layer(
             vessel_layer is not None and int(vessel_layer) == selected_layer_index,
         )
 
-    if arr.shape[0] <= 32:
+    if arr.shape[0] <= SEG_NRRD_MAX_LAYERS:
         layer_count = int(arr.shape[0])
         selected_layer_index = (
             int(vessel_layer)
@@ -325,11 +334,11 @@ def _load_radiologist_vessel_mask_nrrd(
             selected_layer_index,
             selected_layer_layout,
             selected_layer_via_header,
-        ) = _select_radiologist_vessel_layer(
-            arr, vessel_layer=vessel_layer, path=path
-        )
+        ) = _select_radiologist_vessel_layer(arr, vessel_layer=vessel_layer, path=path)
     else:
-        raise ValueError(f"Radiologist seg NRRD must be 3D/4D, got shape {arr.shape} from {path}")
+        raise ValueError(
+            f"Radiologist seg NRRD must be 3D/4D, got shape {arr.shape} from {path}"
+        )
 
     selected, selected_layout = _select_zyx_layout(selected_arr_3d, expected_shape_zyx)
 
@@ -340,13 +349,17 @@ def _load_radiologist_vessel_mask_nrrd(
         if not np.any(vessel_mask):
             vessel_mask = (selected > 0).astype(bool, copy=False)
     if not np.any(vessel_mask):
-        raise ValueError(f"Radiologist vessel segment '{vessel_name}' is empty in {path}")
+        raise ValueError(
+            f"Radiologist vessel segment '{vessel_name}' is empty in {path}"
+        )
 
     return vessel_mask, {
         "path": str(path),
         "segment_name": vessel_name,
         "segment_label_value": None if vessel_label is None else int(vessel_label),
-        "segment_layer": None if selected_layer_index is None else int(selected_layer_index),
+        "segment_layer": None
+        if selected_layer_index is None
+        else int(selected_layer_index),
         "segment_layer_from_header": bool(selected_layer_via_header),
         "segment_layer_layout": selected_layer_layout,
         "layout": selected_layout,
@@ -435,7 +448,14 @@ def _choose_flip_by_containment(
             "best_flip_spec": "none",
             "best_inside_ratio": 0.0,
             "best_inside_voxels": 0,
-            "all": [{"flip_spec": "none", "inside_ratio": 0.0, "inside_voxels": 0, "candidate_voxels": 0}],
+            "all": [
+                {
+                    "flip_spec": "none",
+                    "inside_ratio": 0.0,
+                    "inside_voxels": 0,
+                    "candidate_voxels": 0,
+                }
+            ],
         }
 
     rows = _build_containment_rows(cand=cand, ref=ref, candidate_voxels=cand_voxels)
@@ -698,7 +718,9 @@ def process_4d_study(
                             breast_mask_model,
                         )
                         flip_to_model = str(alignment_to_breast["best_flip_spec"])
-                        tumor_mask_model = _apply_flip_spec(tumor_mask_model, flip_to_model)
+                        tumor_mask_model = _apply_flip_spec(
+                            tumor_mask_model, flip_to_model
+                        )
 
                     tumor_mask_viz = _apply_flip_spec(
                         tumor_mask_model,
@@ -710,7 +732,9 @@ def process_4d_study(
                         "mask_dir": str(tumor_mask_dir),
                         "processing_flip_to_model": flip_to_model,
                         "alignment_to_breast": alignment_to_breast,
-                        "voxels_after_alignment": int(np.count_nonzero(tumor_mask_model)),
+                        "voxels_after_alignment": int(
+                            np.count_nonzero(tumor_mask_model)
+                        ),
                         **tumor_info,
                     }
                 except Exception as exc:
@@ -723,7 +747,10 @@ def process_4d_study(
 
             method_label = "tc4d"
             row_masks: list[tuple[str, np.ndarray]] = [
-                (method_label, _apply_flip_spec(skeleton_mask, PROCESSING_VIZ_FLIP_SPEC))
+                (
+                    method_label,
+                    _apply_flip_spec(skeleton_mask, PROCESSING_VIZ_FLIP_SPEC),
+                )
             ]
             if radiologist_mask_viz is not None:
                 row_masks.append(("radiologist", radiologist_mask_viz))
@@ -774,7 +801,9 @@ def process_4d_study(
         "support_path": str(support_path) if save_exam_masks else None,
         "manifold_path": str(manifold_path) if save_center_manifold_mask else None,
         "morphometry_path": str(morphometry_path),
-        "coverage_mip_path": str(coverage_mip_path) if mip_status == "computed" else None,
+        "coverage_mip_path": str(coverage_mip_path)
+        if mip_status == "computed"
+        else None,
         "coverage_mip_status": mip_status,
         "coverage_mip_diagnostics": coverage_mip_diagnostics,
         "radiologist_context": radiologist_context_for_summary,
