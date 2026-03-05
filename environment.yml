@@ -30,8 +30,10 @@ dependencies:
   - seaborn=0.13.2
   - pydicom=3.0.1
   - pandas=2.3.3
+  # Required by evaluation imports; keep explicit to fail fast on env drift.
   - scikit-learn=1.7.2
   - joblib=1.5.3
+  - threadpoolctl=3.6.0
   - pyyaml=6.0.3
   - numba=0.59.1
   - plotly=6.5.2

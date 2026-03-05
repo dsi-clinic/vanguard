@@ -1,59 +1,47 @@
 # Graph Extraction
 
-Skeleton extraction and skeleton-to-graph feature code for 3D and 4D vessel segmentations.
+TC4D skeleton extraction and skeleton-to-graph morphometry for 4D vessel segmentations.
 
 ## Layout
 
-- `run_skeleton_processing.py`: main processing pipeline (3D or 4D), with skeleton extraction + morphometry generation.
-- `run_compare_3d_4d_debug.py`: debugging/visualization script for side-by-side 3D vs 4D comparison.
-- `processing.py`: shared 3D/4D loading, extraction, collapse, and morphometry helpers.
-- `skeleton3d.py`, `skeleton4d.py`, `visuals.py`, `skeleton_to_graph.py`: core extraction and graph/morphometry modules.
+- `run_skeleton_processing.py`: production entrypoint (tc4d-only) for exam-level skeleton extraction + morphometry.
+- `processing.py`: shared production helpers for study loading, extraction, morphometry, and coverage MIP output.
+- `tc4d.py`: production-only tc4d core implementation used by processing.
+- `debug/run_compare_4d_vs_tc4d.py`: debug-only 4d-vs-tc4d comparison entrypoint.
+- `debug/tc4d_compare_runtime.py`: debug compare helpers + CLI runtime.
+- `debug/skeleton4d.py`: 4d baseline skeletonizer kept only for debug comparison.
+- `core4d.py`: shared 4D study I/O utilities.
+- `vessel_mip.py`: shared orthogonal MIP rendering + radiologist hit/miss summary.
+- `skeleton3d.py`, `skeleton_to_graph.py`: core skeleton and graph/morphometry modules.
 
 ## Main Pipeline
 
-Use one script for production processing.
-
-### 3D mode (single volume)
+Run production processing (tc4d):
 
 ```bash
-python graph_extraction/run_skeleton_processing.py 3d \
-  --input-file /path/to/ISPY2_202539_ISPY2_202539_0000_vessel_segmentation.npy \
-  --output-dir output \
-  --threshold-low 0.5 \
-  --npy-channel 1
-```
-
-### 4D mode (exam-level across all timepoints)
-
-```bash
-python graph_extraction/run_skeleton_processing.py 4d \
+python graph_extraction/run_skeleton_processing.py \
   --input-dir /net/projects2/vanguard/vessel_segmentations \
   --study-id ISPY2_202539 \
-  --output-dir output \
-  --npy-channel 1 \
-  --threshold-low 0.5 \
-  --threshold-high 0.85
+  --output-dir output
 ```
 
 Behavior:
 - If skeleton outputs already exist, they are reused unless `--force-skeleton` is set.
 - If morphometry JSON already exists, it is reused unless `--force-features` is set.
+- The pipeline writes `*_vessel_coverage_mip.png` by default (`--render-mip`, `--mip-dpi`).
+- If DUKE/Breast annotations exist under `--radiologist-annotations-dir`, the MIP includes a radiologist row and hit/miss summary.
 
-## Debug Comparison Script
+## Debug Comparison
 
-Use this for 3D-vs-4D QC plots and rotating MP4:
+Use this only for regression/debug investigations (`4d` baseline vs `tc4d`):
 
 ```bash
-python graph_extraction/run_compare_3d_4d_debug.py \
+python graph_extraction/debug/run_compare_4d_vs_tc4d.py \
   --input-dir /net/projects2/vanguard/vessel_segmentations \
   --study-id ISPY2_202539 \
-  --npy-channel 1 \
-  --threshold-low 0.5 \
-  --threshold-high 0.85 \
-  --output-dir debug_output
+  --output-dir debug_4d_vs_tc4d
 ```
 
-Notes:
-- Tumor overlay is auto-resolved in study mode from:
-  `/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert/{study_id}.nii.gz`
-- MP4 frame count is reduced for faster render.
+Useful runtime flags for repeated debug loops:
+- `--cache-dir ./.cache/compare_4d` and `--use-io-cache` (default on): cache aligned raw DCE and annotation mask loads.
+- `--save-intermediate-masks`: opt-in write of support/manifold NPYs (off by default to reduce output size).
