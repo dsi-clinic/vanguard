@@ -1,16 +1,42 @@
+"""Module for loading and cleaning clinical feature datasets."""
+
+from pathlib import Path
+from typing import Any
+
 import pandas as pd
 
-def get_clinical_features(config):
-    """Loads and cleans the high-value features from Excel."""
-    path = config['data_paths']['clinical_excel']
-    df = pd.read_excel(path)
-    
-    # Columns from EDA
+
+def get_clinical_features(config: dict[str, Any]) -> pd.DataFrame:
+    """Load and clean the high-value clinical features from an Excel file.
+
+    This function reads a clinical Excel file, selects specific high-value
+    columns, and generates dummy variables for categorical data.
+
+    Args:
+        config: A dictionary containing project configuration, including data paths.
+
+    Returns:
+        A cleaned pandas DataFrame with clinical features and dummy variables.
+    """
+    path = Path(config["data_paths"]["clinical_excel"])
+    clinical_data = pd.read_excel(path)
+
     cols = [
-        'patient_id', 'age', 'menopause', 'tumor_subtype', 
-        'hr', 'er', 'pr', 'her2', 'nottingham_grade', 'bmi_group'
+        "patient_id",
+        "age",
+        "menopause",
+        "tumor_subtype",
+        "hr",
+        "er",
+        "pr",
+        "her2",
+        "nottingham_grade",
+        "bmi_group",
     ]
-    df = df[cols].copy()
-    df = pd.get_dummies(df, columns=['tumor_subtype', 'menopause', 'bmi_group'])
-    
-    return df
+
+    feature_df = clinical_data[cols].copy()
+    feature_df = pd.get_dummies(
+        feature_df, columns=["tumor_subtype", "menopause", "bmi_group"]
+    )
+
+    return feature_df

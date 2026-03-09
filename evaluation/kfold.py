@@ -6,8 +6,6 @@ folds with stratification), plus helpers for Excel-driven splits.
 
 from __future__ import annotations
 
-import numpy as np
-from sklearn.model_selection import KFold, StratifiedKFold
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
