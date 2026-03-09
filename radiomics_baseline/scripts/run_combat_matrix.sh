@@ -2,7 +2,8 @@
 # Run the ComBat harmonization matrix (12 runs total: 3 model settings x 4 modes).
 set -euo pipefail
 
-PROJ_DIR="/home/annawoodard/gt/vanguard/crew/amy/radiomics_baseline"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJ_DIR="$(dirname "${SCRIPT_DIR}")"
 
 cd "${PROJ_DIR}"
 

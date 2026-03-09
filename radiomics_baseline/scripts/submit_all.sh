@@ -16,9 +16,9 @@
 # --------------
 #   image_types   : 4 configs,  2 new extractions  sweep_kinetic_maps.yaml
 #                   (-2 subtraction, -5 kinetic done; -7 and -9 are new)
-#   peri_3d       : 6 configs,  1 new extraction   sweep_peritumor_3d.yaml
+#   peri_3d       : 6 configs,  1 new extraction   slurm_sweep_peri3d.sh
 #                   (5 done; only 3d+force2d+5mm remaining)
-#   peri_2d       : 6 configs,  6 new extractions  sweep_peritumor_2d.yaml
+#   peri_2d       : 6 configs,  6 new extractions  slurm_sweep_peri2d.sh
 #   feature_sel   : 6 configs,  0 new extractions  sweep_feature_selection.yaml
 #                   (all done; re-runs training only)
 #   subtypes      : 5 configs,  0 extractions      sweep_test_subtypes.yaml
@@ -50,7 +50,8 @@ set -euo pipefail
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRY_RUN="${1:-}"
 
-mkdir -p "$HOME/vanguard/radiomics_baseline/logs"
+PROJ_DIR="$(dirname "${SCRIPTS_DIR}")"
+mkdir -p "${PROJ_DIR}/logs"
 
 echo "============================================================"
 echo "  Full radiomics experimental sweep"
@@ -68,8 +69,8 @@ echo ""
 if [[ "$DRY_RUN" == "--dry" ]]; then
     echo "[DRY RUN] Would submit:"
     echo "  JOB_IT=\$(sbatch --parsable ${SCRIPTS_DIR}/slurm_sweep_image_types.sh)"
-    echo "  JOB_P3=\$(sbatch --parsable ${SCRIPTS_DIR}/slurm_sweep_peritumor_3d.sh)"
-    echo "  JOB_P2=\$(sbatch --parsable ${SCRIPTS_DIR}/slurm_sweep_peritumor_2d.sh)"
+    echo "  JOB_P3=\$(sbatch --parsable ${SCRIPTS_DIR}/slurm_sweep_peri3d.sh)"
+    echo "  JOB_P2=\$(sbatch --parsable ${SCRIPTS_DIR}/slurm_sweep_peri2d.sh)"
     echo "  JOB_FS=\$(sbatch --parsable ${SCRIPTS_DIR}/slurm_sweep_feature_sel.sh)"
     echo "  JOB_ST=\$(sbatch --parsable ${SCRIPTS_DIR}/slurm_sweep_subtypes.sh)"
     echo "  JOB_SI=\$(sbatch --parsable ${SCRIPTS_DIR}/slurm_sweep_sites.sh)"
@@ -82,12 +83,12 @@ JOB_IT=$(sbatch --parsable "${SCRIPTS_DIR}/slurm_sweep_image_types.sh")
 echo "Submitted image-types sweep    : job ${JOB_IT}  (slurm_sweep_image_types.sh)"
 
 # ---- peritumor 3D sweep (starts immediately; skips 5 completed configs) ----
-JOB_P3=$(sbatch --parsable "${SCRIPTS_DIR}/slurm_sweep_peritumor_3d.sh")
-echo "Submitted peritumor-3d sweep   : job ${JOB_P3}  (slurm_sweep_peritumor_3d.sh)"
+JOB_P3=$(sbatch --parsable "${SCRIPTS_DIR}/slurm_sweep_peri3d.sh")
+echo "Submitted peritumor-3d sweep   : job ${JOB_P3}  (slurm_sweep_peri3d.sh)"
 
 # ---- peritumor 2D sweep (starts immediately) ----
-JOB_P2=$(sbatch --parsable "${SCRIPTS_DIR}/slurm_sweep_peritumor_2d.sh")
-echo "Submitted peritumor-2d sweep   : job ${JOB_P2}  (slurm_sweep_peritumor_2d.sh)"
+JOB_P2=$(sbatch --parsable "${SCRIPTS_DIR}/slurm_sweep_peri2d.sh")
+echo "Submitted peritumor-2d sweep   : job ${JOB_P2}  (slurm_sweep_peri2d.sh)"
 
 # ---- feature-selection sweep (re-runs training; extraction already done) ----
 JOB_FS=$(sbatch --parsable "${SCRIPTS_DIR}/slurm_sweep_feature_sel.sh")

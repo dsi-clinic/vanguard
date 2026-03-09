@@ -1,13 +1,16 @@
 experiment_name: combat_matrix_all_kbest40
 
 paths:
+  # Cluster data paths — update these to match your environment
   images: /net/projects2/vanguard/MAMA-MIA-syn60868042/images
   masks: /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert
-  labels: /home/annawoodard/gt/vanguard/crew/amy/radiomics_baseline/labels.csv
-  splits: /home/annawoodard/gt/vanguard/crew/amy/radiomics_baseline/splits_train_test_ready.csv
-  outdir: /net/projects2/vanguard/annawoodard/radiomics_baseline/outputs/combat_matrix_all_kbest40
-  params_yaml: /home/annawoodard/gt/vanguard/crew/amy/radiomics_baseline/pyradiomics_params.yaml
-  extract_outdir: /net/projects2/vanguard/annawoodard/radiomics_baseline/outputs/shared_extraction/peri5_multiphase_logreg_feature_selection-kbest_k_best-10
+  # Repo-relative paths
+  labels: labels.csv
+  splits: splits_train_test_ready.csv
+  outdir: outputs/combat_matrix_all_kbest40
+  params_yaml: pyradiomics_params.yaml
+  # Update this to point to your shared extraction output
+  extract_outdir: outputs/shared_extraction/peri5_multiphase_logreg_feature_selection-kbest_k_best-10
 
 extract:
   image_patterns:

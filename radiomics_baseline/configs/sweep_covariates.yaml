@@ -10,8 +10,9 @@
 base_config: configs/exp_peri5_multiphase_logreg.yaml
 
 sweep:
+  # Update this path to point to your shared extraction output directory
   paths.extract_outdir:
-    - /net/projects2/vanguard/annawoodard/radiomics_baseline/outputs/shared_extraction/peri5_multiphase_logreg_feature_selection-kbest_k_best-10
+    - outputs/shared_extraction/peri5_multiphase_logreg_feature_selection-kbest_k_best-10
 
   train.include_subtype:
     - true

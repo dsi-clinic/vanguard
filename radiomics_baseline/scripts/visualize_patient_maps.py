@@ -37,10 +37,11 @@ from generate_kinetic_maps import (  # noqa: E402
 # Defaults
 # ---------------------------------------------------------------------------
 
+_REPO_DIR   = Path(__file__).resolve().parent.parent
 IMAGES_DIR  = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/images")
 MASKS_DIR   = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert")
-KINETIC_DIR = Path("/home/summe/vanguard/radiomics_baseline/kinetic_maps")
-FIGURES_DIR = Path("/home/summe/vanguard/radiomics_baseline/figures")
+KINETIC_DIR = _REPO_DIR / "kinetic_maps"
+FIGURES_DIR = _REPO_DIR / "figures"
 ZOOM_FACTOR = 2.5
 DPI         = 160
 
