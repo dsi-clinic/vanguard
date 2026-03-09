@@ -27,7 +27,7 @@ mkdir -p logs
 echo "[$(date)] Starting phase sweep"
 
 python "${SCRIPTS_DIR}/run_ablations.py" \
-    "${PROJ_DIR}/configs/sweep_example.yaml" \
+    "${PROJ_DIR}/configs/sweep_phases.yaml" \
     --generated-dir "${PROJ_DIR}/configs/generated"
 
 echo "[$(date)] Phase sweep complete"

@@ -170,6 +170,7 @@ Define a `base_config` and a `sweep` block with parameters to vary. `run_ablatio
 | `exp_peri5_multiphase_logreg.yaml` | Baseline: 5mm peritumor, 2-phase DCE, logistic regression |
 | `exp_kinetic_maps.yaml` | Raw phases + kinetic parameter maps |
 | `exp_combat_matrix_*.yaml` | ComBat harmonization experiments |
+| `sweep_phases.yaml` | Peri radius x image phases x classifier (24 configs) |
 | `sweep_2d_vs_3d.yaml` | 2D vs 3D peritumor ring comparison (24 configs) |
 | `sweep_kinetic_maps.yaml` | Image type comparison: raw, kinetic, subtraction (24 configs) |
 | `sweep_feature_selection.yaml` | kBest vs mRMR feature selection (6 configs) |

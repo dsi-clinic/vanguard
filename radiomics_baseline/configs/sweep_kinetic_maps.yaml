@@ -21,32 +21,32 @@ sweep:
   extract.image_patterns:
 
     # 1. Kinetic maps only (E_early, E_peak, slope_in, slope_out, AUC)
-    - ["/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_peak.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_in.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz"]
+    - ["kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_E_peak.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_slope_in.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz"]
 
     # 2. Subtraction images only (Braman-style wash_in, wash_out)
-    - ["/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_subtraction_wash_in.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_subtraction_wash_out.nii.gz"]
+    - ["kinetic_maps/{pid}/{pid}_subtraction_wash_in.nii.gz",
+       "kinetic_maps/{pid}/{pid}_subtraction_wash_out.nii.gz"]
 
     # 3. Raw phases + kinetic maps
     - ["{pid}/{pid}_0001.nii.gz",
        "{pid}/{pid}_0002.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_peak.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_in.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz"]
+       "kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_E_peak.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_slope_in.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz"]
 
     # 4. All: raw phases + kinetic maps + subtraction images
     - ["{pid}/{pid}_0001.nii.gz",
        "{pid}/{pid}_0002.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_E_peak.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_in.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_subtraction_wash_in.nii.gz",
-       "/net/projects2/vanguard/annawoodard/radiomics_baseline/kinetic_maps/{pid}/{pid}_subtraction_wash_out.nii.gz"]
+       "kinetic_maps/{pid}/{pid}_kinetic_E_early.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_E_peak.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_slope_in.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_slope_out.nii.gz",
+       "kinetic_maps/{pid}/{pid}_kinetic_AUC.nii.gz",
+       "kinetic_maps/{pid}/{pid}_subtraction_wash_in.nii.gz",
+       "kinetic_maps/{pid}/{pid}_subtraction_wash_out.nii.gz"]

@@ -12,16 +12,16 @@ written next to the sweep YAML.
 Usage
 -----
     # Full sweep
-    python run_ablations.py configs/sweep_example.yaml
+    python run_ablations.py configs/sweep_phases.yaml
 
     # Print generated configs + commands without executing
-    python run_ablations.py configs/sweep_example.yaml --dry-run
+    python run_ablations.py configs/sweep_phases.yaml --dry-run
 
     # Force re-extraction even when outputs exist
-    python run_ablations.py configs/sweep_example.yaml --force
+    python run_ablations.py configs/sweep_phases.yaml --force
 
     # Write generated configs somewhere else
-    python run_ablations.py configs/sweep_example.yaml --generated-dir my_sweep
+    python run_ablations.py configs/sweep_phases.yaml --generated-dir my_sweep
 """
 
 from __future__ import annotations
