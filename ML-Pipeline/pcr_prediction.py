@@ -3,10 +3,7 @@
 import argparse
 import json
 import logging
-import math
-import numbers
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -15,26 +12,19 @@ from joblib import dump
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
-    average_precision_score,
-    confusion_matrix,
     f1_score,
-    fbeta_score,
-    precision_recall_curve,
     precision_score,
     recall_score,
-    roc_auc_score,
-    roc_curve,
 )
-from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 # Constants
 ROC_FLIP_THRESHOLD: float = 0.5
 DEFAULT_PROBA_THRESHOLD: float = 0.5
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -61,10 +51,11 @@ def parse_args() -> argparse.Namespace:
 
 def build_features_from_feature_jsons(feature_dir: Path) -> pd.DataFrame:
     """Aggregate numeric stats from per-case JSON morphometrics."""
-    rows: List[Dict[str, float]] = []
+    rows: list[dict[str, float]] = []
 
-    def to_num(val: Any) -> Optional[float]:
-        if isinstance(val, (bool, numbers.Real)):
+    def to_num(val: bool | float | int | str) -> float | None:
+        """Safely convert inputs to float."""
+        if isinstance(val, bool | float | int):
             return float(val)
         if isinstance(val, str):
             try:
@@ -85,7 +76,7 @@ def build_features_from_feature_jsons(feature_dir: Path) -> pd.DataFrame:
             continue
 
         case_id = "_".join(p.stem.split("_")[:2])
-        feats: Dict[str, float] = {"case_id": float(case_id)}
+        feats: dict[str, float] = {"case_id": float(case_id)}
 
         if isinstance(data, dict):
             for _, group in data.items():
@@ -94,7 +85,7 @@ def build_features_from_feature_jsons(feature_dir: Path) -> pd.DataFrame:
                 for vessel_name, items in group.items():
                     if not isinstance(items, list):
                         continue
-                    per_item_vals: Dict[str, List[float]] = {}
+                    per_item_vals: dict[str, list[float]] = {}
                     for item in items:
                         if not isinstance(item, dict):
                             continue
@@ -102,27 +93,29 @@ def build_features_from_feature_jsons(feature_dir: Path) -> pd.DataFrame:
                             val = to_num(v)
                             if val is not None:
                                 per_item_vals.setdefault(k, []).append(val)
-                    
+
                     vprefix = vessel_name.replace(" ", "_")
                     for fld, vals in per_item_vals.items():
                         feats[f"{vprefix}__{fld}__mean"] = float(np.mean(vals))
-                        feats[f"{vprefix}__{fld}__std"] = float(np.std(vals)) if len(vals) > 1 else 0.0
+                        feats[f"{vprefix}__{fld}__std"] = (
+                            float(np.std(vals)) if len(vals) > 1 else 0.0
+                        )
         rows.append(feats)
 
     return pd.DataFrame(rows)
 
 
-def to_int_label(val: Any) -> int:
+def to_int_label(val: dict | bool | np.bool_ | str | int) -> int:
     """Map fetal dict/bool/str/int to {0,1}."""
     if isinstance(val, dict):
         return int(any(bool(v) for v in val.values()))
-    if isinstance(val, (bool, np.bool_)):
+    if isinstance(val, bool | np.bool_):
         return int(val)
     s = str(val).strip().lower()
     return 1 if s in {"true", "yes", "1"} else 0
 
 
-def metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+def metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     """Calculate standard binary classification metrics."""
     return {
         "precision": float(precision_score(y_true, y_pred, zero_division=0)),
@@ -136,8 +129,18 @@ def metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
 def engineer_features(in_csv: Path, out_csv: Path) -> None:
     """Clean and select relevant morphometric features from raw extraction CSV."""
     features_df = pd.read_csv(in_csv)
-    drop_cols = ["source_file", "bbox_x", "bbox_y", "bbox_z", "bbox_volume", "n_points", "n_cells"]
-    features_df = features_df.drop(columns=[c for c in drop_cols if c in features_df.columns])
+    drop_cols = [
+        "source_file",
+        "bbox_x",
+        "bbox_y",
+        "bbox_z",
+        "bbox_volume",
+        "n_points",
+        "n_cells",
+    ]
+    features_df = features_df.drop(
+        columns=[c for c in drop_cols if c in features_df.columns]
+    )
     features_df.to_csv(out_csv, index=False)
     logger.info("Engineered features saved to %s", out_csv)
 
@@ -145,7 +148,7 @@ def engineer_features(in_csv: Path, out_csv: Path) -> None:
 def plot_confusion_matrix_clean(cm: np.ndarray, outdir: Path) -> None:
     """Plot and save a clean confusion matrix."""
     fig, ax = plt.subplots(figsize=(5, 4))
-    im = ax.imshow(cm, cmap="viridis")
+    ax.imshow(cm, cmap="viridis")
     for i in range(2):
         for j in range(2):
             ax.text(j, i, cm[i, j], ha="center", va="center", color="white")
@@ -168,21 +171,24 @@ def train_baseline(
     make_plots: bool = False,
 ) -> None:
     """Train the model and evaluate performance."""
-
     features_df = pd.read_csv(feats_engineered_csv)
     labels_df = pd.read_csv(labels_source)
     if id_col != "case_id":
         labels_df = labels_df.rename(columns={id_col: "case_id"})
-    
+
     merged_df = features_df.merge(labels_df, on="case_id", how="inner")
     merged_df = merged_df[merged_df[label_col].notna()].copy()
-    
+
     y = merged_df[label_col].astype(int).to_numpy()
     Xmat = merged_df.drop(columns=["case_id", label_col], errors="ignore").to_numpy()
 
-    clf = RandomForestClassifier(n_estimators=100, random_state=random_state) if model == "rf" else LogisticRegression()
+    clf = (
+        RandomForestClassifier(n_estimators=100, random_state=random_state)
+        if model == "rf"
+        else LogisticRegression()
+    )
     clf.fit(Xmat, y)
-    
+
     dump(clf, outdir / f"model_{model}.pkl")
     logger.info("Model saved to %s/model_%s.pkl", outdir, model)
 
@@ -191,13 +197,13 @@ def main() -> None:
     """Run the main entry point."""
     args = parse_args()
     args.outdir.mkdir(parents=True, exist_ok=True)
-    
+
     features_df = build_features_from_feature_jsons(args.feature_dir)
     features_path = args.outdir / "features.csv"
     features_df.to_csv(features_path, index=False)
-    
+
     engineer_features(features_path, args.outdir / "features_engineered.csv")
-    
+
     if args.labels and args.label_column:
         train_baseline(
             args.outdir / "features_engineered.csv",
@@ -206,7 +212,7 @@ def main() -> None:
             args.label_column,
             args.outdir,
             model=args.model,
-            random_state=args.random_state
+            random_state=args.random_state,
         )
 
 
