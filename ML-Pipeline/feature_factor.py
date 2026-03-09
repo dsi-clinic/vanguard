@@ -9,7 +9,7 @@ import pandas as pd
 def get_clinical_features(config: Dict[str, Any]) -> pd.DataFrame:
     """Load and clean the high-value clinical features from an Excel file.
 
-    This function reads a clinical Excel file, selects specific high-value 
+    This function reads a clinical Excel file, selects specific high-value
     columns, and generates dummy variables for categorical data.
 
     Args:
