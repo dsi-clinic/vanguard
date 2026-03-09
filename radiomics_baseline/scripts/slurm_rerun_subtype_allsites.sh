@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=subtype_allsites
-#SBATCH --output=/home/summe/vanguard/radiomics_baseline/logs/subtype_allsites_%j.out
-#SBATCH --error=/home/summe/vanguard/radiomics_baseline/logs/subtype_allsites_%j.err
+#SBATCH --output=logs/subtype_allsites_%j.out
+#SBATCH --error=logs/subtype_allsites_%j.err
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-REPO_DIR="/home/summe/vanguard/radiomics_baseline"
+REPO_DIR="$HOME/vanguard/radiomics_baseline"
 SCRIPTS_DIR="${REPO_DIR}/scripts"
 CONFIGS_DIR="${REPO_DIR}/configs/rerun"
 

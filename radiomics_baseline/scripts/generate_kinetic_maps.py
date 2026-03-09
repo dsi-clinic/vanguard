@@ -10,8 +10,8 @@ Usage
     python generate_kinetic_maps.py \
         --images /net/projects2/vanguard/MAMA-MIA-syn60868042/images \
         --masks  /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert \
-        --splits /home/summe/vanguard/radiomics_baseline/splits_train_test_ready.csv \
-        --output-dir /home/summe/vanguard/radiomics_baseline/kinetic_maps \
+        --splits splits_train_test_ready.csv \
+        --output-dir kinetic_maps \
         --mask-pattern "{pid}.nii.gz" \
         --n-jobs 8 \
         --generate-tpeak-voxel \

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=rerun_top6
-#SBATCH --output=/home/summe/vanguard/radiomics_baseline/logs/rerun_top6_%j.out
-#SBATCH --error=/home/summe/vanguard/radiomics_baseline/logs/rerun_top6_%j.err
+#SBATCH --output=logs/rerun_top6_%j.out
+#SBATCH --error=logs/rerun_top6_%j.err
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=12:00:00
@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-REPO_DIR="/home/summe/vanguard/radiomics_baseline"
+REPO_DIR="$HOME/vanguard/radiomics_baseline"
 SCRIPTS_DIR="${REPO_DIR}/scripts"
 CONFIGS_DIR="${REPO_DIR}/configs/rerun"
 
