@@ -9,7 +9,9 @@ from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_va
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-vanguard_df = pd.read_csv("combined_vanguard_features.csv")
+from pathlib import Path
+DATA_PATH = Path(__file__).parent / "combined_vanguard_features.csv"
+vanguard_df = pd.read_csv(DATA_PATH)
 vanguard_df = vanguard_df.dropna(subset=["pcr"])
 
 X = vanguard_df[["pvd"]]
