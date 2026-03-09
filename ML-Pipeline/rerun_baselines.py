@@ -2,24 +2,33 @@
 
 import sys
 from pathlib import Path
+from typing import List
 
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-
-from evaluation import Evaluator, FoldResults
-
-ROOT_PATH = Path(__file__).resolve().parent.parent
+ROOT_PATH: Path = Path(__file__).resolve().parent.parent
 if str(ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(ROOT_PATH))
 
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from evaluation import Evaluator, FoldResults
+
 
 def train_baseline_mock(
-    train_df: pd.DataFrame, val_df: pd.DataFrame, features: list[str]
+    train_df: pd.DataFrame, val_df: pd.DataFrame, features: List[str]
 ) -> FoldResults:
-    """Simple trainer for the rerun script."""
-    y_train = train_df["pcr"].astype(int)
-    X_train = train_df[features]
-    X_val = val_df[features]
+    """Train a baseline Random Forest model on the provided data splits.
+
+    Args:
+        train_df: DataFrame for training the model.
+        val_df: DataFrame for validating the model.
+        features: List of feature column names to use.
+
+    Returns:
+        FoldResults object containing fold metrics and predictions.
+    """
+    y_train: pd.Series = train_df["pcr"].astype(int)
+    X_train: pd.DataFrame = train_df[features]
+    X_val: pd.DataFrame = val_df[features]
 
     clf = RandomForestClassifier(n_estimators=100, random_state=42)
     clf.fit(X_train, y_train)
@@ -38,27 +47,25 @@ def train_baseline_mock(
 
 
 def prepare_data() -> pd.DataFrame:
-    """Load and clean labels and clinical data."""
-    path = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/")
-    labels_df = pd.read_csv(path / "pcr_labels.csv")
-    clinical_df = pd.read_excel(path / "clinical_and_imaging_info.xlsx")
+    """Load labels and clinical data, then engineer tumor volume features.
+
+    Returns:
+        A merged and cleaned DataFrame ready for experimentation.
+    """
+    path: Path = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/")
+    labels_df: pd.DataFrame = pd.read_csv(path / "pcr_labels.csv")
+    clinical_df: pd.DataFrame = pd.read_excel(path / "clinical_and_imaging_info.xlsx")
 
     labels_df = labels_df.rename(columns={"case_id": "patient_id"})
-    merged_data = labels_df.merge(clinical_df, on="patient_id", how="inner")
+    merged_data: pd.DataFrame = labels_df.merge(clinical_df, on="patient_id", how="inner")
     merged_data = merged_data.rename(columns={"pcr_x": "pcr"})
 
-    def clean_spacing(x: str | float | int) -> float:
-        if isinstance(x, str):
-            return float(x.replace("[", "").replace("]", "").split(",")[0])
-        return float(x)
+    def clean_spacing(val: Union[str, float, int]) -> float:
+        if isinstance(val, str):
+            return float(val.replace("[", "").replace("]", "").split(",")[0])
+        return float(val)
 
-    cols = [
-        "pixel_spacing",
-        "slice_thickness",
-        "image_rows",
-        "image_columns",
-        "num_slices",
-    ]
+    cols = ["pixel_spacing", "slice_thickness", "image_rows", "image_columns", "num_slices"]
     for col in cols:
         merged_data[col] = merged_data[col].apply(clean_spacing)
 
@@ -71,15 +78,15 @@ def prepare_data() -> pd.DataFrame:
 
 
 def run_experiment(
-    df: pd.DataFrame, dataset: str, features: list[str], stratifiers: list[str]
+    data_df: pd.DataFrame, dataset: str, features: List[str], stratifiers: List[str]
 ) -> None:
     """Run baseline experiment and save results."""
     print(f"Running: {dataset} | Features: {features}")
 
-    test_df = (
-        df.copy()
+    test_df: pd.DataFrame = (
+        data_df.copy()
         if dataset == "all"
-        else df[df["dataset"].str.lower() == dataset.lower()].copy()
+        else data_df[data_df["dataset"].str.lower() == dataset.lower()].copy()
     )
 
     cols_to_check = features + stratifiers + ["pcr"]
@@ -97,18 +104,13 @@ def run_experiment(
     )
 
     splits = evaluator.create_kfold_splits(n_splits=5)
-
     results = [
-        train_baseline_mock(
-            test_df.iloc[f.train_indices], test_df.iloc[f.val_indices], features
-        )
+        train_baseline_mock(test_df.iloc[f.train_indices], test_df.iloc[f.val_indices], features)
         for f in splits
     ]
 
     kfold_results = evaluator.aggregate_kfold_results(results)
-    evaluator.save_results(
-        kfold_results, Path(f"results/{dataset}_{'_'.join(features)}")
-    )
+    evaluator.save_results(kfold_results, Path(f"results/{dataset}_{'_'.join(features)}"))
 
 
 if __name__ == "__main__":

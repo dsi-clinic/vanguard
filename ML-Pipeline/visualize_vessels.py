@@ -1,31 +1,32 @@
 """Module for comparing ground truth and deep learning vessel segmentations."""
 
 from pathlib import Path
+from typing import Union, Any
 
 import matplotlib.pyplot as plt
-import nrrd  # type: ignore
+import nrrd
 import numpy as np
-from skimage.morphology import skeletonize  # type: ignore
-from skimage.transform import resize  # type: ignore
+from skimage.morphology import skeletonize
+from skimage.transform import resize
 
-# Constants for configuration
 NDIM_THRESHOLD: int = 4
 PROB_THRESHOLD: float = 0.2
 P_ID: str = "041"
 
-# Using Path objects for platform-agnostic file handling
 BASE_DIR: Path = Path("/net/projects2/vanguard")
 GT_PATH: Path = (
     BASE_DIR
-    / f"gt_masks/Segmentation_Masks_NRRD/Breast_MRI_{P_ID}/Segmentation_Breast_MRI_{P_ID}_Dense_and_Vessels.seg.nrrd"
+    / f"gt_masks/Segmentation_Masks_NRRD/Breast_MRI_{P_ID}/"
+    f"Segmentation_Breast_MRI_{P_ID}_Dense_and_Vessels.seg.nrrd"
 )
 DL_PATH: Path = (
     BASE_DIR
-    / f"vessel_segmentations/DUKE/DUKE_{P_ID}/images/DUKE_{P_ID}_0000_vessel_segmentation.npz"
+    / f"vessel_segmentations/DUKE/DUKE_{P_ID}/"
+    f"images/DUKE_{P_ID}_0000_vessel_segmentation.npz"
 )
 
 
-def compare_vessels(gt_p: str | Path, dl_p: str | Path) -> None:
+def compare_vessels(gt_p: Union[str, Path], dl_p: Union[str, Path]) -> None:
     """Compare ground truth and deep learning vessel segmentations.
 
     This function reads a 3D NRRD ground truth mask and an NPZ AI segmentation,
@@ -42,24 +43,25 @@ def compare_vessels(gt_p: str | Path, dl_p: str | Path) -> None:
         print(f"Error: Could not find ground truth file at {gt_p}")
         return
 
-    # Handle 4D volumes (e.g., time or channel dim)
-    gt_3d: np.ndarray = (
-        gt_data[0, :, :, :] if gt_data.ndim == NDIM_THRESHOLD else gt_data
-    )
+    gt_3d: np.ndarray = gt_data[0, :, :, :] if gt_data.ndim == NDIM_THRESHOLD else gt_data
     v_gt: np.ndarray = (gt_3d == 1).astype(np.float32)
 
     with np.load(str(dl_p)) as data:
         v_dl_prob: np.ndarray = data["vessel"]
 
-    # Normalize orientation
     v_dl: np.ndarray = v_dl_prob.transpose(1, 0, 2)
     v_dl = (v_dl > PROB_THRESHOLD).astype(np.float32)
-    v_dl = resize(v_dl, v_gt.shape, order=0, preserve_range=True, anti_aliasing=False)
+    v_dl = resize(
+        v_dl,
+        v_gt.shape,
+        order=0,
+        preserve_range=True,
+        anti_aliasing=False,
+    )
     v_dl = np.flipud(v_dl)
 
     v_gt_centerline: np.ndarray = skeletonize(v_gt.astype(np.uint8))
 
-    # Visualization
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
     axes[0].imshow(np.max(v_gt, axis=2), cmap="Blues")
@@ -74,6 +76,7 @@ def compare_vessels(gt_p: str | Path, dl_p: str | Path) -> None:
 
     output_fn: str = f"vessel_output_{P_ID}.png"
     plt.savefig(output_fn)
+    plt.close(fig)
     print(f"Output saved to {output_fn}")
 
 
