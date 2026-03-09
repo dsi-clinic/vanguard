@@ -344,6 +344,7 @@ def plot_roc_multi(
 
 
 def main() -> None:
+    """CLI entry point for site-level analysis."""
     ap = argparse.ArgumentParser(
         description="Site-level A/B analysis on pre-extracted radiomics features.",
     )

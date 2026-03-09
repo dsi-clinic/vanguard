@@ -30,6 +30,7 @@ import argparse
 import json
 import re
 import sys
+import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -114,14 +115,14 @@ def select_site_affected_features(
 
     f_scores = {}
     for col in X.columns:
-        groups = [X.loc[sites == s, col].dropna().values for s in unique_sites]
+        groups = [X.loc[sites == s, col].dropna().to_numpy() for s in unique_sites]
         groups = [g for g in groups if len(g) >= 2]
         if len(groups) >= 2:
             try:
                 f_stat, _ = f_oneway(*groups)
                 if np.isfinite(f_stat):
                     f_scores[col] = f_stat
-            except Exception:
+            except ValueError:
                 pass
 
     ranked = sorted(f_scores, key=f_scores.get, reverse=True)
@@ -143,8 +144,8 @@ def plot_pca_before_after(
     """Two-panel PCA scatter: colour = site, shape = pCR."""
     # Impute for PCA
     medians = X_raw.median(axis=0)
-    Xr = X_raw.fillna(medians).values
-    Xc = X_combat.fillna(medians).values
+    Xr = X_raw.fillna(medians).to_numpy()
+    Xc = X_combat.fillna(medians).to_numpy()
 
     # Standardize using raw stats (same basis for both panels)
     scaler = StandardScaler().fit(Xr)
@@ -155,8 +156,8 @@ def plot_pca_before_after(
     Zr = pca.transform(Xr_s)
     Zc = pca.transform(Xc_s)
 
-    sites = labels.loc[X_raw.index, batch_col].astype(str).values
-    pcr = labels.loc[X_raw.index, "pcr"].astype(int).values
+    sites = labels.loc[X_raw.index, batch_col].astype(str).to_numpy()
+    pcr = labels.loc[X_raw.index, "pcr"].astype(int).to_numpy()
     unique_sites = sorted(set(sites))
     colors = plt.cm.Set1.colors
 
@@ -280,8 +281,8 @@ def plot_feature_distributions(
 
             df_plot = pd.DataFrame(
                 {
-                    "value": X[feat].values,
-                    "site": sites.values,
+                    "value": X[feat].to_numpy(),
+                    "site": sites.to_numpy(),
                 }
             )
             sns.violinplot(
@@ -331,7 +332,7 @@ def plot_site_mean_heatmap(
     def site_means(X):
         rows = []
         for s in unique_sites:
-            mask = (sites == s).values
+            mask = (sites == s).to_numpy()
             rows.append(X.loc[mask, top_features].mean(axis=0))
         df = pd.DataFrame(rows, index=unique_sites, columns=top_features)
         # Standardize columns for comparable heatmap
@@ -403,8 +404,8 @@ def plot_site_distance_heatmap(
         Xs = pd.DataFrame(scaler.transform(X), index=X.index, columns=X.columns)
         centroids = []
         for s in unique_sites:
-            mask = (sites == s).values
-            centroids.append(Xs.loc[mask].mean(axis=0).values)
+            mask = (sites == s).to_numpy()
+            centroids.append(Xs.loc[mask].mean(axis=0).to_numpy())
         centroids = np.array(centroids)
         from sklearn.metrics import pairwise_distances
 
@@ -472,7 +473,7 @@ def plot_signal_retained(
     Uses fold-safe ComBat: fit on train fold only, transform both folds.
     """
     sites = labels.loc[X_raw.index, batch_col].astype(str)
-    pcr = labels.loc[X_raw.index, "pcr"].astype(int).values
+    pcr = labels.loc[X_raw.index, "pcr"].astype(int).to_numpy()
     site_enc = LabelEncoder().fit(sites)
     y_site = site_enc.transform(sites)
 
@@ -511,8 +512,8 @@ def plot_signal_retained(
                 proba = clf_site.predict_proba(X_val_s)
                 auc = roc_auc_score(y_site[val_idx], proba, multi_class="ovr")
                 results["site_raw"].append(auc)
-        except Exception:
-            pass
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            warnings.warn(f"Site classifier failed on fold: {exc}", RuntimeWarning, stacklevel=1)
 
         # pCR classifier
         try:
@@ -521,8 +522,8 @@ def plot_signal_retained(
             proba = clf_pcr.predict_proba(X_val_s)[:, 1]
             auc = roc_auc_score(pcr[val_idx], proba)
             results["pcr_raw"].append(auc)
-        except Exception:
-            pass
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            warnings.warn(f"pCR classifier failed on fold: {exc}", RuntimeWarning, stacklevel=1)
 
         # --- ComBat-harmonized features ---
         harmonizer = FeatureHarmonizer(
@@ -556,8 +557,12 @@ def plot_signal_retained(
             proba = clf_pcr_h.predict_proba(X_val_hs)[:, 1]
             auc = roc_auc_score(pcr[val_idx], proba)
             results["pcr_combat"].append(auc)
-        except Exception as e:
-            print(f"  [WARN] Fold {fold_idx}: ComBat failed — {e}")
+        except (ValueError, np.linalg.LinAlgError) as e:
+            warnings.warn(
+                f"Fold {fold_idx}: ComBat failed — {e}",
+                RuntimeWarning,
+                stacklevel=1,
+            )
 
     # --- Plot ---
     fig, ax = plt.subplots(figsize=(8, 5))

@@ -65,7 +65,7 @@ import re
 import shutil
 import sys
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -263,7 +263,7 @@ def ensure_checkpoint_manifest(
         try:
             with manifest_path.open(encoding="utf-8") as fh:
                 old_manifest = json.load(fh)
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             old_manifest = {}
 
         if old_manifest.get("fingerprint") != fingerprint:
@@ -280,7 +280,7 @@ def ensure_checkpoint_manifest(
         manifest = {
             "version": _CHECKPOINT_VERSION,
             "fingerprint": fingerprint,
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "created_at_utc": datetime.now(UTC).isoformat(),
             "fingerprint_payload": fingerprint_payload,
         }
         with manifest_path.open("w", encoding="utf-8") as fh:
@@ -516,7 +516,7 @@ def _is_number(value: object) -> bool:
     try:
         float(value)
         return True
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
 

@@ -545,7 +545,8 @@ class FeatureHarmonizer:
         self,
         X_fit: pd.DataFrame,
         labels_fit: pd.DataFrame,
-    ) -> "FeatureHarmonizer":
+    ) -> FeatureHarmonizer:
+        """Fit harmonization parameters from training features and labels."""
         if self.mode == "none":
             return self
 
@@ -577,6 +578,10 @@ class FeatureHarmonizer:
         X_apply: pd.DataFrame,
         labels_apply: pd.DataFrame,
     ) -> tuple[pd.DataFrame, int]:
+        """Apply fitted harmonization to features.
+
+        Returns transformed data and unknown-batch count.
+        """
         if self.mode == "none":
             return X_apply.copy(), 0
 
@@ -638,7 +643,8 @@ class CorrelationPruner(BaseEstimator, TransformerMixin):
     def __init__(self, threshold: float = 0.9) -> None:
         self.threshold = threshold
 
-    def fit(self, X: np.ndarray, y: np.ndarray | None = None) -> "CorrelationPruner":
+    def fit(self, X: np.ndarray, y: np.ndarray | None = None) -> CorrelationPruner:
+        """Identify features to keep by pruning highly correlated pairs."""
         if self.threshold <= 0 or self.threshold >= 1 or X.shape[1] < MIN_CLASS_COUNT:
             self.keep_mask_ = np.ones(X.shape[1], dtype=bool)
             return self
@@ -662,6 +668,7 @@ class CorrelationPruner(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X: np.ndarray, y: np.ndarray | None = None) -> np.ndarray:
+        """Return features filtered to the unpruned subset."""
         return X[:, self.keep_mask_]
 
 
@@ -682,7 +689,8 @@ class MRMRSelector(BaseEstimator, TransformerMixin):
     def __init__(self, k: int = 20) -> None:
         self.k = k
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> "MRMRSelector":
+    def fit(self, X: np.ndarray, y: np.ndarray) -> MRMRSelector:
+        """Select top-k features using minimum redundancy maximum relevance."""
         try:
             from mrmr import mrmr_classif
         except ImportError as exc:
@@ -704,6 +712,7 @@ class MRMRSelector(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X: np.ndarray, y: np.ndarray | None = None) -> np.ndarray:
+        """Return features filtered to the mRMR-selected subset."""
         return X[:, self.selected_indices_]
 
 

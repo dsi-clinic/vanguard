@@ -128,7 +128,7 @@ def main():
         error_kw={"linewidth": 1.5, "color": "0.3"},
     )
 
-    for bar, m, s, n in zip(bars, means, stds, ns):
+    for bar, m, s, _n in zip(bars, means, stds, ns):
         y_top = bar.get_height() + s + 0.008
         label_text = f"{m:.3f} \u00b1 {s:.3f}"
         ax.text(

@@ -66,14 +66,17 @@ _CMAP: dict[str, tuple[str, bool]] = {
 
 
 def read_nifti(path: Path) -> np.ndarray:
+    """Read a NIfTI file and return its data as a float32 numpy array."""
     return sitk.GetArrayFromImage(sitk.ReadImage(str(path))).astype(np.float32)
 
 
 def read_mask(path: Path) -> np.ndarray:
+    """Read a NIfTI mask and return a binary uint8 numpy array."""
     return (sitk.GetArrayFromImage(sitk.ReadImage(str(path))) > 0).astype(np.uint8)
 
 
 def peak_z(mask3d: np.ndarray) -> int:
+    """Return the axial slice index with the largest mask area."""
     areas = (mask3d > 0).sum(axis=(1, 2))
     if areas.max() == 0:
         raise ValueError("Mask is empty.")
@@ -81,6 +84,7 @@ def peak_z(mask3d: np.ndarray) -> int:
 
 
 def bbox2d(mask2d: np.ndarray) -> tuple[int, int, int, int]:
+    """Return (ymin, ymax, xmin, xmax) bounding box of nonzero pixels."""
     ys, xs = np.where(mask2d > 0)
     return int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
 
@@ -88,6 +92,7 @@ def bbox2d(mask2d: np.ndarray) -> tuple[int, int, int, int]:
 def expand_bbox(
     ymin: int, ymax: int, xmin: int, xmax: int, factor: float, H: int, W: int
 ) -> tuple[int, int, int, int]:
+    """Expand a bounding box by the given factor, clamped to image bounds."""
     cy, cx = 0.5 * (ymin + ymax), 0.5 * (xmin + xmax)
     h = (ymax - ymin + 1) * factor
     w = (xmax - xmin + 1) * factor

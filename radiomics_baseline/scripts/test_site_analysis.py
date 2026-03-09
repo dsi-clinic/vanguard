@@ -51,7 +51,7 @@ def _make_synthetic_data(
         columns=[f"feat_{i}" for i in range(n_features)],
     )
     # Make labels correlated with first feature for non-trivial AUC
-    probs = 1 / (1 + np.exp(-X["feat_0"].values))
+    probs = 1 / (1 + np.exp(-X["feat_0"].to_numpy()))
     y = (rng.rand(len(pids)) < probs).astype(int)
 
     sites_series = assign_sites(X.index)
@@ -257,7 +257,7 @@ class TestLosoAnalysis:
 
         result = loso_analysis(X, y, s, _default_args())
 
-        for site, m in result["loso"].items():
+        for _site, m in result["loso"].items():
             assert m["n_train"] + m["n_test"] == len(X)
 
     def test_held_out_site_in_predictions(self):

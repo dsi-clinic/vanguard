@@ -82,7 +82,7 @@ def load_phase_volumes(
 ) -> tuple[list[int], list[np.ndarray], sitk.Image]:
     """Load all phase NIfTI files.
 
-    Returns
+    Returns:
     -------
     indices : list[int]
         Phase indices (e.g. [0, 1, 2, 3]).
@@ -189,7 +189,7 @@ def compute_kinetic_maps(
     peak_list_idx : pre-computed tumor peak list index; auto-computed if None.
         Pass when sharing peak detection with ``compute_subtraction_maps``.
 
-    Returns
+    Returns:
     -------
     dict mapping map name → 3D numpy array.
     """
@@ -260,7 +260,7 @@ def compute_subtraction_maps(
     peak_list_idx : list index of the tumor-level peak phase, as returned by
         ``find_tumor_peak_phase``.
 
-    Returns
+    Returns:
     -------
     dict with keys:
 
