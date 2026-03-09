@@ -60,6 +60,7 @@ MIN_CLASS_COUNT = 2
 # Site helpers
 # ---------------------------------------------------------------------------
 
+
 def extract_site(pid: str) -> str:
     """Extract clinical site prefix from a patient ID.
 
@@ -71,14 +72,18 @@ def extract_site(pid: str) -> str:
 
 def assign_sites(index: pd.Index) -> pd.Series:
     """Return a Series mapping each patient ID to its site."""
-    return pd.Series([extract_site(str(pid)) for pid in index], index=index, name="site")
+    return pd.Series(
+        [extract_site(str(pid)) for pid in index], index=index, name="site"
+    )
 
 
 def assign_sites_from_labels(labels: pd.DataFrame, index: pd.Index) -> pd.Series:
     """Return site labels aligned to *index*, preferring labels['site'] when present."""
     if "site" in labels.columns:
         sites = labels.loc[index, "site"].astype(str).copy()
-        missing_mask = sites.isna() | (sites.str.len() == 0) | (sites.str.lower() == "nan")
+        missing_mask = (
+            sites.isna() | (sites.str.len() == 0) | (sites.str.lower() == "nan")
+        )
         if missing_mask.any():
             fallback = assign_sites(index[missing_mask.to_numpy()])
             sites.loc[missing_mask] = fallback
@@ -91,8 +96,11 @@ def assign_sites_from_labels(labels: pd.DataFrame, index: pd.Index) -> pd.Series
 # Train / evaluate one split
 # ---------------------------------------------------------------------------
 
+
 def _build_pipeline(args: argparse.Namespace):
-    """Build the sklearn Pipeline (imputer → [corr_prune] → [kbest/mrmr] → [scale] → classifier).
+    """Build the sklearn Pipeline.
+
+    (imputer -> [corr_prune] -> [kbest/mrmr] -> [scale] -> classifier).
 
     Feature selection steps are included inside the pipeline so they are
     re-fitted on only the training rows of each LOSO fold, matching the
@@ -125,7 +133,8 @@ def _safe_auc(y_true: np.ndarray, y_prob: np.ndarray) -> float:
 
 
 def _safe_sens_spec(
-    y_true: np.ndarray, y_pred: np.ndarray,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
 ) -> tuple[float, float]:
     """Return (sensitivity, specificity) or (NaN, NaN)."""
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
@@ -175,6 +184,7 @@ def train_and_evaluate(
 # Analysis 1: Per-site evaluation on existing train/test split
 # ---------------------------------------------------------------------------
 
+
 def per_site_analysis(
     Xtr: pd.DataFrame,
     ytr: np.ndarray,
@@ -218,6 +228,7 @@ def per_site_analysis(
 # Analysis 2: Leave-one-site-out
 # ---------------------------------------------------------------------------
 
+
 def loso_analysis(
     X_all: pd.DataFrame,
     y_all: np.ndarray,
@@ -238,7 +249,11 @@ def loso_analysis(
         Xte = X_all.iloc[mask_test]
         yte = y_all[mask_test]
 
-        print(f"[LOSO] Held out: {held_out} (n_train={mask_train.sum()}, n_test={mask_test.sum()})")
+        print(
+            f"[LOSO] Held out: {held_out}"
+            f" (n_train={mask_train.sum()},"
+            f" n_test={mask_test.sum()})"
+        )
 
         y_prob, threshold = train_and_evaluate(Xtr, ytr, Xte, yte, args)
         y_pred = (y_prob >= threshold).astype(int)
@@ -254,13 +269,17 @@ def loso_analysis(
             "threshold": threshold,
         }
 
-        predictions.append(pd.DataFrame({
-            "patient_id": Xte.index,
-            "site": held_out,
-            "y_true": yte,
-            "y_prob": y_prob,
-            "y_pred": y_pred,
-        }))
+        predictions.append(
+            pd.DataFrame(
+                {
+                    "patient_id": Xte.index,
+                    "site": held_out,
+                    "y_true": yte,
+                    "y_prob": y_prob,
+                    "y_pred": y_pred,
+                }
+            )
+        )
 
     preds_df = pd.concat(predictions, ignore_index=True)
     return {"loso": results, "predictions": preds_df}
@@ -269,6 +288,7 @@ def loso_analysis(
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
+
 
 def plot_roc_multi(
     y_true: np.ndarray,
@@ -289,15 +309,24 @@ def plot_roc_multi(
             continue
         fpr, tpr, _ = roc_curve(yt, yp)
         auc = roc_auc_score(yt, yp)
-        ax.plot(fpr, tpr, color=colors[i % len(colors)],
-                label=f"{site} (AUC={auc:.3f}, n={mask.sum()})")
+        ax.plot(
+            fpr,
+            tpr,
+            color=colors[i % len(colors)],
+            label=f"{site} (AUC={auc:.3f}, n={mask.sum()})",
+        )
 
     # Overall
     if len(np.unique(y_true)) >= MIN_CLASS_COUNT:
         fpr, tpr, _ = roc_curve(y_true, y_prob)
         auc = roc_auc_score(y_true, y_prob)
-        ax.plot(fpr, tpr, "k--", linewidth=2,
-                label=f"Overall (AUC={auc:.3f}, n={len(y_true)})")
+        ax.plot(
+            fpr,
+            tpr,
+            "k--",
+            linewidth=2,
+            label=f"Overall (AUC={auc:.3f}, n={len(y_true)})",
+        )
 
     ax.plot([0, 1], [0, 1], ":", color="grey")
     ax.set_xlabel("False Positive Rate")
@@ -313,21 +342,30 @@ def plot_roc_multi(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Site-level A/B analysis on pre-extracted radiomics features.",
     )
-    ap.add_argument("--features-dir", required=True,
-                    help="Directory with features_train_final.csv and features_test_final.csv.")
+    ap.add_argument(
+        "--features-dir",
+        required=True,
+        help="Directory with features_train_final.csv and features_test_final.csv.",
+    )
     ap.add_argument("--labels", required=True)
-    ap.add_argument("--splits", required=True,
-                    help="CSV with patient_id and split columns.")
+    ap.add_argument(
+        "--splits", required=True, help="CSV with patient_id and split columns."
+    )
     ap.add_argument("--output", required=True)
 
     # Classifier args (mirror radiomics_train.py)
-    ap.add_argument("--classifier", choices=["logistic", "rf", "xgb"], default="logistic")
+    ap.add_argument(
+        "--classifier", choices=["logistic", "rf", "xgb"], default="logistic"
+    )
     ap.add_argument("--logreg-C", type=float, default=1.0)
-    ap.add_argument("--logreg-penalty", choices=["l2", "l1", "elasticnet"], default="l2")
+    ap.add_argument(
+        "--logreg-penalty", choices=["l2", "l1", "elasticnet"], default="l2"
+    )
     ap.add_argument("--logreg-l1-ratio", type=float, default=0.0)
     ap.add_argument("--rf-n-estimators", type=int, default=300)
     ap.add_argument("--rf-max-depth", type=int, default=None)
@@ -351,7 +389,10 @@ def main() -> None:
         "--feature-selection",
         choices=["kbest", "mrmr"],
         default="kbest",
-        help="Filter method after optional correlation pruning (only active when --k-best > 0).",
+        help=(
+            "Filter method after optional correlation"
+            " pruning (only active when --k-best > 0)."
+        ),
     )
     ap.add_argument("--grid-search", action="store_true")
     ap.add_argument("--include-subtype", action="store_true")
@@ -420,14 +461,19 @@ def main() -> None:
         json.dump(ps_result["per_site"], f, indent=2)
 
     plot_roc_multi(
-        yte, ps_result["y_prob"], sites_test,
-        "Per-Site ROC (existing split)", outdir / "roc_per_site.png",
+        yte,
+        ps_result["y_prob"],
+        sites_test,
+        "Per-Site ROC (existing split)",
+        outdir / "roc_per_site.png",
     )
 
     print("\nPer-site test results:")
     for site, m in ps_result["per_site"].items():
-        print(f"  {site:>10s}: AUC={m['auc']:.3f}  sens={m['sensitivity']:.3f}  "
-              f"spec={m['specificity']:.3f}  n={m['n']}")
+        print(
+            f"  {site:>10s}: AUC={m['auc']:.3f}  sens={m['sensitivity']:.3f}  "
+            f"spec={m['specificity']:.3f}  n={m['n']}"
+        )
 
     # ================================================================
     # Analysis 2: Leave-one-site-out
@@ -460,8 +506,10 @@ def main() -> None:
 
     print("\nLOSO results:")
     for site, m in loso_result["loso"].items():
-        print(f"  {site:>10s}: AUC={m['auc']:.3f}  sens={m['sensitivity']:.3f}  "
-              f"spec={m['specificity']:.3f}  n_test={m['n_test']}")
+        print(
+            f"  {site:>10s}: AUC={m['auc']:.3f}  sens={m['sensitivity']:.3f}  "
+            f"spec={m['specificity']:.3f}  n_test={m['n_test']}"
+        )
 
     # ================================================================
     # Combined summary CSV
@@ -470,26 +518,30 @@ def main() -> None:
     for site, m in ps_result["per_site"].items():
         if site == "_overall":
             continue
-        rows.append({
-            "analysis": "per_site",
-            "site": site,
-            "n_test": m["n"],
-            "n_pos_test": m["n_pos"],
-            "auc": m["auc"],
-            "sensitivity": m["sensitivity"],
-            "specificity": m["specificity"],
-        })
+        rows.append(
+            {
+                "analysis": "per_site",
+                "site": site,
+                "n_test": m["n"],
+                "n_pos_test": m["n_pos"],
+                "auc": m["auc"],
+                "sensitivity": m["sensitivity"],
+                "specificity": m["specificity"],
+            }
+        )
     for site, m in loso_result["loso"].items():
-        rows.append({
-            "analysis": "loso",
-            "site": site,
-            "n_train": m["n_train"],
-            "n_test": m["n_test"],
-            "n_pos_test": m["n_pos_test"],
-            "auc": m["auc"],
-            "sensitivity": m["sensitivity"],
-            "specificity": m["specificity"],
-        })
+        rows.append(
+            {
+                "analysis": "loso",
+                "site": site,
+                "n_train": m["n_train"],
+                "n_test": m["n_test"],
+                "n_pos_test": m["n_pos_test"],
+                "auc": m["auc"],
+                "sensitivity": m["sensitivity"],
+                "specificity": m["specificity"],
+            }
+        )
 
     summary = pd.DataFrame(rows)
     summary.to_csv(outdir / "summary.csv", index=False)

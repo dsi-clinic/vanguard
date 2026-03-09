@@ -22,7 +22,7 @@ mkdir -p logs
 echo "[$(date)] Starting 3D peritumor sweep"
 
 python "${SCRIPTS_DIR}/run_ablations.py" \
-    "${PROJ_DIR}/configs/sweep_peri3d_only.yaml" \
+    "${PROJ_DIR}/configs/sweep_2d_vs_3d.yaml" \
     --generated-dir "${PROJ_DIR}/configs/generated"
 
 echo "[$(date)] 3D sweep complete"

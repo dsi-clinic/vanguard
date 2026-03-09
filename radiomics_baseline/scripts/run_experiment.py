@@ -277,9 +277,7 @@ def build_train_cmd(cfg: dict[str, Any], scripts_dir: Path) -> list[str]:
     if train.get("harmonization_mode"):
         cmd.extend(["--harmonization-mode", str(train["harmonization_mode"])])
     if train.get("harmonization_batch_col"):
-        cmd.extend(
-            ["--harmonization-batch-col", str(train["harmonization_batch_col"])]
-        )
+        cmd.extend(["--harmonization-batch-col", str(train["harmonization_batch_col"])])
     if train.get("harmonization_covariates"):
         covars = train["harmonization_covariates"]
         if isinstance(covars, list):

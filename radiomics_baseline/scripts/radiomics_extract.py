@@ -77,10 +77,11 @@ from tqdm import tqdm
 
 try:
     from radiomics import featureextractor
-except Exception as err:
+except Exception as _err:
+    _import_err = _err
 
     def featureextractor(*args, **kwargs):  # noqa: ANN201, D103
-        raise err
+        raise _import_err
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -406,6 +407,7 @@ def build_extractor(
 # Peritumor mask creation
 # ---------------------------------------------------------------------------
 
+
 def make_peritumor_mask(mask_path: Path, radius_mm: float) -> sitk.Image | None:
     """Dilate a binary tumor mask to create a peritumor shell of given radius.
 
@@ -507,6 +509,7 @@ def make_peritumor_mask_2d(mask_path: Path, radius_mm: float) -> sitk.Image | No
 # ---------------------------------------------------------------------------
 # Flatten radiomics output
 # ---------------------------------------------------------------------------
+
 
 def _is_number(value: object) -> bool:
     """Return True if ``value`` can be cast to ``float`` without error."""
@@ -786,7 +789,8 @@ def extract_split_features(
             removed = clear_checkpoint_rows(checkpoint_rows_dir)
             if removed:
                 print(
-                    f"[CHECKPOINT] cleared {removed} cached rows in {checkpoint_rows_dir}",
+                    f"[CHECKPOINT] cleared {removed} cached rows"
+                    f" in {checkpoint_rows_dir}",
                     file=sys.stderr,
                 )
 
@@ -845,7 +849,11 @@ def extract_split_features(
             )
             for pid in tqdm(
                 pending_pids,
-                desc=f"Extracting radiomics (n_jobs={n_jobs}, pending={len(pending_pids)})",
+                desc=(
+                    f"Extracting radiomics"
+                    f" (n_jobs={n_jobs},"
+                    f" pending={len(pending_pids)})"
+                ),
             )
         )
         for row in new_rows:
@@ -975,12 +983,7 @@ def aggregate_multiphase_features(
 
     if drop_original_phase_columns:
         drop_cols = sorted(
-            {
-                c
-                for cols in groups.values()
-                if len(cols) >= 2
-                for c in cols
-            }
+            {c for cols in groups.values() if len(cols) >= 2 for c in cols}
         )
         out = out.drop(columns=drop_cols, errors="ignore")
         print(
@@ -1102,7 +1105,10 @@ def main() -> None:
     ap.add_argument(
         "--clear-checkpoint",
         action="store_true",
-        help="Delete existing checkpoint cache under output/_checkpoint before running.",
+        help=(
+            "Delete existing checkpoint cache under"
+            " output/_checkpoint before running."
+        ),
     )
     ap.add_argument(
         "--label-override",

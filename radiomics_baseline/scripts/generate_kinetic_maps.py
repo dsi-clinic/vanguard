@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 import warnings
 from pathlib import Path
 from typing import Any
@@ -48,6 +47,7 @@ SUBTRACTION_MAP_NAMES = ("wash_in", "wash_out")
 # ---------------------------------------------------------------------------
 # Phase discovery
 # ---------------------------------------------------------------------------
+
 
 def discover_phases(images_dir: str, pid: str) -> list[tuple[int, Path]]:
     """Discover all available DCE phase files for a patient.
@@ -75,6 +75,7 @@ def discover_phases(images_dir: str, pid: str) -> list[tuple[int, Path]]:
 # ---------------------------------------------------------------------------
 # I/O helpers
 # ---------------------------------------------------------------------------
+
 
 def load_phase_volumes(
     phase_paths: list[tuple[int, Path]],
@@ -137,6 +138,7 @@ def load_mask(masks_dir: str, pid: str, mask_pattern: str) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Kinetic computations
 # ---------------------------------------------------------------------------
+
 
 def compute_enhancement_series(
     post_volumes: list[np.ndarray],
@@ -289,6 +291,7 @@ def sanitize_map(arr: np.ndarray, mask: np.ndarray) -> np.ndarray:
 # Per-patient orchestrator
 # ---------------------------------------------------------------------------
 
+
 def generate_maps_for_pid(
     pid: str,
     images_dir: str,
@@ -342,7 +345,7 @@ def generate_maps_for_pid(
         # Select the phase set used for map computation.
         # If fixed indices are provided, kinetics are computed only from those
         # post-contrast timepoints to avoid confounding from variable phase count.
-        idx_to_path = {idx: path for idx, path in phases}
+        idx_to_path = dict(phases)
         if 0 not in idx_to_path:
             raise ValueError(f"No pre-contrast (_0000) phase for {pid}")
 
@@ -439,6 +442,7 @@ def generate_maps_for_pid(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     """CLI entry point."""
     ap = argparse.ArgumentParser(
@@ -487,7 +491,10 @@ def main() -> None:
     ap.add_argument(
         "--generate-tpeak-voxel",
         action="store_true",
-        help="Generate voxel-wise time-to-peak map (requires >=4 post-contrast phases).",
+        help=(
+            "Generate voxel-wise time-to-peak map"
+            " (requires >=4 post-contrast phases)."
+        ),
     )
     ap.add_argument(
         "--generate-subtraction",

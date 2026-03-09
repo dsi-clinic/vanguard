@@ -8,12 +8,14 @@ Run with::
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import SimpleITK as sitk
-from pathlib import Path
-
 from generate_kinetic_maps import (
+    KINETIC_MAP_NAMES,
+    SUBTRACTION_MAP_NAMES,
     compute_enhancement_series,
     compute_kinetic_maps,
     compute_subtraction_maps,
@@ -21,16 +23,16 @@ from generate_kinetic_maps import (
     find_tumor_peak_phase,
     generate_maps_for_pid,
     sanitize_map,
-    KINETIC_MAP_NAMES,
-    SUBTRACTION_MAP_NAMES,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_volume(shape: tuple[int, ...], value: float, spacing: tuple = (1.0, 1.0, 1.0)) -> sitk.Image:
+
+def _make_volume(
+    shape: tuple[int, ...], value: float, spacing: tuple = (1.0, 1.0, 1.0)
+) -> sitk.Image:
     """Create a constant SimpleITK Image."""
     arr = np.full(shape, value, dtype=np.float32)
     img = sitk.GetImageFromArray(arr)
@@ -38,13 +40,22 @@ def _make_volume(shape: tuple[int, ...], value: float, spacing: tuple = (1.0, 1.
     return img
 
 
-def _write_phase(patient_dir: Path, pid: str, phase_idx: int, value: float, shape: tuple, spacing: tuple = (1.0, 1.0, 1.0)) -> None:
+def _write_phase(
+    patient_dir: Path,
+    pid: str,
+    phase_idx: int,
+    value: float,
+    shape: tuple,
+    spacing: tuple = (1.0, 1.0, 1.0),
+) -> None:
     """Write a constant-valued phase NIfTI to disk."""
     img = _make_volume(shape, value, spacing)
     sitk.WriteImage(img, str(patient_dir / f"{pid}_{phase_idx:04d}.nii.gz"))
 
 
-def _write_mask(masks_dir: Path, pid: str, mask_arr: np.ndarray, spacing: tuple = (1.0, 1.0, 1.0)) -> None:
+def _write_mask(
+    masks_dir: Path, pid: str, mask_arr: np.ndarray, spacing: tuple = (1.0, 1.0, 1.0)
+) -> None:
     """Write a binary mask NIfTI to disk."""
     img = sitk.GetImageFromArray(mask_arr.astype(np.uint8))
     img.SetSpacing(spacing)
@@ -54,6 +65,7 @@ def _write_mask(masks_dir: Path, pid: str, mask_arr: np.ndarray, spacing: tuple 
 # ---------------------------------------------------------------------------
 # Tests: compute_enhancement_series
 # ---------------------------------------------------------------------------
+
 
 class TestComputeEnhancementSeries:
     def test_basic_subtraction(self):
@@ -82,6 +94,7 @@ class TestComputeEnhancementSeries:
 # ---------------------------------------------------------------------------
 # Tests: find_tumor_peak_phase
 # ---------------------------------------------------------------------------
+
 
 class TestFindTumorPeakPhase:
     def test_peak_at_second_phase(self):
@@ -122,6 +135,7 @@ class TestFindTumorPeakPhase:
 # Tests: compute_kinetic_maps
 # ---------------------------------------------------------------------------
 
+
 class TestComputeKineticMaps:
     def test_two_phases_peak_early(self):
         """Peak at first post-contrast; washout follows."""
@@ -129,7 +143,7 @@ class TestComputeKineticMaps:
         mask = np.ones(shape, dtype=np.uint8)
         pre = np.zeros(shape)
         post1 = np.ones(shape) * 100  # peak
-        post2 = np.ones(shape) * 80   # washout
+        post2 = np.ones(shape) * 80  # washout
 
         maps = compute_kinetic_maps(pre, [post1, post2], [1, 2], mask)
         assert set(KINETIC_MAP_NAMES).issubset(maps.keys())
@@ -184,7 +198,9 @@ class TestComputeKineticMaps:
         pre = np.zeros(shape)
         phases = [np.ones(shape) * v for v in [50, 100, 80, 60]]
 
-        maps = compute_kinetic_maps(pre, phases, [1, 2, 3, 4], mask, generate_tpeak_voxel=True)
+        maps = compute_kinetic_maps(
+            pre, phases, [1, 2, 3, 4], mask, generate_tpeak_voxel=True
+        )
         assert "t_peak_voxel" in maps
         # All voxels have same enhancement curve → peak at list index 1 → phase index 2
         np.testing.assert_array_equal(maps["t_peak_voxel"], 2)
@@ -195,7 +211,9 @@ class TestComputeKineticMaps:
         pre = np.zeros(shape)
         phases = [np.ones(shape) * v for v in [50, 100, 80]]
 
-        maps = compute_kinetic_maps(pre, phases, [1, 2, 3], mask, generate_tpeak_voxel=True)
+        maps = compute_kinetic_maps(
+            pre, phases, [1, 2, 3], mask, generate_tpeak_voxel=True
+        )
         assert "t_peak_voxel" not in maps
 
     def test_auc_trapezoidal(self):
@@ -216,23 +234,24 @@ class TestComputeKineticMaps:
 # Tests: compute_subtraction_maps
 # ---------------------------------------------------------------------------
 
+
 class TestComputeSubtractionMaps:
     def test_basic_wash_in_wash_out(self):
         """wash_in = peak - early; wash_out = last - peak."""
         shape = (4, 4, 4)
-        post1 = np.ones(shape) * 100   # early
-        post2 = np.ones(shape) * 200   # peak
-        post3 = np.ones(shape) * 150   # last (washout)
+        post1 = np.ones(shape) * 100  # early
+        post2 = np.ones(shape) * 200  # peak
+        post3 = np.ones(shape) * 150  # last (washout)
 
         maps = compute_subtraction_maps([post1, post2, post3], peak_list_idx=1)
         assert set(SUBTRACTION_MAP_NAMES) == set(maps.keys())
-        np.testing.assert_array_almost_equal(maps["wash_in"], 100)   # 200 - 100
+        np.testing.assert_array_almost_equal(maps["wash_in"], 100)  # 200 - 100
         np.testing.assert_array_almost_equal(maps["wash_out"], -50)  # 150 - 200
 
     def test_peak_at_first_phase_wash_in_zero(self):
         """When peak = first post-contrast, wash_in should be zero everywhere."""
         shape = (3, 3, 3)
-        post1 = np.ones(shape) * 200   # peak = early
+        post1 = np.ones(shape) * 200  # peak = early
         post2 = np.ones(shape) * 150
         post3 = np.ones(shape) * 100
 
@@ -244,7 +263,7 @@ class TestComputeSubtractionMaps:
         shape = (2, 2, 2)
         post1 = np.ones(shape) * 50
         post2 = np.ones(shape) * 100
-        post3 = np.ones(shape) * 150   # peak = last
+        post3 = np.ones(shape) * 150  # peak = last
 
         maps = compute_subtraction_maps([post1, post2, post3], peak_list_idx=2)
         np.testing.assert_array_almost_equal(maps["wash_out"], 0)  # last == peak
@@ -261,16 +280,17 @@ class TestComputeSubtractionMaps:
         """With only 2 post-contrast phases: peak must be one of them."""
         shape = (2, 2, 2)
         post1 = np.ones(shape) * 100
-        post2 = np.ones(shape) * 180   # peak = last
+        post2 = np.ones(shape) * 180  # peak = last
 
         maps = compute_subtraction_maps([post1, post2], peak_list_idx=1)
-        np.testing.assert_array_almost_equal(maps["wash_in"], 80)   # 180 - 100
-        np.testing.assert_array_almost_equal(maps["wash_out"], 0)   # 180 - 180
+        np.testing.assert_array_almost_equal(maps["wash_in"], 80)  # 180 - 100
+        np.testing.assert_array_almost_equal(maps["wash_out"], 0)  # 180 - 180
 
 
 # ---------------------------------------------------------------------------
 # Tests: sanitize_map
 # ---------------------------------------------------------------------------
+
 
 class TestSanitizeMap:
     def test_nan_replaced(self):
@@ -301,6 +321,7 @@ class TestSanitizeMap:
 # ---------------------------------------------------------------------------
 # Tests: discover_phases
 # ---------------------------------------------------------------------------
+
 
 class TestDiscoverPhases:
     def test_finds_all_phases(self, tmp_path):
@@ -347,6 +368,7 @@ class TestDiscoverPhases:
 # ---------------------------------------------------------------------------
 # Tests: end-to-end generate_maps_for_pid
 # ---------------------------------------------------------------------------
+
 
 class TestGenerateMapsForPid:
     def test_synthetic_3_post_contrast(self, tmp_path):
@@ -546,7 +568,10 @@ class TestGenerateMapsForPid:
         assert wash_out[3, 8, 8] == pytest.approx(-50.0)
 
     def test_subtraction_skipped_with_single_post_contrast(self, tmp_path):
-        """Subtraction maps require >=2 post-contrast phases; warns and skips gracefully."""
+        """Subtraction maps require >=2 post-contrast phases.
+
+        Warns and skips gracefully.
+        """
         pid = "TEST_SUB_SKIP"
         images_dir = tmp_path / "images"
         patient_dir = images_dir / pid
@@ -562,6 +587,7 @@ class TestGenerateMapsForPid:
         _write_mask(masks_dir, pid, mask_arr)
 
         import warnings as _warnings
+
         with _warnings.catch_warnings(record=True) as w:
             _warnings.simplefilter("always")
             result = generate_maps_for_pid(

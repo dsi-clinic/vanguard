@@ -75,8 +75,13 @@ def bbox_2d_from_mask(mask2d: np.ndarray) -> tuple[int, int, int, int]:
 
 
 def expand_bbox(
-    ymin: int, ymax: int, xmin: int, xmax: int,
-    expand: float, H: int, W: int,
+    ymin: int,
+    ymax: int,
+    xmin: int,
+    xmax: int,
+    expand: float,
+    H: int,
+    W: int,
 ) -> tuple[int, int, int, int]:
     """Expand a 2D bbox by a factor, clamped to image bounds."""
     cy, cx = 0.5 * (ymin + ymax), 0.5 * (xmin + xmax)
@@ -120,6 +125,7 @@ def build_kinetic_map_paths(images_dir: Path, pid: str) -> list[tuple[str, Path]
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Visualize DCE phases + kinetic maps for one patient.",
@@ -153,7 +159,13 @@ def main() -> None:
     first_img = read_img(phase_paths[0])
     H, W = first_img.shape[1:]
     eymin, eymax, exmin, exmax = expand_bbox(
-        ymin, ymax, xmin, xmax, args.zoom_factor, H, W,
+        ymin,
+        ymax,
+        xmin,
+        xmax,
+        args.zoom_factor,
+        H,
+        W,
     )
 
     # Crop function
@@ -170,8 +182,11 @@ def main() -> None:
     # Load kinetic map crops
     kmap_entries = build_kinetic_map_paths(args.images_dir, pid)
     if not kmap_entries:
-        print(f"[WARN] No kinetic maps found for {pid}. Run generate_kinetic_maps.py first.",
-              file=sys.stderr)
+        print(
+            f"[WARN] No kinetic maps found for {pid}."
+            " Run generate_kinetic_maps.py first.",
+            file=sys.stderr,
+        )
 
     kmap_crops: list[tuple[str, np.ndarray]] = []
     for name, pth in kmap_entries:
@@ -184,7 +199,10 @@ def main() -> None:
     n_rows = 2 if n_maps > 0 else 1
 
     fig, axes = plt.subplots(
-        n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows), dpi=160,
+        n_rows,
+        n_cols,
+        figsize=(4 * n_cols, 4 * n_rows),
+        dpi=160,
         squeeze=False,
     )
 
@@ -230,7 +248,8 @@ def main() -> None:
 
     fig.suptitle(
         f"{pid} — DCE phases & kinetic maps (z={z})",
-        y=0.98, fontsize=12,
+        y=0.98,
+        fontsize=12,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.95])
 

@@ -56,10 +56,10 @@ from radiomics_train import (  # noqa: E402
     sanitize_numeric,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def extract_site(pid: str) -> str:
     """Extract site prefix from patient ID (e.g. ISPY2_0042 → ISPY2)."""
@@ -88,22 +88,26 @@ def load_and_align(features_dir: Path, labels_path: Path):
     return X, labels
 
 
-def apply_combat_full(X: pd.DataFrame, labels: pd.DataFrame,
-                      mode: str, batch_col: str) -> pd.DataFrame:
+def apply_combat_full(
+    X: pd.DataFrame, labels: pd.DataFrame, mode: str, batch_col: str
+) -> pd.DataFrame:
     """Fit ComBat on the full matrix (for qualitative visualisations only)."""
     medians = X.median(axis=0)
     X_imp = X.fillna(medians)
 
     harmonizer = FeatureHarmonizer(
-        mode=mode, batch_col=batch_col, covariate_cols=[],
+        mode=mode,
+        batch_col=batch_col,
+        covariate_cols=[],
     ).fit(X_imp, labels)
 
     X_h, _ = harmonizer.transform(X_imp, labels)
     return X_h
 
 
-def select_site_affected_features(X: pd.DataFrame, labels: pd.DataFrame,
-                                  batch_col: str, n: int = 8) -> list[str]:
+def select_site_affected_features(
+    X: pd.DataFrame, labels: pd.DataFrame, batch_col: str, n: int = 8
+) -> list[str]:
     """Select top-n features with strongest site effect (ANOVA F-stat)."""
     sites = labels.loc[X.index, batch_col].astype(str)
     unique_sites = sites.unique()
@@ -128,9 +132,14 @@ def select_site_affected_features(X: pd.DataFrame, labels: pd.DataFrame,
 # Plot 1: PCA before vs after
 # ---------------------------------------------------------------------------
 
-def plot_pca_before_after(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
-                          labels: pd.DataFrame, batch_col: str,
-                          output_path: Path):
+
+def plot_pca_before_after(
+    X_raw: pd.DataFrame,
+    X_combat: pd.DataFrame,
+    labels: pd.DataFrame,
+    batch_col: str,
+    output_path: Path,
+):
     """Two-panel PCA scatter: colour = site, shape = pCR."""
     # Impute for PCA
     medians = X_raw.median(axis=0)
@@ -168,10 +177,24 @@ def plot_pca_before_after(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
             m0 = mask_site & (pcr == 0)
             m1 = mask_site & (pcr == 1)
 
-            ax.scatter(Z[m0, 0], Z[m0, 1], c=[c], marker="o",
-                       alpha=0.5, s=25, label=f"{site} (pCR=0)")
-            ax.scatter(Z[m1, 0], Z[m1, 1], c=[c], marker="^",
-                       alpha=0.5, s=25, label=f"{site} (pCR=1)")
+            ax.scatter(
+                Z[m0, 0],
+                Z[m0, 1],
+                c=[c],
+                marker="o",
+                alpha=0.5,
+                s=25,
+                label=f"{site} (pCR=0)",
+            )
+            ax.scatter(
+                Z[m1, 0],
+                Z[m1, 1],
+                c=[c],
+                marker="^",
+                alpha=0.5,
+                s=25,
+                label=f"{site} (pCR=1)",
+            )
 
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
@@ -183,14 +206,42 @@ def plot_pca_before_after(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
     handles = []
     for si, site in enumerate(unique_sites):
         c = colors[si % len(colors)]
-        handles.append(Line2D([0], [0], marker="o", color="w",
-                              markerfacecolor=c, markersize=8, label=site))
-    handles.append(Line2D([0], [0], marker="o", color="grey", linestyle="None",
-                          markersize=8, label="pCR=0"))
-    handles.append(Line2D([0], [0], marker="^", color="grey", linestyle="None",
-                          markersize=8, label="pCR=1"))
-    fig.legend(handles=handles, loc="center right", fontsize=8,
-               bbox_to_anchor=(1.0, 0.5))
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=c,
+                markersize=8,
+                label=site,
+            )
+        )
+    handles.append(
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="grey",
+            linestyle="None",
+            markersize=8,
+            label="pCR=0",
+        )
+    )
+    handles.append(
+        Line2D(
+            [0],
+            [0],
+            marker="^",
+            color="grey",
+            linestyle="None",
+            markersize=8,
+            label="pCR=1",
+        )
+    )
+    fig.legend(
+        handles=handles, loc="center right", fontsize=8, bbox_to_anchor=(1.0, 0.5)
+    )
 
     fig.suptitle("PCA — site clustering before vs after ComBat", fontsize=13)
     fig.tight_layout(rect=[0, 0, 0.88, 0.95])
@@ -203,9 +254,15 @@ def plot_pca_before_after(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
 # Plot 2: Feature distribution violins
 # ---------------------------------------------------------------------------
 
-def plot_feature_distributions(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
-                               labels: pd.DataFrame, batch_col: str,
-                               top_features: list[str], output_path: Path):
+
+def plot_feature_distributions(
+    X_raw: pd.DataFrame,
+    X_combat: pd.DataFrame,
+    labels: pd.DataFrame,
+    batch_col: str,
+    top_features: list[str],
+    output_path: Path,
+):
     """Per-site violin plots for top site-affected features, before vs after."""
     n_feat = len(top_features)
     fig, axes = plt.subplots(n_feat, 2, figsize=(12, 2.5 * n_feat))
@@ -221,21 +278,33 @@ def plot_feature_distributions(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
                 ax.set_visible(False)
                 continue
 
-            df_plot = pd.DataFrame({
-                "value": X[feat].values,
-                "site": sites.values,
-            })
-            sns.violinplot(data=df_plot, x="site", y="value", ax=ax,
-                           cut=0, inner="quartile", density_norm="width",
-                           palette="Set1")
+            df_plot = pd.DataFrame(
+                {
+                    "value": X[feat].values,
+                    "site": sites.values,
+                }
+            )
+            sns.violinplot(
+                data=df_plot,
+                x="site",
+                y="value",
+                ax=ax,
+                cut=0,
+                inner="quartile",
+                density_norm="width",
+                palette="Set1",
+            )
             ax.set_title(f"{panel_title}: {feat[:40]}", fontsize=9)
             ax.set_xlabel("")
             ax.tick_params(axis="x", rotation=45, labelsize=7)
 
     axes[0, 0].set_title("Before ComBat", fontsize=11, fontweight="bold")
     axes[0, 1].set_title("After ComBat", fontsize=11, fontweight="bold")
-    fig.suptitle("Feature distributions by site (top site-affected features)",
-                 fontsize=13, y=1.01)
+    fig.suptitle(
+        "Feature distributions by site (top site-affected features)",
+        fontsize=13,
+        y=1.01,
+    )
     fig.tight_layout()
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
@@ -246,9 +315,15 @@ def plot_feature_distributions(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
 # Plot 3: Site-mean heatmap
 # ---------------------------------------------------------------------------
 
-def plot_site_mean_heatmap(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
-                           labels: pd.DataFrame, batch_col: str,
-                           top_features: list[str], output_path: Path):
+
+def plot_site_mean_heatmap(
+    X_raw: pd.DataFrame,
+    X_combat: pd.DataFrame,
+    labels: pd.DataFrame,
+    batch_col: str,
+    top_features: list[str],
+    output_path: Path,
+):
     """Heatmap of standardised per-site means for selected features."""
     sites = labels.loc[X_raw.index, batch_col].astype(str)
     unique_sites = sorted(sites.unique())
@@ -272,15 +347,31 @@ def plot_site_mean_heatmap(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
     # Shorten feature names for display
     short_names = [f[:25] for f in top_features]
 
-    sns.heatmap(Z_raw.rename(columns=dict(zip(top_features, short_names))),
-                ax=ax1, cmap="RdBu_r", center=0, vmin=-vmax, vmax=vmax,
-                annot=True, fmt=".2f", cbar_kws={"shrink": 0.8})
+    sns.heatmap(
+        Z_raw.rename(columns=dict(zip(top_features, short_names))),
+        ax=ax1,
+        cmap="RdBu_r",
+        center=0,
+        vmin=-vmax,
+        vmax=vmax,
+        annot=True,
+        fmt=".2f",
+        cbar_kws={"shrink": 0.8},
+    )
     ax1.set_title("Before ComBat")
     ax1.set_xlabel("")
 
-    sns.heatmap(Z_combat.rename(columns=dict(zip(top_features, short_names))),
-                ax=ax2, cmap="RdBu_r", center=0, vmin=-vmax, vmax=vmax,
-                annot=True, fmt=".2f", cbar_kws={"shrink": 0.8})
+    sns.heatmap(
+        Z_combat.rename(columns=dict(zip(top_features, short_names))),
+        ax=ax2,
+        cmap="RdBu_r",
+        center=0,
+        vmin=-vmax,
+        vmax=vmax,
+        annot=True,
+        fmt=".2f",
+        cbar_kws={"shrink": 0.8},
+    )
     ax2.set_title("After ComBat")
     ax2.set_xlabel("")
 
@@ -295,9 +386,14 @@ def plot_site_mean_heatmap(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
 # Plot 4: Pairwise site-centroid distance heatmap
 # ---------------------------------------------------------------------------
 
-def plot_site_distance_heatmap(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
-                               labels: pd.DataFrame, batch_col: str,
-                               output_path: Path):
+
+def plot_site_distance_heatmap(
+    X_raw: pd.DataFrame,
+    X_combat: pd.DataFrame,
+    labels: pd.DataFrame,
+    batch_col: str,
+    output_path: Path,
+):
     """Pairwise Euclidean distance between site centroids, before vs after."""
     sites = labels.loc[X_raw.index, batch_col].astype(str)
     unique_sites = sorted(sites.unique())
@@ -311,9 +407,11 @@ def plot_site_distance_heatmap(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
             centroids.append(Xs.loc[mask].mean(axis=0).values)
         centroids = np.array(centroids)
         from sklearn.metrics import pairwise_distances
+
         return pd.DataFrame(
             pairwise_distances(centroids, metric="euclidean"),
-            index=unique_sites, columns=unique_sites,
+            index=unique_sites,
+            columns=unique_sites,
         )
 
     D_raw = centroid_distances(X_raw)
@@ -323,12 +421,30 @@ def plot_site_distance_heatmap(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
-    sns.heatmap(D_raw, ax=ax1, cmap="YlOrRd", vmin=0, vmax=vmax,
-                annot=True, fmt=".1f", square=True, cbar_kws={"shrink": 0.8})
+    sns.heatmap(
+        D_raw,
+        ax=ax1,
+        cmap="YlOrRd",
+        vmin=0,
+        vmax=vmax,
+        annot=True,
+        fmt=".1f",
+        square=True,
+        cbar_kws={"shrink": 0.8},
+    )
     ax1.set_title("Before ComBat")
 
-    sns.heatmap(D_combat, ax=ax2, cmap="YlOrRd", vmin=0, vmax=vmax,
-                annot=True, fmt=".1f", square=True, cbar_kws={"shrink": 0.8})
+    sns.heatmap(
+        D_combat,
+        ax=ax2,
+        cmap="YlOrRd",
+        vmin=0,
+        vmax=vmax,
+        annot=True,
+        fmt=".1f",
+        square=True,
+        cbar_kws={"shrink": 0.8},
+    )
     ax2.set_title("After ComBat")
 
     fig.suptitle("Pairwise Euclidean distance between site centroids", fontsize=13)
@@ -342,9 +458,15 @@ def plot_site_distance_heatmap(X_raw: pd.DataFrame, X_combat: pd.DataFrame,
 # Plot 5: Signal-retained bar chart (fold-safe)
 # ---------------------------------------------------------------------------
 
-def plot_signal_retained(X_raw: pd.DataFrame, labels: pd.DataFrame,
-                         output_path: Path, harmonization_mode: str,
-                         batch_col: str, cv_folds: int):
+
+def plot_signal_retained(
+    X_raw: pd.DataFrame,
+    labels: pd.DataFrame,
+    output_path: Path,
+    harmonization_mode: str,
+    batch_col: str,
+    cv_folds: int,
+):
     """Bar chart comparing site-AUC and pCR-AUC before vs after ComBat.
 
     Uses fold-safe ComBat: fit on train fold only, transform both folds.
@@ -357,8 +479,10 @@ def plot_signal_retained(X_raw: pd.DataFrame, labels: pd.DataFrame,
     skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
 
     results = {
-        "site_raw": [], "site_combat": [],
-        "pcr_raw": [], "pcr_combat": [],
+        "site_raw": [],
+        "site_combat": [],
+        "pcr_raw": [],
+        "pcr_combat": [],
     }
 
     for fold_idx, (tr_idx, val_idx) in enumerate(skf.split(X_raw, pcr)):
@@ -402,7 +526,9 @@ def plot_signal_retained(X_raw: pd.DataFrame, labels: pd.DataFrame,
 
         # --- ComBat-harmonized features ---
         harmonizer = FeatureHarmonizer(
-            mode=harmonization_mode, batch_col=batch_col, covariate_cols=[],
+            mode=harmonization_mode,
+            batch_col=batch_col,
+            covariate_cols=[],
         )
         labels_tr = labels.loc[tr_ids]
         labels_val = labels.loc[val_ids]
@@ -445,24 +571,48 @@ def plot_signal_retained(X_raw: pd.DataFrame, labels: pd.DataFrame,
     means_after = [np.mean(results["site_combat"]), np.mean(results["pcr_combat"])]
     stds_after = [np.std(results["site_combat"]), np.std(results["pcr_combat"])]
 
-    bars1 = ax.bar(x - width / 2, means_before, width, yerr=stds_before,
-                   label="Before ComBat", color="#4C72B0", capsize=5, alpha=0.85)
-    bars2 = ax.bar(x + width / 2, means_after, width, yerr=stds_after,
-                   label="After ComBat", color="#DD8452", capsize=5, alpha=0.85)
+    bars1 = ax.bar(
+        x - width / 2,
+        means_before,
+        width,
+        yerr=stds_before,
+        label="Before ComBat",
+        color="#4C72B0",
+        capsize=5,
+        alpha=0.85,
+    )
+    bars2 = ax.bar(
+        x + width / 2,
+        means_after,
+        width,
+        yerr=stds_after,
+        label="After ComBat",
+        color="#DD8452",
+        capsize=5,
+        alpha=0.85,
+    )
 
     # Add value labels on bars
     for bars in [bars1, bars2]:
         for bar in bars:
             h = bar.get_height()
-            ax.annotate(f"{h:.3f}", xy=(bar.get_x() + bar.get_width() / 2, h),
-                        xytext=(0, 4), textcoords="offset points",
-                        ha="center", va="bottom", fontsize=9)
+            ax.annotate(
+                f"{h:.3f}",
+                xy=(bar.get_x() + bar.get_width() / 2, h),
+                xytext=(0, 4),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
 
     ax.set_xticks(x)
     ax.set_xticklabels(categories, fontsize=11)
     ax.set_ylabel("CV AUC (mean ± std)", fontsize=11)
-    ax.set_title(f"Signal Retained — {harmonization_mode}\n"
-                 f"(fold-safe, {cv_folds}-fold CV)", fontsize=13)
+    ax.set_title(
+        f"Signal Retained — {harmonization_mode}\n" f"(fold-safe, {cv_folds}-fold CV)",
+        fontsize=13,
+    )
     ax.legend(fontsize=10)
     ax.set_ylim(0.4, 1.0)
     ax.axhline(0.5, color="grey", linestyle="--", linewidth=0.8, alpha=0.5)
@@ -476,10 +626,22 @@ def plot_signal_retained(X_raw: pd.DataFrame, labels: pd.DataFrame,
     summary = {
         "harmonization_mode": harmonization_mode,
         "cv_folds": cv_folds,
-        "site_auc_before": f"{np.mean(results['site_raw']):.4f} ± {np.std(results['site_raw']):.4f}",
-        "site_auc_after": f"{np.mean(results['site_combat']):.4f} ± {np.std(results['site_combat']):.4f}",
-        "pcr_auc_before": f"{np.mean(results['pcr_raw']):.4f} ± {np.std(results['pcr_raw']):.4f}",
-        "pcr_auc_after": f"{np.mean(results['pcr_combat']):.4f} ± {np.std(results['pcr_combat']):.4f}",
+        "site_auc_before": (
+            f"{np.mean(results['site_raw']):.4f}"
+            f" ± {np.std(results['site_raw']):.4f}"
+        ),
+        "site_auc_after": (
+            f"{np.mean(results['site_combat']):.4f}"
+            f" ± {np.std(results['site_combat']):.4f}"
+        ),
+        "pcr_auc_before": (
+            f"{np.mean(results['pcr_raw']):.4f}"
+            f" ± {np.std(results['pcr_raw']):.4f}"
+        ),
+        "pcr_auc_after": (
+            f"{np.mean(results['pcr_combat']):.4f}"
+            f" ± {np.std(results['pcr_combat']):.4f}"
+        ),
     }
     summary_path = output_path.parent / "signal_retained_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
@@ -490,25 +652,41 @@ def plot_signal_retained(X_raw: pd.DataFrame, labels: pd.DataFrame,
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="ComBat harmonization diagnostic visualizations.",
     )
-    parser.add_argument("--features-dir", required=True,
-                        help="Directory with features_train_final.csv")
-    parser.add_argument("--labels", required=True,
-                        help="Path to labels.csv")
-    parser.add_argument("--output-dir", required=True,
-                        help="Directory for output PNG files")
-    parser.add_argument("--harmonization-mode", default="combat_param",
-                        choices=["zscore_site", "combat_param", "combat_nonparam"],
-                        help="Harmonization method (default: combat_param)")
-    parser.add_argument("--batch-col", default="site",
-                        help="Column in labels for batch/site (default: site)")
-    parser.add_argument("--cv-folds", type=int, default=5,
-                        help="Number of CV folds for signal-retained plot (default: 5)")
-    parser.add_argument("--n-top-features", type=int, default=8,
-                        help="Number of top site-affected features to show (default: 8)")
+    parser.add_argument(
+        "--features-dir", required=True, help="Directory with features_train_final.csv"
+    )
+    parser.add_argument("--labels", required=True, help="Path to labels.csv")
+    parser.add_argument(
+        "--output-dir", required=True, help="Directory for output PNG files"
+    )
+    parser.add_argument(
+        "--harmonization-mode",
+        default="combat_param",
+        choices=["zscore_site", "combat_param", "combat_nonparam"],
+        help="Harmonization method (default: combat_param)",
+    )
+    parser.add_argument(
+        "--batch-col",
+        default="site",
+        help="Column in labels for batch/site (default: site)",
+    )
+    parser.add_argument(
+        "--cv-folds",
+        type=int,
+        default=5,
+        help="Number of CV folds for signal-retained plot (default: 5)",
+    )
+    parser.add_argument(
+        "--n-top-features",
+        type=int,
+        default=8,
+        help="Number of top site-affected features to show (default: 8)",
+    )
     args = parser.parse_args()
 
     features_dir = Path(args.features_dir)
@@ -526,7 +704,10 @@ def main():
 
     # Select top site-affected features
     top_features = select_site_affected_features(
-        X_raw, labels, args.batch_col, n=args.n_top_features,
+        X_raw,
+        labels,
+        args.batch_col,
+        n=args.n_top_features,
     )
     print(f"[VIZ] Top {len(top_features)} site-affected features selected")
 
@@ -534,33 +715,50 @@ def main():
 
     print("\n[VIZ] === Plot 1: PCA before vs after ===")
     plot_pca_before_after(
-        X_raw, X_combat, labels, args.batch_col,
+        X_raw,
+        X_combat,
+        labels,
+        args.batch_col,
         output_dir / "combat_pca_before_after.png",
     )
 
     print("\n[VIZ] === Plot 2: Feature distributions ===")
     plot_feature_distributions(
-        X_raw, X_combat, labels, args.batch_col, top_features,
+        X_raw,
+        X_combat,
+        labels,
+        args.batch_col,
+        top_features,
         output_dir / "combat_feature_distributions.png",
     )
 
     print("\n[VIZ] === Plot 3: Site-mean heatmap ===")
     plot_site_mean_heatmap(
-        X_raw, X_combat, labels, args.batch_col, top_features,
+        X_raw,
+        X_combat,
+        labels,
+        args.batch_col,
+        top_features,
         output_dir / "combat_site_mean_heatmap.png",
     )
 
     print("\n[VIZ] === Plot 4: Site-distance heatmap ===")
     plot_site_distance_heatmap(
-        X_raw, X_combat, labels, args.batch_col,
+        X_raw,
+        X_combat,
+        labels,
+        args.batch_col,
         output_dir / "combat_site_distance_heatmap.png",
     )
 
     print("\n[VIZ] === Plot 5: Signal retained (fold-safe) ===")
     plot_signal_retained(
-        X_raw, labels,
+        X_raw,
+        labels,
         output_dir / "combat_signal_retained.png",
-        args.harmonization_mode, args.batch_col, args.cv_folds,
+        args.harmonization_mode,
+        args.batch_col,
+        args.cv_folds,
     )
 
     print(f"\n[VIZ] All plots saved to {output_dir}")

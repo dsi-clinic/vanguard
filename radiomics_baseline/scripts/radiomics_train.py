@@ -73,6 +73,7 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.calibration import calibration_curve
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectKBest, f_classif
@@ -84,7 +85,6 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.model_selection import (
     GridSearchCV,
     StratifiedKFold,
@@ -329,8 +329,10 @@ def _build_covariate_matrix(
                 mat[i, idx] = 1.0
             blocks.append(mat)
 
-    design = np.concatenate(blocks, axis=1) if blocks else np.zeros(
-        (len(labels_slice), 0), dtype=float
+    design = (
+        np.concatenate(blocks, axis=1)
+        if blocks
+        else np.zeros((len(labels_slice), 0), dtype=float)
     )
     return design, categories_out, medians_out
 
@@ -379,8 +381,12 @@ class FeatureHarmonizer:
                 unknown_batches += len(idx)
                 continue
             b_mean, b_std = self.batch_stats_[str(batch)]
-            arr[idx, :] = ((arr[idx, :] - b_mean) / b_std) * self.global_std_ + self.global_mean_
-        return pd.DataFrame(arr, index=X_apply.index, columns=X_apply.columns), unknown_batches
+            arr[idx, :] = (
+                (arr[idx, :] - b_mean) / b_std
+            ) * self.global_std_ + self.global_mean_
+        return pd.DataFrame(
+            arr, index=X_apply.index, columns=X_apply.columns
+        ), unknown_batches
 
     def _fit_combat(
         self,
@@ -416,7 +422,9 @@ class FeatureHarmonizer:
         var_pooled = np.where(var_pooled <= COMBAT_EPS, 1.0, var_pooled)
 
         if covar_design.shape[1] > 0:
-            stand_mean = grand_mean[:, None] + (covar_design @ b_hat[len(batch_levels):, :]).T
+            stand_mean = (
+                grand_mean[:, None] + (covar_design @ b_hat[len(batch_levels) :, :]).T
+            )
         else:
             stand_mean = np.repeat(grand_mean[:, None], n, axis=1)
 
@@ -431,7 +439,9 @@ class FeatureHarmonizer:
             sb = s_data[:, idx]
             gamma_hat[bi, :] = np.mean(sb, axis=1)
             delta_hat[bi, :] = np.var(sb, axis=1, ddof=1)
-            delta_hat[bi, :] = np.where(delta_hat[bi, :] <= COMBAT_EPS, 1.0, delta_hat[bi, :])
+            delta_hat[bi, :] = np.where(
+                delta_hat[bi, :] <= COMBAT_EPS, 1.0, delta_hat[bi, :]
+            )
 
         gamma_star = np.zeros_like(gamma_hat)
         delta_star = np.zeros_like(delta_hat)
@@ -474,7 +484,11 @@ class FeatureHarmonizer:
 
         self.var_pooled_ = var_pooled
         self.grand_mean_ = grand_mean
-        self.b_hat_nonbatch_ = b_hat[len(batch_levels):, :] if covar_design.shape[1] > 0 else np.zeros((0, p))
+        self.b_hat_nonbatch_ = (
+            b_hat[len(batch_levels) :, :]
+            if covar_design.shape[1] > 0
+            else np.zeros((0, p))
+        )
         self.gamma_star_ = gamma_star
         self.delta_star_ = delta_star
         self.n_features_ = p
@@ -497,8 +511,13 @@ class FeatureHarmonizer:
             fitted_medians=getattr(self, "covar_medians_", {}),
         )
 
-        if covar_design.shape[1] > 0 and self.b_hat_nonbatch_.shape[0] == covar_design.shape[1]:
-            stand_mean = self.grand_mean_[:, None] + (covar_design @ self.b_hat_nonbatch_).T
+        if (
+            covar_design.shape[1] > 0
+            and self.b_hat_nonbatch_.shape[0] == covar_design.shape[1]
+        ):
+            stand_mean = (
+                self.grand_mean_[:, None] + (covar_design @ self.b_hat_nonbatch_).T
+            )
         else:
             stand_mean = np.repeat(self.grand_mean_[:, None], n, axis=1)
 
@@ -518,7 +537,9 @@ class FeatureHarmonizer:
             ) / np.sqrt(self.delta_star_[bi, :])[:, None]
 
         out = adjusted * np.sqrt(self.var_pooled_)[:, None] + stand_mean
-        return pd.DataFrame(out.T, index=X_apply.index, columns=X_apply.columns), unknown_batches
+        return pd.DataFrame(
+            out.T, index=X_apply.index, columns=X_apply.columns
+        ), unknown_batches
 
     def fit(
         self,
@@ -535,7 +556,8 @@ class FeatureHarmonizer:
         batch_fit = labels_fit[self.batch_col].astype(str)
         if batch_fit.nunique() < 2:
             warnings.warn(
-                f"Harmonization mode '{self.mode}' requested with <2 batches in fit data. "
+                f"Harmonization mode '{self.mode}' requested"
+                " with <2 batches in fit data. "
                 "No harmonization will be applied.",
                 RuntimeWarning,
                 stacklevel=2,
@@ -559,7 +581,9 @@ class FeatureHarmonizer:
             return X_apply.copy(), 0
 
         if self.mode == "zscore_site":
-            return self._transform_zscore(X_apply, labels_apply[self.batch_col].astype(str))
+            return self._transform_zscore(
+                X_apply, labels_apply[self.batch_col].astype(str)
+            )
 
         return self._transform_combat(X_apply, labels_apply)
 
@@ -1077,9 +1101,10 @@ def main() -> None:
         msg = (
             "Feature rows contain patient IDs missing from labels.csv. "
             f"missing_train={len(missing_tr)}"
-            f"{' [' + preview_tr + (' ...' if len(missing_tr) > 5 else '') + ']' if len(missing_tr) else ''}, "
+            f"{' [' + preview_tr + (' ...' if len(missing_tr) > 5 else '') + ']' if len(missing_tr) else ''}"  # noqa: E501
+            ", "
             f"missing_test={len(missing_te)}"
-            f"{' [' + preview_te + (' ...' if len(missing_te) > 5 else '') + ']' if len(missing_te) else ''}"
+            f"{' [' + preview_te + (' ...' if len(missing_te) > 5 else '') + ']' if len(missing_te) else ''}"  # noqa: E501
         )
         raise ValueError(msg)
 
@@ -1113,11 +1138,16 @@ def main() -> None:
     if args.subtype_filter:
         if subtype_col is None:
             print(
-                "[WARN] --subtype-filter set but no subtype column found in labels; ignoring.",
+                "[WARN] --subtype-filter set but no subtype"
+                " column found in labels; ignoring.",
             )
         else:
-            tr_mask = (labels.loc[Xtr_raw.index, subtype_col] == args.subtype_filter).to_numpy()
-            te_mask = (labels.loc[Xte_raw.index, subtype_col] == args.subtype_filter).to_numpy()
+            tr_mask = (
+                labels.loc[Xtr_raw.index, subtype_col] == args.subtype_filter
+            ).to_numpy()
+            te_mask = (
+                labels.loc[Xte_raw.index, subtype_col] == args.subtype_filter
+            ).to_numpy()
             Xtr_raw = Xtr_raw.iloc[tr_mask]
             Xte_raw = Xte_raw.iloc[te_mask]
             ytr = labels.loc[Xtr_raw.index, "pcr"].astype(int).to_numpy()
@@ -1131,11 +1161,16 @@ def main() -> None:
     if args.site_filter:
         if site_col is None:
             print(
-                "[WARN] --site-filter set but no 'site' column found in labels; ignoring.",
+                "[WARN] --site-filter set but no 'site' column"
+                " found in labels; ignoring.",
             )
         else:
-            tr_mask = (labels.loc[Xtr_raw.index, site_col] == args.site_filter).to_numpy()
-            te_mask = (labels.loc[Xte_raw.index, site_col] == args.site_filter).to_numpy()
+            tr_mask = (
+                labels.loc[Xtr_raw.index, site_col] == args.site_filter
+            ).to_numpy()
+            te_mask = (
+                labels.loc[Xte_raw.index, site_col] == args.site_filter
+            ).to_numpy()
             Xtr_raw = Xtr_raw.iloc[tr_mask]
             Xte_raw = Xte_raw.iloc[te_mask]
             ytr = labels.loc[Xtr_raw.index, "pcr"].astype(int).to_numpy()
@@ -1201,13 +1236,13 @@ def main() -> None:
             )
         else:
             print(
-                "[DEBUG] --exclude-feature-regex provided but no matching features found.",
+                "[DEBUG] --exclude-feature-regex provided"
+                " but no matching features found.",
             )
 
     if len(Xtr_raw) == 0 or len(Xte_raw) == 0:
         msg = (
-            "Empty split after filtering: "
-            f"train={len(Xtr_raw)}, test={len(Xte_raw)}"
+            "Empty split after filtering: " f"train={len(Xtr_raw)}, test={len(Xte_raw)}"
         )
         raise ValueError(msg)
 
@@ -1427,9 +1462,7 @@ def main() -> None:
                 if len(np.unique(y_sub)) < MIN_CLASS_COUNT:
                     auc_cv_by_subtype[str(sub_val)] = float("nan")
                 else:
-                    auc_cv_by_subtype[str(sub_val)] = float(
-                        roc_auc_score(y_sub, p_sub)
-                    )
+                    auc_cv_by_subtype[str(sub_val)] = float(roc_auc_score(y_sub, p_sub))
 
     auc_test_by_subtype: dict[str, float] | None = None
     auc_test_by_site: dict[str, float] | None = None

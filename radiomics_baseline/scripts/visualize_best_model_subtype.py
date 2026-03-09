@@ -14,7 +14,6 @@ Usage
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -91,16 +90,25 @@ def main():
     fig, ax = plt.subplots(figsize=(8, 5.5))
 
     bars = ax.bar(
-        x, means, 0.55,
-        yerr=stds, capsize=6,
-        color=colors, edgecolor="white", linewidth=0.5,
+        x,
+        means,
+        0.55,
+        yerr=stds,
+        capsize=6,
+        color=colors,
+        edgecolor="white",
+        linewidth=0.5,
         error_kw={"linewidth": 1.5, "color": "0.3"},
     )
 
     for bar, m, s in zip(bars, means, stds):
         ax.text(
-            bar.get_x() + bar.get_width() / 2, bar.get_height() + s + 0.008,
-            f"{m:.3f} \u00b1 {s:.3f}", ha="center", va="bottom", fontsize=9,
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + s + 0.008,
+            f"{m:.3f} \u00b1 {s:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
         )
 
     ax.axhline(0.5, color="grey", linestyle="--", linewidth=0.8, alpha=0.6)

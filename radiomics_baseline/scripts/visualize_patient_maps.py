@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,40 +29,41 @@ import SimpleITK as sitk
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from generate_kinetic_maps import (  # noqa: E402
-    generate_maps_for_pid,
     KINETIC_MAP_NAMES,
     SUBTRACTION_MAP_NAMES,
+    generate_maps_for_pid,
 )
 
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
 
-_REPO_DIR   = Path(__file__).resolve().parent.parent
-IMAGES_DIR  = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/images")
-MASKS_DIR   = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert")
+_REPO_DIR = Path(__file__).resolve().parent.parent
+IMAGES_DIR = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/images")
+MASKS_DIR = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert")
 KINETIC_DIR = _REPO_DIR / "kinetic_maps"
 FIGURES_DIR = _REPO_DIR / "figures"
 ZOOM_FACTOR = 2.5
-DPI         = 160
+DPI = 160
 
 _PHASE_RE = re.compile(r"_(\d{4})\.nii(?:\.gz)?$")
 
 # Colormap config: (cmap_name, center_at_zero)
 _CMAP: dict[str, tuple[str, bool]] = {
-    "E_early":      ("inferno",  False),
-    "E_peak":       ("inferno",  False),
-    "slope_in":     ("inferno",  False),
-    "slope_out":    ("coolwarm", True),
-    "AUC":          ("inferno",  False),
-    "t_peak_voxel": ("viridis",  False),
-    "wash_in":      ("plasma",   False),
-    "wash_out":     ("coolwarm", True),
+    "E_early": ("inferno", False),
+    "E_peak": ("inferno", False),
+    "slope_in": ("inferno", False),
+    "slope_out": ("coolwarm", True),
+    "AUC": ("inferno", False),
+    "t_peak_voxel": ("viridis", False),
+    "wash_in": ("plasma", False),
+    "wash_out": ("coolwarm", True),
 }
 
 # ---------------------------------------------------------------------------
 # Spatial helpers
 # ---------------------------------------------------------------------------
+
 
 def read_nifti(path: Path) -> np.ndarray:
     return sitk.GetArrayFromImage(sitk.ReadImage(str(path))).astype(np.float32)
@@ -96,9 +98,11 @@ def expand_bbox(
         int(min(W - 1, np.ceil(cx + 0.5 * w))),
     )
 
+
 # ---------------------------------------------------------------------------
 # Plotting helper
 # ---------------------------------------------------------------------------
+
 
 def add_map_panel(
     fig: plt.Figure,
@@ -114,7 +118,9 @@ def add_map_panel(
     if tumor_vals.size == 0 or not np.any(np.isfinite(tumor_vals)):
         vmin, vmax = None, None
     elif center_at_zero:
-        vabs = max(abs(float(np.nanmin(tumor_vals))), abs(float(np.nanmax(tumor_vals))), 1e-6)
+        vabs = max(
+            abs(float(np.nanmin(tumor_vals))), abs(float(np.nanmax(tumor_vals))), 1e-6
+        )
         vmin, vmax = -vabs, vabs
     else:
         vmin = float(np.nanmin(tumor_vals))
@@ -126,23 +132,28 @@ def add_map_panel(
     ax.axis("off")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--pid",        default="DUKE_001")
-    ap.add_argument("--overwrite",  action="store_true",
-                    help="Force regeneration of maps even if they already exist.")
+    ap.add_argument("--pid", default="DUKE_001")
+    ap.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Force regeneration of maps even if they already exist.",
+    )
     ap.add_argument("--zoom-factor", type=float, default=ZOOM_FACTOR)
-    ap.add_argument("--outdir",     type=Path, default=FIGURES_DIR)
+    ap.add_argument("--outdir", type=Path, default=FIGURES_DIR)
     args = ap.parse_args()
 
-    pid      = args.pid
-    outdir   = args.outdir
-    zoom     = args.zoom_factor
-    pid_dir  = KINETIC_DIR / pid
+    pid = args.pid
+    outdir = args.outdir
+    zoom = args.zoom_factor
+    pid_dir = KINETIC_DIR / pid
     outdir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
@@ -162,14 +173,16 @@ def main() -> None:
     if result["status"] == "error":
         print(f"[ERROR] Map generation failed: {result['error']}", file=sys.stderr)
         sys.exit(1)
-    print(f"[INFO] Status={result['status']}, maps_generated={result['maps_generated']}")
+    print(
+        f"[INFO] Status={result['status']}, maps_generated={result['maps_generated']}"
+    )
 
     # ------------------------------------------------------------------
     # 2. Shared crop geometry
     # ------------------------------------------------------------------
-    mask3d   = read_mask(MASKS_DIR / f"{pid}.nii.gz")
-    z        = peak_z(mask3d)
-    mask2d   = mask3d[z]
+    mask3d = read_mask(MASKS_DIR / f"{pid}.nii.gz")
+    z = peak_z(mask3d)
+    mask2d = mask3d[z]
     ymin, ymax, xmin, xmax = bbox2d(mask2d)
 
     first_phase_vol = read_nifti(IMAGES_DIR / pid / f"{pid}_0000.nii.gz")
@@ -185,8 +198,11 @@ def main() -> None:
     # 3. Figure 1 — DCE phases with segmentation
     # ------------------------------------------------------------------
     phase_paths = sorted(
-        [p for p in (IMAGES_DIR / pid).glob(f"{pid}_????.nii.gz")
-         if _PHASE_RE.search(p.name)],
+        [
+            p
+            for p in (IMAGES_DIR / pid).glob(f"{pid}_????.nii.gz")
+            if _PHASE_RE.search(p.name)
+        ],
         key=lambda p: int(_PHASE_RE.search(p.name).group(1)),  # type: ignore[union-attr]
     )
     phase_crops = [

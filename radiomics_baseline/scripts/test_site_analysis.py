@@ -9,26 +9,23 @@ Run with::
 from __future__ import annotations
 
 import argparse
-import json
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
-
 from site_analysis import (
+    _safe_auc,
+    _safe_sens_spec,
     assign_sites,
     extract_site,
     loso_analysis,
     per_site_analysis,
-    _safe_auc,
-    _safe_sens_spec,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_synthetic_data(
     sites: dict[str, int],
@@ -98,6 +95,7 @@ def _default_args(**overrides) -> argparse.Namespace:
 # Tests: extract_site
 # ---------------------------------------------------------------------------
 
+
 class TestExtractSite:
     def test_duke(self):
         assert extract_site("DUKE_001") == "DUKE"
@@ -122,6 +120,7 @@ class TestExtractSite:
 # Tests: assign_sites
 # ---------------------------------------------------------------------------
 
+
 class TestAssignSites:
     def test_mixed_index(self):
         idx = pd.Index(["DUKE_001", "ISPY1_002", "DUKE_003", "NACT_001"])
@@ -137,6 +136,7 @@ class TestAssignSites:
 # ---------------------------------------------------------------------------
 # Tests: safe metrics
 # ---------------------------------------------------------------------------
+
 
 class TestSafeMetrics:
     def test_safe_auc_normal(self):
@@ -168,6 +168,7 @@ class TestSafeMetrics:
 # ---------------------------------------------------------------------------
 # Tests: per_site_analysis
 # ---------------------------------------------------------------------------
+
 
 class TestPerSiteAnalysis:
     def test_returns_all_sites(self):
@@ -206,9 +207,7 @@ class TestPerSiteAnalysis:
         result = per_site_analysis(Xtr, ytr, Xte, yte, sites_test, args)
 
         # Per-site counts should sum to overall
-        site_n = sum(
-            m["n"] for k, m in result["per_site"].items() if k != "_overall"
-        )
+        site_n = sum(m["n"] for k, m in result["per_site"].items() if k != "_overall")
         assert site_n == result["per_site"]["_overall"]["n"]
 
     def test_y_prob_length(self):
@@ -227,6 +226,7 @@ class TestPerSiteAnalysis:
 # ---------------------------------------------------------------------------
 # Tests: loso_analysis
 # ---------------------------------------------------------------------------
+
 
 class TestLosoAnalysis:
     def test_covers_all_patients(self):
@@ -285,6 +285,7 @@ class TestLosoAnalysis:
 # ---------------------------------------------------------------------------
 # Tests: with feature selection
 # ---------------------------------------------------------------------------
+
 
 class TestWithFeatureSelection:
     def test_corr_prune_and_kbest(self):

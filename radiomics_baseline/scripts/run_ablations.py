@@ -49,9 +49,9 @@ _EXTRACT_FINGERPRINT_KEYS = (
     "extract.image_patterns",
     "extract.mask_pattern",
     "extract.peri_radius_mm",
-    "extract.peri_mode",              # NEW — 2d vs 3d peritumor ring
-    "extract.force_2d",               # NEW — per-slice vs volumetric textures
-    "extract.force_2d_dimension",     # NEW — which axis for force2D
+    "extract.peri_mode",  # NEW — 2d vs 3d peritumor ring
+    "extract.force_2d",  # NEW — per-slice vs volumetric textures
+    "extract.force_2d_dimension",  # NEW — which axis for force2D
     # Non-scalar handling changes the extracted feature matrix and must
     # therefore produce a distinct shared extraction directory.
     "extract.non_scalar_handling",

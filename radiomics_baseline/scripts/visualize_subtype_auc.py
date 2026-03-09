@@ -20,7 +20,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-
 # Model display names (short) and their output directory basenames.
 MODELS = [
     ("mRMR-20\n(kinetic, corr0.90)", "rerun_bin100_kinsubonly_mrmr20"),

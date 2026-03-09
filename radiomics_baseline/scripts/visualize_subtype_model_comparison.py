@@ -24,7 +24,8 @@ from sklearn.metrics import roc_auc_score
 OVERALL_DIR = "rerun_bin100_kinsubonly_mrmr20"
 
 # (label, dirname, color)
-# Groups: Overall | ISPY2-only subtypes | All-sites subtypes (no harm) | All-sites + ComBat
+# Groups: Overall | ISPY2-only subtypes
+# All-sites subtypes (no harm) | All-sites + ComBat
 # Subtype-specific models, each trained on all available data for that subtype.
 # Luminal A/B only exist in ISPY2, so their ISPY2 models already use all data.
 MODELS = [
@@ -80,11 +81,13 @@ def load_model(output_dir: Path, dirname: str) -> tuple[float, float, int]:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--output-dir", default="outputs",
+        "--output-dir",
+        default="outputs",
         help="Parent directory containing model outputs",
     )
     parser.add_argument(
-        "--fig-path", default="figures/subtype_model_cv_auc_comparison.png",
+        "--fig-path",
+        default="figures/subtype_model_cv_auc_comparison.png",
         help="Output figure path",
     )
     args = parser.parse_args()
@@ -98,7 +101,6 @@ def main():
     means = []
     stds = []
     ns = []
-    colors = []
 
     for label, dirname in MODELS:
         m, s, n = load_model(output_dir, dirname)
@@ -115,9 +117,14 @@ def main():
     fig, ax = plt.subplots(figsize=(max(10, len(labels) * 1.3), 5.5))
 
     bars = ax.bar(
-        x, means, 0.6,
-        yerr=stds, capsize=5,
-        color=BAR_COLOR, edgecolor="white", linewidth=0.5,
+        x,
+        means,
+        0.6,
+        yerr=stds,
+        capsize=5,
+        color=BAR_COLOR,
+        edgecolor="white",
+        linewidth=0.5,
         error_kw={"linewidth": 1.5, "color": "0.3"},
     )
 
@@ -125,8 +132,12 @@ def main():
         y_top = bar.get_height() + s + 0.008
         label_text = f"{m:.3f} \u00b1 {s:.3f}"
         ax.text(
-            bar.get_x() + bar.get_width() / 2, y_top,
-            label_text, ha="center", va="bottom", fontsize=8,
+            bar.get_x() + bar.get_width() / 2,
+            y_top,
+            label_text,
+            ha="center",
+            va="bottom",
+            fontsize=8,
         )
 
     ax.axhline(0.5, color="grey", linestyle="--", linewidth=0.8, alpha=0.6)
@@ -138,7 +149,8 @@ def main():
     ax.set_ylim(0.3, 0.9)
     ax.set_title(
         "pCR Prediction: Subtype-Specific Models",
-        fontsize=13, pad=10,
+        fontsize=13,
+        pad=10,
     )
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
