@@ -1,5 +1,7 @@
 """Module for training an ElasticNet Logistic Regression model to predict pCR from PVD features."""
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -9,7 +11,6 @@ from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_va
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from pathlib import Path
 DATA_PATH = Path(__file__).parent / "combined_vanguard_features.csv"
 vanguard_df = pd.read_csv(DATA_PATH)
 vanguard_df = vanguard_df.dropna(subset=["pcr"])
