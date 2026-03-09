@@ -3,64 +3,76 @@
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import nrrd
+import nrrd  # type: ignore
 import numpy as np
-from skimage.morphology import skeletonize
-from skimage.transform import resize
+from skimage.morphology import skeletonize  # type: ignore
+from skimage.transform import resize  # type: ignore
 
-NDIM_THRESHOLD = 4
-PROB_THRESHOLD = 0.2
-P_ID = "041"
+# Constants for configuration
+NDIM_THRESHOLD: int = 4
+PROB_THRESHOLD: float = 0.2
+P_ID: str = "041"
 
-GT_PATH = Path(
-    f"/net/projects2/vanguard/gt_masks/Segmentation_Masks_NRRD/Breast_MRI_{P_ID}/"
-    f"Segmentation_Breast_MRI_{P_ID}_Dense_and_Vessels.seg.nrrd"
+# Using Path objects for platform-agnostic file handling
+BASE_DIR: Path = Path("/net/projects2/vanguard")
+GT_PATH: Path = (
+    BASE_DIR
+    / f"gt_masks/Segmentation_Masks_NRRD/Breast_MRI_{P_ID}/Segmentation_Breast_MRI_{P_ID}_Dense_and_Vessels.seg.nrrd"
 )
-DL_PATH = Path(
-    f"/net/projects2/vanguard/vessel_segmentations/DUKE/DUKE_{P_ID}/"
-    f"images/DUKE_{P_ID}_0000_vessel_segmentation.npz"
+DL_PATH: Path = (
+    BASE_DIR
+    / f"vessel_segmentations/DUKE/DUKE_{P_ID}/images/DUKE_{P_ID}_0000_vessel_segmentation.npz"
 )
 
 
 def compare_vessels(gt_p: str | Path, dl_p: str | Path) -> None:
     """Compare ground truth and deep learning vessel segmentations.
 
-    Args:
-        gt_p: Path to ground truth segmentation.
-        dl_p: Path to deep learning segmentation.
-    """
-    gt_data, _ = nrrd.read(str(gt_p))
-    print(f"Original GT Shape: {gt_data.shape}")
+    This function reads a 3D NRRD ground truth mask and an NPZ AI segmentation,
+    normalizes their orientations, computes the skeleton of the GT, and saves
+    a comparative visualization.
 
-    gt_3d = gt_data[0, :, :, :] if gt_data.ndim == NDIM_THRESHOLD else gt_data
-    v_gt = (gt_3d == 1).astype(np.float32)
+    Args:
+        gt_p: Path to the ground truth NRRD file.
+        dl_p: Path to the deep learning NPZ file.
+    """
+    try:
+        gt_data, _ = nrrd.read(str(gt_p))
+    except FileNotFoundError:
+        print(f"Error: Could not find ground truth file at {gt_p}")
+        return
+
+    # Handle 4D volumes (e.g., time or channel dim)
+    gt_3d: np.ndarray = (
+        gt_data[0, :, :, :] if gt_data.ndim == NDIM_THRESHOLD else gt_data
+    )
+    v_gt: np.ndarray = (gt_3d == 1).astype(np.float32)
 
     with np.load(str(dl_p)) as data:
-        v_dl_prob = data["vessel"]
+        v_dl_prob: np.ndarray = data["vessel"]
 
-    v_dl = v_dl_prob.transpose(1, 0, 2)
+    # Normalize orientation
+    v_dl: np.ndarray = v_dl_prob.transpose(1, 0, 2)
     v_dl = (v_dl > PROB_THRESHOLD).astype(np.float32)
     v_dl = resize(v_dl, v_gt.shape, order=0, preserve_range=True, anti_aliasing=False)
     v_dl = np.flipud(v_dl)
 
-    v_gt_centerline = skeletonize(v_gt.astype(np.uint8))
+    v_gt_centerline: np.ndarray = skeletonize(v_gt.astype(np.uint8))
 
-    plt.figure(figsize=(15, 5))
+    # Visualization
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-    plt.subplot(1, 3, 1)
-    plt.imshow(np.max(v_gt, axis=2), cmap="Blues")
-    plt.title(f"Radiologist GT (Patient {P_ID})")
+    axes[0].imshow(np.max(v_gt, axis=2), cmap="Blues")
+    axes[0].set_title(f"Radiologist GT (Patient {P_ID})")
 
-    plt.subplot(1, 3, 2)
-    plt.imshow(np.max(v_dl, axis=2), cmap="Reds")
-    plt.title("AI Fixed Orientation")
+    axes[1].imshow(np.max(v_dl, axis=2), cmap="Reds")
+    axes[1].set_title("AI Fixed Orientation")
 
-    plt.subplot(1, 3, 3)
-    plt.imshow(np.max(v_dl, axis=2), cmap="gray", alpha=0.3)
-    plt.imshow(np.max(v_gt_centerline, axis=2), cmap="hot")
-    plt.title("Overlay: AI vs GT Centerline")
+    axes[2].imshow(np.max(v_dl, axis=2), cmap="gray", alpha=0.3)
+    axes[2].imshow(np.max(v_gt_centerline, axis=2), cmap="hot")
+    axes[2].set_title("Overlay: AI vs GT Centerline")
 
-    output_fn = f"vessel_output_{P_ID}.png"
+    output_fn: str = f"vessel_output_{P_ID}.png"
     plt.savefig(output_fn)
     print(f"Output saved to {output_fn}")
 
@@ -69,4 +81,4 @@ if __name__ == "__main__":
     if GT_PATH.exists() and DL_PATH.exists():
         compare_vessels(GT_PATH, DL_PATH)
     else:
-        print("Error: Files not found.")
+        print(f"Error: Files not found at {GT_PATH} or {DL_PATH}")
