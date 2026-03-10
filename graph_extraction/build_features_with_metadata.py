@@ -31,10 +31,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.utils.clinic_metadata import load_clinic_metadata_excel  # noqa: E402
 
-# ML-Pipeline has hyphen; load via importlib
+# ml_pipeline has hyphen; load via importlib
 _spec = importlib.util.spec_from_file_location(
     "pcr_prediction",
-    REPO_ROOT / "ML-Pipeline" / "pcr_prediction.py",
+    REPO_ROOT / "ml_pipeline" / "pcr_prediction.py",
 )
 _pcr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_pcr)

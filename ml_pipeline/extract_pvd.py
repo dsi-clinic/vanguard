@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 import SimpleITK as sitk
-from pvd_feature import get_pvd_feature
+from ml_pipeline.pvd_feature import get_pvd_feature
 from tqdm import tqdm
 
 

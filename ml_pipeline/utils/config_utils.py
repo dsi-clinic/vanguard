@@ -7,7 +7,7 @@ import yaml
 
 
 def load_pipeline_config(
-    config_path: str = "ML-Pipeline/config_pcr.yaml",
+    config_path: str = "ml_pipeline/config_pcr.yaml",
 ) -> dict[str, Any]:
     """Load configuration YAML file."""
     path = Path(config_path)

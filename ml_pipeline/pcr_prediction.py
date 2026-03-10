@@ -11,7 +11,7 @@ from joblib import dump
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
-from .utils.config_utils import load_pipeline_config
+from ml_pipeline.utils.config_utils import load_pipeline_config
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     ap = argparse.ArgumentParser("PCR Prediction Pipeline")
-    ap.add_argument("--config", type=Path, default="ML-Pipeline/config_pcr.yaml")
+    ap.add_argument("--config", type=Path, default="ml_pipeline/config_pcr.yaml")
     return ap.parse_args()
 
 
