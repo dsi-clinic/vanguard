@@ -8,9 +8,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from joblib import dump
-from .utils.config_utils import load_pipeline_config
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
+
+from .utils.config_utils import load_pipeline_config
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
