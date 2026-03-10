@@ -27,7 +27,8 @@ from pathlib import Path
 import pandas as pd
 
 # Column name aliases for laterality (unilateral/bilateral)
-LATERALITY_COLUMN_ALIASES = ("bilateral", "laterality")
+# bilateral_mri: 0 = unilateral, 1 = bilateral (Excel format)
+LATERALITY_COLUMN_ALIASES = ("bilateral", "laterality", "bilateral_mri")
 
 
 def _resolve_laterality_column(df: pd.DataFrame) -> str | None:
@@ -183,18 +184,37 @@ def apply_selection_criteria(
         if lat_col is None:
             if verbose:
                 print(
-                    "  Selection: no laterality column found (bilateral/laterality), skipping"
+                    "  Selection: no laterality column found (bilateral/laterality/bilateral_mri), skipping"
                 )
         else:
             before = mask.sum()
-            if criteria_obj.unilateral_only:
-                mask = mask & (
-                    metadata_df[lat_col].astype(str).str.lower() == "unilateral"
-                )
+            if lat_col == "bilateral_mri":
+                # bilateral_mri: 0 = unilateral, 1 = bilateral
+                def _is_unilateral(v: object) -> bool:
+                    try:
+                        return int(float(v)) == 0
+                    except (TypeError, ValueError):
+                        return False
+
+                def _is_bilateral(v: object) -> bool:
+                    try:
+                        return int(float(v)) == 1
+                    except (TypeError, ValueError):
+                        return False
+
+                if criteria_obj.unilateral_only:
+                    mask = mask & metadata_df[lat_col].apply(_is_unilateral)
+                else:
+                    mask = mask & metadata_df[lat_col].apply(_is_bilateral)
             else:
-                mask = mask & (
-                    metadata_df[lat_col].astype(str).str.lower() == "bilateral"
-                )
+                if criteria_obj.unilateral_only:
+                    mask = mask & (
+                        metadata_df[lat_col].astype(str).str.lower() == "unilateral"
+                    )
+                else:
+                    mask = mask & (
+                        metadata_df[lat_col].astype(str).str.lower() == "bilateral"
+                    )
             excluded = before - mask.sum()
             if verbose and excluded > 0:
                 label = "unilateral" if criteria_obj.unilateral_only else "bilateral"

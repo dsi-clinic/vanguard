@@ -40,6 +40,7 @@ dependencies:
   - scipy=1.14.1
   - pyvista=0.45.0
   - openpyxl=3.1.5
+  - umap-learn=0.5.11
   - pip:
       - git+https://github.com/AIM-Harvard/pyradiomics.git@v3.1.0
       - unet
