@@ -9,15 +9,16 @@ experiment_setup:
   base_outdir: "./ML-Pipeline/experiments" 
 
 model_params:
-  model: "rf" #rf or lr
+  model: "rf" 
   test_size: 0.2
-  n_splits: 5 #per Daniel Luna's evaluator
+  n_splits: 5 
   val_size: 0.2
   bootstrap_n: 1000
   random_state: 42
 
 data_paths:
-  feature_dir: "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files"
-  labels_csv: "/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv"
-  label_column: "pcr"
-  id_column: "patient_id"
+  feature_dir: "data/features/"
+  labels_csv: "data/labels.csv"
+  clinical_file: "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
+id_column: "case_id"
+label_column: "pcr_status"

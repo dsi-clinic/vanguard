@@ -81,34 +81,20 @@ def build_features_from_feature_jsons(feature_dir: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def train_baseline(
-    features_csv: Path,
-    labels_source: Path,
-    id_col: str,
-    label_col: str,
-    outdir: Path,
-    model_type: str,
-) -> None:
-    """Train the model and evaluate performance."""
-    features_df = pd.read_csv(features_csv)
-    labels_df = pd.read_csv(labels_source)
+def train_and_save(X: np.ndarray, y: np.ndarray, model_cfg: dict, outdir: Path) -> None:
+    """Helper to handle model training and serialization."""
+    model_map = {"rf": RandomForestClassifier(), "lr": LogisticRegression()}
 
-    if id_col != "case_id":
-        labels_df = labels_df.rename(columns={id_col: "case_id"})
+    clf = model_map.get(model_cfg["model"], RandomForestClassifier())
+    clf.fit(X, y)
 
-    merged_df = features_df.merge(labels_df, on="case_id", how="inner")
-    y = merged_df[label_col].astype(int).to_numpy()
-    Xmat = merged_df.drop(columns=["case_id", label_col], errors="ignore").to_numpy()
-
-    clf = RandomForestClassifier() if model_type == "rf" else LogisticRegression()
-    clf.fit(Xmat, y)
-
-    dump(clf, outdir / f"model_{model_type}.pkl")
-    logger.info("Model saved to %s", outdir / f"model_{model_type}.pkl")
+    save_path = outdir / f"model_{model_cfg['model']}.pkl"
+    dump(clf, save_path)
+    logger.info("Model saved to %s", save_path)
 
 
 def run_pipeline() -> None:
-    """Orchestrate the pipeline via YAML config with conditional feature toggles."""
+    """Orchestrate the pipeline via YAML config with robust index-based merging."""
     args = parse_args()
     config = load_pipeline_config(str(args.config))
 
@@ -120,36 +106,43 @@ def run_pipeline() -> None:
     outdir = Path(setup["base_outdir"]) / setup["name"]
     outdir.mkdir(parents=True, exist_ok=True)
 
+    labels_df = pd.read_csv(paths["labels_csv"]).set_index(paths["id_column"])
+    y_target = labels_df[[paths["label_column"]]]
+
     feature_sets = []
 
     if toggles.get("use_vascular", False):
-        logger.info("Loading Vascular features...")
-        feature_sets.append(
-            build_features_from_feature_jsons(Path(paths["feature_dir"]))
-        )
+        logger.info("Loading Vascular features:")
+        vasc_df = build_features_from_feature_jsons(Path(paths["feature_dir"]))
+        feature_sets.append(vasc_df.set_index("case_id"))
 
     if toggles.get("use_clinical", False):
-        logger.info("Loading Clinical features...")
-        feature_sets.append(pd.read_csv(paths["labels_csv"]))
+        logger.info("Loading Clinical features:")
+        clin_df = pd.read_excel(paths["clinical_excel"]).set_index(paths["id_column"])
+        clin_df = clin_df.drop(columns=[paths["label_column"]], errors="ignore")
+        feature_sets.append(clin_df)
 
     if toggles.get("use_radiomics", False):
-        logger.info("Loading Radiomics features...")
+        logger.warning("Radiomics integration is currently a stub.")
 
     if not feature_sets:
         raise ValueError("No feature sets selected in config_pcr.yaml")
 
-    features_df = pd.concat(feature_sets, axis=1)
-    features_path = outdir / "features.csv"
-    features_df.to_csv(features_path, index=False)
+    X_features = pd.concat(feature_sets, axis=1, join="inner")
 
-    train_baseline(
-        features_csv=features_path,
-        labels_source=Path(paths["labels_csv"]),
-        id_col=paths["id_column"],
-        label_col=paths["label_column"],
-        outdir=outdir,
-        model_type=model_cfg["model"],
+    final_df = X_features.join(y_target, how="inner")
+    final_df.to_csv(outdir / "features_complete.csv")
+
+    y = final_df[paths["label_column"]].astype(int).to_numpy()
+    Xmat = X_features.to_numpy()
+
+    clf = (
+        RandomForestClassifier() if model_cfg["model"] == "rf" else LogisticRegression()
     )
+    clf.fit(Xmat, y)
+
+    dump(clf, outdir / f"model_{model_cfg['model']}.pkl")
+    logger.info("Model saved to %s", outdir)
 
 
 if __name__ == "__main__":
