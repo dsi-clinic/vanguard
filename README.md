@@ -293,26 +293,7 @@ python ML-Pipeline/pcr_prediction.py \
 **Key Scripts**:
 - `batch_segmentation.py`: Batch vessel segmentation from `.nii.gz` files
 
-4d-vs-tc4d benchmark scripts now live under `graph_extraction/`:
-- `graph_extraction/benchmark_4d_vs_tc4d.py`
-- `graph_extraction/reduce_4d_vs_tc4d.py`
-
-**Usage**:
-```bash
-# Build benchmark manifest only
-python graph_extraction/benchmark_4d_vs_tc4d.py \
-  --segmentation-dir /net/projects2/vanguard/vessel_segmentations \
-  --output-dir /net/projects2/vanguard/benchmarks/4d_vs_tc4d/run_001 \
-  --manifest-only
-
-# Reduce benchmark records
-python graph_extraction/reduce_4d_vs_tc4d.py \
-  --benchmark-dir /net/projects2/vanguard/benchmarks/4d_vs_tc4d/run_001
-```
-
-**See**:
-- [`graph_extraction/README.md`](graph_extraction/README.md) for compare/graph pipeline commands
-- [`slurm_submit_scripts/README.md`](slurm_submit_scripts/README.md) for benchmark submission workflows
+**See**: [`graph_extraction/README.md`](graph_extraction/README.md) for current centerline extraction and morphometry commands.
 
 ---
 
@@ -323,16 +304,6 @@ python graph_extraction/reduce_4d_vs_tc4d.py \
 **Key Scripts**:
 - `submit_vessel_segmentation.slurm`: Main vessel segmentation job (1 GPU, 16 CPUs, 128GB RAM)
 - `submit_vessel_segmentation_array.slurm`: Array job for parallel processing (one file per task)
-- `submit_4d_vs_tc4d_benchmark.sh`: Head-node helper for benchmark suite submission
-- `submit_4d_vs_tc4d_benchmark_array.slurm`: Array worker for per-study benchmark runs
-- `submit_4d_vs_tc4d_benchmark_reduce.slurm`: Reducer job for benchmark summary outputs
-
-**Usage**:
-```bash
-# Submit full 4d-vs-tc4d benchmark suite from head node
-OUT_DIR="/net/projects2/vanguard/benchmarks/4d_vs_tc4d/run_$(date +%Y%m%d_%H%M%S)"
-slurm_submit_scripts/submit_4d_vs_tc4d_benchmark.sh "${OUT_DIR}"
-```
 
 **See**: [`slurm_submit_scripts/README.md`](slurm_submit_scripts/README.md) for all available scripts and monitoring commands
 
@@ -484,12 +455,6 @@ For HPC clusters, use SLURM submit scripts:
    sbatch slurm_submit_scripts/submit_vessel_segmentation.slurm
    ```
 
-2. **4d-vs-tc4d Benchmark Suite**:
-   ```bash
-   OUT_DIR="/net/projects2/vanguard/benchmarks/4d_vs_tc4d/run_$(date +%Y%m%d_%H%M%S)"
-   slurm_submit_scripts/submit_4d_vs_tc4d_benchmark.sh "${OUT_DIR}"
-   ```
-
 See [`slurm_submit_scripts/README.md`](slurm_submit_scripts/README.md) for detailed SLURM usage.
 
 ---
@@ -517,7 +482,6 @@ pre-commit run --all-files
 
 - All scripts support `--resume` flags to safely restart interrupted jobs
 - Use SLURM array jobs (`submit_vessel_segmentation_array.slurm`) for maximum parallelization
-- For 4d-vs-tc4d study sweeps, use `submit_4d_vs_tc4d_benchmark.sh` (head-node orchestrated array + reducer)
 - Check individual README files in each folder for detailed usage and options
 - Compare baseline models (non-imaging, radiomics) against graph-based methods to assess improvement
 - Use `clinical_and_imaging_exploration/` to understand data distributions before modeling

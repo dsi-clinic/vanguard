@@ -74,6 +74,7 @@ def _run_one_study(
             },
         )
     except Exception as e:
+        # Intentional: return failure result so batch can continue and report failed studies.
         return (study_id, "failed", str(e))
 
 

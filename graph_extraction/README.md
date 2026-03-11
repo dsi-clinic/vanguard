@@ -9,7 +9,6 @@ TC4D skeleton extraction and skeleton-to-graph / morphometry pipeline.
 - `vessel_mip.py`: orthogonal MIP rendering + radiologist hit/miss summary.
 - `skeleton3d.py`, `skeleton_to_graph.py`: core skeleton and graph/morphometry modules.
 - `batch_process_4d.py`: batch tc4d processing for study-wide morphometry generation.
-- `debug_compare_4d_vs_tc4d.py`: debug-only 4d-vs-tc4d comparison entrypoint.
 
 ## Production Pipeline
 
@@ -46,20 +45,3 @@ Useful flags:
 - `--study-range START END` and `--chunk-id`: array-task style partitioning.
 - `--studies-per-task N`: process multiple studies in parallel within one task.
 - `--merge-manifests`: merge `manifest_task_*.json` into one `manifest.json`.
-
-## Debug Comparison
-
-Use this only for regression/debug work comparing the older 4d baseline against tc4d:
-
-```bash
-python graph_extraction/debug_compare_4d_vs_tc4d.py \
-  --input-dir /net/projects2/vanguard/vessel_segmentations \
-  --study-id ISPY2_202539 \
-  --output-dir debug_4d_vs_tc4d
-```
-
-Useful flags for repeated debug loops:
-
-- `--cache-dir ./.cache/compare_4d`
-- `--use-io-cache`
-- `--save-intermediate-masks`

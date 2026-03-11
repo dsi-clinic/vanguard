@@ -98,6 +98,7 @@ def _plot_skeleton_static(
         plt.close()
         return True
     except Exception as e:
+        # Intentional: optional viz; report and return False so batch continues.
         print(f"    [viz] {e}")
         return False
 
@@ -265,6 +266,7 @@ def main() -> None:
         try:
             mask = np.load(skel_path).astype(bool)
         except Exception as e:
+            # Intentional: record load error in status and continue with other cases.
             viz_status.append(
                 {"case_id": cid, "fp_or_fn": tag, "status": f"load_error:{e}"}
             )

@@ -65,6 +65,7 @@ def _select_zyx_layout(
         " (and common transposes)"
     )
 
+
 def _apply_flip_spec(mask_zyx: np.ndarray, flip_spec: str) -> np.ndarray:
     """Apply axis flips in `z/y/x` notation to a 3D mask."""
     spec = str(flip_spec).strip().lower()
@@ -88,6 +89,7 @@ def _apply_flip_spec(mask_zyx: np.ndarray, flip_spec: str) -> np.ndarray:
     if not axes:
         return mask_zyx
     return np.flip(mask_zyx, axis=tuple(axes))
+
 
 def _to_breast_mri_case_id_strict(study_id: str) -> str | None:
     """Map `DUKE_###` or `Breast_MRI_###` into `Breast_MRI_###`."""

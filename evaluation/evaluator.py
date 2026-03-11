@@ -495,7 +495,7 @@ class Evaluator:
         y_true = results.predictions["y_true"].to_numpy()
         y_prob = results.predictions["y_prob"].to_numpy()
 
-        # Generate all registered visualizations
+        # Generate all registered visualizations (optional: failure does not abort run)
         for viz_name, viz_func in VISUALIZATION_REGISTRY.items():
             output_path = plots_dir / f"{viz_name}.png"
             try:

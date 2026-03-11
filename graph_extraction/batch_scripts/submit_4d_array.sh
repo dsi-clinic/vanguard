@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Discover study count, submit SLURM arrays in chunks of ~200, wait for each chunk
 # to finish before submitting the next (keeps under 250 job queue limit).
 #

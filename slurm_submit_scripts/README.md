@@ -4,9 +4,10 @@ Tracked Slurm helpers in this branch are:
 
 - `submit_vessel_segmentation.slurm`
 - `submit_vessel_segmentation_array.slurm`
-- `submit_4d_vs_tc4d_benchmark.sh`
-- `submit_4d_vs_tc4d_benchmark_array.slurm`
-- `submit_4d_vs_tc4d_benchmark_reduce.slurm`
+- `submit_batch_segmentation_array.sh`
+- `submit_batch_segmentation_array.slurm`
+- `submit_graph_pruning_array.sh`
+- `submit_graph_pruning_array.slurm`
 
 ## Rules
 
@@ -23,28 +24,18 @@ Tracked Slurm helpers in this branch are:
 - `submit_vessel_segmentation_array.slurm`
   - Array version for one-file-per-task segmentation.
 
-### 4d-vs-tc4d benchmark
+### Batch segmentation and graph pruning
 
-- `submit_4d_vs_tc4d_benchmark.sh`
-  - Headnode orchestrator: builds study manifest, submits array, then submits reducer with dependency.
-- `submit_4d_vs_tc4d_benchmark_array.slurm`
-  - Worker script: runs one compare task per study ID.
-- `submit_4d_vs_tc4d_benchmark_reduce.slurm`
-  - Reducer script: aggregates per-study records to summary CSV/JSON.
+- `submit_batch_segmentation_array.sh`
+  - Headnode helper for array submission of vessel segmentation jobs.
+- `submit_batch_segmentation_array.slurm`
+  - Array worker for segmentation processing.
+- `submit_graph_pruning_array.sh`
+  - Headnode helper for array submission of graph-pruning jobs.
+- `submit_graph_pruning_array.slurm`
+  - Array worker for graph-pruning / centerline extraction.
 
 ## Recommended Usage
-
-### Benchmark suite (preferred)
-
-```bash
-OUT_DIR="/net/projects2/vanguard/benchmarks/4d_vs_tc4d/run_$(date +%Y%m%d_%H%M%S)"
-slurm_submit_scripts/submit_4d_vs_tc4d_benchmark.sh "${OUT_DIR}"
-```
-
-Optional environment overrides for the orchestrator:
-
-- `SEGMENTATION_DIR=/net/projects2/vanguard/vessel_segmentations`
-- `COMPARE_SCRIPT=/path/to/graph_extraction/debug_compare_4d_vs_tc4d.py`
 
 ### Vessel segmentation
 

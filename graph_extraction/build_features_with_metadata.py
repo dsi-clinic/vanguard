@@ -113,6 +113,7 @@ def load_excel_laterality(
     try:
         excel_df = load_clinic_metadata_excel(excel_path)
     except Exception as exc:
+        # Intentional: log and return None so caller can proceed without this file.
         logging.warning("Failed to load Excel %s: %s", excel_path, exc)
         return None
     if "bilateral_mri" not in excel_df.columns:
@@ -144,6 +145,7 @@ def load_patient_info_metadata(patient_info_dir: Path) -> pd.DataFrame:
         try:
             js = json.loads(p.read_text())
         except Exception as exc:
+            # Intentional: skip invalid JSON and continue loading other files.
             logging.warning("Skipping invalid JSON %s: %s", p, exc)
             continue
         rows.append(
