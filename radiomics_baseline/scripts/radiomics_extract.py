@@ -65,7 +65,7 @@ import re
 import shutil
 import sys
 import warnings
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -283,7 +283,7 @@ def ensure_checkpoint_manifest(
         manifest = {
             "version": _CHECKPOINT_VERSION,
             "fingerprint": fingerprint,
-            "created_at_utc": datetime.now(UTC).isoformat(),
+            "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "fingerprint_payload": fingerprint_payload,
         }
         with manifest_path.open("w", encoding="utf-8") as fh:
