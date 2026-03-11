@@ -1,0 +1,23 @@
+# Config file for MAMA-MIA PCR Prediction Pipeline
+feature_toggles:
+  use_vascular: true   # Vascular features
+  use_clinical: true   # Clinical features
+  use_radiomics: false # Bella's baseline (radiomics)
+
+experiment_setup:
+  name: "mamamia_baseline_v1"
+  base_outdir: "./ml_pipeline/experiments"
+
+model_params:
+  model: "rf"
+  n_splits: 5
+  n_estimators: 800
+  random_state: 42
+
+data_paths:
+  feature_dir: "/net/projects2/vanguard/centerlines_tc4d/morphometry_jsons"
+  labels_csv: "/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv"
+  label_column: "pcr"
+  id_column: "patient_id"
+  clinical_excel: "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
+  radiomics_csv: "/net/projects2/vanguard/MAMA-MIA-syn60868042/radiomics/features.csv"
