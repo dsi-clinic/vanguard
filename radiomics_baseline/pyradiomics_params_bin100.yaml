@@ -1,15 +1,11 @@
 setting:
-  binWidth: 25
+  binWidth: 100
   normalize: true
   normalizeScale: 100
   resampledPixelSpacing: [1, 1, 1]
   interpolator: sitkBSpline
   preCrop: true
   label: 1
-
-  # 2D extraction (uncomment or override via CLI --force-2d)
-  # force2D: true
-  # force2Ddimension: 0   # 0 = axial (z), 1 = coronal (y), 2 = sagittal (x)
 
 imageType:
   Original: {}

@@ -1,0 +1,24 @@
+# ---------------------------------------------------------------------------
+# Ablation sweep: peri radius x image phases x classifier
+#
+# Cartesian product: 4 x 2 x 3 = 24 experiment configs.
+# Configs sharing the same extraction parameters are pointed at the same
+# extraction output, so only 4 x 2 = 8 extraction jobs actually run.
+# ---------------------------------------------------------------------------
+base_config: configs/exp_peri5_multiphase_logreg.yaml
+
+sweep:
+  extract.peri_radius_mm:
+    - 0
+    - 2.5
+    - 5
+    - 10
+
+  extract.image_patterns:
+    - ["{pid}/{pid}_0001.nii.gz"]
+    - ["{pid}/{pid}_0001.nii.gz", "{pid}/{pid}_0002.nii.gz"]
+
+  train.classifier:
+    - logistic
+    - rf
+    - xgb

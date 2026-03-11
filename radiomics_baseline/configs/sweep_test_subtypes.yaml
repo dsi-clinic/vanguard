@@ -1,0 +1,29 @@
+# ---------------------------------------------------------------------------
+# Sweep: subtype-specific models  (logistic / elasticnet only)
+#
+# Trains and evaluates a separate model for each tumor subtype.
+# Each model sees only patients of that subtype in both train and test.
+# All four use the same already-extracted features (1 shared extraction).
+#
+# Subtype counts in this dataset (train + test):
+#   triple_negative   494   PCR rate 37 %
+#   luminal_a         381   PCR rate 17 %
+#   luminal           206   PCR rate 12 %
+#   her2_enriched     166   PCR rate 46 %
+#   luminal_b         155   PCR rate 37 %  ← borderline sample size
+#
+# Grid: 5 subtypes = 5 configs  (1 shared extraction)
+#
+# Note: per-subtype AUC is also available within a mixed model via
+#       auc_test_by_subtype in metrics.json. Use these subtype-filtered
+#       runs to check whether a dedicated model beats the mixed one.
+# ---------------------------------------------------------------------------
+base_config: configs/exp_peri5_multiphase_logreg.yaml
+
+sweep:
+  train.subtype_filter:
+    - triple_negative
+    - luminal_a
+    - luminal
+    - her2_enriched
+    - luminal_b
