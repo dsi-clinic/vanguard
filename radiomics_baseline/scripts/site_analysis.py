@@ -36,6 +36,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.metrics import confusion_matrix, roc_auc_score, roc_curve
+from sklearn.pipeline import Pipeline
 
 # ---------------------------------------------------------------------------
 # Reuse helpers from radiomics_train (imported at function level so the
@@ -47,6 +48,7 @@ from radiomics_train import (  # noqa: E402
     CorrelationPruner,
     MRMRSelector,
     align_numeric_to_reference,
+    append_categorical_feature,
     build_estimator,
     load_features,
     load_labels,
@@ -54,6 +56,8 @@ from radiomics_train import (  # noqa: E402
 )
 
 MIN_CLASS_COUNT = 2
+CONF_MATRIX_SIZE = 4
+DUPLICATE_PREVIEW_LIMIT = 5
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +101,7 @@ def assign_sites_from_labels(labels: pd.DataFrame, index: pd.Index) -> pd.Series
 # ---------------------------------------------------------------------------
 
 
-def _build_pipeline(args: argparse.Namespace):
+def _build_pipeline(args: argparse.Namespace) -> Pipeline:
     """Build the sklearn Pipeline.
 
     (imputer -> [corr_prune] -> [kbest/mrmr] -> [scale] -> classifier).
@@ -108,7 +112,6 @@ def _build_pipeline(args: argparse.Namespace):
     """
     from sklearn.feature_selection import SelectKBest, f_classif
     from sklearn.impute import SimpleImputer
-    from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
 
     steps: list[tuple[str, object]] = [("impute", SimpleImputer(strategy="median"))]
@@ -138,7 +141,7 @@ def _safe_sens_spec(
 ) -> tuple[float, float]:
     """Return (sensitivity, specificity) or (NaN, NaN)."""
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    if cm.size == 4:
+    if cm.size == CONF_MATRIX_SIZE:
         tn, fp, fn, tp = cm.ravel()
         sens = float(tp / (tp + fn)) if (tp + fn) > 0 else float("nan")
         spec = float(tn / (tn + fp)) if (tn + fp) > 0 else float("nan")
@@ -397,6 +400,15 @@ def main() -> None:
     )
     ap.add_argument("--grid-search", action="store_true")
     ap.add_argument("--include-subtype", action="store_true")
+    ap.add_argument(
+        "--categorical-encoding",
+        choices=["onehot", "ordinal"],
+        default="onehot",
+        help=(
+            "Encoding for --include-subtype. "
+            "'onehot' (default) avoids imposing ordinal structure."
+        ),
+    )
 
     args = ap.parse_args()
     outdir = Path(args.output)
@@ -417,7 +429,7 @@ def main() -> None:
         preview = ", ".join(map(str, dup[:5]))
         msg = (
             f"{args.splits} has duplicate patient_id values (n={len(dup)}): "
-            f"{preview}{' ...' if len(dup) > 5 else ''}"
+            f"{preview}{' ...' if len(dup) > DUPLICATE_PREVIEW_LIMIT else ''}"
         )
         raise ValueError(msg)
     split_map = splits.set_index("patient_id")["split"]
@@ -442,6 +454,32 @@ def main() -> None:
 
     ytr = labels.loc[Xtr_raw.index, "pcr"].astype(int).to_numpy()
     yte = labels.loc[Xte_raw.index, "pcr"].astype(int).to_numpy()
+
+    subtype_col: str | None = None
+    for candidate in ("subtype", "tumor_subtype"):
+        if candidate in labels.columns:
+            subtype_col = candidate
+            break
+
+    if args.include_subtype:
+        if subtype_col is None:
+            print(
+                "[WARN] --include-subtype set but no 'subtype' or 'tumor_subtype' "
+                "in labels; skipping.",
+            )
+        else:
+            Xtr_raw, Xte_raw, added = append_categorical_feature(
+                Xtr_raw,
+                Xte_raw,
+                labels,
+                column=subtype_col,
+                prefix="subtype",
+                encoding=args.categorical_encoding,
+            )
+            print(
+                f"[DEBUG] appended subtype features from '{subtype_col}' "
+                f"using {args.categorical_encoding}: +{len(added)} columns",
+            )
 
     sites_train = assign_sites_from_labels(labels, Xtr_raw.index)
     sites_test = assign_sites_from_labels(labels, Xte_raw.index)
