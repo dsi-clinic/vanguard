@@ -177,6 +177,8 @@ python radiomics_baseline/radiomics_train.py \
 - Produces skeleton volumes and optional graph representations
 - Uses graph-based pruning to maintain vessel topology
 
+**4D centerline extraction**: A separate pipeline turns vessel segmentations into **4D centerlines** (4th dimension = imaging timepoint; one 3D centerline per timepoint). It uses `graph_extraction/run_skeleton_processing.py` in 4d mode. On the cluster, run the batch workflow via the graph pruning array scripts: `submit_graph_pruning_array.sh` and `submit_graph_pruning_array.slurm`. Outputs go to `/net/projects2/vanguard/centerlines_4d`. For full options and workflow details, see [`graph_pruning_centerline_extraction/README.md`](graph_pruning_centerline_extraction/README.md).
+
 **Key Features**:
 - Preserves vessel topology (no breaking connectivity)
 - Can export to JSON or other formats for downstream analysis
@@ -286,7 +288,11 @@ python ML-Pipeline/pcr_prediction.py \
 - `graph_pruning_outdir/`: Graph pruning method results (excluded from git)
 - `thinning_based_outdir/`: Thinning-based method results (excluded from git)
 
-**Full paths to reproducible outputs** (if needed for reference):
+**Cluster output paths** (canonical locations when running on the cluster):
+- **Vessel segmentations**: `/net/projects2/vanguard/vessel_segmentations` — produced by the batch vessel segmentation array (`submit_batch_segmentation_array.sh`). Layout: one file per processed image (e.g. `*_vessel_segmentation.npz`).
+- **4D centerlines**: `/net/projects2/vanguard/centerlines_4d` — produced by the graph pruning array (`submit_graph_pruning_array.sh`). One output per study (timepoints × 3D centerlines).
+
+**Other full paths** (if needed for reference):
 - Graph pruning results: `/net/projects2/vanguard/output/skeleton_to_graph_output/` (if regenerated)
 - Centerline JSON outputs: `/net/projects2/vanguard/centerline_json_outputs/` (if regenerated)
 
@@ -304,12 +310,18 @@ python ML-Pipeline/pcr_prediction.py \
 - `batch_segmentation.py`: Batch vessel segmentation from `.nii.gz` files
   - Preprocesses images (normalization, axis rotation)
   - Runs 3-step segmentation pipeline (preprocessing → breast mask → vessel segmentation)
-  - Supports parallel processing and resume functionality
+  - Supports parallel processing, resume, and range processing via `--file-start` / `--file-end`
 - `batch_extract_centerlines.py`: Batch centerline extraction from vessel segmentations
 - `batch_process_centerlines.py`: Batch processing that extracts centerlines and converts to JSON with proper spacing extraction
 - `batch_convert_vtp_to_json.py`: Converts VTP centerline files to JSON format
 
-**Usage**:
+**Batch vessel segmentation (cluster)**: Use the array workflow so each SLURM task processes a chunk of files (e.g. `FILES_PER_TASK=40` files per task). Submit via `submit_batch_segmentation_array.sh`; the underlying `.slurm` script passes `--file-start` and `--file-end` to `batch_segmentation.py`. Example:
+```bash
+FILES_PER_TASK=40 ARRAY_THROTTLE=20 ./slurm_submit_scripts/submit_batch_segmentation_array.sh
+```
+Output on cluster: `/net/projects2/vanguard/vessel_segmentations` (see Section 5).
+
+**Usage (local / single-node)**:
 ```bash
 # Batch vessel segmentation
 python batch_processing/batch_segmentation.py \
@@ -317,6 +329,12 @@ python batch_processing/batch_segmentation.py \
   --output-dir /path/to/vessel_segmentations \
   --max-workers 8 \
   --resume
+
+# Process a file range (e.g. for testing or resuming a subset)
+python batch_processing/batch_segmentation.py \
+  --images-dir /path/to/images \
+  --output-dir /path/to/vessel_segmentations \
+  --file-start 0 --file-end 39
 
 # Batch centerline extraction
 python batch_processing/batch_extract_centerlines.py
@@ -334,19 +352,28 @@ python batch_processing/batch_process_centerlines.py
 **Purpose**: Pre-configured SLURM batch job scripts for running pipeline components on HPC clusters.
 
 **Key Scripts**:
-- `submit_vessel_segmentation.slurm`: Main vessel segmentation job (1 GPU, 16 CPUs, 128GB RAM)
-- `submit_vessel_segmentation_array.slurm`: Array job for parallel processing (one file per task)
+- **Vessel segmentation (batch array)**  
+  - `submit_batch_segmentation_array.sh`: Helper that computes task count and submits the array (use this for vessel segmentation on the cluster).  
+  - `submit_batch_segmentation_array.slurm`: Array job; each task processes a chunk of files (see `FILES_PER_TASK`).
+- `submit_vessel_segmentation.slurm`: Single job for vessel segmentation (1 GPU, 16 CPUs, 128GB RAM)
+- `submit_vessel_segmentation_array.slurm`: Legacy array (one file per task)
 - `submit_vessel_segmentation_optimized.slurm`: High-resource version for faster processing
-- `submit_centerline_extraction.slurm`: Centerline extraction job
+- **4D centerline extraction (graph pruning)**  
+  - `submit_graph_pruning_array.sh`: Submits array of graph-pruning centerline jobs (4D: timepoints × 3D).  
+  - `submit_graph_pruning_array.slurm`: Array job; reads from vessel segmentations, writes 4D centerlines.
+- `submit_centerline_extraction.slurm`: Centerline extraction job (thinning/VMTK)
 - `submit_vtp_to_json_conversion.slurm`: VTP to JSON conversion job
 
 **Usage**:
 ```bash
-# Submit vessel segmentation
-sbatch slurm_submit_scripts/submit_vessel_segmentation.slurm
+# Vessel segmentation: batch array (recommended; FILES_PER_TASK files per task)
+FILES_PER_TASK=40 ARRAY_THROTTLE=20 ./slurm_submit_scripts/submit_batch_segmentation_array.sh
 
-# Submit array job (processes all files in parallel)
-sbatch slurm_submit_scripts/submit_vessel_segmentation_array.slurm
+# 4D centerline extraction from vessel segmentations (graph pruning)
+STUDIES_PER_TASK=20 ARRAY_THROTTLE=20 ./slurm_submit_scripts/submit_graph_pruning_array.sh
+
+# Single vessel segmentation job
+sbatch slurm_submit_scripts/submit_vessel_segmentation.slurm
 
 # Monitor jobs
 squeue -u $USER
@@ -433,7 +460,9 @@ vanguard/
 
 **Complete pipeline:**
 
-1. **Vessel Segmentation**:
+1. **Vessel Segmentation** (on cluster: use batch array; locally: use `batch_segmentation.py`):
+   - **Cluster**: `FILES_PER_TASK=40 ./slurm_submit_scripts/submit_batch_segmentation_array.sh` → outputs to `/net/projects2/vanguard/vessel_segmentations`.
+   - **Local**:
    ```bash
    python batch_processing/batch_segmentation.py \
      --images-dir data/images \
@@ -441,9 +470,15 @@ vanguard/
      --max-workers 4 \
      --resume
    ```
-   Output: `data/vessel_segmentations/*.npy` (vessel segmentation masks)
+   Output: vessel segmentation files (e.g. `*.npz` on cluster, `*.npy` locally).
 
-2. **Centerline Extraction** (thinning-based method):
+2. **4D Centerline Extraction** (graph pruning; cluster): After vessel segmentations exist, run the graph pruning array to produce 4D centerlines (timepoints × 3D):
+   ```bash
+   ./slurm_submit_scripts/submit_graph_pruning_array.sh
+   ```
+   Output: `/net/projects2/vanguard/centerlines_4d`. See [`graph_pruning_centerline_extraction/README.md`](graph_pruning_centerline_extraction/README.md) for details.
+
+3. **Centerline Extraction** (thinning-based method; optional):
    ```bash
    python batch_processing/batch_extract_centerlines.py \
      --input-dir data/vessel_segmentations \
@@ -459,7 +494,7 @@ vanguard/
    ```
    Output: `data/centerlines_vtp/*.vtp` (centerline polylines)
 
-3. **Convert to JSON**:
+4. **Convert to JSON**:
    ```bash
    python batch_processing/batch_process_centerlines.py \
      --input-dir data/centerlines_vtp \
@@ -468,7 +503,7 @@ vanguard/
    ```
    Output: `data/centerlines_json/*.json` (centerline features)
 
-4. **Train Baselines** (for comparison):
+5. **Train Baselines** (for comparison):
    ```bash
    # Non-imaging baseline
    python non_imaging_baseline/baseline_pcr_simple.py \
@@ -491,7 +526,7 @@ vanguard/
      --output outputs/radiomics_baseline
    ```
 
-5. **Train ML Models** (graph-based):
+6. **Train ML Models** (graph-based):
    ```bash
    python ML-Pipeline/pcr_prediction.py \
      --feature-dir data/centerlines_json \
@@ -505,7 +540,7 @@ vanguard/
    ```
    Output: `outputs/graph_model/metrics_rf.json`, `predictions.csv`, `feature_importance.csv`
 
-6. **Compare Results**: Compare metrics across `outputs/*` directories to assess model performance.
+7. **Compare Results**: Compare metrics across `outputs/*` directories to assess model performance.
 
 ---
 
@@ -513,17 +548,24 @@ vanguard/
 
 For HPC clusters, use SLURM submit scripts:
 
-1. **Vessel Segmentation**:
+1. **Vessel Segmentation** (batch array; recommended):
    ```bash
-   sbatch slurm_submit_scripts/submit_vessel_segmentation.slurm
+   FILES_PER_TASK=40 ./slurm_submit_scripts/submit_batch_segmentation_array.sh
    ```
+   Output: `/net/projects2/vanguard/vessel_segmentations`.
 
-2. **Centerline Extraction**:
+2. **4D Centerline Extraction** (graph pruning): After vessel segmentations are written:
+   ```bash
+   ./slurm_submit_scripts/submit_graph_pruning_array.sh
+   ```
+   Output: `/net/projects2/vanguard/centerlines_4d`.
+
+3. **Centerline Extraction** (thinning/VMTK; optional):
    ```bash
    sbatch slurm_submit_scripts/submit_centerline_extraction.slurm
    ```
 
-3. **Convert to JSON**:
+4. **Convert to JSON**:
    ```bash
    sbatch slurm_submit_scripts/submit_vtp_to_json_conversion.slurm
    ```
@@ -562,7 +604,7 @@ pre-commit run --all-files
 ## Notes for Next Cohort
 
 - All scripts support `--resume` flags to safely restart interrupted jobs
-- Use SLURM array jobs (`submit_vessel_segmentation_array.slurm`) for maximum parallelization
+- Use the batch vessel segmentation array (`submit_batch_segmentation_array.sh` with `FILES_PER_TASK`) and the graph pruning array (`submit_graph_pruning_array.sh`) for cluster parallelization; see Section 6.2
 - Check individual README files in each folder for detailed usage and options
 - Compare baseline models (non-imaging, radiomics) against graph-based methods to assess improvement
 - Use `clinical_and_imaging_exploration/` to understand data distributions before modeling
