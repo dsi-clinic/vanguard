@@ -1,0 +1,10 @@
+case_id,feature,value,z_score,is_outlier
+ISPY1_1144,component_1__curvature__q1__min,0.6579593223521527,3.0630961588322574,True
+ISPY1_1144,_n_outliers,1.0,,True
+ISPY2_929980,component_1__length__mean,73.67924692336815,3.176984574771824,True
+ISPY2_929980,component_1__length__min,73.67924692336815,3.5873923516777104,True
+ISPY2_929980,component_1__volume__min,172.78759594743855,3.18140026855222,True
+ISPY2_929980,component_1__curvature__max__min,1.9106332362490184,3.096804179609253,True
+ISPY2_929980,_n_outliers,4.0,,True
+ISPY1_1088,component_1__curvature__q1__min,0.7429185497156832,3.4996526408269397,True
+ISPY1_1088,_n_outliers,1.0,,True

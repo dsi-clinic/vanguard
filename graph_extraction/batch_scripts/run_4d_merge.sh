@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Run the 4d morphometry merge job individually (no SLURM dependency).
 # Use this when the array jobs have already completed but the merge submission
 # failed (e.g. "Job dependency problem" after jobs finished).

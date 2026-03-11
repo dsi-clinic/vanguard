@@ -83,6 +83,7 @@ def compute_random_auc_distribution(
         try:
             auc = float(roc_auc_score(y_true, y_prob))
         except ValueError:
+            # Intentional: edge case (e.g. constant predictions); record NaN and continue.
             auc = float("nan")
         auc_values.append(auc)
 

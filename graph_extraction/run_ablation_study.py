@@ -228,6 +228,7 @@ def main() -> None:
         plt.close()
         print(f"  -> {plots_dir / 'ablation_auc_comparison.png'}")
     except Exception as e:
+        # Intentional: optional plot; log and continue so ablation results still saved.
         print(f"  [ablation] Plot failed: {e}")
 
     print("[ablation] Done")
