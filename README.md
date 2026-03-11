@@ -66,13 +66,13 @@ Work on feature branches; keep them up to date with `main`. All code must pass `
 
 ## Config-Driven Methodology
 
-As of this quarter, the pipeline is entirely config-based. Every experiment—from cohort selection to model hyperparameters—is fully documented and reproducible. Avoid hardcoding parameters in scripts; instead, reference a YAML file in the `configs/` directory.
+As of this quarter, the pipeline is entirely config-based. Every experiment—from cohort selection to model hyperparameters—is fully documented and reproducible. Avoid hardcoding parameters in scripts; instead, reference a YAML file in the `config/` directory.
 
 ## Repository Structure
 
 | Directory | Description |
 | --------- | ----------- |
-| **configs/** | Central repository for YAML files defining experiment parameters. |
+| **config/** | Central repository for YAML files defining experiment parameters. |
 | **evaluation/** | Centralized system for k-fold CV, cohort selection, and metrics. See [evaluation/README.md](evaluation/README.md). |
 | **graph_extraction/** | Pipeline for converting 3D vessel masks into graph-based JSONs. See [graph_extraction/README.md](graph_extraction/README.md) and [graph_pruning_centerline_extraction/README.md](graph_pruning_centerline_extraction/README.md) for 4D centerlines. |
 | **ML-Pipeline/** | Training suite for GNNs and traditional ML models (Random Forest, Logistic Regression). See [ML-Pipeline/README.md](ML-Pipeline/README.md). |
@@ -87,7 +87,7 @@ Additional components: **non_imaging_baseline/**, **radiomics_baseline/**, **exa
    Process raw MRI volumes into graph representations using parameters defined in your config. On the cluster: use `submit_batch_segmentation_array.sh` (vessel segmentations → `/net/projects2/vanguard/vessel_segmentations`) then `submit_graph_pruning_array.sh` (4D centerlines → `/net/projects2/vanguard/centerlines_4d`). See [batch_processing/README.md](batch_processing/README.md) and [graph_pruning_centerline_extraction/README.md](graph_pruning_centerline_extraction/README.md).
 
 2. **Model Training**  
-   Train GNN or traditional ML models by pointing the pipeline to your specific experiment config (e.g. in `configs/`). See [ML-Pipeline/README.md](ML-Pipeline/README.md).
+   Train GNN or traditional ML models by pointing the pipeline to your specific experiment config (e.g. in `config/`). See [ML-Pipeline/README.md](ML-Pipeline/README.md).
 
 3. **Comparison & Validation**  
    Compare your graph-based results against Radiomics and Clinical (Non-Imaging) baselines to assess model uplift. See [radiomics_baseline/README.md](radiomics_baseline/README.md), [non_imaging_baseline/](non_imaging_baseline/), and [examples/README.md](examples/README.md).
