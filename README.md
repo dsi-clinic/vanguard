@@ -32,16 +32,18 @@ Installation recipe (one time):
 ```bash
 micromamba config prepend channels conda-forge
 micromamba config set channel_priority strict
-git clone --recursive git@github.com:uchicago-dsi/vanguard.git
+git clone --recursive git@github.com:dsi-clinic/vanguard.git
 cd vanguard
 micromamba env create -y -n vanguard -f environment.yml
 micromamba activate vanguard
 ```
 
+Note: All Python dependencies (including pip-only packages like PyRadiomics) are installed via `environment.yml`.
+
 To Update:
 ```bash
 micromamba activate vanguard
-micromamba env update -y -f environment.yml
+micromamba env update -y -n vanguard -f environment.yml
 ```
 
 (Be sure to clone this repo with `--recursive` so that submodules like [dsi-clinic/vanguard-blood-vessel-segmentation](https://github.com/dsi-clinic/vanguard-blood-vessel-segmentation) are included.)
@@ -152,7 +154,7 @@ python radiomics_baseline/radiomics_train.py \
 
 ## 3. Centerline Extraction Methods
 
-### 3.1 Graph Pruning (`graph_pruning_centerline_extraction/`)
+### 3.1 Graph Extraction (`graph_extraction/`)
 
 **Purpose**: Topology-preserving 3D skeletonization algorithm for vessel segmentation volumes using graph pruning methodology.
 
@@ -167,7 +169,7 @@ python radiomics_baseline/radiomics_train.py \
 - Can export to JSON or other formats for downstream analysis
 - Includes visualization utilities for skeleton inspection
 
-**Usage**: See [`graph_pruning_centerline_extraction/README.md`](graph_pruning_centerline_extraction/README.md) for implementation details and API
+**Usage**: See [`graph_extraction/README.md`](graph_extraction/README.md) for implementation details and API
 
 **When to use**: When you need a topology-preserving skeletonization with graph-based pruning for downstream analysis.
 
@@ -353,6 +355,44 @@ tail -f logs/vessel-seg-<JOB_ID>.out
   - Tables: summary statistics, missing data summaries
 
 **Usage**: Open `exploration.ipynb` in Jupyter and run cells to regenerate EDA outputs for new cohorts.
+
+---
+
+### 6.4 Evaluation Framework (Dataset Selection and Splits)
+
+**Purpose**: Centralized evaluation system with k-fold cross-validation and cohort selection for focused A/B experiments.
+
+**Dataset selection**: Restrict evaluation to specific datasets, sites, tumor types, or laterality (unilateral/bilateral). Criteria are combined with AND logic; within a criterion (e.g. datasets), OR applies (IN semantics).
+
+**Usage examples** (require `--excel-metadata` with clinic metadata Excel):
+
+```bash
+# Run evaluation only on iSpy2
+python examples/baseline_model_example.py --model random \
+  --excel-metadata path/to/clinical_and_imaging_info.xlsx \
+  --datasets iSpy2 --output results/ispy2
+
+# Run on iSpy2 + Duke
+python examples/baseline_model_example.py --model random \
+  --excel-metadata path/to/clinical_and_imaging_info.xlsx \
+  --datasets iSpy2 Duke --output results/ispy2_duke
+
+# Stacked criteria: iSpy2 AND unilateral cases
+python examples/baseline_model_example.py --model random \
+  --excel-metadata path/to/clinical_and_imaging_info.xlsx \
+  --datasets iSpy2 --unilateral-only --output results/ispy2_unilateral
+
+# Stratified evaluations (use stratify_cols in export_splits)
+python -m src.utils.export_splits --excel metadata.xlsx --output splits.csv \
+  --stratify-cols dataset tumor_subtype --group-col site
+
+# Selection from YAML config (CLI flags override config)
+python examples/baseline_model_example.py --model random \
+  --excel-metadata path/to/metadata.xlsx \
+  --config config/eval_selection_example.yaml --output results/config_run
+```
+
+**Config file** (`config/eval_selection_example.yaml`): Define `selection.datasets`, `selection.sites`, `selection.tumor_types`, `selection.unilateral_only`, `selection.bilateral_only`, or `selection.column_filters` for generic column filters.
 
 ---
 

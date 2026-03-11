@@ -120,6 +120,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+bin/
 
 # Spyder project settings
 .spyderproject
@@ -170,9 +171,12 @@ test_outputs/
 *.vtk
 *-out/
 logs/
+debug_output/
 
 # Results shouldn't be commited as they can be regenerated easily
 results/**.claude/
+results/**
+test_breast_masks/
 radiomics_baseline/outputs/
 radiomics_baseline/figures/
 radiomics_baseline/kinetic_maps/

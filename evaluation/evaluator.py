@@ -2,25 +2,40 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from evaluation.kfold import create_kfold_splits
+from evaluation.kfold import (
+    FoldSplit,
+    create_group_stratified_kfold_splits,
+    create_kfold_splits,
+)
+from evaluation.logging_config import get_logger
 from evaluation.metrics import (
     aggregate_fold_metrics,
     compute_binary_metrics,
     compute_metrics_by_group,
 )
+from evaluation.random_baseline import (
+    compute_random_auc_distribution,
+    empirical_p_value,
+    z_score,
+)
+from evaluation.types import FoldResults, KFoldResults, TrainTestResults
 from evaluation.utils import (
     align_data,
     validate_inputs,
 )
-from evaluation.visualizations import VISUALIZATION_REGISTRY
+from evaluation.visualizations import (
+    VISUALIZATION_REGISTRY,
+    plot_auc_distribution,
+    plot_pr_per_split,
+    plot_roc_per_split,
+)
 
-# Column name(s) used for stratum/subgroup reporting (first present in predictions is used)
+# Column name(s) used for stratum reporting (first present in predictions is used)
 STRATUM_COLUMN_ALIASES = ("stratum", "subtype")
 
 
@@ -36,12 +51,13 @@ def _print_validation_summary(
     validation_summary: dict,
     stratum_col: str,
 ) -> None:
-    """Print overall and stratum-specific metrics (e.g. AUC) to stdout."""
+    """Log overall and per-stratum metrics (e.g. AUC)."""
+    logger = get_logger()
     overall = validation_summary.get("overall", {})
     by_group = validation_summary.get("by_group", {})
-    print("Validation summary:")
+    logger.info("Validation summary:")
     if "auc" in overall:
-        print(f"  AUC (overall): {overall['auc']:.3f}")
+        logger.info("  AUC (overall): %.3f", overall["auc"])
     for i, (stratum_name, metrics) in enumerate(by_group.items(), start=1):
         auc_val = metrics.get("auc", float("nan"))
         auc_str = (
@@ -49,50 +65,7 @@ def _print_validation_summary(
             if not (isinstance(auc_val, float) and np.isnan(auc_val))
             else "nan"
         )
-        print(f"  AUC (Strata {i} / {stratum_name}): {auc_str}")
-    print()
-
-
-@dataclass
-class FoldSplit:
-    """Represents a single fold split."""
-
-    fold_idx: int
-    train_indices: np.ndarray
-    val_indices: np.ndarray
-    train_patient_ids: np.ndarray | None = None
-    val_patient_ids: np.ndarray | None = None
-
-
-@dataclass
-class FoldResults:
-    """Results from a single fold."""
-
-    fold_idx: int
-    predictions: pd.DataFrame  # columns: patient_id, y_true, y_pred, y_prob
-    metrics: dict[str, float] | None = None  # Optional pre-computed metrics
-
-
-@dataclass
-class KFoldResults:
-    """Aggregated results from k-fold cross-validation."""
-
-    fold_metrics: list[dict[str, float]]
-    aggregated_metrics: dict[str, dict[str, float]]
-    predictions: pd.DataFrame  # columns: patient_id, fold, y_true, y_pred, y_prob
-    n_splits: int
-    model_name: str
-    run_name: str | None = None
-
-
-@dataclass
-class TrainTestResults:
-    """Results from train/test evaluation."""
-
-    metrics: dict[str, float]
-    predictions: pd.DataFrame  # columns: patient_id, y_true, y_pred, y_prob
-    model_name: str
-    run_name: str | None = None
+        logger.info("  AUC (Strata %d / %s): %s", i, stratum_name, auc_str)
 
 
 class Evaluator:
@@ -145,36 +118,105 @@ class Evaluator:
         n_splits: int = 5,
         stratify: bool = True,
         shuffle: bool = True,
-    ) -> list[FoldSplit]:
+        groups: np.ndarray | None = None,
+        stratify_labels: np.ndarray | None = None,
+        validate_exclusivity: bool = True,
+        return_report: bool = False,
+    ) -> list[FoldSplit] | tuple[list[FoldSplit], dict]:
         """Create k-fold splits and return them to the model.
+
+        Supports both standard stratified k-fold and group-stratified k-fold
+        (group-exclusive folds with stratification by stratify_labels).
 
         Parameters
         ----------
         n_splits : int, default=5
-            Number of folds
+            Number of folds.
         stratify : bool, default=True
-            Whether to use stratified k-fold (maintains class distribution)
+            Whether to use stratified k-fold (maintains class distribution).
+            Ignored if groups/stratify_labels are provided (uses group-stratified).
         shuffle : bool, default=True
-            Whether to shuffle data before splitting
+            Whether to shuffle data before splitting.
+        groups : np.ndarray | None, default=None
+            Group assignments for each sample (e.g. site). If provided along with
+            stratify_labels, uses group-stratified k-fold so groups do not cross folds.
+        stratify_labels : np.ndarray | None, default=None
+            Stratification labels (e.g. subtype/dataset). If provided along with
+            groups, used for group-stratified splitting. If provided alone,
+            used for standard stratified splitting instead of y.
+        validate_exclusivity : bool, default=True
+            Whether to validate and warn if groups cross folds (only used when
+            groups are provided).
+        return_report : bool, default=False
+            If True, also return a report dictionary with distribution statistics
+            (only used when groups are provided).
 
         Returns:
         -------
-        list[FoldSplit]
+        list[FoldSplit] | tuple[list[FoldSplit], dict]
             List of FoldSplit objects, one per fold, containing:
             - train_indices: indices for training
             - val_indices: indices for validation
             - train_patient_ids: patient IDs for training (if available)
             - val_patient_ids: patient IDs for validation (if available)
+            If return_report=True and groups provided, returns tuple of (splits, report_dict).
+
+        Examples:
+        --------
+        >>> # Standard stratified k-fold (existing behavior)
+        >>> splits = evaluator.create_kfold_splits(n_splits=5)
+        >>>
+        >>> # Group-stratified k-fold (site-exclusive, subtype-stratified)
+        >>> splits = evaluator.create_kfold_splits(
+        ...     n_splits=5,
+        ...     groups=site_array,
+        ...     stratify_labels=subtype_array
+        ... )
         """
-        split_dicts = create_kfold_splits(
-            X=self.X,
-            y=self.y,
-            patient_ids=self.patient_ids,
-            n_splits=n_splits,
-            stratify=stratify,
-            shuffle=shuffle,
-            random_state=self.random_state,
-        )
+        # Use group-stratified splitting if both groups and stratify_labels provided
+        if groups is not None and stratify_labels is not None:
+            result = create_group_stratified_kfold_splits(
+                X=self.X,
+                y=self.y,
+                groups=groups,
+                stratify_labels=stratify_labels,
+                patient_ids=self.patient_ids,
+                n_splits=n_splits,
+                shuffle=shuffle,
+                random_state=self.random_state,
+                validate_exclusivity=validate_exclusivity,
+                return_report=return_report,
+            )
+            if return_report:
+                split_dicts, report_dict = result
+            else:
+                split_dicts = result
+                report_dict = None
+        # Use standard stratified splitting with custom stratify_labels if provided alone
+        elif stratify_labels is not None:
+            # Use stratify_labels instead of y for stratification
+            split_dicts = create_kfold_splits(
+                X=self.X,
+                y=stratify_labels,  # Use stratify_labels for stratification
+                patient_ids=self.patient_ids,
+                n_splits=n_splits,
+                stratify=True,  # Always stratify when stratify_labels provided
+                shuffle=shuffle,
+                random_state=self.random_state,
+            )
+            report_dict = None
+        # Standard behavior: use existing create_kfold_splits
+        else:
+            split_dicts = create_kfold_splits(
+                X=self.X,
+                y=self.y,
+                patient_ids=self.patient_ids,
+                n_splits=n_splits,
+                stratify=stratify,
+                shuffle=shuffle,
+                random_state=self.random_state,
+            )
+            report_dict = None
 
         # Convert to FoldSplit objects
         splits = []
@@ -188,6 +230,9 @@ class Evaluator:
                     val_patient_ids=split_dict["val_patient_ids"],
                 )
             )
+
+        if return_report and report_dict is not None:
+            return splits, report_dict
 
         return splits
 
@@ -275,29 +320,68 @@ class Evaluator:
         """
         return compute_binary_metrics(y_true, y_pred, y_prob)
 
+    def compute_random_baseline_distribution(
+        self: Evaluator,
+        n_runs: int = 1000,
+        random_state: int | None = None,
+    ) -> dict:
+        """Compute the distribution of AUCs from random predictors on evaluator labels.
+
+        Uses the same labels (self.y) as used for splits. Returns dict with
+        auc_values, mean, std, n_runs.
+
+        Parameters
+        ----------
+        n_runs : int, default=1000
+            Number of random predictor runs.
+        random_state : int, optional
+            Base random seed. If None, uses self.random_state.
+
+        Returns:
+        -------
+        dict
+            From compute_random_auc_distribution: auc_values, mean, std, n_runs.
+        """
+        rs = self.random_state if random_state is None else random_state
+        return compute_random_auc_distribution(self.y, n_runs=n_runs, random_state=rs)
+
     def save_results(
         self: Evaluator,
         results: KFoldResults | TrainTestResults,
         output_dir: Path,
         run_name: str | None = None,
+        random_baseline_distribution: dict | None = None,
+        run_aucs: list[float] | None = None,
     ) -> None:
         """Save results to output directory, organized by model name and run name.
+
+        Writes predictions CSV, metrics JSON (with per-fold metrics for k-fold),
+        and registered visualizations. If results.predictions has a stratum
+        column (e.g. "stratum" or "subtype"), per-stratum metrics are computed,
+        added to metrics, and printed.
 
         Parameters
         ----------
         results : KFoldResults | TrainTestResults
-            Evaluation results to save
+            Evaluation results to save.
         output_dir : Path
-            Base output directory. Results will be saved to:
-            output_dir / model_name / run_name / (if run_name provided)
-            output_dir / model_name / (if no run_name)
+            Base output directory. Results are saved to
+            output_dir / model_name / run_name (if run_name provided), else
+            output_dir / model_name.
         run_name : str, optional
-            Name of this run (e.g., "run_001", "experiment_1", timestamp).
-            Used for tracking multiple runs of the same model.
-            If None, results saved directly under model_name.
+            Name of this run (e.g. "run_001", "experiment_1"). If None, results
+            are saved directly under model_name.
+        random_baseline_distribution : dict, optional
+            Precomputed null distribution from compute_random_baseline_distribution.
+            If provided, adds random_baseline to metrics and, when results
+            contain AUC, adds z_score_vs_random and p_value_vs_random.
+        run_aucs : list[float], optional
+            AUC values from multiple k-fold runs. If provided (e.g. when n_runs > 1),
+            adds run_aucs, run_auc_mean, run_auc_std to metrics.
 
-        Note: output_dir is a Path object. Model systems determine this path
-        from their configuration (CLI args, config files, etc.) and pass it here.
+        Notes:
+        -----
+        output_dir is a Path. Model systems pass the path from their config.
         """
         output_dir = Path(output_dir)
 
@@ -348,6 +432,43 @@ class Evaluator:
             if results.run_name:
                 metrics_dict["run_name"] = results.run_name
 
+        # Optional: random baseline comparison
+        if random_baseline_distribution is not None:
+            metrics_dict["random_baseline"] = {
+                "mean": random_baseline_distribution["mean"],
+                "std": random_baseline_distribution["std"],
+                "min": random_baseline_distribution.get("min", float("nan")),
+                "max": random_baseline_distribution.get("max", float("nan")),
+                "n_runs": random_baseline_distribution["n_runs"],
+            }
+            observed_auc = None
+            if (
+                isinstance(results, KFoldResults)
+                and "auc" in results.aggregated_metrics
+            ):
+                observed_auc = results.aggregated_metrics["auc"].get("mean")
+            elif isinstance(results, TrainTestResults) and "auc" in results.metrics:
+                observed_auc = results.metrics["auc"]
+            if observed_auc is not None and not np.isnan(observed_auc):
+                mean_r = random_baseline_distribution["mean"]
+                std_r = random_baseline_distribution["std"]
+                metrics_dict["z_score_vs_random"] = z_score(observed_auc, mean_r, std_r)
+                auc_values = random_baseline_distribution.get("auc_values", [])
+                metrics_dict["p_value_vs_random"] = (
+                    empirical_p_value(auc_values, observed_auc)
+                    if auc_values
+                    else float("nan")
+                )
+
+        # Multi-run AUC summary
+        if run_aucs is not None and len(run_aucs) > 0:
+            arr = np.asarray(run_aucs)
+            arr = arr[~np.isnan(arr)]
+            if arr.size > 0:
+                metrics_dict["run_aucs"] = [float(x) for x in run_aucs]
+                metrics_dict["run_auc_mean"] = float(np.mean(arr))
+                metrics_dict["run_auc_std"] = float(np.std(arr))
+
         # Subgroup (stratum) metrics: compute, add to dict, and print summary
         stratum_col = _stratum_column(results.predictions)
         if stratum_col is not None:
@@ -381,4 +502,36 @@ class Evaluator:
                 viz_func(y_true, y_prob, output_path)
             except Exception as e:
                 # If visualization fails, log but continue
-                print(f"Warning: Failed to generate {viz_name}: {e}")
+                get_logger().warning("Failed to generate %s: %s", viz_name, e)
+
+        # K-fold: per-split ROC and PR curves
+        if isinstance(results, KFoldResults) and "fold" in results.predictions.columns:
+            try:
+                plot_roc_per_split(
+                    results.predictions,
+                    plots_dir / "roc_per_split.png",
+                    title="ROC Per Split",
+                    fold_col="fold",
+                )
+            except Exception as e:
+                get_logger().warning("Failed to generate roc_per_split: %s", e)
+            try:
+                plot_pr_per_split(
+                    results.predictions,
+                    plots_dir / "pr_per_split.png",
+                    title="PR Per Split",
+                    fold_col="fold",
+                )
+            except Exception as e:
+                get_logger().warning("Failed to generate pr_per_split: %s", e)
+
+        # Multi-run AUC distribution
+        if run_aucs is not None and len(run_aucs) > 0:
+            try:
+                plot_auc_distribution(
+                    run_aucs,
+                    plots_dir / "auc_distribution.png",
+                    title="AUC distribution across runs",
+                )
+            except Exception as e:
+                get_logger().warning("Failed to generate auc_distribution: %s", e)

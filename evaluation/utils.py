@@ -20,16 +20,16 @@ def validate_inputs(
     Parameters
     ----------
     X : np.ndarray | pd.DataFrame
-        Feature matrix
+        Feature matrix.
     y : np.ndarray | pd.Series
-        Target labels
+        Target labels (must be binary 0/1).
     patient_ids : np.ndarray | pd.Series, optional
-        Patient IDs for tracking
+        Patient IDs for tracking.
 
     Raises:
     ------
     ValueError
-        If inputs are invalid or inconsistent
+        If lengths differ or y is not binary 0/1.
     """
     # Convert to numpy arrays for validation
     if isinstance(X, pd.DataFrame):
@@ -78,16 +78,16 @@ def align_data(
     Parameters
     ----------
     X : np.ndarray | pd.DataFrame
-        Feature matrix
+        Feature matrix.
     y : np.ndarray | pd.Series
-        Target labels
+        Target labels.
     patient_ids : np.ndarray | pd.Series, optional
-        Patient IDs
+        Patient IDs.
 
     Returns:
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray | None]
-        Aligned (X, y, patient_ids) as numpy arrays
+        Aligned (X, y, patient_ids) as numpy arrays.
     """
     # Convert to numpy arrays
     if isinstance(X, pd.DataFrame):
@@ -128,24 +128,26 @@ def prepare_predictions_df(
 ) -> pd.DataFrame:
     """Format predictions into a standardized DataFrame.
 
+    Optional helper for building prediction tables used by the evaluator.
+    Columns: patient_id, y_true, y_pred, y_prob; optionally "fold" for k-fold.
+
     Parameters
     ----------
     patient_ids : np.ndarray | pd.Series | None
-        Patient IDs (or None to use indices)
+        Patient IDs, or None to use integer indices.
     y_true : np.ndarray
-        True labels
+        True labels.
     y_pred : np.ndarray
-        Predicted labels
+        Predicted labels.
     y_prob : np.ndarray
-        Predicted probabilities for positive class
+        Predicted probabilities for positive class.
     fold : int, optional
-        Fold number (for k-fold results)
+        Fold index (for k-fold results); if provided, adds "fold" column.
 
     Returns:
     -------
     pd.DataFrame
-        DataFrame with columns: patient_id, y_true, y_pred, y_prob
-        (and optionally 'fold' if fold is provided)
+        Standardized predictions table.
     """
     if patient_ids is None:
         patient_ids = np.arange(len(y_true))
