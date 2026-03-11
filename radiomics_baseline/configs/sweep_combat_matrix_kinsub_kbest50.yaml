@@ -1,0 +1,8 @@
+base_config: configs/exp_combat_matrix_kinsub_kbest50.yaml
+
+sweep:
+  train.harmonization_mode:
+    - none
+    - zscore_site
+    - combat_param
+    - combat_nonparam

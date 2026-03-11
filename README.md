@@ -118,14 +118,14 @@ python non_imaging_baseline/feature_importance.py \
 - Includes feature selection (correlation pruning, SelectKBest) and optional subtype inclusion
 
 **Key Files**:
-- `radiomics_extract.py`: Extracts PyRadiomics features to CSV
-- `radiomics_train.py`: Trains models on extracted features
+- `radiomics_baseline/scripts/radiomics_extract.py`: Extracts PyRadiomics features to CSV
+- `radiomics_baseline/scripts/radiomics_train.py`: Trains models on extracted features
 - `pyradiomics_params.yaml`: Configuration for PyRadiomics extraction
 
 **Usage**:
 ```bash
 # Extract features
-python radiomics_baseline/radiomics_extract.py \
+python radiomics_baseline/scripts/radiomics_extract.py \
   --images /path/to/images \
   --masks /path/to/segmentations \
   --labels radiomics_baseline/labels.csv \
@@ -137,7 +137,7 @@ python radiomics_baseline/radiomics_extract.py \
   --peri-radius-mm 5
 
 # Train model
-python radiomics_baseline/radiomics_train.py \
+python radiomics_baseline/scripts/radiomics_train.py \
   --train-features experiments/extract_peri5_multiphase/features_train_final.csv \
   --test-features experiments/extract_peri5_multiphase/features_test_final.csv \
   --labels labels.csv \
@@ -464,14 +464,14 @@ vanguard/
      --output outputs/non_imaging_baseline
    
    # Radiomics baseline
-   python radiomics_baseline/radiomics_extract.py \
+   python radiomics_baseline/scripts/radiomics_extract.py \
      --images data/images \
      --masks data/masks \
      --labels labels.csv \
      --split splits_v1.csv \
      --output outputs/radiomics_features
    
-   python radiomics_baseline/radiomics_train.py \
+   python radiomics_baseline/scripts/radiomics_train.py \
      --train-features outputs/radiomics_features/features_train_final.csv \
      --test-features outputs/radiomics_features/features_test_final.csv \
      --labels labels.csv \
