@@ -1,4 +1,4 @@
-"""Shared 3D/4D skeleton processing and morphometry helpers."""
+"""Shared 4D skeleton processing and morphometry helpers."""
 
 from __future__ import annotations
 
@@ -8,39 +8,33 @@ from pathlib import Path
 
 import numpy as np
 
-from graph_extraction.skeleton3d import skeletonize3d
-from graph_extraction.skeleton4d import skeletonize4d
+from graph_extraction.core4d import (
+    NDIM_3D,
+    NDIM_4D,
+    discover_study_timepoints,
+    load_time_series_from_files,
+)
 from graph_extraction.skeleton_to_graph import (
     assign_component_labels,
     build_vessel_json,
     detect_bifurcations,
+    edges_to_segments,
     extract_segments,
     obtain_radius_map,
     segments_to_graph,
 )
-from graph_extraction.visuals import edges_to_segments
+from graph_extraction.tc4d import run_tc4d_from_priority
+from graph_extraction.vessel_mip import render_vessel_coverage_mip
 
-DEFAULT_SEGMENTATION_DIR = Path("/net/projects2/vanguard/vessel_segmentations")
-NDIM_3D = 3
-NDIM_4D = 4
-
-
-def load_segmentation_array(path: Path) -> np.ndarray:
-    """Load a segmentation array from .npy or compressed .npz files."""
-    data = np.load(path)
-    if isinstance(data, np.lib.npyio.NpzFile):
-        try:
-            if "vessel" in data.files:
-                return data["vessel"]
-            if len(data.files) == 1:
-                return data[data.files[0]]
-            raise ValueError(
-                f"NPZ file {path} has multiple arrays: {data.files}; expected 'vessel'."
-            )
-        finally:
-            data.close()
-    return data
-
+DEFAULT_RADIOLOGIST_ANNOTATIONS_DIR = Path(
+    "/net/projects2/vanguard/Duke-Breast-Cancer-MRI-Supplement-v3"
+)
+DEFAULT_TUMOR_MASK_DIR = Path(
+    "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
+)
+PROCESSING_VIZ_FLIP_SPEC = "z"
+VIZ_FLIP_SPECS = ("none", "z", "y", "x", "zy", "zx", "yx", "zyx")
+SEG_NRRD_MAX_LAYERS = 32
 
 _OFFSETS_3D = np.array(
     [
@@ -54,173 +48,453 @@ _OFFSETS_3D = np.array(
 )
 
 
-def extract_single_timepoint_volume(arr: np.ndarray, npy_channel: int) -> np.ndarray:
-    """Extract one `(z, y, x)` probability volume from per-timepoint arrays."""
-    if arr.ndim == NDIM_3D:
-        return arr.astype(np.float32, copy=False)
-    if arr.ndim == NDIM_4D:
-        if npy_channel < 0 or npy_channel >= arr.shape[0]:
-            raise ValueError(
-                f"Requested channel {npy_channel} but array has {arr.shape[0]} channels."
-            )
-        return arr[npy_channel].astype(np.float32, copy=False)
+def _select_zyx_layout(
+    volume: np.ndarray, expected_shape_zyx: tuple[int, int, int]
+) -> tuple[np.ndarray, str]:
+    """Pick a 3D orientation layout whose shape matches the expected ZYX shape."""
+    candidates: tuple[tuple[str, np.ndarray], ...] = (
+        ("zyx", volume),
+        ("yxz", np.transpose(volume, (1, 2, 0))),
+        ("xyz", np.transpose(volume, (2, 1, 0))),
+    )
+    for layout_name, candidate in candidates:
+        if tuple(candidate.shape) == tuple(expected_shape_zyx):
+            return candidate, layout_name
     raise ValueError(
-        f"Per-timepoint input must be 3D or channel-first 4D, got shape {arr.shape}"
+        f"mask shape mismatch. Expected {expected_shape_zyx}, got {volume.shape}"
+        " (and common transposes)"
     )
 
 
-def _load_array_from_path(path: Path) -> np.ndarray:
-    """Load a single array from .npy or .npz. NPZ files use the first stored array."""
-    data = np.load(path, allow_pickle=False)
-    if path.suffix.lower() == ".npz":
-        keys = list(data.files)
-        if not keys:
-            raise ValueError(f"NPZ file contains no arrays: {path}")
-        return np.asarray(data[keys[0]])
-    return np.asarray(data)
+def _apply_flip_spec(mask_zyx: np.ndarray, flip_spec: str) -> np.ndarray:
+    """Apply axis flips in `z/y/x` notation to a 3D mask."""
+    spec = str(flip_spec).strip().lower()
+    if spec in ("", "none"):
+        return mask_zyx
 
+    axis_by_char = {"z": 0, "y": 1, "x": 2}
 
-def load_time_series_from_files(paths: list[Path], npy_channel: int) -> np.ndarray:
-    """Load and stack per-timepoint arrays into `(t, z, y, x)`."""
-    volumes: list[np.ndarray] = []
-    expected_shape: tuple[int, int, int] | None = None
-
-    for path in paths:
-        arr = load_segmentation_array(path)
-        vol = extract_single_timepoint_volume(arr, npy_channel=npy_channel)
-        if expected_shape is None:
-            expected_shape = tuple(int(x) for x in vol.shape)
-        elif tuple(vol.shape) != expected_shape:
+    axes: list[int] = []
+    seen: set[str] = set()
+    for char in spec:
+        if char in seen:
+            continue
+        seen.add(char)
+        axis = axis_by_char.get(char)
+        if axis is None:
             raise ValueError(
-                f"Shape mismatch: expected {expected_shape}, got {vol.shape} from {path}"
+                f"Unsupported flip spec '{flip_spec}'. Supported: {list(VIZ_FLIP_SPECS)}"
             )
-        volumes.append(vol)
+        axes.append(axis)
+    if not axes:
+        return mask_zyx
+    return np.flip(mask_zyx, axis=tuple(axes))
 
-    if not volumes:
-        raise ValueError("No input files provided.")
-    return np.stack(volumes, axis=0).astype(np.float32, copy=False)
 
+def _to_breast_mri_case_id_strict(study_id: str) -> str | None:
+    """Map `DUKE_###` or `Breast_MRI_###` into `Breast_MRI_###`."""
+    clean = str(study_id).strip()
+    if clean == "":
+        return None
 
-def discover_study_timepoints(
-    input_dir: Path, study_id: str
-) -> tuple[list[Path], list[int]]:
-    """Discover and sort timepoint files for one study id.
-
-    Expects layout: input_dir / [SITE] / [STUDY_ID] / images / *.npz
-    SITE is parsed from study_id as the first underscore-separated component
-    (e.g. ISPY2_202539 -> SITE=ISPY2, STUDY_ID=ISPY2_202539).
-    """
-    if not input_dir.exists():
-        raise ValueError(f"Input directory does not exist: {input_dir}")
-    if not input_dir.is_dir():
-        raise ValueError(f"Input path is not a directory: {input_dir}")
-
-    candidates = sorted(
-        p
-        for ext in (".npy", ".npz")
-        for p in input_dir.rglob(f"*{study_id}*_vessel_segmentation{ext}")
-    )
-    if not candidates:
-        raise ValueError(
-            f"No candidate .npz files found for study_id='{study_id}' in {input_dir}"
-        )
-
-    patt = re.compile(
-        rf"{re.escape(study_id)}_(\d{{4}})_vessel_segmentation\.(npy|npz)$",
-        flags=re.IGNORECASE,
-    )
-
-    timepoint_pairs: list[tuple[int, Path]] = []
-    for path in candidates:
-        match = patt.search(path.name)
+    for pattern in (r"Breast_MRI_(\d+)", r"DUKE_(\d+)"):
+        match = re.search(pattern, clean, flags=re.IGNORECASE)
         if match is not None:
-            timepoint_pairs.append((int(match.group(1)), path))
+            return f"Breast_MRI_{int(match.group(1)):03d}"
 
-    if not timepoint_pairs:
-        example_names = ", ".join(p.name for p in candidates[:5])
-        raise ValueError(
-            "Found candidate files but none matched the expected timepoint pattern "
-            f"for study_id='{study_id}'. First candidates: {example_names}"
+    return None
+
+
+def _resolve_radiologist_nrrd_root(annotations_dir: Path) -> Path:
+    """Resolve `Segmentation_Masks_NRRD` from either base or direct root."""
+    candidate = annotations_dir / "Segmentation_Masks_NRRD"
+    if candidate.exists():
+        return candidate
+    return annotations_dir
+
+
+def _resolve_annotation_segment_path(
+    *,
+    nrrd_root: Path,
+    case_id: str,
+    segment_glob: str,
+) -> Path | None:
+    """Resolve a segment path for one Breast_MRI case using a glob pattern."""
+    case_dir = nrrd_root / case_id
+    if not case_dir.exists():
+        return None
+    matches = sorted(case_dir.glob(segment_glob))
+    if not matches:
+        return None
+    return matches[0]
+
+
+def _resolve_radiologist_seg_path(
+    *,
+    nrrd_root: Path,
+    case_id: str,
+) -> Path | None:
+    """Resolve Dense+Vessels path for one Breast_MRI case."""
+    return _resolve_annotation_segment_path(
+        nrrd_root=nrrd_root,
+        case_id=case_id,
+        segment_glob="Segmentation_*_Dense_and_Vessels.seg.nrrd",
+    )
+
+
+def _resolve_breast_seg_path(
+    *,
+    nrrd_root: Path,
+    case_id: str,
+) -> Path | None:
+    """Resolve breast mask path for one Breast_MRI case."""
+    return _resolve_annotation_segment_path(
+        nrrd_root=nrrd_root,
+        case_id=case_id,
+        segment_glob="Segmentation_*_Breast.seg.nrrd",
+    )
+
+
+def _resolve_tumor_mask_path(
+    *,
+    tumor_mask_dir: Path,
+    study_id: str,
+) -> Path | None:
+    """Resolve tumor mask path from common study-id tokens."""
+    tumor_extensions = (".nii.gz", ".nii", ".nrrd")
+    candidates: list[Path] = [
+        tumor_mask_dir / f"{study_id}{ext}" for ext in tumor_extensions
+    ]
+    case_id = _to_breast_mri_case_id_strict(study_id)
+    if case_id is not None:
+        candidates.extend(
+            tumor_mask_dir / f"{case_id}{ext}" for ext in tumor_extensions
         )
-
-    seen: dict[int, Path] = {}
-    duplicates: list[str] = []
-    for tp, path in sorted(timepoint_pairs, key=lambda x: (x[0], x[1].name)):
-        if tp in seen:
-            duplicates.append(f"{tp:04d}: {seen[tp].name} | {path.name}")
-        else:
-            seen[tp] = path
-
-    if duplicates:
-        dup_msg = "; ".join(duplicates[:5])
-        raise ValueError(
-            "Duplicate files found for one or more timepoints. "
-            f"Please resolve duplicates. Examples: {dup_msg}"
-        )
-
-    ordered = sorted(seen.items(), key=lambda kv: kv[0])
-    return [p for _, p in ordered], [tp for tp, _ in ordered]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
 
 
-def baseline_3d_mask(priority_zyx: np.ndarray, threshold_low: float) -> np.ndarray:
-    """Run 3D skeleton extraction and return a binary skeleton mask."""
-    edges = skeletonize3d(priority_zyx, threshold=threshold_low)
-    return edges > 0
+def _parse_seg_nrrd_segments(path: Path) -> dict[str, dict[str, int | None]]:
+    """Parse Slicer `.seg.nrrd` segment metadata keyed by segment name."""
+    header_chunks: list[bytes] = []
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(4096)
+            if not chunk:
+                break
+            header_chunks.append(chunk)
+            joined = b"".join(header_chunks)
+            if b"\n\n" in joined or b"\r\n\r\n" in joined:
+                break
+
+    joined = b"".join(header_chunks)
+    if b"\n\n" in joined:
+        header_bytes = joined.split(b"\n\n", maxsplit=1)[0]
+    elif b"\r\n\r\n" in joined:
+        header_bytes = joined.split(b"\r\n\r\n", maxsplit=1)[0]
+    else:
+        header_bytes = joined
+    header_text = header_bytes.decode("utf-8", errors="ignore")
+
+    names_by_idx: dict[str, str] = {}
+    labels_by_idx: dict[str, int] = {}
+    layers_by_idx: dict[str, int] = {}
+    for raw_line in header_text.splitlines():
+        line = raw_line.strip()
+        name_match = re.match(r"^Segment(\d+)_Name:=(.+)$", line)
+        if name_match is not None:
+            names_by_idx[name_match.group(1)] = name_match.group(2).strip()
+            continue
+        label_match = re.match(r"^Segment(\d+)_LabelValue:=(-?\d+)$", line)
+        if label_match is not None:
+            labels_by_idx[label_match.group(1)] = int(label_match.group(2))
+            continue
+        layer_match = re.match(r"^Segment(\d+)_Layer:=(-?\d+)$", line)
+        if layer_match is not None:
+            layers_by_idx[layer_match.group(1)] = int(layer_match.group(2))
+
+    segments_by_name: dict[str, dict[str, int | None]] = {}
+    for idx, name in names_by_idx.items():
+        segments_by_name[name] = {
+            "label_value": labels_by_idx.get(idx),
+            "layer": layers_by_idx.get(idx),
+        }
+    return segments_by_name
 
 
-def largest_component_3d(mask_zyx: np.ndarray) -> np.ndarray:
-    """Keep only the largest 26-connected 3D component."""
-    from scipy import ndimage
+def _load_binary_mask_nrrd(
+    path: Path,
+    *,
+    expected_shape_zyx: tuple[int, int, int],
+    label_name: str,
+    threshold: float = 0.0,
+) -> tuple[np.ndarray, dict[str, object]]:
+    """Load binary NRRD and align to expected `(z,y,x)`."""
+    import SimpleITK as sitk
 
-    if not np.any(mask_zyx):
-        return mask_zyx
-
-    structure = np.ones((3, 3, 3), dtype=np.uint8)
-    labels, n_comp = ndimage.label(mask_zyx.astype(np.uint8), structure=structure)
-    if n_comp <= 1:
-        return mask_zyx
-
-    sizes = np.bincount(labels.ravel())
-    sizes[0] = 0
-    keep_label = int(np.argmax(sizes))
-    return labels == keep_label
-
-
-def collapse_4d_to_exam_skeleton(
-    mask_4d: np.ndarray,
-    min_temporal_support: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Collapse a 4D manifold to one 3D exam-level skeleton."""
-    from scipy import ndimage
-
-    if mask_4d.ndim != NDIM_4D:
-        raise ValueError(f"Expected 4D mask (t,z,y,x), got shape {mask_4d.shape}")
-
-    t_dim = int(mask_4d.shape[0])
-    if min_temporal_support < 1 or min_temporal_support > t_dim:
-        raise ValueError(
-            f"min-temporal-support must be in [1, {t_dim}], got {min_temporal_support}"
-        )
-
-    support_count = np.count_nonzero(mask_4d, axis=0).astype(np.int32)
-    support_mask = support_count >= min_temporal_support
-    if not np.any(support_mask):
-        raise ValueError(
-            "4D collapse produced an empty support mask. "
-            "Lower min-temporal-support or adjust pruning thresholds."
-        )
-
-    priority = ndimage.distance_transform_edt(support_mask).astype(
+    arr = sitk.GetArrayFromImage(sitk.ReadImage(str(path))).astype(
         np.float32, copy=False
     )
-    exam_skeleton = skeletonize3d(priority, threshold=0.0) > 0
-    exam_skeleton = largest_component_3d(exam_skeleton)
-    if not np.any(exam_skeleton):
+    if arr.ndim != NDIM_3D:
         raise ValueError(
-            "Exam-level skeleton is empty after largest-component filtering."
+            f"{label_name} NRRD must be 3D, got shape {arr.shape} from {path}"
         )
 
-    return exam_skeleton, support_mask, support_count
+    selected, selected_layout = _select_zyx_layout(arr, expected_shape_zyx)
+
+    mask = (selected > float(threshold)).astype(bool, copy=False)
+    if not np.any(mask):
+        raise ValueError(f"{label_name} mask is empty in {path}")
+    return mask, {
+        "path": str(path),
+        "layout": selected_layout,
+        "voxels": int(np.count_nonzero(mask)),
+    }
+
+
+def _select_radiologist_vessel_layer(
+    arr: np.ndarray,
+    *,
+    vessel_layer: int | None,
+    path: Path,
+) -> tuple[np.ndarray, int | None, str | None, bool]:
+    """Select radiologist vessel layer and report whether selection used header index."""
+    if arr.shape[-1] <= SEG_NRRD_MAX_LAYERS:
+        layer_count = int(arr.shape[-1])
+        selected_layer_index = (
+            int(vessel_layer)
+            if vessel_layer is not None and 0 <= int(vessel_layer) < layer_count
+            else 0
+        )
+        return (
+            arr[..., selected_layer_index],
+            selected_layer_index,
+            "layer_last",
+            vessel_layer is not None and int(vessel_layer) == selected_layer_index,
+        )
+
+    if arr.shape[0] <= SEG_NRRD_MAX_LAYERS:
+        layer_count = int(arr.shape[0])
+        selected_layer_index = (
+            int(vessel_layer)
+            if vessel_layer is not None and 0 <= int(vessel_layer) < layer_count
+            else 0
+        )
+        return (
+            arr[selected_layer_index, ...],
+            selected_layer_index,
+            "layer_first",
+            vessel_layer is not None and int(vessel_layer) == selected_layer_index,
+        )
+
+    raise ValueError(
+        "Radiologist seg NRRD 4D shape unsupported for layered decoding: "
+        f"{arr.shape} from {path}"
+    )
+
+
+def _load_radiologist_vessel_mask_nrrd(
+    path: Path,
+    *,
+    expected_shape_zyx: tuple[int, int, int],
+) -> tuple[np.ndarray, dict[str, object]]:
+    """Load vessel segment from Dense_and_Vessels `.seg.nrrd`."""
+    import SimpleITK as sitk
+
+    segments_by_name = _parse_seg_nrrd_segments(path)
+    vessel_name: str | None = None
+    vessel_label: int | None = None
+    vessel_layer: int | None = None
+    for name, meta in segments_by_name.items():
+        if "vessel" in name.lower():
+            vessel_name = name
+            raw_label = meta.get("label_value")
+            raw_layer = meta.get("layer")
+            vessel_label = None if raw_label is None else int(raw_label)
+            vessel_layer = None if raw_layer is None else int(raw_layer)
+            break
+
+    if vessel_name is None:
+        raise ValueError(
+            f"Could not find a vessel segment in {path}. "
+            f"Found segments: {sorted(segments_by_name.keys())}"
+        )
+
+    arr = sitk.GetArrayFromImage(sitk.ReadImage(str(path))).astype(np.int16, copy=False)
+    if arr.ndim == NDIM_3D:
+        selected_arr_3d = arr
+        selected_layer_index: int | None = None
+        selected_layer_layout: str | None = None
+        selected_layer_via_header = False
+    elif arr.ndim == NDIM_4D:
+        (
+            selected_arr_3d,
+            selected_layer_index,
+            selected_layer_layout,
+            selected_layer_via_header,
+        ) = _select_radiologist_vessel_layer(arr, vessel_layer=vessel_layer, path=path)
+    else:
+        raise ValueError(
+            f"Radiologist seg NRRD must be 3D/4D, got shape {arr.shape} from {path}"
+        )
+
+    selected, selected_layout = _select_zyx_layout(selected_arr_3d, expected_shape_zyx)
+
+    if vessel_label is None:
+        vessel_mask = (selected > 0).astype(bool, copy=False)
+    else:
+        vessel_mask = (selected == int(vessel_label)).astype(bool, copy=False)
+        if not np.any(vessel_mask):
+            vessel_mask = (selected > 0).astype(bool, copy=False)
+    if not np.any(vessel_mask):
+        raise ValueError(
+            f"Radiologist vessel segment '{vessel_name}' is empty in {path}"
+        )
+
+    return vessel_mask, {
+        "path": str(path),
+        "segment_name": vessel_name,
+        "segment_label_value": None if vessel_label is None else int(vessel_label),
+        "segment_layer": None
+        if selected_layer_index is None
+        else int(selected_layer_index),
+        "segment_layer_from_header": bool(selected_layer_via_header),
+        "segment_layer_layout": selected_layer_layout,
+        "layout": selected_layout,
+        "voxels": int(np.count_nonzero(vessel_mask)),
+    }
+
+
+def _maybe_load_radiologist_context_for_mip(
+    *,
+    study_id: str,
+    shape_zyx: tuple[int, int, int],
+    radiologist_annotations_dir: Path,
+) -> dict[str, object]:
+    """Attempt to load radiologist/breast masks for MIP rendering."""
+    case_id = _to_breast_mri_case_id_strict(study_id)
+    if case_id is None:
+        return {"status": "no_case_mapping", "resolved_case_id": None}
+
+    nrrd_root = _resolve_radiologist_nrrd_root(radiologist_annotations_dir)
+    if not nrrd_root.exists():
+        return {
+            "status": "annotations_root_missing",
+            "resolved_case_id": case_id,
+            "nrrd_root": str(nrrd_root),
+        }
+
+    breast_path = _resolve_breast_seg_path(nrrd_root=nrrd_root, case_id=case_id)
+    vessel_path = _resolve_radiologist_seg_path(nrrd_root=nrrd_root, case_id=case_id)
+    if breast_path is None or vessel_path is None:
+        return {
+            "status": "annotation_files_missing",
+            "resolved_case_id": case_id,
+            "nrrd_root": str(nrrd_root),
+            "breast_path": None if breast_path is None else str(breast_path),
+            "vessel_path": None if vessel_path is None else str(vessel_path),
+        }
+
+    try:
+        breast_mask, breast_info = _load_binary_mask_nrrd(
+            breast_path,
+            expected_shape_zyx=shape_zyx,
+            label_name="Breast",
+            threshold=0.0,
+        )
+        vessel_mask, vessel_info = _load_radiologist_vessel_mask_nrrd(
+            vessel_path,
+            expected_shape_zyx=shape_zyx,
+        )
+    except Exception as exc:
+        return {
+            "status": "annotation_load_failed",
+            "resolved_case_id": case_id,
+            "breast_path": str(breast_path),
+            "vessel_path": str(vessel_path),
+            "error": str(exc),
+        }
+
+    return {
+        "status": "ok",
+        "resolved_case_id": case_id,
+        "nrrd_root": str(nrrd_root),
+        "breast_path": str(breast_path),
+        "vessel_path": str(vessel_path),
+        "breast_info": breast_info,
+        "vessel_info": vessel_info,
+        "breast_mask_zyx": breast_mask,
+        "radiologist_mask_zyx": vessel_mask,
+    }
+
+
+def _choose_flip_by_containment(
+    candidate_mask_zyx: np.ndarray,
+    reference_mask_zyx: np.ndarray,
+) -> dict[str, object]:
+    """Select flip that maximizes candidate containment inside reference."""
+    cand = np.asarray(candidate_mask_zyx, dtype=bool)
+    ref = np.asarray(reference_mask_zyx, dtype=bool)
+    if cand.shape != ref.shape:
+        raise ValueError(
+            "Containment flip shape mismatch: "
+            f"{tuple(int(v) for v in cand.shape)} vs {tuple(int(v) for v in ref.shape)}"
+        )
+    cand_voxels = int(np.count_nonzero(cand))
+    if cand_voxels == 0:
+        return {
+            "best_flip_spec": "none",
+            "best_inside_ratio": 0.0,
+            "best_inside_voxels": 0,
+            "all": [
+                {
+                    "flip_spec": "none",
+                    "inside_ratio": 0.0,
+                    "inside_voxels": 0,
+                    "candidate_voxels": 0,
+                }
+            ],
+        }
+
+    rows = _build_containment_rows(cand=cand, ref=ref, candidate_voxels=cand_voxels)
+    rows_sorted = sorted(
+        rows,
+        key=lambda d: (
+            float(d["inside_ratio"]),
+            int(d["inside_voxels"]),
+            1 if str(d["flip_spec"]) == "none" else 0,
+        ),
+        reverse=True,
+    )
+    best = rows_sorted[0]
+    return {
+        "best_flip_spec": str(best["flip_spec"]),
+        "best_inside_ratio": float(best["inside_ratio"]),
+        "best_inside_voxels": int(best["inside_voxels"]),
+        "all": rows_sorted,
+    }
+
+
+def _build_containment_rows(
+    cand: np.ndarray,
+    ref: np.ndarray,
+    candidate_voxels: int,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for spec in VIZ_FLIP_SPECS:
+        flipped = _apply_flip_spec(cand, spec)
+        inside_voxels = int(np.count_nonzero(flipped & ref))
+        rows.append(
+            {
+                "flip_spec": str(spec),
+                "inside_ratio": float(inside_voxels / float(candidate_voxels)),
+                "inside_voxels": inside_voxels,
+                "candidate_voxels": candidate_voxels,
+            }
+        )
+    return rows
 
 
 def mask_to_edges_bitmask(mask_zyx: np.ndarray) -> np.ndarray:
@@ -295,89 +569,19 @@ def build_morphometry_from_skeleton(
     }
 
 
-def process_3d_case(
-    *,
-    input_file: Path,
-    output_dir: Path,
-    threshold_low: float,
-    npy_channel: int,
-    force_skeleton: bool,
-    force_features: bool,
-) -> dict[str, object]:
-    """Run 3D skeleton extraction + morphometry for one input file."""
-    start = time.perf_counter()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    stem = input_file.stem
-    skeleton_path = output_dir / f"{stem}_skeleton_3d_mask.npy"
-    morphometry_path = output_dir / f"{stem}_morphometry.json"
-
-    skeleton_took = 0.0
-    features_took = 0.0
-
-    arr = load_segmentation_array(input_file)
-    priority_zyx = extract_single_timepoint_volume(arr, npy_channel=npy_channel)
-
-    if skeleton_path.exists() and not force_skeleton:
-        skeleton_mask = np.load(skeleton_path).astype(bool, copy=False)
-        skeleton_status = "loaded_existing"
-    else:
-        t0 = time.perf_counter()
-        skeleton_mask = baseline_3d_mask(priority_zyx, threshold_low=threshold_low)
-        np.save(skeleton_path, skeleton_mask.astype(np.uint8))
-        skeleton_took = float(time.perf_counter() - t0)
-        skeleton_status = "computed"
-
-    if morphometry_path.exists() and not force_features:
-        feature_stats: dict[str, int] | None = None
-        features_status = "loaded_existing"
-    else:
-        t1 = time.perf_counter()
-        feature_stats = build_morphometry_from_skeleton(
-            skeleton_mask_zyx=skeleton_mask,
-            vessel_reference_zyx=priority_zyx,
-            output_json_path=morphometry_path,
-        )
-        features_took = float(time.perf_counter() - t1)
-        features_status = "computed"
-
-    return {
-        "mode": "3d",
-        "input_file": str(input_file),
-        "threshold_low": float(threshold_low),
-        "npy_channel": int(npy_channel),
-        "skeleton_status": skeleton_status,
-        "features_status": features_status,
-        "skeleton_voxels": int(np.count_nonzero(skeleton_mask)),
-        "skeleton_path": str(skeleton_path),
-        "morphometry_path": str(morphometry_path),
-        "feature_stats": feature_stats,
-        "timing_seconds": {
-            "skeleton": skeleton_took,
-            "features": features_took,
-            "total": float(time.perf_counter() - start),
-        },
-    }
-
-
 def process_4d_study(
     *,
     input_dir: Path,
     study_id: str,
     output_dir: Path,
-    npy_channel: int,
-    threshold_low: float,
-    threshold_high: float | None,
-    max_temporal_radius: int,
-    min_voxels_per_timepoint: int,
-    min_anchor_fraction: float,
-    min_anchor_voxels: int,
-    max_candidates: int | None,
-    min_temporal_support: int,
     force_skeleton: bool,
     force_features: bool,
+    save_exam_masks: bool,
     save_center_manifold_mask: bool,
-    verbose: bool = True,
+    render_mip: bool,
+    mip_dpi: int,
+    radiologist_annotations_dir: Path,
+    tumor_mask_dir: Path,
 ) -> dict[str, object]:
     """Run 4D exam-level skeleton extraction + morphometry for one study."""
     start = time.perf_counter()
@@ -387,14 +591,24 @@ def process_4d_study(
     support_path = output_dir / f"{study_id}_skeleton_4d_exam_support_mask.npy"
     manifold_path = output_dir / f"{study_id}_center_manifold_4d_mask.npy"
     morphometry_path = output_dir / f"{study_id}_morphometry.json"
+    coverage_mip_path = output_dir / f"{study_id}_vessel_coverage_mip.png"
 
     skeleton_took = 0.0
     features_took = 0.0
+    mip_took = 0.0
 
     discovered_files: list[Path] | None = None
     discovered_timepoints: list[int] | None = None
+    effective_min_temporal_support: int | None = None
+    tc4d_params: dict[str, object] | None = None
+    tc4d_diagnostics: dict[str, object] | None = None
 
-    if skeleton_path.exists() and support_path.exists() and not force_skeleton:
+    if (
+        save_exam_masks
+        and skeleton_path.exists()
+        and support_path.exists()
+        and not force_skeleton
+    ):
         skeleton_mask = np.load(skeleton_path).astype(bool, copy=False)
         support_mask = np.load(support_path).astype(bool, copy=False)
         retained_per_t: list[int] | None = None
@@ -407,27 +621,24 @@ def process_4d_study(
         )
         priority_4d = load_time_series_from_files(
             discovered_files,
-            npy_channel=npy_channel,
         )
-
-        mask_4d = skeletonize4d(
+        tc4d_result, tc4d_params, tc4d_diagnostics = run_tc4d_from_priority(
             priority_4d,
-            threshold_low=threshold_low,
-            threshold_high=threshold_high,
-            max_temporal_radius=max_temporal_radius,
-            min_voxels_per_timepoint=min_voxels_per_timepoint,
-            min_anchor_fraction=min_anchor_fraction,
-            min_anchor_voxels=min_anchor_voxels,
-            max_candidates=max_candidates,
-            verbose=verbose,
         )
-        skeleton_mask, support_mask, _ = collapse_4d_to_exam_skeleton(
-            mask_4d,
-            min_temporal_support=min_temporal_support,
+        mask_4d = np.asarray(tc4d_result["mask_4d"], dtype=bool)
+        skeleton_mask = np.asarray(tc4d_result["exam_mask"], dtype=bool)
+        support_mask = np.asarray(tc4d_result["support_mask"], dtype=bool)
+        effective_min_temporal_support = int(
+            tc4d_result["effective_min_temporal_support"]
         )
+        if not np.any(skeleton_mask):
+            raise ValueError("TC4D produced an empty exam-level skeleton.")
+        if not np.any(support_mask):
+            raise ValueError("TC4D produced an empty support mask.")
 
-        np.save(skeleton_path, skeleton_mask.astype(np.uint8))
-        np.save(support_path, support_mask.astype(np.uint8))
+        if save_exam_masks:
+            np.save(skeleton_path, skeleton_mask.astype(np.uint8))
+            np.save(support_path, support_mask.astype(np.uint8))
         if save_center_manifold_mask:
             np.save(manifold_path, mask_4d.astype(np.uint8))
 
@@ -448,36 +659,167 @@ def process_4d_study(
         features_took = float(time.perf_counter() - t1)
         features_status = "computed"
 
+    mip_status = "skipped"
+    coverage_mip_diagnostics: dict[str, object] | None = None
+    radiologist_context_for_summary: dict[str, object] | None = None
+    tumor_context_for_summary: dict[str, object] | None = None
+    if render_mip:
+        t2 = time.perf_counter()
+        try:
+            shape_zyx = tuple(int(v) for v in skeleton_mask.shape)
+            radiologist_context = _maybe_load_radiologist_context_for_mip(
+                study_id=study_id,
+                shape_zyx=shape_zyx,
+                radiologist_annotations_dir=radiologist_annotations_dir,
+            )
+            radiologist_mask_model: np.ndarray | None = None
+            breast_mask_model: np.ndarray | None = None
+            radiologist_mask_viz: np.ndarray | None = None
+            breast_mask_viz: np.ndarray | None = None
+            if radiologist_context.get("status") == "ok":
+                radiologist_mask_model = np.asarray(
+                    radiologist_context["radiologist_mask_zyx"], dtype=bool
+                )
+                breast_mask_model = np.asarray(
+                    radiologist_context["breast_mask_zyx"], dtype=bool
+                )
+                radiologist_mask_viz = _apply_flip_spec(
+                    radiologist_mask_model,
+                    PROCESSING_VIZ_FLIP_SPEC,
+                )
+                breast_mask_viz = _apply_flip_spec(
+                    breast_mask_model,
+                    PROCESSING_VIZ_FLIP_SPEC,
+                )
+
+            tumor_mask_viz: np.ndarray | None = None
+            resolved_tumor_path = _resolve_tumor_mask_path(
+                tumor_mask_dir=tumor_mask_dir,
+                study_id=study_id,
+            )
+            if resolved_tumor_path is None:
+                tumor_context_for_summary = {
+                    "status": "tumor_mask_missing",
+                    "mask_dir": str(tumor_mask_dir),
+                }
+            else:
+                try:
+                    tumor_mask_model, tumor_info = _load_binary_mask_nrrd(
+                        resolved_tumor_path,
+                        expected_shape_zyx=shape_zyx,
+                        label_name="Tumor",
+                        threshold=0.5,
+                    )
+                    alignment_to_breast: dict[str, object] | None = None
+                    flip_to_model = "none"
+                    if breast_mask_model is not None:
+                        alignment_to_breast = _choose_flip_by_containment(
+                            tumor_mask_model,
+                            breast_mask_model,
+                        )
+                        flip_to_model = str(alignment_to_breast["best_flip_spec"])
+                        tumor_mask_model = _apply_flip_spec(
+                            tumor_mask_model, flip_to_model
+                        )
+
+                    tumor_mask_viz = _apply_flip_spec(
+                        tumor_mask_model,
+                        PROCESSING_VIZ_FLIP_SPEC,
+                    )
+                    tumor_context_for_summary = {
+                        "status": "ok",
+                        "path": str(resolved_tumor_path),
+                        "mask_dir": str(tumor_mask_dir),
+                        "processing_flip_to_model": flip_to_model,
+                        "alignment_to_breast": alignment_to_breast,
+                        "voxels_after_alignment": int(
+                            np.count_nonzero(tumor_mask_model)
+                        ),
+                        **tumor_info,
+                    }
+                except Exception as exc:
+                    tumor_context_for_summary = {
+                        "status": "tumor_mask_load_failed",
+                        "path": str(resolved_tumor_path),
+                        "mask_dir": str(tumor_mask_dir),
+                        "error": str(exc),
+                    }
+
+            method_label = "tc4d"
+            row_masks: list[tuple[str, np.ndarray]] = [
+                (
+                    method_label,
+                    _apply_flip_spec(skeleton_mask, PROCESSING_VIZ_FLIP_SPEC),
+                )
+            ]
+            if radiologist_mask_viz is not None:
+                row_masks.append(("radiologist", radiologist_mask_viz))
+
+            coverage_mip_diag = render_vessel_coverage_mip(
+                row_masks=row_masks,
+                output_path=coverage_mip_path,
+                case_label=study_id,
+                title_prefix=f"{method_label} vessel coverage mip",
+                radiologist_mask_zyx=radiologist_mask_viz,
+                breast_mask_zyx=breast_mask_viz,
+                tumor_mask_zyx=tumor_mask_viz,
+                vessel_color="#111827",
+                dpi=int(mip_dpi),
+            )
+            radiologist_context_for_summary = {
+                k: v
+                for k, v in radiologist_context.items()
+                if k not in {"breast_mask_zyx", "radiologist_mask_zyx"}
+            }
+            coverage_mip_diagnostics = {
+                **coverage_mip_diag,
+                "radiologist_context": radiologist_context_for_summary,
+                "tumor_context": tumor_context_for_summary,
+                "visualization_flip_spec": PROCESSING_VIZ_FLIP_SPEC,
+            }
+            mip_status = "computed"
+        except Exception as exc:
+            mip_status = "failed"
+            coverage_mip_diagnostics = {"error": str(exc)}
+        mip_took = float(time.perf_counter() - t2)
+
     return {
-        "mode": "4d",
+        "mode": "tc4d",
         "study_id": study_id,
         "input_dir": str(input_dir),
-        "npy_channel": int(npy_channel),
-        "threshold_low": float(threshold_low),
-        "threshold_high": None if threshold_high is None else float(threshold_high),
-        "max_temporal_radius": int(max_temporal_radius),
-        "min_voxels_per_timepoint": int(min_voxels_per_timepoint),
-        "min_anchor_fraction": float(min_anchor_fraction),
-        "min_anchor_voxels": int(min_anchor_voxels),
-        "max_candidates": None if max_candidates is None else int(max_candidates),
-        "min_temporal_support": int(min_temporal_support),
+        "algorithm": "tc4d",
+        "effective_min_temporal_support": (
+            None
+            if effective_min_temporal_support is None
+            else int(effective_min_temporal_support)
+        ),
         "skeleton_status": skeleton_status,
         "features_status": features_status,
         "skeleton_voxels": int(np.count_nonzero(skeleton_mask)),
         "support_voxels": int(np.count_nonzero(support_mask)),
-        "skeleton_path": str(skeleton_path),
-        "support_path": str(support_path),
+        "skeleton_path": str(skeleton_path) if save_exam_masks else None,
+        "support_path": str(support_path) if save_exam_masks else None,
         "manifold_path": str(manifold_path) if save_center_manifold_mask else None,
         "morphometry_path": str(morphometry_path),
+        "coverage_mip_path": str(coverage_mip_path)
+        if mip_status == "computed"
+        else None,
+        "coverage_mip_status": mip_status,
+        "coverage_mip_diagnostics": coverage_mip_diagnostics,
+        "radiologist_context": radiologist_context_for_summary,
+        "tumor_context": tumor_context_for_summary,
         "feature_stats": feature_stats,
+        "tc4d_params": tc4d_params,
+        "tc4d_diagnostics": tc4d_diagnostics,
         "study_files": None
         if discovered_files is None
         else [str(p) for p in discovered_files],
         "study_timepoints": discovered_timepoints,
-        "retained_per_timepoint_4d": retained_per_t,
+        "retained_per_timepoint": retained_per_t,
         "timing_seconds": {
             "skeleton": skeleton_took,
             "features": features_took,
+            "coverage_mip": mip_took,
             "total": float(time.perf_counter() - start),
         },
     }

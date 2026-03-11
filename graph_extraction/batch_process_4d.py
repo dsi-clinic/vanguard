@@ -30,6 +30,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 from graph_extraction.processing import (  # noqa: E402
+    DEFAULT_RADIOLOGIST_ANNOTATIONS_DIR,
+    DEFAULT_TUMOR_MASK_DIR,
     process_4d_study,
 )
 
@@ -163,14 +165,6 @@ def main() -> None:
         nargs="*",
         help="Optional: restrict to these study IDs. If not given, discover all.",
     )
-    parser.add_argument("--npy-channel", type=int, default=1)
-    parser.add_argument("--threshold-low", type=float, default=0.5)
-    parser.add_argument("--threshold-high", type=float, default=0.85)
-    parser.add_argument("--max-temporal-radius", type=int, default=1)
-    parser.add_argument("--min-voxels-per-timepoint", type=int, default=64)
-    parser.add_argument("--min-anchor-fraction", type=float, default=0.005)
-    parser.add_argument("--min-anchor-voxels", type=int, default=128)
-    parser.add_argument("--min-temporal-support", type=int, default=2)
     parser.add_argument("--force-skeleton", action="store_true")
     parser.add_argument("--force-features", action="store_true")
     parser.add_argument(
@@ -179,15 +173,35 @@ def main() -> None:
         help="Skip studies that already have morphometry JSON (no process_4d_study call)",
     )
     parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Suppress skeletonize4d verbose output (faster, less I/O)",
+        "--save-exam-masks",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write exam skeleton/support masks.",
     )
     parser.add_argument(
         "--save-center-manifold-mask",
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Save full 4D manifold mask (large files)",
+    )
+    parser.add_argument(
+        "--render-mip",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Render vessel coverage MIPs during batch processing.",
+    )
+    parser.add_argument("--mip-dpi", type=int, default=180)
+    parser.add_argument(
+        "--radiologist-annotations-dir",
+        type=Path,
+        default=DEFAULT_RADIOLOGIST_ANNOTATIONS_DIR,
+        help="Base path for optional Duke supplemental annotations.",
+    )
+    parser.add_argument(
+        "--tumor-mask-dir",
+        type=Path,
+        default=DEFAULT_TUMOR_MASK_DIR,
+        help="Directory for optional tumor masks used in MIP overlays.",
     )
     parser.add_argument(
         "--study-index",
@@ -265,19 +279,14 @@ def main() -> None:
         manifest_suffix = f"task_{args.study_index}"
 
     study_kwargs = {
-        "npy_channel": args.npy_channel,
-        "threshold_low": args.threshold_low,
-        "threshold_high": args.threshold_high,
-        "max_temporal_radius": args.max_temporal_radius,
-        "min_voxels_per_timepoint": args.min_voxels_per_timepoint,
-        "min_anchor_fraction": args.min_anchor_fraction,
-        "min_anchor_voxels": args.min_anchor_voxels,
-        "max_candidates": None,
-        "min_temporal_support": args.min_temporal_support,
         "force_skeleton": args.force_skeleton,
         "force_features": args.force_features,
+        "save_exam_masks": args.save_exam_masks,
         "save_center_manifold_mask": args.save_center_manifold_mask,
-        "verbose": not args.quiet,
+        "render_mip": args.render_mip,
+        "mip_dpi": args.mip_dpi,
+        "radiologist_annotations_dir": args.radiologist_annotations_dir,
+        "tumor_mask_dir": args.tumor_mask_dir,
     }
 
     manifest: list[dict] = []

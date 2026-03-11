@@ -13,9 +13,41 @@ Point3D = tuple[int, int, int]
 Segment = tuple[Point3D, Point3D]
 PathList = list[Point3D]
 
+_OFFSETS_3D = np.array(
+    [
+        (dz, dy, dx)
+        for dz in (-1, 0, 1)
+        for dy in (-1, 0, 1)
+        for dx in (-1, 0, 1)
+        if not (dz == 0 and dy == 0 and dx == 0)
+    ],
+    dtype=np.int64,
+)
+
 SEGMENT_DEGREE = 2
 BIFURCATION_DEGREE = 3
 MIN_CURVATURE_POINTS = 3
+
+
+def edges_to_segments(edges: np.ndarray) -> np.ndarray:
+    """Convert 3D edge bitmask into an array of line segments."""
+    depth, height, width = edges.shape
+    segments: list[tuple[tuple[int, int, int], tuple[int, int, int]]] = []
+    for z in range(depth):
+        for y in range(height):
+            for x in range(width):
+                mask = int(edges[z, y, x])
+                if mask == 0:
+                    continue
+                for bit in range(26):
+                    if (mask >> bit) & 1:
+                        dz, dy, dx = _OFFSETS_3D[bit]
+                        nz, ny, nx = z + int(dz), y + int(dy), x + int(dx)
+                        if 0 <= nz < depth and 0 <= ny < height and 0 <= nx < width:
+                            # Avoid duplicate segments by canonical ordering.
+                            if (nz, ny, nx) > (z, y, x):
+                                segments.append(((x, y, z), (nx, ny, nz)))
+    return np.asarray(segments, dtype=np.int64)
 
 
 def segments_to_graph(segments: Iterable[Segment]) -> nx.Graph:

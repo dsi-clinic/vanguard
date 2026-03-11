@@ -48,4 +48,8 @@ convention = "google"
 "radiomics_baseline/scripts/radiomics_train.py" = ["ANN101", "D107"]
 
 [tool.pytest.ini_options]
-python_files = "*.py"
+# Only treat actual test files as test modules. Importing every `*.py` during
+# collection is brittle (e.g., debug/one-off scripts) and makes CI fail on
+# unrelated import-time errors.
+testpaths = ["tests"]
+python_files = ["test_*.py"]
