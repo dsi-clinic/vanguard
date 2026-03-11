@@ -146,7 +146,6 @@ out_pcr_jose/model_rf.pkl
 out_pcr_jose/features.csv
 out_pcr_jose/features_engineered.csv
 out_pcr_jose/features_join_preview.csv
-*.pkl
 # Ignore Rebecca's large feature files
 out_pcr_rebecca/features.csv
 out_pcr_rebecca/features_engineered.csv
@@ -173,11 +172,6 @@ test_outputs/
 logs/
 debug_output/
 
-# Ignore experiment data dumps
-*.csv
-*.pkl
-features_*.csv
-predictions.csv
 # Results shouldn't be commited as they can be regenerated easily
 results/**
 test_breast_masks/

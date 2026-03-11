@@ -18,7 +18,7 @@ def get_clinical_features(config: dict[str, Any]) -> pd.DataFrame:
     Returns:
         A cleaned pandas DataFrame with clinical features and dummy variables.
     """
-    path = Path(config["data_paths"]["clinical_file"])
+    path = Path(config["data_paths"]["clinical_excel"])
     clinical_data = pd.read_excel(path)
 
     cols = [
