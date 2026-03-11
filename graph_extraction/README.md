@@ -2,6 +2,8 @@
 
 Skeleton extraction and skeleton-to-graph feature code for 3D and 4D vessel segmentations.
 
+**Paths:** Examples below use relative paths (e.g. `output/`, `report/4d_morphometry`) where possible. Some docs and cluster scripts use project-specific absolute paths (e.g. `/net/projects2/vanguard/...`); replace those with your own paths when running locally.
+
 ## Layout
 
 - `run_skeleton_processing.py`: main processing pipeline (3D or 4D), with skeleton extraction + morphometry generation.
@@ -32,8 +34,9 @@ python graph_extraction/run_skeleton_processing.py 3d \
 ### 4D mode (exam-level across all timepoints)
 
 ```bash
+# Use relative paths when running from repo root (e.g. input-dir vessel_segmentations)
 python graph_extraction/run_skeleton_processing.py 4d \
-  --input-dir /net/projects2/vanguard/vessel_segmentations \
+  --input-dir vessel_segmentations \
   --study-id ISPY2_202539 \
   --output-dir output \
   --npy-channel 1 \
@@ -55,7 +58,7 @@ Use this for 3D-vs-4D QC plots and rotating MP4:
 
 ```bash
 python graph_extraction/run_compare_3d_4d_debug.py \
-  --input-dir /net/projects2/vanguard/vessel_segmentations \
+  --input-dir vessel_segmentations \
   --study-id ISPY2_202539 \
   --npy-channel 1 \
   --threshold-low 0.5 \
@@ -64,8 +67,7 @@ python graph_extraction/run_compare_3d_4d_debug.py \
 ```
 
 Notes:
-- Tumor overlay is auto-resolved in study mode from:
-  `/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert/{study_id}.nii.gz`
+- Tumor overlay paths are cluster-specific; on cluster, overlay may be auto-resolved from `.../segmentations/expert/{study_id}.nii.gz`.
 - MP4 frame count is reduced for faster render.
 
 ## Weak-signal diagnostic pipeline (Phase 1 & 2)
@@ -75,7 +77,7 @@ For diagnosing weak downstream prediction signal:
 **Phase 1.1 – batch 4D morphometry:**
 ```bash
 python graph_extraction/batch_process_4d.py \
-  --input-dir /net/projects2/vanguard/vessel_segmentations \
+  --input-dir vessel_segmentations \
   --npy-channel 1 \
   --threshold-low 0.5 \
   --threshold-high 0.85 \
@@ -87,8 +89,8 @@ Use `--skip-existing` to skip studies that already have morphometry JSON, and `-
 **Phase 1.2 – feature extraction + metadata join:**
 ```bash
 python graph_extraction/build_features_with_metadata.py \
-  --morphometry-dir /net/projects2/vanguard/report/4d_morphometry \
-  --patient-info-dir /net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files \
+  --morphometry-dir report/4d_morphometry \
+  --patient-info-dir path/to/patient_info_files \
   --output-dir report
 ```
 
@@ -96,7 +98,7 @@ python graph_extraction/build_features_with_metadata.py \
 ```bash
 python graph_extraction/run_feature_qc.py \
   --features-csv report/features_with_metadata.csv \
-  --morphometry-dir /net/projects2/vanguard/report/4d_morphometry \
+  --morphometry-dir report/4d_morphometry \
   --output-dir report
 ```
 
@@ -133,7 +135,7 @@ Outputs: `ablation_results.csv`, `report/plots/ablation_auc_comparison.png`.
 ```bash
 python graph_extraction/run_fp_fn_inspection.py \
   --features-csv report/features_with_metadata.csv \
-  --morphometry-dir /net/projects2/vanguard/report/4d_morphometry \
+  --morphometry-dir report/4d_morphometry \
   --output-dir report
 ```
 

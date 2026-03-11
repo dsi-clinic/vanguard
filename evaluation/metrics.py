@@ -102,7 +102,7 @@ def compute_binary_metrics(
                 else:
                     results[metric_name] = metric_result
             except Exception:
-                # If metric computation fails, set to NaN
+                # Intentional: NaN for failed metric (e.g. single-class fold) so aggregation proceeds.
                 results[metric_name] = float("nan")
 
     return results
@@ -157,6 +157,7 @@ def compute_metrics_by_group(
                 yt, yp, ypr, metrics_to_compute
             )
         except Exception:
+            # Intentional: NaN per group on failure so overall report still returns.
             by_group[str(group_val)] = {
                 k: float("nan")
                 for k in (metrics_to_compute or list(METRIC_REGISTRY.keys()))

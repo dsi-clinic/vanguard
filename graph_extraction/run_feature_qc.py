@@ -83,6 +83,7 @@ def plot_core_distributions(df: pd.DataFrame, output_dir: Path) -> None:
         import matplotlib.pyplot as plt
         import seaborn as sns
     except ImportError:
+        # Intentional: optional plots; skip and return so QC still runs.
         print("[qc] matplotlib/seaborn not installed; skipping distribution plots")
         return
 

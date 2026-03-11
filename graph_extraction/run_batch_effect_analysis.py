@@ -134,6 +134,7 @@ def _run_umap(X: np.ndarray) -> np.ndarray | None:
     try:
         import umap
     except ImportError:
+        # Intentional: umap is optional; return None and skip UMAP.
         return None
     n_neighbors = min(UMAP_N_NEIGHBORS, X.shape[0] // 4, X.shape[0] - 1)
     n_neighbors = max(2, n_neighbors)
@@ -248,6 +249,7 @@ def _predict_site_and_report(
             average="macro",
         )
     except ValueError:
+        # Intentional: edge case (e.g. too few classes); record NaN.
         auc_macro = float("nan")
 
     report = {
@@ -287,6 +289,7 @@ def _predict_site_and_report(
         plt.close()
         print("  site_prediction_confusion.png")
     except Exception as e:
+        # Intentional: optional plot; log and continue so report still completes.
         print(f"  [batch_effect] Confusion plot failed: {e}")
 
     # Feature importances (fit on full data)

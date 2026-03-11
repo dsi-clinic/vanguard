@@ -48,9 +48,22 @@ micromamba env update -y -n vanguard -f environment.yml
 
 (Be sure to clone this repo with `--recursive` so that submodules like [dsi-clinic/vanguard-blood-vessel-segmentation](https://github.com/dsi-clinic/vanguard-blood-vessel-segmentation) are included.)
 
+### Environment (cluster and local)
+
+For **cluster and local runs**, the Python environment is specified by [**environment.yml**](environment.yml) (micromamba/conda recipe). All dependencies, including pip-only packages, are versioned there. Use `micromamba env create -f environment.yml` / `micromamba env update -f environment.yml` as above.
+
+When running scripts from the repo root (e.g. `examples/baseline_model_example.py`, `graph_extraction/run_*.py`), ensure the project is on `PYTHONPATH` (e.g. `PYTHONPATH=. python examples/baseline_model_example.py ...`) or install the package in development mode: `pip install -e .` (then `python examples/baseline_model_example.py ...`).
+
 ## Repository Structure and Methodologies
 
 This repository contains a complete pipeline for predicting pathologic complete response (pCR) from breast DCE-MRI using vascular graph analysis. The following sections describe each component and how to reuse them for future cohorts.
+
+### Code layout (evaluation, tests, examples)
+
+- **`evaluation/`** – Centralized evaluation system (k-fold CV, cohort selection, random baseline, metrics). Library only; see [`evaluation/README.md`](evaluation/README.md) for module layout and usage.
+- **`tests/`** – Unit and integration tests for the evaluation framework and related code. See [`tests/README.md`](tests/README.md) for what's tested and how to run pytest.
+- **`examples/`** – Example script and sample data for running the evaluation pipeline (`baseline_model_example.py`). See [`examples/README.md`](examples/README.md) for contents and run commands.
+- **`graph_extraction/`** – Skeleton extraction and graph/morphometry pipeline. See [`graph_extraction/README.md`](graph_extraction/README.md) for implementation details and API.
 
 ---
 
@@ -527,6 +540,14 @@ To check for errors locally, first ensure that `pre-commit` is installed by runn
 ```
 pre-commit run --all-files
 ```
+
+---
+
+## Development
+
+- Work on feature branches; open pull requests for code review before merging to `main`.
+- Keep working branches up to date with `main` (rebase or merge at least daily and before final review).
+- All code must pass `pre-commit run --all-files` (ruff, format, etc.) before merge.
 
 ---
 

@@ -113,6 +113,7 @@ def check_morphometry_json(json_path: Path) -> list[dict]:
     try:
         data = json.loads(json_path.read_text())
     except Exception:
+        # Intentional: return structured parse_error so QC report lists invalid files.
         return [
             {
                 "case_id": case_id,
