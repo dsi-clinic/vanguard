@@ -1,1 +1,1 @@
-"""Graph extraction package for 4d/tc4d vessel pipelines."""
+"""Graph extraction package for tc4d vessel pipelines."""

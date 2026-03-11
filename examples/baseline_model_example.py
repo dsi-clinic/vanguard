@@ -84,6 +84,7 @@ from evaluation import (  # noqa: E402
     report_random_baseline,
     save_random_baseline_distribution,
 )
+from evaluation.logging_config import get_logger, setup_logging  # noqa: E402
 from evaluation.selection import (  # noqa: E402
     apply_selection_criteria,
     build_selection_criteria_from_args,
@@ -302,6 +303,7 @@ def run_kfold(
     splits: list[FoldSplit],
     get_predictions_for_fold: callable,
     stratum: np.ndarray | None = None,
+    log_progress: bool = True,
 ) -> list[FoldResults]:
     """Run k-fold evaluation with a given predictor.
 
@@ -323,12 +325,16 @@ def run_kfold(
         (split, X, y, stratum) -> (y_true, y_pred, y_prob, patient_ids).
     stratum : np.ndarray, optional
         Stratum labels aligned to X/y for per-stratum reporting.
+    log_progress : bool, default=True
+        If True, log each fold completion.
 
     Returns:
     -------
     list[FoldResults]
         One FoldResults per fold.
     """
+    logger = get_logger()
+    n_splits = len(splits)
     fold_results = []
     for split in splits:
         y_true, y_pred, y_prob, pid = get_predictions_for_fold(split, X, y, stratum)
@@ -338,6 +344,8 @@ def run_kfold(
         if stratum is not None:
             pred_df["stratum"] = stratum[split.val_indices]
         fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
+        if log_progress:
+            logger.info("  Fold %d/%d done", split.fold_idx + 1, n_splits)
     return fold_results
 
 
@@ -527,6 +535,25 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to YAML config with selection criteria. Used when no CLI selection flags. Requires --excel-metadata.",
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level.",
+    )
+    parser.add_argument(
+        "--n-runs",
+        type=int,
+        default=1,
+        help="Number of k-fold runs (each with different random seed). When > 1, outputs run AUC distribution.",
+    )
+    parser.add_argument(
+        "--run-seed-offset",
+        type=int,
+        default=0,
+        help="Offset added to random_state for each run when --n-runs > 1 (run i uses random_state + run_seed_offset + i).",
+    )
     args = parser.parse_args()
     if (args.features is None) != (args.labels is None):
         parser.error(
@@ -554,6 +581,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Run the baseline model example (random or logistic) with k-fold and optional train/test."""
     args = parse_args()
+    setup_logging(level=args.log_level)
+    logger = get_logger()
 
     # --- Data preparation ---
     # Build selection criteria: CLI flags override; else use --config if set.
@@ -619,51 +648,94 @@ def main() -> None:
         do_train_test = True
 
     model_name = "random_baseline" if args.model == "random" else "logistic_baseline"
+    train_pids = patient_ids if not do_train_test else patient_ids[train_idx]
 
-    # --- Evaluator (same API for any model) ---
+    logger.info(
+        "Starting k-fold evaluation (n_splits=%d, n_runs=%d)",
+        args.n_splits,
+        args.n_runs,
+    )
+
+    run_aucs: list[float] = []
+    kfold_results = None
+
+    for run_idx in range(args.n_runs):
+        seed = args.random_state + args.run_seed_offset + run_idx
+        logger.info(
+            "Run %d/%d (seed=%d)",
+            run_idx + 1,
+            args.n_runs,
+            seed,
+        )
+
+        # --- Evaluator (same API for any model) ---
+        evaluator = Evaluator(
+            X=X_train,
+            y=y_train,
+            patient_ids=train_pids,
+            model_name=model_name,
+            random_state=seed,
+        )
+
+        # --- K-fold evaluation ---
+        if args.excel_metadata is not None:
+            splits = create_splits_from_excel(
+                excel_path=args.excel_metadata,
+                patient_ids=train_pids,
+                n_splits=args.n_splits,
+                random_state=seed,
+                selection_criteria=selection_criteria,
+            )
+        else:
+            splits = evaluator.create_kfold_splits(
+                n_splits=args.n_splits,
+                stratify=True,
+                shuffle=True,
+            )
+
+        if args.model == "random":
+
+            def get_predictions(
+                split: FoldSplit,
+                X: np.ndarray,
+                y: np.ndarray,
+                s: np.ndarray | None,
+                _seed: int = seed,
+            ) -> tuple:
+                return _get_predictions_random(split, X, y, s, _seed)
+        else:
+
+            def get_predictions(
+                split: FoldSplit,
+                X: np.ndarray,
+                y: np.ndarray,
+                s: np.ndarray | None,
+                _seed: int = seed,
+            ) -> tuple:
+                return _get_predictions_logistic(split, X, y, s, _seed)
+
+        fold_results = run_kfold(
+            evaluator, X_train, y_train, splits, get_predictions, stratum=stratum
+        )
+
+        kfold_results = evaluator.aggregate_kfold_results(fold_results)
+        mean_auc = kfold_results.aggregated_metrics.get("auc", {}).get("mean")
+        run_aucs.append(
+            mean_auc
+            if mean_auc is not None and not np.isnan(mean_auc)
+            else float("nan")
+        )
+
+    # Use last evaluator and kfold_results for saving
+    if kfold_results is None:
+        raise RuntimeError("No k-fold results produced")
     evaluator = Evaluator(
         X=X_train,
         y=y_train,
-        patient_ids=patient_ids if not do_train_test else patient_ids[train_idx],
+        patient_ids=train_pids,
         model_name=model_name,
         random_state=args.random_state,
     )
-
-    # --- K-fold evaluation ---
-    train_pids = patient_ids if not do_train_test else patient_ids[train_idx]
-    if args.excel_metadata is not None:
-        splits = create_splits_from_excel(
-            excel_path=args.excel_metadata,
-            patient_ids=train_pids,
-            n_splits=args.n_splits,
-            random_state=args.random_state,
-            selection_criteria=selection_criteria,
-        )
-    else:
-        splits = evaluator.create_kfold_splits(
-            n_splits=args.n_splits,
-            stratify=True,
-            shuffle=True,
-        )
-
-    if args.model == "random":
-
-        def get_predictions(
-            split: FoldSplit, X: np.ndarray, y: np.ndarray, s: np.ndarray | None
-        ) -> tuple:
-            return _get_predictions_random(split, X, y, s, args.random_state)
-    else:
-
-        def get_predictions(
-            split: FoldSplit, X: np.ndarray, y: np.ndarray, s: np.ndarray | None
-        ) -> tuple:
-            return _get_predictions_logistic(split, X, y, s, args.random_state)
-
-    fold_results = run_kfold(
-        evaluator, X_train, y_train, splits, get_predictions, stratum=stratum
-    )
-
-    kfold_results = evaluator.aggregate_kfold_results(fold_results)
 
     # Random baseline AUC distribution: compare model AUC to null distribution
     # Default n_runs=1000 generates a robust distribution for statistical comparison
@@ -684,11 +756,26 @@ def main() -> None:
     )
 
     evaluator.save_results(
-        kfold_results, args.output, random_baseline_distribution=distribution
+        kfold_results,
+        args.output,
+        random_baseline_distribution=distribution,
+        run_aucs=run_aucs if args.n_runs > 1 else None,
     )
 
-    print(f"K-fold results saved for {model_name}")
-    print(f"  Aggregated AUC: {kfold_results.aggregated_metrics.get('auc', {})}")
+    if args.n_runs > 1:
+        auc_arr = np.array([a for a in run_aucs if not np.isnan(a)])
+        if len(auc_arr) > 0:
+            logger.info(
+                "Aggregated AUC across runs: mean=%.3f, std=%.3f",
+                float(np.mean(auc_arr)),
+                float(np.std(auc_arr)),
+            )
+
+    logger.info("K-fold results saved for %s", model_name)
+    logger.info(
+        "  Aggregated AUC: %s",
+        kfold_results.aggregated_metrics.get("auc", {}),
+    )
 
     # --- Train/test evaluation (only when we have a test set) ---
     stratum_test = (
@@ -712,10 +799,10 @@ def main() -> None:
             stratum_test=stratum_test,
         )
         evaluator.save_results(tt_results, args.output, run_name="train_test")
-        print("Train/test results saved (run_name=train_test)")
-        print(f"  AUC: {tt_results.metrics.get('auc', 'N/A')}")
+        logger.info("Train/test results saved (run_name=train_test)")
+        logger.info("  AUC: %s", tt_results.metrics.get("auc", "N/A"))
 
-    print(f"Output directory: {args.output.resolve()}")
+    logger.info("Output directory: %s", args.output.resolve())
 
 
 if __name__ == "__main__":

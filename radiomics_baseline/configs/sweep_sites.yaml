@@ -1,0 +1,27 @@
+# ---------------------------------------------------------------------------
+# Sweep: per-clinical-site models  (logistic / elasticnet only)
+#
+# Trains and evaluates a separate model for each clinical site.
+# Each model sees only patients from that site in both train and test.
+# All four share the same already-extracted features (1 shared extraction).
+#
+# Site counts in this dataset (train + test):
+#   ISPY2         980   PCR rate 32 %
+#   DUKE          280   PCR rate 23 %
+#   ISPY1         167   PCR rate 29 %
+#   NACT           64   PCR rate 17 %  ← borderline sample size
+#
+# Grid: 4 sites = 4 configs  (1 shared extraction)
+#
+# Note: per-site AUC is also available within the mixed model via
+#       auc_test_by_site in metrics.json. Use these site-filtered runs to
+#       check whether a dedicated site-specific model beats the mixed one.
+# ---------------------------------------------------------------------------
+base_config: configs/exp_peri5_multiphase_logreg.yaml
+
+sweep:
+  train.site_filter:
+    - DUKE
+    - ISPY1
+    - ISPY2
+    - NACT

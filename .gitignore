@@ -120,6 +120,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+bin/
 
 # Spyder project settings
 .spyderproject
@@ -145,7 +146,6 @@ out_pcr_jose/model_rf.pkl
 out_pcr_jose/features.csv
 out_pcr_jose/features_engineered.csv
 out_pcr_jose/features_join_preview.csv
-*.pkl
 # Ignore Rebecca's large feature files
 out_pcr_rebecca/features.csv
 out_pcr_rebecca/features_engineered.csv
@@ -170,7 +170,27 @@ test_outputs/
 *.vtk
 *-out/
 logs/
+debug_output/
 
 # Results shouldn't be commited as they can be regenerated easily
+results/**.claude/
 results/**
 test_breast_masks/
+radiomics_baseline/outputs/
+radiomics_baseline/figures/
+radiomics_baseline/kinetic_maps/
+radiomics_baseline/configs/generated/
+radiomics_baseline/configs/rerun/
+radiomics_baseline/configs/ablation_summary.csv
+radiomics_baseline/experiment_averages.csv
+radiomics_baseline/experiment_results.csv
+radiomics_baseline/lab_notebook.md
+radiomics_baseline/combat_plan.md
+radiomics_baseline/splits_v1.csv
+ml_pipeline/experiments/
+*.backup
+
+# Gas Town (added by gt)
+.runtime/
+.claude/commands/
+.logs/

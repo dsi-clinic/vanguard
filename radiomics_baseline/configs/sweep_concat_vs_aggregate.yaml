@@ -1,0 +1,17 @@
+# ---------------------------------------------------------------------------
+# Ablation: concat vs aggregate for non-scalar (angle-vector) features
+#
+# Everything is identical between the two runs except how the 13-element
+# vectors from GLCM / GLRLM / GLDM are flattened.  Because the extraction
+# parameters (peri_radius_mm, image_patterns, etc.) are the same, both
+# experiments share one extraction run — only the flattening differs.
+#
+# After the sweep finishes, compare feature counts and AUCs in
+#   configs/ablation_summary.csv
+# ---------------------------------------------------------------------------
+base_config: configs/exp_peri5_multiphase_logreg.yaml
+
+sweep:
+  extract.non_scalar_handling:
+    - concat
+    - aggregate

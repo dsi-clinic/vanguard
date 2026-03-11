@@ -68,6 +68,18 @@ def create_kfold_splits(
         train_patient_ids, val_patient_ids (latter two optional).
     """
     # Choose splitter
+    if stratify:
+        splitter = StratifiedKFold(
+            n_splits=n_splits,
+            shuffle=shuffle,
+            random_state=random_state,
+        )
+    else:
+        splitter = KFold(
+            n_splits=n_splits,
+            shuffle=shuffle,
+            random_state=random_state,
+        )
     # When shuffle=False, random_state has no effect and sklearn raises an error
     # So we only pass random_state when shuffle=True
     splitter_kwargs = {
