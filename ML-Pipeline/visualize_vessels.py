@@ -1,7 +1,6 @@
 """Module for comparing ground truth and deep learning vessel segmentations."""
 
 from pathlib import Path
-from typing import Union, Any
 
 import matplotlib.pyplot as plt
 import nrrd
@@ -15,18 +14,16 @@ P_ID: str = "041"
 
 BASE_DIR: Path = Path("/net/projects2/vanguard")
 GT_PATH: Path = (
-    BASE_DIR
-    / f"gt_masks/Segmentation_Masks_NRRD/Breast_MRI_{P_ID}/"
+    BASE_DIR / f"gt_masks/Segmentation_Masks_NRRD/Breast_MRI_{P_ID}/"
     f"Segmentation_Breast_MRI_{P_ID}_Dense_and_Vessels.seg.nrrd"
 )
 DL_PATH: Path = (
-    BASE_DIR
-    / f"vessel_segmentations/DUKE/DUKE_{P_ID}/"
+    BASE_DIR / f"vessel_segmentations/DUKE/DUKE_{P_ID}/"
     f"images/DUKE_{P_ID}_0000_vessel_segmentation.npz"
 )
 
 
-def compare_vessels(gt_p: Union[str, Path], dl_p: Union[str, Path]) -> None:
+def compare_vessels(gt_p: str | Path, dl_p: str | Path) -> None:
     """Compare ground truth and deep learning vessel segmentations.
 
     This function reads a 3D NRRD ground truth mask and an NPZ AI segmentation,
@@ -43,7 +40,9 @@ def compare_vessels(gt_p: Union[str, Path], dl_p: Union[str, Path]) -> None:
         print(f"Error: Could not find ground truth file at {gt_p}")
         return
 
-    gt_3d: np.ndarray = gt_data[0, :, :, :] if gt_data.ndim == NDIM_THRESHOLD else gt_data
+    gt_3d: np.ndarray = (
+        gt_data[0, :, :, :] if gt_data.ndim == NDIM_THRESHOLD else gt_data
+    )
     v_gt: np.ndarray = (gt_3d == 1).astype(np.float32)
 
     with np.load(str(dl_p)) as data:

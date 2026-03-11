@@ -1,12 +1,12 @@
 """Module for loading and cleaning clinical feature datasets."""
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
 
-def get_clinical_features(config: Dict[str, Any]) -> pd.DataFrame:
+def get_clinical_features(config: dict[str, Any]) -> pd.DataFrame:
     """Load and clean the high-value clinical features from an Excel file.
 
     This function reads a clinical Excel file, selects specific high-value

@@ -3,14 +3,14 @@
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import yaml  # type: ignore
 
 
 def load_pipeline_config(
     config_path: str = "ML-Pipeline/config_pcr.yaml",
-) -> Tuple[Dict[str, Any], Path]:
+) -> tuple[dict[str, Any], Path]:
     """Load configuration and initialize a project output directory.
 
     This function reads the YAML configuration, creates a timestamped output
@@ -23,13 +23,13 @@ def load_pipeline_config(
         A tuple containing the configuration dictionary and the output directory path.
     """
     with Path(config_path).open("r", encoding="utf-8") as f:
-        config: Dict[str, Any] = yaml.safe_load(f)
+        config: dict[str, Any] = yaml.safe_load(f)
 
     timestamp: str = datetime.now().strftime("%Y%m%d_%H%M")
-    
+
     exp_name: str = str(config["experiment_setup"]["name"])
     base_outdir: str = str(config["experiment_setup"]["base_outdir"])
-    
+
     outdir: Path = Path(base_outdir) / f"{exp_name}_{timestamp}"
     outdir.mkdir(parents=True, exist_ok=True)
 

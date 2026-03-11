@@ -1,20 +1,15 @@
-"""Module for rerunning baseline models using the Evaluator framework."""
+"""Module for rerunning baseline experiments and evaluating results."""
 
-import sys
 from pathlib import Path
-from typing import List
-
-ROOT_PATH: Path = Path(__file__).resolve().parent.parent
-if str(ROOT_PATH) not in sys.path:
-    sys.path.insert(0, str(ROOT_PATH))
 
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
+
 from evaluation import Evaluator, FoldResults
 
 
 def train_baseline_mock(
-    train_df: pd.DataFrame, val_df: pd.DataFrame, features: List[str]
+    train_df: pd.DataFrame, val_df: pd.DataFrame, features: list[str]
 ) -> FoldResults:
     """Train a baseline Random Forest model on the provided data splits.
 
@@ -57,15 +52,23 @@ def prepare_data() -> pd.DataFrame:
     clinical_df: pd.DataFrame = pd.read_excel(path / "clinical_and_imaging_info.xlsx")
 
     labels_df = labels_df.rename(columns={"case_id": "patient_id"})
-    merged_data: pd.DataFrame = labels_df.merge(clinical_df, on="patient_id", how="inner")
+    merged_data: pd.DataFrame = labels_df.merge(
+        clinical_df, on="patient_id", how="inner"
+    )
     merged_data = merged_data.rename(columns={"pcr_x": "pcr"})
 
-    def clean_spacing(val: Union[str, float, int]) -> float:
+    def clean_spacing(val: str | float | int) -> float:
         if isinstance(val, str):
             return float(val.replace("[", "").replace("]", "").split(",")[0])
         return float(val)
 
-    cols = ["pixel_spacing", "slice_thickness", "image_rows", "image_columns", "num_slices"]
+    cols = [
+        "pixel_spacing",
+        "slice_thickness",
+        "image_rows",
+        "image_columns",
+        "num_slices",
+    ]
     for col in cols:
         merged_data[col] = merged_data[col].apply(clean_spacing)
 
@@ -78,7 +81,7 @@ def prepare_data() -> pd.DataFrame:
 
 
 def run_experiment(
-    data_df: pd.DataFrame, dataset: str, features: List[str], stratifiers: List[str]
+    data_df: pd.DataFrame, dataset: str, features: list[str], stratifiers: list[str]
 ) -> None:
     """Run baseline experiment and save results."""
     print(f"Running: {dataset} | Features: {features}")
@@ -105,12 +108,16 @@ def run_experiment(
 
     splits = evaluator.create_kfold_splits(n_splits=5)
     results = [
-        train_baseline_mock(test_df.iloc[f.train_indices], test_df.iloc[f.val_indices], features)
+        train_baseline_mock(
+            test_df.iloc[f.train_indices], test_df.iloc[f.val_indices], features
+        )
         for f in splits
     ]
 
     kfold_results = evaluator.aggregate_kfold_results(results)
-    evaluator.save_results(kfold_results, Path(f"results/{dataset}_{'_'.join(features)}"))
+    evaluator.save_results(
+        kfold_results, Path(f"results/{dataset}_{'_'.join(features)}")
+    )
 
 
 if __name__ == "__main__":
