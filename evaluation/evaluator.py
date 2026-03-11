@@ -12,6 +12,7 @@ from evaluation.kfold import (
     create_group_stratified_kfold_splits,
     create_kfold_splits,
 )
+from evaluation.logging_config import get_logger
 from evaluation.metrics import (
     aggregate_fold_metrics,
     compute_binary_metrics,
@@ -27,7 +28,12 @@ from evaluation.utils import (
     align_data,
     validate_inputs,
 )
-from evaluation.visualizations import VISUALIZATION_REGISTRY
+from evaluation.visualizations import (
+    VISUALIZATION_REGISTRY,
+    plot_auc_distribution,
+    plot_pr_per_split,
+    plot_roc_per_split,
+)
 
 # Column name(s) used for stratum reporting (first present in predictions is used)
 STRATUM_COLUMN_ALIASES = ("stratum", "subtype")
@@ -45,12 +51,13 @@ def _print_validation_summary(
     validation_summary: dict,
     stratum_col: str,
 ) -> None:
-    """Print overall and per-stratum metrics (e.g. AUC) to stdout."""
+    """Log overall and per-stratum metrics (e.g. AUC)."""
+    logger = get_logger()
     overall = validation_summary.get("overall", {})
     by_group = validation_summary.get("by_group", {})
-    print("Validation summary:")
+    logger.info("Validation summary:")
     if "auc" in overall:
-        print(f"  AUC (overall): {overall['auc']:.3f}")
+        logger.info("  AUC (overall): %.3f", overall["auc"])
     for i, (stratum_name, metrics) in enumerate(by_group.items(), start=1):
         auc_val = metrics.get("auc", float("nan"))
         auc_str = (
@@ -58,8 +65,7 @@ def _print_validation_summary(
             if not (isinstance(auc_val, float) and np.isnan(auc_val))
             else "nan"
         )
-        print(f"  AUC (Strata {i} / {stratum_name}): {auc_str}")
-    print()
+        logger.info("  AUC (Strata %d / %s): %s", i, stratum_name, auc_str)
 
 
 class Evaluator:
@@ -345,6 +351,7 @@ class Evaluator:
         output_dir: Path,
         run_name: str | None = None,
         random_baseline_distribution: dict | None = None,
+        run_aucs: list[float] | None = None,
     ) -> None:
         """Save results to output directory, organized by model name and run name.
 
@@ -368,6 +375,9 @@ class Evaluator:
             Precomputed null distribution from compute_random_baseline_distribution.
             If provided, adds random_baseline to metrics and, when results
             contain AUC, adds z_score_vs_random and p_value_vs_random.
+        run_aucs : list[float], optional
+            AUC values from multiple k-fold runs. If provided (e.g. when n_runs > 1),
+            adds run_aucs, run_auc_mean, run_auc_std to metrics.
 
         Notes:
         -----
@@ -450,6 +460,15 @@ class Evaluator:
                     else float("nan")
                 )
 
+        # Multi-run AUC summary
+        if run_aucs is not None and len(run_aucs) > 0:
+            arr = np.asarray(run_aucs)
+            arr = arr[~np.isnan(arr)]
+            if arr.size > 0:
+                metrics_dict["run_aucs"] = [float(x) for x in run_aucs]
+                metrics_dict["run_auc_mean"] = float(np.mean(arr))
+                metrics_dict["run_auc_std"] = float(np.std(arr))
+
         # Subgroup (stratum) metrics: compute, add to dict, and print summary
         stratum_col = _stratum_column(results.predictions)
         if stratum_col is not None:
@@ -482,5 +501,37 @@ class Evaluator:
             try:
                 viz_func(y_true, y_prob, output_path)
             except Exception as e:
-                # Intentional: optional viz failure is logged; evaluation results are still saved.
-                print(f"Warning: Failed to generate {viz_name}: {e}")
+                # If visualization fails, log but continue
+                get_logger().warning("Failed to generate %s: %s", viz_name, e)
+
+        # K-fold: per-split ROC and PR curves
+        if isinstance(results, KFoldResults) and "fold" in results.predictions.columns:
+            try:
+                plot_roc_per_split(
+                    results.predictions,
+                    plots_dir / "roc_per_split.png",
+                    title="ROC Per Split",
+                    fold_col="fold",
+                )
+            except Exception as e:
+                get_logger().warning("Failed to generate roc_per_split: %s", e)
+            try:
+                plot_pr_per_split(
+                    results.predictions,
+                    plots_dir / "pr_per_split.png",
+                    title="PR Per Split",
+                    fold_col="fold",
+                )
+            except Exception as e:
+                get_logger().warning("Failed to generate pr_per_split: %s", e)
+
+        # Multi-run AUC distribution
+        if run_aucs is not None and len(run_aucs) > 0:
+            try:
+                plot_auc_distribution(
+                    run_aucs,
+                    plots_dir / "auc_distribution.png",
+                    title="AUC distribution across runs",
+                )
+            except Exception as e:
+                get_logger().warning("Failed to generate auc_distribution: %s", e)
