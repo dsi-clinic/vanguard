@@ -42,6 +42,8 @@ KINETIC_MAP_NAMES = ("E_early", "E_peak", "slope_in", "slope_out", "AUC")
 # wash_in  = I_peak − I_early  (incremental late enhancement; distinct from E_peak)
 # wash_out = I_last − I_peak   (signed: negative = washout, positive = persistent)
 SUBTRACTION_MAP_NAMES = ("wash_in", "wash_out")
+_MIN_TPEAK_PHASES = 4
+_MIN_SUBTRACTION_PHASES = 2
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +237,7 @@ def compute_kinetic_maps(
     maps["AUC"] = auc.astype(np.float32)
 
     # Optional: voxel-wise time-to-peak (only if ≥4 post-contrast phases)
-    if generate_tpeak_voxel and len(post_volumes) >= 4:
+    if generate_tpeak_voxel and len(post_volumes) >= _MIN_TPEAK_PHASES:
         enhancement_stack = np.stack(enhancements, axis=0)  # (n_phases, z, y, x)
         peak_voxel_list_idx = np.argmax(enhancement_stack, axis=0)  # index into list
         # Map list index → actual phase index
@@ -412,7 +414,7 @@ def generate_maps_for_pid(
 
         # Compute and save subtraction images (Braman et al. convention).
         if generate_subtraction:
-            if len(post_volumes) < 2:
+            if len(post_volumes) < _MIN_SUBTRACTION_PHASES:
                 warnings.warn(
                     f"[{pid}] Subtraction maps require ≥2 post-contrast phases "
                     f"({len(post_volumes)} found); skipping subtraction.",
@@ -578,21 +580,21 @@ def main() -> None:
     )
 
     # Summarize
-    df = pd.DataFrame(results)
-    n_ok = (df["status"] == "success").sum()
-    n_skip = (df["status"] == "skipped").sum()
-    n_err = (df["status"] == "error").sum()
+    results_df = pd.DataFrame(results)
+    n_ok = (results_df["status"] == "success").sum()
+    n_skip = (results_df["status"] == "skipped").sum()
+    n_err = (results_df["status"] == "error").sum()
     print(f"\n[KINETIC] Done: {n_ok} success, {n_skip} skipped, {n_err} errors")
 
     if n_err > 0:
         print("\n[KINETIC] Errors:")
-        for _, row in df[df["status"] == "error"].iterrows():
+        for _, row in results_df[results_df["status"] == "error"].iterrows():
             print(f"  {row['patient_id']}: {row['error']}")
 
     # Save summary
     summary_root = Path(args.output_dir) if args.output_dir else Path(args.images)
     summary_path = args.summary_csv or str(summary_root / "kinetic_maps_summary.csv")
-    df.to_csv(summary_path, index=False)
+    results_df.to_csv(summary_path, index=False)
     print(f"[KINETIC] Summary written to {summary_path}")
 
 

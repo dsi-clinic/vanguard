@@ -43,5 +43,9 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.per-file-ignores]
+"radiomics_baseline/scripts/test_*.py" = ["ANN001", "ANN101", "ANN201", "D101", "D102", "PLR2004"]
+"radiomics_baseline/scripts/radiomics_train.py" = ["ANN101", "D107"]
+
 [tool.pytest.ini_options]
 python_files = "*.py"

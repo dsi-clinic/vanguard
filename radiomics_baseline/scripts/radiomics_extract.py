@@ -98,6 +98,8 @@ _CHECKPOINT_VERSION = 1
 _CHECKPOINT_ROOT_NAME = "_checkpoint"
 _CHECKPOINT_MANIFEST = "manifest.json"
 _PHASE_TOKEN_RE = re.compile(r"_(\d{4})\.nii(?:\.gz)?")
+_DUPLICATE_PREVIEW_LIMIT = 5
+_MIN_PHASE_COLUMNS = 2
 
 
 # small helpers
@@ -115,10 +117,11 @@ def ensure_unique_patient_ids(data: pd.DataFrame, tag: str) -> None:
     """Fail fast if a metadata table contains duplicate patient IDs."""
     dup = data["patient_id"][data["patient_id"].duplicated()].astype(str).unique()
     if len(dup) > 0:
-        preview = ", ".join(dup[:5])
+        preview = ", ".join(dup[:_DUPLICATE_PREVIEW_LIMIT])
         msg = (
             f"{tag} has duplicate patient_id values "
-            f"(n={len(dup)}): {preview}{' ...' if len(dup) > 5 else ''}"
+            f"(n={len(dup)}): {preview}"
+            f"{' ...' if len(dup) > _DUPLICATE_PREVIEW_LIMIT else ''}"
         )
         raise ValueError(msg)
 
@@ -155,9 +158,9 @@ def ensure_exists(path: Path, what: str) -> None:
 
 
 def _sequence_hash(values: list[str]) -> str:
-    """Return a stable SHA1 for an ordered sequence of strings."""
+    """Return a stable SHA256 for an ordered sequence of strings."""
     joined = "\n".join(values)
-    return hashlib.sha1(joined.encode("utf-8")).hexdigest()
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
 def _path_signature(path: str | None) -> dict[str, Any] | None:
@@ -236,7 +239,7 @@ def build_checkpoint_fingerprint(
     }
 
     payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    fingerprint = hashlib.sha1(payload_json.encode("utf-8")).hexdigest()
+    fingerprint = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
     return fingerprint, payload
 
 
@@ -295,7 +298,7 @@ def checkpoint_rows_dir(checkpoint_root: Path, split_name: str) -> Path:
 def _checkpoint_row_path(rows_dir: Path, pid: str) -> Path:
     """Return the per-patient checkpoint path for a split cache directory."""
     safe_pid = re.sub(r"[^\w.\-]", "_", str(pid))
-    suffix = hashlib.sha1(str(pid).encode("utf-8")).hexdigest()[:10]
+    suffix = hashlib.sha256(str(pid).encode("utf-8")).hexdigest()[:10]
     return rows_dir / f"{safe_pid}__{suffix}.json"
 
 
@@ -861,10 +864,10 @@ def extract_split_features(
 
     missing = [pid for pid in pid_list if pid not in rows_by_pid]
     if missing:
-        preview = ", ".join(missing[:5])
+        preview = ", ".join(missing[:_DUPLICATE_PREVIEW_LIMIT])
         msg = (
             "Extraction finished with missing patient rows: "
-            f"{preview}{' ...' if len(missing) > 5 else ''}"
+            f"{preview}{' ...' if len(missing) > _DUPLICATE_PREVIEW_LIMIT else ''}"
         )
         raise RuntimeError(msg)
 
@@ -965,7 +968,7 @@ def aggregate_multiphase_features(
     out = df.copy()
     total_phase_cols = 0
     for base_key, cols in groups.items():
-        if len(cols) < 2:
+        if len(cols) < _MIN_PHASE_COLUMNS:
             # Skip single-phase groups; no count-related confound to remove.
             continue
         total_phase_cols += len(cols)
@@ -983,7 +986,12 @@ def aggregate_multiphase_features(
 
     if drop_original_phase_columns:
         drop_cols = sorted(
-            {c for cols in groups.values() if len(cols) >= 2 for c in cols}
+            {
+                c
+                for cols in groups.values()
+                if len(cols) >= _MIN_PHASE_COLUMNS
+                for c in cols
+            }
         )
         out = out.drop(columns=drop_cols, errors="ignore")
         print(

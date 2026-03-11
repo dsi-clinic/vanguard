@@ -36,15 +36,16 @@ MODELS = [
 ]
 
 BAR_COLOR = "#800000"
+MIN_CLASSES_FOR_AUC = 2
 
 
 def per_fold_auc(predictions_path: Path) -> list[float]:
     """Compute AUC per CV fold from predictions CSV."""
-    df = pd.read_csv(predictions_path)
+    pred_df = pd.read_csv(predictions_path)
     aucs = []
-    for fold in sorted(df["fold"].unique()):
-        fold_df = df[df["fold"] == fold]
-        if len(fold_df["y_true"].unique()) >= 2:
+    for fold in sorted(pred_df["fold"].unique()):
+        fold_df = pred_df[pred_df["fold"] == fold]
+        if len(fold_df["y_true"].unique()) >= MIN_CLASSES_FOR_AUC:
             aucs.append(roc_auc_score(fold_df["y_true"], fold_df["y_prob"]))
     return aucs
 
@@ -78,7 +79,8 @@ def load_model(output_dir: Path, dirname: str) -> tuple[float, float, int]:
     return mean_auc, std_auc, n
 
 
-def main():
+def main() -> None:
+    """Render the subtype-model comparison bar chart."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output-dir",

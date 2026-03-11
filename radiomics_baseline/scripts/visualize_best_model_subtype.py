@@ -23,21 +23,22 @@ from sklearn.metrics import roc_auc_score
 
 SUBTYPES = ["her2_enriched", "luminal_a", "luminal_b", "triple_negative"]
 SUBTYPE_LABELS = ["HER2-\nenriched", "Luminal A", "Luminal B", "Triple-\nnegative"]
+MIN_CLASSES_FOR_AUC = 2
 
 
 def compute_fold_subtype_aucs(predictions_path: Path) -> dict[str, list[float]]:
     """Compute AUC per fold per subtype from CV predictions CSV."""
-    df = pd.read_csv(predictions_path)
-    folds = sorted(df["fold"].unique())
+    pred_df = pd.read_csv(predictions_path)
+    folds = sorted(pred_df["fold"].unique())
 
     result: dict[str, list[float]] = {s: [] for s in SUBTYPES}
     result["overall"] = []
 
     for fold in folds:
-        fold_df = df[df["fold"] == fold]
+        fold_df = pred_df[pred_df["fold"] == fold]
 
         # Overall
-        if len(fold_df["y_true"].unique()) >= 2:
+        if len(fold_df["y_true"].unique()) >= MIN_CLASSES_FOR_AUC:
             result["overall"].append(
                 roc_auc_score(fold_df["y_true"], fold_df["y_prob"])
             )
@@ -45,7 +46,10 @@ def compute_fold_subtype_aucs(predictions_path: Path) -> dict[str, list[float]]:
         # Per subtype
         for subtype in SUBTYPES:
             sub_df = fold_df[fold_df["subtype"] == subtype]
-            if len(sub_df) >= 2 and len(sub_df["y_true"].unique()) >= 2:
+            if (
+                len(sub_df) >= MIN_CLASSES_FOR_AUC
+                and len(sub_df["y_true"].unique()) >= MIN_CLASSES_FOR_AUC
+            ):
                 result[subtype].append(
                     roc_auc_score(sub_df["y_true"], sub_df["y_prob"])
                 )
@@ -53,7 +57,8 @@ def compute_fold_subtype_aucs(predictions_path: Path) -> dict[str, list[float]]:
     return result
 
 
-def main():
+def main() -> None:
+    """Render the best-model subtype AUC bar chart."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model-dir",

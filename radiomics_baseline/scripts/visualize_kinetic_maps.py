@@ -34,6 +34,7 @@ import SimpleITK as sitk
 _PHASE_RE = re.compile(r"_(\d{4})\.nii(?:\.gz)?$")
 
 KINETIC_MAP_NAMES = ["E_early", "E_peak", "slope_in", "slope_out", "AUC"]
+_TWO_PANEL_ROWS = 2
 
 # Colormaps: signed maps get diverging, unsigned get sequential
 _CMAP = {
@@ -127,6 +128,7 @@ def build_kinetic_map_paths(images_dir: Path, pid: str) -> list[tuple[str, Path]
 
 
 def main() -> None:
+    """Render raw DCE phases and kinetic maps for one patient."""
     ap = argparse.ArgumentParser(
         description="Visualize DCE phases + kinetic maps for one patient.",
     )
@@ -227,7 +229,7 @@ def main() -> None:
         axes[0, i].axis("off")
 
     # Row 2: kinetic maps
-    if n_rows == 2:
+    if n_rows == _TWO_PANEL_ROWS:
         for i, (name, kimg) in enumerate(kmap_crops):
             ax = axes[1, i]
             cmap = _CMAP.get(name, "inferno")

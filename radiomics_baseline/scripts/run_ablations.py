@@ -140,7 +140,7 @@ def _value_label(value: Any) -> str:  # noqa: ANN401
     """
     if isinstance(value, list):
         rendered = "|".join(str(v) for v in value)
-        digest = hashlib.sha1(rendered.encode("utf-8")).hexdigest()[:8]
+        digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()[:8]
         return f"{len(value)}-{digest}"
     label = re.sub(r"[^\w.\-]", "", str(value))
     return label or "empty"

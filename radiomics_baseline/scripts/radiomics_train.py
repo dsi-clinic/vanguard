@@ -107,6 +107,8 @@ MIN_CLASS_COUNT = 2
 CONF_MATRIX_SIZE = 4
 AUC_BASELINE = 0.5
 COMBAT_EPS = 1e-8
+COMBAT_CONVERGENCE_TOL = 1e-6
+DUPLICATE_PREVIEW_LIMIT = 5
 
 
 # ---------------------------
@@ -118,10 +120,10 @@ def load_features(path: str) -> pd.DataFrame:
     data.index = data.index.map(str)
     dup = data.index[data.index.duplicated()].unique()
     if len(dup) > 0:
-        preview = ", ".join(map(str, dup[:5]))
+        preview = ", ".join(map(str, dup[:DUPLICATE_PREVIEW_LIMIT]))
         msg = (
             f"Feature table has duplicate patient IDs (n={len(dup)}): "
-            f"{preview}{' ...' if len(dup) > 5 else ''}"
+            f"{preview}{' ...' if len(dup) > DUPLICATE_PREVIEW_LIMIT else ''}"
         )
         raise ValueError(msg)
     return data
@@ -135,10 +137,10 @@ def load_labels(labels_csv: str) -> pd.DataFrame:
         raise ValueError(msg)
     dup = lab["patient_id"][lab["patient_id"].duplicated()].astype(str).unique()
     if len(dup) > 0:
-        preview = ", ".join(dup[:5])
+        preview = ", ".join(dup[:DUPLICATE_PREVIEW_LIMIT])
         msg = (
             f"labels.csv has duplicate patient_id values (n={len(dup)}): "
-            f"{preview}{' ...' if len(dup) > 5 else ''}"
+            f"{preview}{' ...' if len(dup) > DUPLICATE_PREVIEW_LIMIT else ''}"
         )
         raise ValueError(msg)
     lab["patient_id"] = lab["patient_id"].astype(str)
@@ -473,8 +475,8 @@ class FeatureHarmonizer:
                     d_new = (0.5 * sum2 + b_prior) / (n_i / 2.0 + a_prior - 1.0)
                     d_new = np.where(d_new <= COMBAT_EPS, 1.0, d_new)
                     if (
-                        np.max(np.abs(g_new - g_old)) < 1e-6
-                        and np.max(np.abs(d_new - d_old)) < 1e-6
+                        np.max(np.abs(g_new - g_old)) < COMBAT_CONVERGENCE_TOL
+                        and np.max(np.abs(d_new - d_old)) < COMBAT_CONVERGENCE_TOL
                     ):
                         g_old, d_old = g_new, d_new
                         break
@@ -555,7 +557,7 @@ class FeatureHarmonizer:
             raise ValueError(msg)
 
         batch_fit = labels_fit[self.batch_col].astype(str)
-        if batch_fit.nunique() < 2:
+        if batch_fit.nunique() < MIN_CLASS_COUNT:
             warnings.warn(
                 f"Harmonization mode '{self.mode}' requested"
                 " with <2 batches in fit data. "
@@ -702,8 +704,8 @@ class MRMRSelector(BaseEstimator, TransformerMixin):
             raise ImportError(msg) from exc
 
         k = min(self.k, X.shape[1])
-        df = pd.DataFrame(X)
-        selected = mrmr_classif(X=df, y=pd.Series(y), K=k, show_progress=False)
+        feature_df = pd.DataFrame(X)
+        selected = mrmr_classif(X=feature_df, y=pd.Series(y), K=k, show_progress=False)
         self.selected_indices_ = np.array(selected, dtype=int)
         print(
             f"[DEBUG] MRMRSelector: requested k={self.k}, "
@@ -1105,15 +1107,15 @@ def main() -> None:
     missing_tr = Xtr_raw.index.difference(labels.index)
     missing_te = Xte_raw.index.difference(labels.index)
     if len(missing_tr) > 0 or len(missing_te) > 0:
-        preview_tr = ", ".join(map(str, missing_tr[:5]))
-        preview_te = ", ".join(map(str, missing_te[:5]))
+        preview_tr = ", ".join(map(str, missing_tr[:DUPLICATE_PREVIEW_LIMIT]))
+        preview_te = ", ".join(map(str, missing_te[:DUPLICATE_PREVIEW_LIMIT]))
         msg = (
             "Feature rows contain patient IDs missing from labels.csv. "
             f"missing_train={len(missing_tr)}"
-            f"{' [' + preview_tr + (' ...' if len(missing_tr) > 5 else '') + ']' if len(missing_tr) else ''}"  # noqa: E501
+            f"{' [' + preview_tr + (' ...' if len(missing_tr) > DUPLICATE_PREVIEW_LIMIT else '') + ']' if len(missing_tr) else ''}"  # noqa: E501
             ", "
             f"missing_test={len(missing_te)}"
-            f"{' [' + preview_te + (' ...' if len(missing_te) > 5 else '') + ']' if len(missing_te) else ''}"  # noqa: E501
+            f"{' [' + preview_te + (' ...' if len(missing_te) > DUPLICATE_PREVIEW_LIMIT else '') + ']' if len(missing_te) else ''}"  # noqa: E501
         )
         raise ValueError(msg)
 
@@ -1423,7 +1425,7 @@ def main() -> None:
             y_prob_val = fold_pipe.predict_proba(X_fold_val_model)[:, fold_pos_idx]
             # Use 0.5 threshold for per-fold binary predictions; the Youden-J
             # threshold is only meaningful on the full training set.
-            y_pred_val = (y_prob_val >= 0.5).astype(int)
+            y_pred_val = (y_prob_val >= AUC_BASELINE).astype(int)
 
             fold_pred_df = pd.DataFrame(
                 {

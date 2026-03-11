@@ -48,7 +48,8 @@ def load_metrics(output_dir: Path) -> list[dict | None]:
     return results
 
 
-def main():
+def main() -> None:
+    """Render a grouped subtype AUC comparison chart."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output-dir",

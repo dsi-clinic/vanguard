@@ -144,6 +144,7 @@ def add_map_panel(
 
 
 def main() -> None:
+    """Generate patient kinetic maps and save three diagnostic figures."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pid", default="DUKE_001")
     ap.add_argument(
