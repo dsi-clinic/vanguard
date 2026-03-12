@@ -9,6 +9,8 @@ from tqdm import tqdm
 
 from ml_pipeline.pvd_feature import get_pvd_feature
 
+OUTPUT_DIR = Path(__file__).resolve().parent
+
 
 def pvd_pipeline(dataset_name: str) -> None:
     """Orchestrate the extraction of PVD features for a given dataset.
@@ -22,7 +24,7 @@ def pvd_pipeline(dataset_name: str) -> None:
             "mask_dir": Path(
                 "/net/projects2/vanguard/gt_masks/Segmentation_Masks_NRRD"
             ),
-            "output": "pvd_results_duke.csv",
+            "output": OUTPUT_DIR / "pvd_results_duke.csv",
             "mask_ext": ".seg.nrrd",
         },
         "ISPY2": {
@@ -30,7 +32,7 @@ def pvd_pipeline(dataset_name: str) -> None:
             "mask_dir": Path(
                 "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
             ),
-            "output": "pvd_results_ispy2.csv",
+            "output": OUTPUT_DIR / "pvd_results_ispy2.csv",
             "mask_ext": ".nii.gz",
         },
     }
