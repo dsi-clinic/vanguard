@@ -223,50 +223,38 @@ python thinning_based_centerline_extraction/run_centerline_extraction.py \
 
 ---
 
-## 4. ML Testbed (`ML-Pipeline/`)
+## 4. ML Testbed (`ml_pipeline/`)
 
-**Purpose**: Machine learning pipeline for training and evaluating pCR prediction models on graph-based vascular features.
+**Purpose**: Config-driven pCR modeling pipeline for vascular, clinical, and radiomics feature blocks.
 
 **Methodology**:
-- Loads per-case JSON feature files (extracted from centerlines)
-- Engineers features (aggregation, normalization, feature selection)
-- Trains models (Random Forest, Logistic Regression)
-- Evaluates with cross-validation, bootstrap confidence intervals, and statistical tests
-- Supports ensemble runs for stability assessment
+- Loads configured feature blocks from `ml_pipeline/config_pcr.yaml`
+- Merges vascular features with optional clinical and radiomics features
+- Trains configured baseline models
+- Writes merged feature tables and fitted model artifacts
 
 **Key Features**:
-- Handles missing data and feature engineering
-- Includes random baseline comparison and DeLong test for statistical validation
-- Ensemble runs to assess model stability across random seeds
-- Comprehensive metrics and visualizations
+- Runtime is config-driven rather than CLI-flag driven
+- Feature sources are toggled in YAML
+- Supports vascular, clinical, and radiomics blocks
+- Writes reproducible experiment outputs under the configured output directory
 
 **Key Files**:
-- `pcr_prediction.py`: Main training and evaluation script
+- `ml_pipeline/pcr_prediction.py`: Main training script
+- `ml_pipeline/config_pcr.yaml`: Runtime config and feature toggles
 
 **Usage**:
 ```bash
-python ML-Pipeline/pcr_prediction.py \
-  --feature-dir vessel_segmentations/processed_3D \
-  --labels pcr_labels.csv \
-  --label-column pcr \
-  --id-column patient_id \
-  --outdir out_pcr \
-  --model rf \
-  --plots \
-  --test-size 0.2 \
-  --val-size 0.2 \
-  --bootstrap-n 1000 \
-  --delong
+python ml_pipeline/pcr_prediction.py \
+  --config ml_pipeline/config_pcr.yaml \
+  --outdir ml_pipeline/experiments/debug_run
 ```
 
 **Outputs**: 
-- `metrics.json`: Performance metrics (AUC, AP, accuracy, precision, recall, F1)
-- `predictions.csv`: Per-case predictions
-- `feature_importance.csv` and plots: Top predictive features
-- ROC/PR curves, confusion matrices
-- `model.pkl`: Trained model for inference
+- `features_complete.csv`: Merged feature table used for training
+- `model_rf.pkl` or `model_lr.pkl`: Serialized fitted model
 
-**See**: [`ML-Pipeline/README.md`](ML-Pipeline/README.md) for all command-line options
+**See**: [`ml_pipeline/README.md`](ml_pipeline/README.md) for current usage and config options
 
 ---
 
@@ -430,17 +418,11 @@ vanguard/
 
 4. **Train ML Models** (graph-based):
    ```bash
-   python ML-Pipeline/pcr_prediction.py \
-     --feature-dir data/centerlines_json \
-     --labels labels.csv \
-     --label-column pcr \
-     --id-column patient_id \
-     --outdir outputs/graph_model \
-     --model rf \
-     --plots \
-     --test-size 0.2
+   python ml_pipeline/pcr_prediction.py \
+     --config ml_pipeline/config_pcr.yaml \
+     --outdir outputs/graph_model
    ```
-   Output: `outputs/graph_model/metrics_rf.json`, `predictions.csv`, `feature_importance.csv`
+   Output: `outputs/graph_model/features_complete.csv`, `model_*.pkl`
 
 5. **Compare Results**: Compare metrics across `outputs/*` directories to assess model performance.
 

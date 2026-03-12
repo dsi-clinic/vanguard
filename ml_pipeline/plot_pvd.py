@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
+OUTPUT_DIR = Path(__file__).resolve().parent
+
 
 def plot_pvd(
     csv_name: str, labels_path: str, title_prefix: str, output_name: str
@@ -22,6 +24,8 @@ def plot_pvd(
         A merged DataFrame containing join_id, PVD, and pCR, or None if empty.
     """
     csv_path = Path(csv_name)
+    if not csv_path.is_absolute():
+        csv_path = OUTPUT_DIR / csv_path
     if not csv_path.exists():
         print(f"File not found: {csv_name}")
         return None
@@ -84,7 +88,10 @@ def plot_pvd(
     plt.xlabel("Peritumoral Vessel Density (Voxels)")
     plt.ylabel("Frequency")
 
-    plt.savefig(output_name)
+    output_path = Path(output_name)
+    if not output_path.is_absolute():
+        output_path = OUTPUT_DIR / output_path
+    plt.savefig(output_path)
     print(f"{title_prefix} plot saved to {output_name}")
     print(plot_data.groupby(pcr_col)[pvd_col].describe())
 
@@ -101,4 +108,6 @@ if __name__ == "__main__":
 
     if duke_data is not None and ispy2_data is not None:
         combined_features = pd.concat([duke_data, ispy2_data], ignore_index=True)
-        combined_features.to_csv("combined_vanguard_features.csv", index=False)
+        combined_features.to_csv(
+            OUTPUT_DIR / "combined_vanguard_features.csv", index=False
+        )

@@ -1451,7 +1451,7 @@ Future extension: Add `MultiClassEvaluator` class with:
 **Goal**: Add advanced features and integrate with remaining model systems.
 
 **Deliverables**:
-1. Integrate with other model systems (`baseline_pcr_simple.py`, `ML-Pipeline/pcr_prediction.py`)
+1. Integrate with other model systems (`baseline_pcr_simple.py`, `ml_pipeline/pcr_prediction.py`)
 2. Add advanced metrics (calibration metrics, Brier score, ECE)
 3. Add subgroup analysis (metrics by subtype, site, etc.)
 4. Add more visualization types as needed
