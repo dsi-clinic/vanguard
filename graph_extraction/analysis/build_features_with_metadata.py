@@ -1,7 +1,7 @@
 """Feature extraction from morphometry JSONs with patient_info metadata join.
 
-Produces features_raw.csv and features_with_metadata.csv for weak-signal diagnostics.
-Requires: morphometry JSONs (from batch_process_4d) and patient_info JSONs.
+Produces features_raw.csv and features_with_metadata.csv for optional analysis.
+Requires saved morphometry JSONs and patient_info JSONs.
 
 Usage:
     python graph_extraction/analysis/build_features_with_metadata.py \
@@ -162,7 +162,7 @@ def main() -> None:
         "--morphometry-dir",
         type=Path,
         required=True,
-        help="Directory with per-case morphometry JSONs (e.g. from batch_process_4d)",
+        help="Directory with per-case morphometry JSONs",
     )
     parser.add_argument(
         "--patient-info-dir",

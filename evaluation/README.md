@@ -84,6 +84,18 @@ Typical pattern:
 4. Convert validation predictions into the standard prediction table.
 5. Aggregate the fold results and save them.
 
+The current `train_gnn.py` template already gives students:
+
+- required manifest columns
+- suggested config keys for graph data
+- a helper that converts fold predictions into the evaluator-ready table
+
+Students still need to implement:
+
+- manifest loading
+- graph dataset construction
+- the actual per-fold training loop
+
 ## Example Skeleton
 
 ```python

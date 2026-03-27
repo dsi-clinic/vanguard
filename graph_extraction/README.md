@@ -6,7 +6,7 @@ In plain terms, this stage takes vessel segmentations, finds vessel centerlines,
 
 Internally, the centerline stage uses the tc4d method. New students do not need to understand every tc4d implementation detail before using this pipeline, but they should know what the main outputs mean.
 
-Exploratory and QC scripts related to graph-extraction outputs live in
+Optional helper scripts for flat-table analysis live in
 `graph_extraction/analysis/`. The files in the top level of `graph_extraction/`
 are the production path.
 

@@ -95,7 +95,7 @@ Supporting pieces:
 - `features/`
   - canonical definitions of the five modeling blocks: `clinical`, `tumor_size`, `morph`, `graph`, and `kinematic`
 - `train_gnn.py`
-  - scaffold for a future graph neural network training path
+  - template for a future graph neural network training path that reuses the shared evaluator
 - `evaluation/`
   - shared split generation, metrics, result aggregation, and output saving used across model families
 - `modeling/`
@@ -109,7 +109,7 @@ Supporting pieces:
 - `results/`
   - compact tracked result summaries
 - `analysis/`
-  - notebooks and lightweight exploratory analyses
+  - optional notebooks and lightweight exploratory analyses that are not part of the production pipeline
 - `docs/`
   - reference documents that are helpful but not part of the main run path
 
@@ -250,11 +250,11 @@ Radiomics is maintained as a separate modeling workflow.
 
 ## Analysis Utilities
 
-Exploratory notebooks and one-off analysis outputs live under:
+Optional exploratory notebooks live under:
 
 - [`analysis/`](analysis)
 
-Graph-extraction-specific analysis scripts live under:
+Optional graph-extraction analysis helpers live under:
 
 - [`graph_extraction/analysis/`](graph_extraction/analysis)
 

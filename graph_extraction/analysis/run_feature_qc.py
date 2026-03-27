@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -21,8 +22,202 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TITLE_MAX_LEN = 40
 HIGH_MISSING_PCT = 50
+MAX_ANGLE_DEGREES = 180
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+
+def _check_tortuosity(value: float, case_id: str, context: str) -> list[dict]:
+    """Flag tortuosity values that violate the geometric lower bound."""
+    if value >= 1.0:
+        return []
+    return [
+        {
+            "case_id": case_id,
+            "feature": "tortuosity",
+            "value": value,
+            "violation_type": "tortuosity_lt_1",
+            "rule": "tortuosity >= 1",
+            "context": context,
+        }
+    ]
+
+
+def _check_angle(value: float, case_id: str, feature: str, context: str) -> list[dict]:
+    """Flag bifurcation angles outside the expected degree range."""
+    if 0 <= value <= MAX_ANGLE_DEGREES:
+        return []
+    return [
+        {
+            "case_id": case_id,
+            "feature": feature,
+            "value": value,
+            "violation_type": "angle_out_of_range",
+            "rule": "angle in [0, 180]",
+            "context": context,
+        }
+    ]
+
+
+def _check_positive(
+    value: float, case_id: str, feature: str, rule_name: str, context: str
+) -> list[dict]:
+    """Flag measurements that should be strictly positive."""
+    if value > 0:
+        return []
+    return [
+        {
+            "case_id": case_id,
+            "feature": feature,
+            "value": value,
+            "violation_type": rule_name,
+            "rule": f"{feature} > 0",
+            "context": context,
+        }
+    ]
+
+
+def _check_non_negative(
+    value: float, case_id: str, feature: str, rule_name: str, context: str
+) -> list[dict]:
+    """Flag measurements that should never be negative."""
+    if value >= 0:
+        return []
+    return [
+        {
+            "case_id": case_id,
+            "feature": feature,
+            "value": value,
+            "violation_type": rule_name,
+            "rule": f"{feature} >= 0",
+            "context": context,
+        }
+    ]
+
+
+def _check_curvature(value: float, case_id: str, context: str) -> list[dict]:
+    """Flag curvature values that fall below zero."""
+    if value >= 0:
+        return []
+    return [
+        {
+            "case_id": case_id,
+            "feature": "curvature",
+            "value": value,
+            "violation_type": "curvature_negative",
+            "rule": "curvature >= 0",
+            "context": context,
+        }
+    ]
+
+
+def check_morphometry_json(json_path: Path) -> list[dict]:
+    """Check one morphometry JSON file for basic biological sanity violations."""
+    case_id = "_".join(json_path.stem.split("_")[:2])
+    violations: list[dict] = []
+
+    try:
+        data = json.loads(json_path.read_text())
+    except Exception:
+        return [
+            {
+                "case_id": case_id,
+                "feature": "parse_error",
+                "value": None,
+                "violation_type": "parse_error",
+                "rule": "valid JSON",
+                "context": str(json_path),
+            }
+        ]
+
+    if not isinstance(data, dict):
+        return violations
+
+    for comp_key, group in data.items():
+        if not isinstance(group, dict):
+            continue
+        for vessel_name, items in group.items():
+            if not isinstance(items, list):
+                continue
+            ctx = f"{comp_key}/{vessel_name}"
+            for idx, item in enumerate(items):
+                if not isinstance(item, dict):
+                    continue
+                item_ctx = f"{ctx}[{idx}]"
+
+                if "tortuosity" in item and isinstance(item["tortuosity"], int | float):
+                    violations.extend(
+                        _check_tortuosity(float(item["tortuosity"]), case_id, item_ctx)
+                    )
+
+                if "length" in item and isinstance(item["length"], int | float):
+                    violations.extend(
+                        _check_non_negative(
+                            float(item["length"]),
+                            case_id,
+                            "length",
+                            "length_negative",
+                            item_ctx,
+                        )
+                    )
+
+                if "radius" in item and isinstance(item["radius"], dict):
+                    for key, radius_value in item["radius"].items():
+                        if isinstance(radius_value, int | float):
+                            feature_name = f"radius.{key}"
+                            if key == "sd":
+                                violations.extend(
+                                    _check_non_negative(
+                                        float(radius_value),
+                                        case_id,
+                                        feature_name,
+                                        "radius_sd_negative",
+                                        item_ctx,
+                                    )
+                                )
+                            else:
+                                violations.extend(
+                                    _check_positive(
+                                        float(radius_value),
+                                        case_id,
+                                        feature_name,
+                                        "radius_non_positive",
+                                        item_ctx,
+                                    )
+                                )
+
+                if "curvature" in item and isinstance(item["curvature"], dict):
+                    for key, curvature_value in item["curvature"].items():
+                        if isinstance(curvature_value, int | float):
+                            violations.extend(
+                                _check_curvature(
+                                    float(curvature_value),
+                                    case_id,
+                                    f"{item_ctx}/curvature.{key}",
+                                )
+                            )
+
+                if "angles" in item and isinstance(item["angles"], dict):
+                    for angle_name, angle_value in item["angles"].items():
+                        if isinstance(angle_value, int | float):
+                            violations.extend(
+                                _check_angle(
+                                    float(angle_value),
+                                    case_id,
+                                    f"angles.{angle_name}",
+                                    item_ctx,
+                                )
+                            )
+
+    return violations
+
+
+def check_morphometry_dir(morphometry_dir: Path) -> list[dict]:
+    """Check all morphometry JSONs in a directory and return flat violations."""
+    all_violations: list[dict] = []
+    for path in sorted(morphometry_dir.glob("*.json")):
+        all_violations.extend(check_morphometry_json(path))
+    return all_violations
 
 
 def compute_qc_per_feature(
@@ -209,8 +404,6 @@ def main() -> None:
 
     # Phase 2.2: Sanity checks (if morphometry dir provided)
     if args.morphometry_dir and args.morphometry_dir.exists():
-        from graph_extraction.analysis.feature_sanity import check_morphometry_dir
-
         violations = check_morphometry_dir(args.morphometry_dir)
         if violations:
             vio_df = pd.DataFrame(violations)
