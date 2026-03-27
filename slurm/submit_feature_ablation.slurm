@@ -10,8 +10,8 @@
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$PWD}"
-CONFIG="${CONFIG:-configs/feature_ablation_ispy2.yaml}"
-OUTDIR="${OUTDIR:-experiments/feature_ablation_ispy2_q2}"
+CONFIG="${CONFIG:-configs/ablation.yaml}"
+OUTDIR="${OUTDIR:-experiments/feature_ablation_q3}"
 
 mkdir -p "${REPO_ROOT}/logs"
 cd "${REPO_ROOT}"

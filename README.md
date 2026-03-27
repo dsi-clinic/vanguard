@@ -101,7 +101,9 @@ Supporting pieces:
 - `modeling/`
   - helper scripts for array-parallel ablation jobs
 - `configs/`
-  - run configs for training and ablation experiments
+  - `ispy2.yaml` for standard tabular training
+  - `ablation.yaml` for broad feature-block ablations
+  - `independent_signal.yaml` for the focused independent-signal matrix
 - `slurm/`
   - top-level Slurm submission wrappers for modeling runs
 - `results/`
@@ -174,7 +176,7 @@ micromamba activate vanguard
 python train_tabular.py --config configs/ispy2.yaml --outdir experiments/debug_run
 ```
 
-Primary config for the current vessel-feature pipeline:
+Primary training config:
 
 - [`configs/ispy2.yaml`](configs/ispy2.yaml)
 
@@ -222,7 +224,7 @@ This experiment asks a practical question: after accounting for clinical variabl
 
 Config:
 
-- [`configs/independent_signal_matrix_ispy2.yaml`](configs/independent_signal_matrix_ispy2.yaml)
+- [`configs/independent_signal.yaml`](configs/independent_signal.yaml)
 
 Recommended Slurm submission:
 

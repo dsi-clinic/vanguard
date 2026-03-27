@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-CONFIG="${CONFIG:-${REPO_ROOT}/configs/independent_signal_matrix_ispy2.yaml}"
-OUT_ROOT="${OUT_ROOT:-${REPO_ROOT}/experiments/independent_signal_matrix_ispy2_q2_array}"
+CONFIG="${CONFIG:-${REPO_ROOT}/configs/independent_signal.yaml}"
+OUT_ROOT="${OUT_ROOT:-${REPO_ROOT}/experiments/independent_signal_q3_array}"
 PARTITION="${PARTITION:-general}"
 
 CACHE_CPUS="${CACHE_CPUS:-8}"

@@ -103,6 +103,6 @@ def get_clinical_features(config: dict) -> pd.DataFrame:
 
     msg = (
         "No clinical source found. Set data_paths.patient_info_dir or "
-        "data_paths.clinical_excel in configs/ispy2.yaml."
+        "data_paths.clinical_excel in your training config, such as configs/ispy2.yaml."
     )
     raise FileNotFoundError(msg)
