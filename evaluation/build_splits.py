@@ -26,10 +26,11 @@ def create_splits_for_dataframe(
     ``cohort_df`` should contain any group or stratum columns referenced by the
     config, such as ``site`` or ``tumor_subtype``.
     """
-    random_state = int(config["model_params"].get("random_state", 42))
-    use_group_split = bool(config["model_params"].get("use_group_split", False))
-    group_col = str(config["model_params"].get("group_col", "site"))
-    stratum_col = config["model_params"].get("stratum_col")
+    model_params = config.model_params
+    random_state = int(model_params.random_state)
+    use_group_split = bool(model_params.use_group_split)
+    group_col = str(model_params.group_col)
+    stratum_col = model_params.stratum_col
 
     evaluator = Evaluator(
         X=X,
@@ -39,7 +40,7 @@ def create_splits_for_dataframe(
         random_state=random_state,
     )
 
-    n_splits = int(config["model_params"].get("n_splits", 5))
+    n_splits = int(model_params.n_splits)
     if use_group_split and group_col in cohort_df.columns:
         groups = cohort_df[group_col].fillna("UNKNOWN").astype(str).to_numpy()
         if stratum_col and str(stratum_col) in cohort_df.columns:

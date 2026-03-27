@@ -38,7 +38,7 @@ def parse_args() -> argparse.Namespace:
 
 def _normalize_ablation_arms(config: dict[str, Any]) -> list[dict[str, Any]]:
     """Return ablation arms from config or defaults."""
-    raw_arms = config["ablation_arms"] or DEFAULT_ABLATION_ARMS
+    raw_arms = config.ablation_arms or DEFAULT_ABLATION_ARMS
     arms: list[dict[str, Any]] = []
     seen_names: set[str] = set()
 
@@ -86,18 +86,18 @@ def _prepare_full_dataset(
 ) -> pd.DataFrame:
     """Build the superset labeled dataset once for reuse across ablation arms."""
     full_config = deepcopy(base_config)
-    toggles = full_config.setdefault("feature_toggles", {})
-    toggles["use_vascular"] = True
+    toggles = full_config.feature_toggles
+    toggles.use_vascular = True
     if any("clinical" in arm["selected_features"] for arm in arms):
-        toggles["use_clinical"] = True
+        toggles.use_clinical = True
     toggles.pop("selected_features", None)
 
     features_df = build_modular_features(full_config)
     features_df.to_csv(outdir / "features_full_raw.csv", index=False)
 
-    label_col = full_config["data_paths"]["label_column"]
-    id_col = full_config["data_paths"]["id_column"]
-    labels_df = load_labels(full_config["data_paths"]["labels_csv"], id_col, label_col)
+    label_col = full_config.data_paths.label_column
+    id_col = full_config.data_paths.id_column
+    labels_df = load_labels(full_config.data_paths.labels_csv, id_col, label_col)
 
     merged_df = features_df.merge(labels_df, on="case_id", how="inner")
     merged_df.to_csv(outdir / "features_full_labeled.csv", index=False)
@@ -238,7 +238,7 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
         yaml.safe_dump({"ablation_arms": to_plain_data(arms)}, handle, sort_keys=False)
 
     full_df = _prepare_full_dataset(config, arms, outdir)
-    label_col = config["data_paths"]["label_column"]
+    label_col = config.data_paths.label_column
 
     runs_root = outdir / "runs"
     runs_root.mkdir(parents=True, exist_ok=True)
@@ -251,15 +251,13 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
         logging.info("Running ablation arm %s with blocks %s", arm_name, blocks)
 
         arm_config = deepcopy(config)
-        arm_config.setdefault("experiment_setup", {})["name"] = arm_name
-        toggles = arm_config.setdefault("feature_toggles", {})
-        toggles["selected_features"] = blocks
-        toggles["use_clinical"] = "clinical" in blocks
-        toggles["use_vascular"] = any(block != "clinical" for block in blocks)
+        arm_config.experiment_setup.name = arm_name
+        toggles = arm_config.feature_toggles
+        toggles.selected_features = blocks
+        toggles.use_clinical = "clinical" in blocks
+        toggles.use_vascular = any(block != "clinical" for block in blocks)
         toggles.update(arm.get("feature_toggles_override", {}))
-        arm_config.setdefault("model_params", {}).update(
-            arm.get("model_params_override", {})
-        )
+        arm_config.model_params.update(arm.get("model_params_override", {}))
 
         arm_df = select_features(
             full_df,
@@ -293,7 +291,7 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
     summary_df, fold_df = _add_baseline_deltas(
         summary_df,
         fold_df,
-        baseline_arm_name=config["baseline_arm_name"],
+        baseline_arm_name=config.baseline_arm_name,
     )
     summary_df.to_csv(outdir / "ablation_summary.csv", index=False)
     if not fold_df.empty:

@@ -45,7 +45,7 @@ def main() -> None:
     blocks = list(arm["selected_features"])
 
     full_df = pd.read_csv(args.features_csv)
-    label_col = config["data_paths"]["label_column"]
+    label_col = config.data_paths.label_column
     arm_df = select_features(
         full_df,
         selected_blocks=blocks,
@@ -53,15 +53,13 @@ def main() -> None:
     )
 
     arm_config = deepcopy(config)
-    arm_config.setdefault("experiment_setup", {})["name"] = arm_name
-    toggles = arm_config.setdefault("feature_toggles", {})
-    toggles["selected_features"] = blocks
-    toggles["use_clinical"] = "clinical" in blocks
-    toggles["use_vascular"] = any(block != "clinical" for block in blocks)
+    arm_config.experiment_setup.name = arm_name
+    toggles = arm_config.feature_toggles
+    toggles.selected_features = blocks
+    toggles.use_clinical = "clinical" in blocks
+    toggles.use_vascular = any(block != "clinical" for block in blocks)
     toggles.update(arm.get("feature_toggles_override", {}))
-    arm_config.setdefault("model_params", {}).update(
-        arm.get("model_params_override", {})
-    )
+    arm_config.model_params.update(arm.get("model_params_override", {}))
 
     context = prepare_evaluation_context(arm_df, arm_config)
     split_map = {split.fold_idx: split for split in context["splits"]}

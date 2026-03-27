@@ -13,6 +13,7 @@ change cohort assembly and feature blocks without also editing estimator code.
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from itertools import product
 from typing import Any
 
@@ -641,39 +642,37 @@ def build_model_pipeline(
     model_params_override: dict[str, Any] | None = None,
 ) -> Pipeline:
     """Construct the sklearn pipeline for a configured tabular model."""
-    model_params = dict(config["model_params"])
+    model_params = deepcopy(config.model_params)
     if model_params_override:
         model_params.update(model_params_override)
 
-    feature_select_enabled = bool(model_params["feature_select_enabled"])
-    feature_select_k = int(model_params["feature_select_k"])
-    feature_select_mode = str(model_params["feature_select_mode"])
-    feature_select_k_kin = int(model_params["feature_select_k_kin"])
-    feature_select_kin_method = str(model_params["feature_select_kin_method"])
+    feature_select_enabled = bool(model_params.feature_select_enabled)
+    feature_select_k = int(model_params.feature_select_k)
+    feature_select_mode = str(model_params.feature_select_mode)
+    feature_select_k_kin = int(model_params.feature_select_k_kin)
+    feature_select_kin_method = str(model_params.feature_select_kin_method)
     feature_select_kinematic_prefixes = normalize_prefixes(
-        model_params["feature_select_kinematic_prefixes"],
+        model_params.feature_select_kinematic_prefixes,
         default_prefixes=["kinematic_"],
     )
     feature_select_mrmr_redundancy_weight = float(
-        model_params["feature_select_mrmr_redundancy_weight"]
+        model_params.feature_select_mrmr_redundancy_weight
     )
     feature_select_mrmr_include_baseline = bool(
-        model_params["feature_select_mrmr_include_baseline"]
+        model_params.feature_select_mrmr_include_baseline
     )
     feature_select_corr_gate_against_baseline = bool(
-        model_params["feature_select_corr_gate_against_baseline"]
+        model_params.feature_select_corr_gate_against_baseline
     )
-    feature_select_min_non_na_rate = float(
-        model_params["feature_select_min_non_na_rate"]
-    )
-    feature_select_min_n_unique = int(model_params["feature_select_min_n_unique"])
-    feature_select_max_abs_corr_raw = model_params["feature_select_max_abs_corr"]
+    feature_select_min_non_na_rate = float(model_params.feature_select_min_non_na_rate)
+    feature_select_min_n_unique = int(model_params.feature_select_min_n_unique)
+    feature_select_max_abs_corr_raw = model_params.feature_select_max_abs_corr
     feature_select_max_abs_corr = (
         None
         if feature_select_max_abs_corr_raw in {None, "", "none", "null"}
         else float(feature_select_max_abs_corr_raw)
     )
-    feature_select_max_zero_rate_raw = model_params["feature_select_max_zero_rate"]
+    feature_select_max_zero_rate_raw = model_params.feature_select_max_zero_rate
     feature_select_max_zero_rate = (
         None
         if feature_select_max_zero_rate_raw in {None, "", "none", "null"}
@@ -721,9 +720,9 @@ def build_model_pipeline(
         )
 
         model = RandomForestClassifier(
-            n_estimators=int(model_params["n_estimators"]),
-            max_depth=model_params["max_depth"],
-            min_samples_leaf=int(model_params["min_samples_leaf"]),
+            n_estimators=int(model_params.n_estimators),
+            max_depth=model_params.max_depth,
+            min_samples_leaf=int(model_params.min_samples_leaf),
             class_weight="balanced",
             random_state=random_state,
             n_jobs=-1,
@@ -773,20 +772,20 @@ def build_model_pipeline(
             remainder="drop",
         )
 
-        penalty = str(model_params["penalty"]).lower()
+        penalty = str(model_params.penalty).lower()
         solver_default = "saga" if penalty == "elasticnet" else "lbfgs"
-        solver = str(model_params["solver"] or solver_default)
+        solver = str(model_params.solver or solver_default)
 
         model_kwargs: dict[str, Any] = {
             "class_weight": "balanced",
             "random_state": random_state,
-            "max_iter": int(model_params["max_iter"]),
+            "max_iter": int(model_params.max_iter),
             "solver": solver,
             "penalty": penalty,
-            "C": float(model_params["C"]),
+            "C": float(model_params.C),
         }
         if penalty == "elasticnet":
-            model_kwargs["l1_ratio"] = float(model_params["l1_ratio"])
+            model_kwargs["l1_ratio"] = float(model_params.l1_ratio)
 
         model = LogisticRegression(**model_kwargs)
 
@@ -815,49 +814,47 @@ def build_nested_candidate_overrides(
     model_params: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Build inner-CV candidate override dictionaries from config grids."""
-    c_vals = [
-        float(v) for v in grid_values(model_params["nested_c_grid"], model_params["C"])
-    ]
+    c_vals = [float(v) for v in grid_values(model_params.nested_c_grid, model_params.C)]
     l1_vals = [
         float(v)
         for v in grid_values(
-            model_params["nested_l1_ratio_grid"],
-            model_params["l1_ratio"],
+            model_params.nested_l1_ratio_grid,
+            model_params.l1_ratio,
         )
     ]
     mode_vals = [
         str(v)
         for v in grid_values(
-            model_params["nested_feature_select_mode_grid"],
-            model_params["feature_select_mode"],
+            model_params.nested_feature_select_mode_grid,
+            model_params.feature_select_mode,
         )
     ]
     k_kin_vals = [
         int(v)
         for v in grid_values(
-            model_params["nested_k_kin_grid"],
-            model_params["feature_select_k_kin"],
+            model_params.nested_k_kin_grid,
+            model_params.feature_select_k_kin,
         )
     ]
     kin_method_vals = [
         str(v)
         for v in grid_values(
-            model_params["nested_kin_method_grid"],
-            model_params["feature_select_kin_method"],
+            model_params.nested_kin_method_grid,
+            model_params.feature_select_kin_method,
         )
     ]
     max_corr_vals = [
         parse_optional_float_param(v)
         for v in grid_values(
-            model_params["nested_max_abs_corr_grid"],
-            model_params["feature_select_max_abs_corr"],
+            model_params.nested_max_abs_corr_grid,
+            model_params.feature_select_max_abs_corr,
         )
     ]
     max_zero_vals = [
         parse_optional_float_param(v)
         for v in grid_values(
-            model_params["nested_max_zero_rate_grid"],
-            model_params["feature_select_max_zero_rate"],
+            model_params.nested_max_zero_rate_grid,
+            model_params.feature_select_max_zero_rate,
         )
     ]
 
@@ -871,7 +868,7 @@ def build_nested_candidate_overrides(
         mode_kin_method_vals = (
             kin_method_vals
             if use_kin_grid
-            else [str(model_params["feature_select_kin_method"])]
+            else [str(model_params.feature_select_kin_method)]
         )
 
         for c_val, l1_val, k_kin, kin_method, max_corr, max_zero in product(
@@ -885,7 +882,7 @@ def build_nested_candidate_overrides(
             override: dict[str, Any] = {
                 "C": float(c_val),
                 "l1_ratio": float(l1_val),
-                "feature_select_enabled": bool(model_params["feature_select_enabled"]),
+                "feature_select_enabled": bool(model_params.feature_select_enabled),
                 "feature_select_mode": str(mode),
             }
 
@@ -964,15 +961,15 @@ def pick_nested_candidate_for_outer_fold(
     outer_fold_idx: int,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Select the best inner-CV candidate for one outer fold."""
-    model_params = config["model_params"]
-    inner_splits = max(2, int(model_params["nested_inner_splits"]))
+    model_params = config.model_params
+    inner_splits = max(2, int(model_params.nested_inner_splits))
 
     candidates = build_nested_candidate_overrides(model_params)
     if not candidates:
         return {}, []
 
     rows: list[dict[str, Any]] = []
-    inner_seed_base = int(model_params["nested_inner_random_state"])
+    inner_seed_base = int(model_params.nested_inner_random_state)
     fold_seed = inner_seed_base + int(outer_fold_idx) * 997
 
     for cand in candidates:

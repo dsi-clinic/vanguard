@@ -27,9 +27,9 @@ def resolve_run_output_dir(
     base_out = (
         Path(outdir_override)
         if outdir_override is not None
-        else Path(config["experiment_setup"]["base_outdir"])
+        else Path(config.experiment_setup.base_outdir)
     )
-    run_name = f"{config['experiment_setup']['name']}_{timestamp}"
+    run_name = f"{config.experiment_setup.name}_{timestamp}"
     return base_out / run_name
 
 

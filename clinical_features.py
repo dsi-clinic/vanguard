@@ -88,15 +88,15 @@ def get_clinical_features(config: dict) -> pd.DataFrame:
     1) patient_info JSON directory (data_paths.patient_info_dir)
     2) Excel metadata file (data_paths.clinical_excel)
     """
-    data_paths = config.get("data_paths", {})
+    data_paths = config.data_paths
 
-    patient_info_dir = data_paths.get("patient_info_dir")
+    patient_info_dir = data_paths.patient_info_dir
     if patient_info_dir:
         patient_info_path = Path(patient_info_dir)
         if patient_info_path.exists():
             return _load_clinical_from_patient_info(patient_info_path)
 
-    clinical_excel = data_paths.get("clinical_excel")
+    clinical_excel = data_paths.clinical_excel
     if clinical_excel:
         excel_path = Path(clinical_excel)
         if excel_path.exists():
