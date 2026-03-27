@@ -18,4 +18,25 @@ cd slurm
 ./submit_independent_signal_matrix_array.sh
 ```
 
-Check or override `CONFIG`, `OUT_ROOT`, and the Slurm resource settings before running.
+Check or override these before running:
+
+- `CONFIG`
+- `OUT_ROOT`
+- `PARTITION`
+- `CACHE_CPUS`, `CACHE_MEM`, `CACHE_TIME`
+- `FOLD_CPUS`, `FOLD_MEM`, `FOLD_TIME`
+- `MERGE_CPUS`, `MERGE_MEM`, `MERGE_TIME`
+
+Typical use for the independent-signal matrix:
+
+```bash
+cd slurm
+CONFIG=../configs/independent_signal.yaml \
+OUT_ROOT=../experiments/independent_signal_q3_array_rerun1 \
+./submit_independent_signal_matrix_array.sh
+```
+
+To test different arms:
+
+1. edit `ablation_arms` in `../configs/independent_signal.yaml`
+2. submit again to a fresh `OUT_ROOT`

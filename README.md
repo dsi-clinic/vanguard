@@ -226,6 +226,17 @@ Config:
 
 - [`configs/independent_signal.yaml`](configs/independent_signal.yaml)
 
+How to modify the experiment:
+
+- edit `ablation_arms` in [`configs/independent_signal.yaml`](configs/independent_signal.yaml) to change which block combinations are tested
+- edit `baseline_arm_name` in the same file if you want deltas reported against a different reference arm
+- keep the canonical block names:
+  - `clinical`
+  - `tumor_size`
+  - `morph`
+  - `graph`
+  - `kinematic`
+
 Recommended Slurm submission:
 
 ```bash
@@ -237,10 +248,31 @@ Outputs:
 
 - `experiments/<run_name>/ablation_summary.csv`
 - `experiments/<run_name>/ablation_fold_auc.csv`
+- `experiments/<run_name>/ablation_auc_summary.png`
 
-Tracked checkpoint result:
+Current tracked checkpoint:
 
-- [`results/feature_ablation_ispy2_q2_summary.csv`](results/feature_ablation_ispy2_q2_summary.csv)
+- [`results/independent_signal_q3_summary.csv`](results/independent_signal_q3_summary.csv)
+- [`results/independent_signal_q3_auc_summary.png`](results/independent_signal_q3_auc_summary.png)
+
+Current result summary:
+
+- baseline `clinical + tumor size`: `0.572 +/- 0.041`
+- `+ morph`: `0.591 +/- 0.033`
+- `+ graph`: `0.588 +/- 0.055`
+- `+ kinematic`: `0.594 +/- 0.043`
+- `+ graph + kinematic`: `0.594 +/- 0.051`
+- `+ all vessel blocks`: `0.596 +/- 0.032`
+
+Interpretation:
+
+- all three vessel families improved mean AUC over the `clinical + tumor size` baseline in this rerun
+- the best mean result came from the full vessel block
+- the gains are modest, so future work should focus on more stable feature definitions and cleaner selection within each block
+
+Tracked q3 summary figure:
+
+![independent signal q3 auc summary](results/independent_signal_q3_auc_summary.png)
 
 ## Radiomics
 
