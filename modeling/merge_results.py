@@ -21,6 +21,85 @@ from run_ablation_matrix import (
 )
 
 
+def _write_auc_summary_plot(summary_df: pd.DataFrame, out_root: Path) -> None:
+    """Write a one-dot-per-arm AUC plot with error bars for fold std."""
+    if summary_df.empty:
+        return
+    plot_df = summary_df.loc[
+        summary_df["status"].astype(str) == "ok",
+        ["arm_name", "auc_mean", "auc_std"],
+    ].copy()
+    plot_df = plot_df.dropna(subset=["auc_mean"])
+    plot_df = plot_df.sort_values("auc_mean", ascending=True).reset_index(drop=True)
+    if plot_df.empty:
+        return
+
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        logging.warning("matplotlib not available; skipping ablation summary plot")
+        return
+
+    y_pos = np.arange(len(plot_df))
+    auc_mean = plot_df["auc_mean"].astype(float).to_numpy()
+    auc_std = plot_df["auc_std"].fillna(0.0).astype(float).to_numpy()
+    display_labels = (
+        plot_df["arm_name"]
+        .astype(str)
+        .str.replace("_plus_", " + ", regex=False)
+        .str.replace("_", " ", regex=False)
+        .str.lower()
+        .tolist()
+    )
+
+    fig_height = max(4.0, 0.7 * len(plot_df))
+    fig, ax = plt.subplots(figsize=(12, fig_height))
+    ax.errorbar(
+        auc_mean,
+        y_pos,
+        xerr=auc_std,
+        fmt="o",
+        color="tab:blue",
+        ecolor="tab:gray",
+        elinewidth=1.5,
+        capsize=4,
+        markersize=6,
+    )
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(display_labels)
+    ax.set_xlabel("validation auc")
+    ax.grid(False)
+    ax.xaxis.grid(False)
+    ax.yaxis.grid(False)
+
+    data_min = float((auc_mean - auc_std).min())
+    data_max = float((auc_mean + auc_std).max())
+    data_span = max(data_max - data_min, 0.02)
+    left_pad = max(0.01, 0.15 * data_span)
+    right_pad = max(0.05, 0.45 * data_span)
+    x_min = max(0.0, data_min - left_pad)
+    x_max = min(1.0, data_max + right_pad)
+    if x_max <= x_min:
+        x_min = max(0.0, data_min - 0.02)
+        x_max = min(1.0, data_max + 0.08)
+    ax.set_xlim(x_min, x_max)
+
+    for idx, row in plot_df.reset_index(drop=True).iterrows():
+        ax.text(
+            x_max - 0.002,
+            idx,
+            f"{float(row['auc_mean']):.3f} +/- {float(row['auc_std'] or 0.0):.3f}",
+            ha="right",
+            va="center",
+            fontsize=9,
+        )
+
+    plt.tight_layout()
+    plt.savefig(out_root / "ablation_auc_summary.png", dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -129,6 +208,7 @@ def main() -> None:
     summary_df.to_csv(args.out_root / "ablation_summary.csv", index=False)
     if not fold_df.empty:
         fold_df.to_csv(args.out_root / "ablation_fold_auc.csv", index=False)
+    _write_auc_summary_plot(summary_df, args.out_root)
 
 
 if __name__ == "__main__":
