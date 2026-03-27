@@ -12,11 +12,8 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from train_tabular import (
-    prepare_evaluation_context,
-    run_single_fold_from_context,
-    select_features,
-)
+from tabular_cohort import select_features
+from train_tabular import prepare_evaluation_context, run_single_fold_from_context
 from run_ablation_matrix import _normalize_ablation_arms
 
 

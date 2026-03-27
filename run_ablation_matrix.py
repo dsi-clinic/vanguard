@@ -13,12 +13,8 @@ import pandas as pd
 import yaml
 
 from features import FEATURE_BLOCK_DESCRIPTIONS, normalize_selected_features
-from train_tabular import (
-    build_modular_features,
-    load_labels,
-    run_evaluation_pipeline,
-    select_features,
-)
+from tabular_cohort import build_modular_features, load_labels, select_features
+from train_tabular import run_evaluation_pipeline
 
 DEFAULT_ABLATION_ARMS: list[dict[str, Any]] = [
     {"name": "tumor_size_only", "selected_features": ["tumor_size"]},

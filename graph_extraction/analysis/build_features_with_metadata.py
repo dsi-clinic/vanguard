@@ -29,7 +29,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 from clinic_metadata import load_clinic_metadata_excel  # noqa: E402
-from train_tabular import build_features_from_feature_jsons  # noqa: E402
+from tabular_cohort import build_features_from_feature_jsons  # noqa: E402
 
 
 def get_patient_id(path: Path, js: dict[str, Any]) -> str:

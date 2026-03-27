@@ -13,7 +13,8 @@ import pandas as pd
 import yaml
 
 from evaluation import Evaluator, FoldResults
-from train_tabular import prepare_evaluation_context, select_features
+from tabular_cohort import select_features
+from train_tabular import prepare_evaluation_context
 from run_ablation_matrix import (
     _add_baseline_deltas,
     _metrics_summary_row,
