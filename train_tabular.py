@@ -1655,6 +1655,7 @@ def prepare_evaluation_context(
     """Prepare evaluator inputs and deterministic fold splits for a config."""
     label_col = config["data_paths"]["label_column"]
     model_type = str(config["model_params"].get("model", "rf")).lower()
+    random_state = int(config["model_params"].get("random_state", 42))
     use_clinical_features = bool(
         config.get("feature_toggles", {}).get("use_clinical", False)
     )
