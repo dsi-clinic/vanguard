@@ -492,7 +492,7 @@ def _create_splits_from_excel_core(
     report : dict with per_fold_site_counts, per_fold_stratum_counts, warnings, infeasible_constraints
     """
     from evaluation.selection import apply_selection_criteria
-    from src.utils.clinic_metadata import (
+    from clinic_metadata import (
         align_metadata_to_patient_ids,
         build_split_annotations,
         load_clinic_metadata_excel,

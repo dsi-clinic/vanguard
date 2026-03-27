@@ -1,0 +1,1927 @@
+"""MAMA-MIA pCR prediction pipeline using the evaluation framework.
+
+Outputs:
+- features_raw.csv
+- features_engineered_labeled.csv
+- evaluator metrics/predictions/plots under experiment output dir
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+from itertools import product
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+from clinical_features import get_clinical_features
+from evaluation import FoldResults
+from evaluation.build_splits import create_splits_for_dataframe
+from evaluation.kfold import FoldSplit
+from features import (
+    ANNOTATION_COLUMNS,
+    FEATURE_BLOCK_DESCRIPTIONS,
+    feature_block_for_column,
+    normalize_selected_features,
+)
+from features.clinical import SITE_COLUMNS
+from features._common import safe_float
+from features.graph import (
+    add_derived_graph_features,
+    extract_graph_json_features,
+    extract_local_graph_features,
+    load_tumor_graph_payload,
+    resolve_tumor_graph_features_path,
+)
+from features.kinematic import extract_kinematic_json_features
+from features.morph import extract_morphometry_features
+from features.tumor_size import (
+    build_local_tumor_context,
+    extract_tumor_size_local_features,
+    parse_tumor_radii,
+)
+from load_cohort import (
+    load_config,
+    resolve_run_output_dir,
+    write_config_snapshot,
+)
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    ap = argparse.ArgumentParser(description="pCR prediction with evaluator")
+    ap.add_argument(
+        "--config",
+        type=str,
+        default="configs/ispy2.yaml",
+        help="Path to YAML config",
+    )
+    ap.add_argument("--outdir", type=Path, help="Override output directory")
+    return ap.parse_args()
+
+
+def _as_optional_bool(value: Any) -> bool | None:
+    """Parse optional bool values from YAML/CLI-like representations."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)):
+        return bool(value)
+    if isinstance(value, str):
+        lower = value.strip().lower()
+        if lower in {"none", "null", ""}:
+            return None
+        if lower in {"true", "1", "yes", "y"}:
+            return True
+        if lower in {"false", "0", "no", "n"}:
+            return False
+    raise ValueError(f"Unable to parse optional bool from value: {value!r}")
+
+
+def build_features_from_feature_jsons(morphometry_dir: Path) -> pd.DataFrame:
+    """Build a feature table directly from per-study morphometry JSON files."""
+    rows: list[dict[str, Any]] = []
+    for morphometry_path in sorted(morphometry_dir.glob("*_morphometry.json")):
+        case_id = morphometry_path.name.removesuffix("_morphometry.json")
+        row: dict[str, Any] = {"case_id": case_id}
+        row.update(extract_morphometry_features(morphometry_path))
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
+    """Build study-level vascular feature table from centerline_tc4d outputs.
+
+    Processed-ness is defined by centerline file existence, not .status markers.
+    """
+    data_paths = config.get("data_paths", {})
+    toggles = config.get("feature_toggles", {})
+
+    centerline_root = Path(data_paths.get("centerline_root", ""))
+    if not centerline_root.exists():
+        raise FileNotFoundError(f"Centerline root not found: {centerline_root}")
+
+    centerline_pattern = str(
+        toggles.get("centerline_file_pattern", "{case_id}_skeleton_4d_exam_mask.npy")
+    )
+    require_centerline_file = bool(toggles.get("require_centerline_file", True))
+    include_missing_centerline_rows = bool(
+        toggles.get("include_missing_centerline_rows", False)
+    )
+    include_morphometry = bool(toggles.get("use_morphometry", True))
+    include_tumor_graph_json = bool(toggles.get("use_tumor_graph_features_json", True))
+    dataset_include = toggles.get("dataset_include")
+    dataset_allow: set[str] | None = None
+    if dataset_include is not None:
+        if isinstance(dataset_include, str):
+            dataset_include = [dataset_include]
+        dataset_allow = {str(v) for v in dataset_include}
+    bilateral_filter = _as_optional_bool(toggles.get("bilateral_filter", None))
+    bilateral_lookup: dict[str, bool | None] = {}
+    if bilateral_filter is not None:
+        try:
+            clinical_df = get_clinical_features(config).rename(
+                columns={"patient_id": "case_id"}
+            )
+            if "bilateral" in clinical_df.columns:
+                for _, rec in (
+                    clinical_df[["case_id", "bilateral"]]
+                    .dropna(subset=["case_id"])
+                    .iterrows()
+                ):
+                    raw_val = rec["bilateral"]
+                    if pd.isna(raw_val):
+                        bilateral_lookup[str(rec["case_id"])] = None
+                    else:
+                        bilateral_lookup[str(rec["case_id"])] = _as_optional_bool(
+                            raw_val
+                        )
+            else:
+                logging.warning(
+                    "Bilateral prefilter requested but clinical metadata has no "
+                    "'bilateral' column; continuing without early bilateral prefilter."
+                )
+                bilateral_filter = None
+        except Exception as exc:  # noqa: BLE001
+            logging.warning(
+                "Could not apply early bilateral prefilter: %s. "
+                "Continuing without it.",
+                exc,
+            )
+            bilateral_filter = None
+    include_tumor_local = bool(toggles.get("use_tumor_local_features", False))
+    tumor_mask_root = Path(
+        data_paths.get(
+            "tumor_mask_root",
+            "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert",
+        )
+    )
+    tumor_mask_pattern = str(toggles.get("tumor_mask_file_pattern", "{case_id}.nii.gz"))
+    tumor_threshold = float(toggles.get("tumor_mask_threshold", 0.5))
+    tumor_radii_voxels = parse_tumor_radii(
+        toggles.get("tumor_radius_voxels", [0, 2, 4, 8])
+    )
+
+    if include_tumor_local and not tumor_mask_root.exists():
+        logging.warning(
+            "Tumor local features requested but tumor mask root not found: %s. "
+            "Disabling tumor local features.",
+            tumor_mask_root,
+        )
+        include_tumor_local = False
+
+    rows: list[dict[str, Any]] = []
+    total_studies = 0
+    centerline_exists_count = 0
+    tumor_mask_exists_count = 0
+    tumor_mask_loaded_count = 0
+    tumor_graph_exists_count = 0
+    tumor_graph_loaded_count = 0
+
+    study_dirs = [
+        (dataset_dir.name, study_dir)
+        for dataset_dir in sorted(centerline_root.iterdir())
+        if dataset_dir.is_dir()
+        for study_dir in sorted(dataset_dir.iterdir())
+        if study_dir.is_dir()
+    ]
+
+    for idx, (dataset_name, study_dir) in enumerate(study_dirs, start=1):
+        if dataset_allow is not None and str(dataset_name) not in dataset_allow:
+            continue
+
+        case_id = study_dir.name
+
+        if bilateral_filter is not None:
+            case_bilateral = bilateral_lookup.get(str(case_id))
+            if case_bilateral is None or case_bilateral != bilateral_filter:
+                continue
+
+        total_studies += 1
+
+        centerline_path = study_dir / centerline_pattern.format(case_id=case_id)
+        has_centerline_file = centerline_path.exists()
+        if has_centerline_file:
+            centerline_exists_count += 1
+
+        if (
+            require_centerline_file
+            and not has_centerline_file
+            and not include_missing_centerline_rows
+        ):
+            continue
+
+        row: dict[str, Any] = {
+            "case_id": case_id,
+            "dataset": dataset_name,
+            "has_centerline_file": bool(has_centerline_file),
+        }
+
+        summary_path = study_dir / "run_summary.json"
+        summary: dict[str, Any] = {}
+        if summary_path.exists():
+            try:
+                summary = json.loads(summary_path.read_text())
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("Failed run_summary parse for %s: %s", summary_path, exc)
+                summary = {}
+
+        feature_stats = (
+            summary.get("feature_stats", {}) if isinstance(summary, dict) else {}
+        )
+        if not isinstance(feature_stats, dict):
+            feature_stats = {}
+        row.update(
+            {
+                "graph_skeleton_voxels": summary.get("skeleton_voxels"),
+                "graph_support_voxels": summary.get("support_voxels"),
+                "graph_nodes": feature_stats.get("graph_nodes"),
+                "graph_edges": feature_stats.get("graph_edges"),
+                "graph_segment_count": feature_stats.get("segment_count"),
+                "graph_component_count": feature_stats.get("component_count"),
+            }
+        )
+
+        if include_morphometry:
+            morphometry_path = study_dir / f"{case_id}_morphometry.json"
+            if morphometry_path.exists():
+                try:
+                    row.update(extract_morphometry_features(morphometry_path))
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning(
+                        "Failed morphometry parse for %s: %s",
+                        morphometry_path,
+                        exc,
+                    )
+
+        if include_tumor_local and has_centerline_file:
+            local_tumor_context = build_local_tumor_context(
+                case_id=case_id,
+                dataset_name=dataset_name,
+                centerline_path=centerline_path,
+                tumor_mask_root=tumor_mask_root,
+                tumor_mask_pattern=tumor_mask_pattern,
+                tumor_threshold=tumor_threshold,
+                tumor_radii_voxels=tumor_radii_voxels,
+            )
+            row.update(
+                extract_tumor_size_local_features(
+                    local_tumor_context,
+                    tumor_radii_voxels=tumor_radii_voxels,
+                )
+            )
+            row.update(
+                extract_local_graph_features(
+                    local_tumor_context,
+                    tumor_radii_voxels=tumor_radii_voxels,
+                )
+            )
+            if row.get("tumor_mask_exists") == 1.0:
+                tumor_mask_exists_count += 1
+            if row.get("tumor_mask_loaded") == 1.0:
+                tumor_mask_loaded_count += 1
+
+        if include_tumor_graph_json:
+            tumor_graph_path = resolve_tumor_graph_features_path(
+                case_id=case_id,
+                study_dir=study_dir,
+                summary=summary,
+            )
+            row["tumor_graph_features_exists"] = (
+                1.0 if tumor_graph_path is not None else 0.0
+            )
+            row["tumor_graph_features_loaded"] = 0.0
+
+            status_from_summary = summary.get("tumor_graph_features_status")
+            if status_from_summary is None:
+                status_from_summary = feature_stats.get("tumor_graph_features_status")
+            if status_from_summary is not None:
+                row["tumor_graph_status_ok_summary"] = (
+                    1.0 if str(status_from_summary).strip().lower() == "ok" else 0.0
+                )
+
+            if tumor_graph_path is not None:
+                tumor_graph_exists_count += 1
+                try:
+                    tumor_graph_payload = load_tumor_graph_payload(tumor_graph_path)
+                    row.update(extract_graph_json_features(tumor_graph_payload))
+                    row.update(extract_kinematic_json_features(tumor_graph_payload))
+                    if row.get("tumor_graph_features_loaded") == 1.0:
+                        tumor_graph_loaded_count += 1
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning(
+                        "Failed tumor graph feature parse for %s: %s",
+                        tumor_graph_path,
+                        exc,
+                    )
+
+        add_derived_graph_features(row)
+        rows.append(row)
+
+        if idx % 300 == 0:
+            logging.info("Parsed %d/%d centerline studies", idx, len(study_dirs))
+
+    if dataset_allow is not None:
+        logging.info(
+            "Centerline build applied dataset prefilter: %s",
+            sorted(dataset_allow),
+        )
+    if bilateral_filter is not None:
+        logging.info(
+            "Centerline build applied bilateral prefilter: %s", bilateral_filter
+        )
+    logging.info(
+        "Centerline file coverage: %d/%d studies have file (%s)",
+        centerline_exists_count,
+        total_studies,
+        centerline_pattern,
+    )
+    if include_tumor_local:
+        logging.info(
+            "Tumor mask coverage among parsed studies: exists=%d, loaded=%d, radii=%s",
+            tumor_mask_exists_count,
+            tumor_mask_loaded_count,
+            tumor_radii_voxels,
+        )
+    if include_tumor_graph_json:
+        logging.info(
+            "Tumor-graph JSON coverage among parsed studies: exists=%d, loaded=%d",
+            tumor_graph_exists_count,
+            tumor_graph_loaded_count,
+        )
+    df = pd.DataFrame(rows)
+    logging.info("Centerline feature table shape: %s", df.shape)
+    return df
+
+
+def build_modular_features(config: dict[str, Any]) -> pd.DataFrame:
+    """Build and merge feature blocks selected in config.feature_toggles."""
+    toggles = config.get("feature_toggles", {})
+
+    use_vascular = bool(toggles.get("use_vascular", False))
+    use_clinical = bool(toggles.get("use_clinical", False))
+    include_site_features = bool(toggles.get("include_site_features", True))
+    merge_how = str(toggles.get("merge_how", "inner"))
+    dataset_include = toggles.get("dataset_include")
+    bilateral_filter = _as_optional_bool(toggles.get("bilateral_filter", None))
+
+    if use_vascular:
+        logging.info("Loading vascular centerline features...")
+        merged_df = build_centerline_features(config)
+    elif use_clinical:
+        clinical_df = get_clinical_features(config).rename(
+            columns={"patient_id": "case_id"}
+        )
+        merged_df = clinical_df.copy()
+    else:
+        raise ValueError(
+            "No feature blocks enabled. Set at least one of: "
+            "feature_toggles.use_vascular or feature_toggles.use_clinical"
+        )
+
+    # Always attach annotation columns for filtering/debug (not necessarily modeling).
+    try:
+        all_clinical = get_clinical_features(config).rename(
+            columns={"patient_id": "case_id"}
+        )
+    except Exception as exc:  # noqa: BLE001
+        all_clinical = pd.DataFrame(columns=["case_id"])
+        logging.warning("Could not load annotation metadata: %s", exc)
+
+    annotation_cols = [
+        c
+        for c in ["case_id", "dataset", "site", "bilateral", "tumor_subtype"]
+        if c in all_clinical.columns
+    ]
+    if annotation_cols:
+        annotations = all_clinical[annotation_cols].drop_duplicates(subset=["case_id"])
+        missing_ann_cols = [
+            c for c in annotation_cols if c != "case_id" and c not in merged_df.columns
+        ]
+        if missing_ann_cols:
+            merged_df = merged_df.merge(
+                annotations[["case_id"] + missing_ann_cols],
+                on="case_id",
+                how="left",
+            )
+
+    if use_clinical and not all_clinical.empty:
+        clinical_features = all_clinical.copy()
+        if not include_site_features:
+            clinical_features = clinical_features.drop(
+                columns=SITE_COLUMNS, errors="ignore"
+            )
+
+        overlap_cols = [
+            c
+            for c in clinical_features.columns
+            if c != "case_id" and c in merged_df.columns
+        ]
+        if overlap_cols:
+            clinical_features = clinical_features.drop(
+                columns=overlap_cols, errors="ignore"
+            )
+        merged_df = merged_df.merge(clinical_features, on="case_id", how=merge_how)
+
+    if dataset_include is not None and "dataset" in merged_df.columns:
+        if isinstance(dataset_include, str):
+            dataset_include = [dataset_include]
+        dataset_include = {str(v) for v in dataset_include}
+        before = len(merged_df)
+        merged_df = merged_df[
+            merged_df["dataset"].astype(str).isin(dataset_include)
+        ].copy()
+        logging.info(
+            "Applied dataset filter %s: %d -> %d rows",
+            sorted(dataset_include),
+            before,
+            len(merged_df),
+        )
+
+    if bilateral_filter is not None and "bilateral" in merged_df.columns:
+        before = len(merged_df)
+        bilateral_series = merged_df["bilateral"].astype("boolean")
+        merged_df = merged_df[bilateral_series == bilateral_filter].copy()
+        logging.info(
+            "Applied bilateral filter %s: %d -> %d rows",
+            bilateral_filter,
+            before,
+            len(merged_df),
+        )
+
+    merged_df = merged_df.dropna(subset=["case_id"]).drop_duplicates(subset=["case_id"])
+    logging.info("Merged feature table shape: %s", merged_df.shape)
+    return merged_df
+
+
+def load_labels(path: Path, id_col: str, label_col: str) -> pd.DataFrame:
+    """Load labels from CSV or JSON and normalize to integer {0, 1}."""
+    path = Path(path)
+    if path.suffix.lower() == ".csv":
+        df_labels = pd.read_csv(path)
+    else:
+        if path.is_dir():
+            rows = []
+            for json_path in sorted(path.glob("*.json")):
+                try:
+                    rows.append(json.loads(json_path.read_text()))
+                except Exception:  # noqa: BLE001
+                    continue
+            df_labels = pd.DataFrame(rows)
+        else:
+            obj = json.loads(path.read_text())
+            df_labels = pd.DataFrame(obj)
+
+    if id_col not in df_labels.columns and "patient_id" in df_labels.columns:
+        df_labels = df_labels.rename(columns={"patient_id": id_col})
+
+    df_labels = df_labels.dropna(subset=[label_col])
+    mapping = {"true": 1, "false": 0, "yes": 1, "no": 0}
+
+    def clean_val(value: Any) -> Any:
+        s = str(value).strip().lower()
+        return mapping.get(s, value)
+
+    df_labels[label_col] = pd.to_numeric(
+        df_labels[label_col].map(clean_val),
+        errors="coerce",
+    )
+    df_labels = df_labels.dropna(subset=[label_col])
+    df_labels[label_col] = df_labels[label_col].astype(int)
+
+    return df_labels[[id_col, label_col]].rename(columns={id_col: "case_id"})
+
+
+def prepare_data(config: dict[str, Any], outdir: Path) -> pd.DataFrame:
+    """Load feature blocks, load labels, and build final labeled feature table."""
+    feats_df = build_modular_features(config)
+    feats_df.to_csv(outdir / "features_raw.csv", index=False)
+
+    labels_path = config["data_paths"]["labels_csv"]
+    label_col = config["data_paths"]["label_column"]
+    id_col = config["data_paths"].get("id_column", "case_id")
+
+    labels_df = load_labels(labels_path, id_col, label_col)
+
+    merged_df = feats_df.merge(labels_df, on="case_id", how="inner")
+    merged_df = select_features(
+        merged_df,
+        selected_blocks=config.get("feature_toggles", {}).get(
+            "selected_features", None
+        ),
+        label_col=label_col,
+    )
+    merged_df.to_csv(outdir / "features_engineered_labeled.csv", index=False)
+
+    logging.info("Final labeled data shape: %s", merged_df.shape)
+    return merged_df
+
+
+def select_features(
+    df: pd.DataFrame,
+    *,
+    selected_blocks: Any,
+    label_col: str,
+) -> pd.DataFrame:
+    """Filter a labeled feature frame down to the requested canonical blocks."""
+    normalized_blocks = normalize_selected_features(selected_blocks)
+    if not normalized_blocks:
+        return df
+
+    keep_columns: list[str] = [
+        column
+        for column in df.columns
+        if column in ANNOTATION_COLUMNS or column == label_col
+    ]
+    selected_set = set(normalized_blocks)
+    selected_feature_columns = [
+        column
+        for column in df.columns
+        if column not in keep_columns
+        and feature_block_for_column(column) in selected_set
+    ]
+
+    if not selected_feature_columns:
+        raise ValueError(
+            "selected_features filtered out all modeling features. "
+            f"Requested blocks: {normalized_blocks}"
+        )
+
+    block_counts = {
+        block: sum(
+            1
+            for column in selected_feature_columns
+            if feature_block_for_column(column) == block
+        )
+        for block in normalized_blocks
+    }
+    block_descriptions = {
+        block: FEATURE_BLOCK_DESCRIPTIONS.get(block, block)
+        for block in normalized_blocks
+    }
+    logging.info(
+        "Selected feature blocks %s -> %d columns (%s); descriptions=%s",
+        normalized_blocks,
+        len(selected_feature_columns),
+        block_counts,
+        block_descriptions,
+    )
+    return df[keep_columns + selected_feature_columns].copy()
+
+
+class NumericTopKAUCSelector(BaseEstimator, TransformerMixin):
+    """Fold-safe train-fold top-K numeric feature selection by univariate AUC."""
+
+    def __init__(
+        self,
+        feature_names: list[str] | None = None,
+        enabled: bool = False,
+        k: int = 128,
+        min_non_na_rate: float = 0.2,
+        min_n_unique: int = 2,
+        max_abs_corr: float | None = None,
+        max_zero_rate: float | None = None,
+    ) -> None:
+        self.feature_names = feature_names
+        self.enabled = enabled
+        self.k = k
+        self.min_non_na_rate = min_non_na_rate
+        self.min_n_unique = min_n_unique
+        self.max_abs_corr = max_abs_corr
+        self.max_zero_rate = max_zero_rate
+
+    def fit(self, X: Any, y: Any = None) -> NumericTopKAUCSelector:
+        arr = np.asarray(X, dtype=float)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        n_features = int(arr.shape[1])
+
+        feature_names = list(self.feature_names or [])
+        if len(feature_names) != n_features:
+            feature_names = [f"f{i}" for i in range(n_features)]
+        self.feature_names_in_ = feature_names
+
+        if not self.enabled or n_features == 0:
+            self.keep_indices_ = np.arange(n_features, dtype=int)
+            self.n_input_features_ = n_features
+            self.n_selected_features_ = n_features
+            self.n_dropped_low_info_ = 0
+            self.n_dropped_zero_heavy_ = 0
+            self.n_dropped_collinear_ = 0
+            self.k_effective_ = n_features
+            return self
+
+        if y is None:
+            raise ValueError("NumericTopKAUCSelector requires y during fit.")
+        y_arr = np.asarray(y).astype(int, copy=False)
+        if y_arr.ndim != 1 or y_arr.shape[0] != arr.shape[0]:
+            raise ValueError("y must be a 1D array aligned with X rows.")
+
+        scores = np.full(n_features, -np.inf, dtype=float)
+        non_na_rate = np.isfinite(arr).mean(axis=0)
+        zero_rate = np.full(n_features, np.nan, dtype=float)
+        low_info = np.zeros(n_features, dtype=bool)
+        zero_heavy = np.zeros(n_features, dtype=bool)
+        zero_thr = self.max_zero_rate
+        use_zero_gate = (
+            zero_thr is not None
+            and np.isfinite(zero_thr)
+            and 0.0 <= float(zero_thr) < 1.0
+        )
+
+        for j in range(n_features):
+            valid = np.isfinite(arr[:, j])
+            if float(non_na_rate[j]) < float(self.min_non_na_rate):
+                low_info[j] = True
+                continue
+
+            xv = arr[valid, j]
+            if xv.size > 0:
+                zero_rate[j] = float(np.mean(xv == 0.0))
+            if (
+                use_zero_gate
+                and np.isfinite(zero_rate[j])
+                and float(zero_rate[j]) > float(zero_thr)
+            ):
+                zero_heavy[j] = True
+                continue
+
+            yv = y_arr[valid]
+            if np.unique(xv).size < int(self.min_n_unique) or np.unique(yv).size < 2:
+                low_info[j] = True
+                continue
+
+            try:
+                auc = float(roc_auc_score(yv, xv))
+            except Exception:  # noqa: BLE001
+                low_info[j] = True
+                continue
+            if np.isfinite(auc):
+                scores[j] = float(abs(auc - 0.5) * 2.0)
+            else:
+                low_info[j] = True
+
+        valid_idx = np.where(np.isfinite(scores))[0]
+        if valid_idx.size == 0:
+            fallback = int(np.argmax(non_na_rate)) if n_features > 0 else 0
+            valid_idx = np.array([fallback], dtype=int)
+            scores[fallback] = 0.0
+
+        k_cfg = max(1, int(self.k))
+        k_eff = min(k_cfg, int(valid_idx.size))
+        order = sorted(
+            valid_idx.tolist(),
+            key=lambda j: (-float(scores[j]), feature_names[j]),
+        )
+
+        selected_list: list[int] = []
+        dropped_collinear = 0
+        corr_thr = self.max_abs_corr
+        use_corr_gate = (
+            corr_thr is not None
+            and np.isfinite(corr_thr)
+            and 0.0 < float(corr_thr) < 1.0
+        )
+
+        if use_corr_gate and len(order) > 1:
+            arr_order = arr[:, order].copy()
+            med = np.nanmedian(arr_order, axis=0)
+            med = np.where(np.isfinite(med), med, 0.0)
+            nan_mask = ~np.isfinite(arr_order)
+            if np.any(nan_mask):
+                arr_order[nan_mask] = np.take(med, np.where(nan_mask)[1])
+
+            corr = np.corrcoef(arr_order, rowvar=False)
+            corr = np.nan_to_num(np.abs(corr), nan=0.0, posinf=1.0, neginf=1.0)
+            np.fill_diagonal(corr, 0.0)
+
+            selected_local: list[int] = []
+            for local_i in range(len(order)):
+                if len(selected_local) >= k_eff:
+                    break
+                if any(
+                    corr[local_i, local_j] > float(corr_thr)
+                    for local_j in selected_local
+                ):
+                    dropped_collinear += 1
+                    continue
+                selected_local.append(local_i)
+
+            # If corr-gate is too strict, backfill by score order.
+            if len(selected_local) < k_eff:
+                selected_set = set(selected_local)
+                for local_i in range(len(order)):
+                    if len(selected_local) >= k_eff:
+                        break
+                    if local_i in selected_set:
+                        continue
+                    selected_local.append(local_i)
+            selected_list = [order[i] for i in selected_local[:k_eff]]
+        else:
+            selected_list = order[:k_eff]
+
+        selected = np.array(selected_list, dtype=int)
+        self.keep_indices_ = np.sort(selected)
+        self.n_input_features_ = n_features
+        self.n_selected_features_ = int(self.keep_indices_.size)
+        self.n_dropped_low_info_ = int(low_info.sum())
+        self.n_dropped_zero_heavy_ = int(zero_heavy.sum())
+        self.n_dropped_collinear_ = int(dropped_collinear)
+        self.k_effective_ = int(k_eff)
+        self.feature_scores_ = scores
+        self.feature_zero_rate_ = zero_rate
+        self.kept_feature_names_ = [feature_names[i] for i in self.keep_indices_]
+        return self
+
+    def transform(self, X: Any) -> np.ndarray:
+        arr = np.asarray(X, dtype=float)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        if not hasattr(self, "keep_indices_"):
+            raise RuntimeError("NumericTopKAUCSelector must be fit before transform.")
+        return arr[:, self.keep_indices_]
+
+
+def _normalize_prefixes(prefixes: Any, default_prefixes: list[str]) -> list[str]:
+    """Normalize prefix config to a non-empty list of strings."""
+    if prefixes is None:
+        out = list(default_prefixes)
+    elif isinstance(prefixes, str):
+        cleaned = prefixes.strip()
+        out = [cleaned] if cleaned else list(default_prefixes)
+    elif isinstance(prefixes, (list, tuple)):
+        out = [str(p).strip() for p in prefixes if str(p).strip()]
+        out = out or list(default_prefixes)
+    else:
+        out = list(default_prefixes)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for pref in out:
+        if pref in seen:
+            continue
+        seen.add(pref)
+        deduped.append(pref)
+    return deduped
+
+
+def _impute_standardize_matrix(values: np.ndarray) -> np.ndarray:
+    """Median-impute and standardize columns for robust correlation estimates."""
+    arr = np.asarray(values, dtype=float).copy()
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+
+    med = np.nanmedian(arr, axis=0)
+    med = np.where(np.isfinite(med), med, 0.0)
+    nan_mask = ~np.isfinite(arr)
+    if np.any(nan_mask):
+        arr[nan_mask] = np.take(med, np.where(nan_mask)[1])
+
+    mean = arr.mean(axis=0)
+    std = arr.std(axis=0)
+    std = np.where(np.isfinite(std) & (std > 0.0), std, 1.0)
+    return (arr - mean) / std
+
+
+class NumericKinematicAddonSelector(BaseEstimator, TransformerMixin):
+    """Keep all non-kinematic numeric features and add selected kinematic features.
+
+    This selector is fold-safe: selection is fit on each training fold only.
+    It supports two methods for kinematic feature ranking:
+    - topk_auc: univariate separability by AUC distance from 0.5
+    - mrmr: relevance-redundancy tradeoff (AUC relevance minus corr redundancy)
+    """
+
+    def __init__(
+        self,
+        feature_names: list[str] | None = None,
+        enabled: bool = False,
+        k_kin: int = 0,
+        kinematic_prefixes: list[str] | None = None,
+        method: str = "topk_auc",
+        min_non_na_rate: float = 0.2,
+        min_n_unique: int = 2,
+        max_abs_corr: float | None = None,
+        max_zero_rate: float | None = None,
+        mrmr_redundancy_weight: float = 1.0,
+        mrmr_include_baseline: bool = True,
+        corr_gate_against_baseline: bool = True,
+    ) -> None:
+        self.feature_names = feature_names
+        self.enabled = enabled
+        self.k_kin = k_kin
+        self.kinematic_prefixes = kinematic_prefixes
+        self.method = method
+        self.min_non_na_rate = min_non_na_rate
+        self.min_n_unique = min_n_unique
+        self.max_abs_corr = max_abs_corr
+        self.max_zero_rate = max_zero_rate
+        self.mrmr_redundancy_weight = mrmr_redundancy_weight
+        self.mrmr_include_baseline = mrmr_include_baseline
+        self.corr_gate_against_baseline = corr_gate_against_baseline
+
+    def fit(self, X: Any, y: Any = None) -> NumericKinematicAddonSelector:
+        arr = np.asarray(X, dtype=float)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        n_features = int(arr.shape[1])
+
+        feature_names = list(self.feature_names or [])
+        if len(feature_names) != n_features:
+            feature_names = [f"f{i}" for i in range(n_features)]
+        self.feature_names_in_ = feature_names
+
+        prefixes = _normalize_prefixes(
+            self.kinematic_prefixes,
+            default_prefixes=["kinematic_"],
+        )
+        kin_mask = np.asarray(
+            [
+                any(str(name).startswith(pref) for pref in prefixes)
+                for name in feature_names
+            ],
+            dtype=bool,
+        )
+        kin_idx = np.where(kin_mask)[0]
+        base_idx = np.where(~kin_mask)[0]
+
+        self.n_input_features_ = n_features
+        self.n_base_features_ = int(base_idx.size)
+        self.n_kin_features_total_ = int(kin_idx.size)
+
+        if not self.enabled or n_features == 0:
+            self.keep_indices_ = np.arange(n_features, dtype=int)
+            self.n_selected_features_ = n_features
+            self.n_kin_selected_ = int(kin_idx.size)
+            self.n_kin_eligible_ = int(kin_idx.size)
+            self.n_dropped_low_info_ = 0
+            self.n_dropped_zero_heavy_ = 0
+            self.n_dropped_collinear_ = 0
+            self.k_effective_ = int(kin_idx.size)
+            self.kept_feature_names_ = [feature_names[i] for i in self.keep_indices_]
+            self.selected_kin_feature_names_ = [feature_names[i] for i in kin_idx]
+            return self
+
+        if y is None:
+            raise ValueError("NumericKinematicAddonSelector requires y during fit.")
+        y_arr = np.asarray(y).astype(int, copy=False)
+        if y_arr.ndim != 1 or y_arr.shape[0] != arr.shape[0]:
+            raise ValueError("y must be a 1D array aligned with X rows.")
+
+        if kin_idx.size == 0:
+            self.keep_indices_ = np.sort(base_idx)
+            self.n_selected_features_ = int(self.keep_indices_.size)
+            self.n_kin_selected_ = 0
+            self.n_kin_eligible_ = 0
+            self.n_dropped_low_info_ = 0
+            self.n_dropped_zero_heavy_ = 0
+            self.n_dropped_collinear_ = 0
+            self.k_effective_ = 0
+            self.kept_feature_names_ = [feature_names[i] for i in self.keep_indices_]
+            self.selected_kin_feature_names_ = []
+            return self
+
+        k_cfg = max(0, int(self.k_kin))
+        if k_cfg == 0:
+            self.keep_indices_ = np.sort(base_idx)
+            self.n_selected_features_ = int(self.keep_indices_.size)
+            self.n_kin_selected_ = 0
+            self.n_kin_eligible_ = 0
+            self.n_dropped_low_info_ = 0
+            self.n_dropped_zero_heavy_ = 0
+            self.n_dropped_collinear_ = 0
+            self.k_effective_ = 0
+            self.kept_feature_names_ = [feature_names[i] for i in self.keep_indices_]
+            self.selected_kin_feature_names_ = []
+            return self
+
+        kin_arr = arr[:, kin_idx]
+        kin_scores = np.full(kin_idx.size, -np.inf, dtype=float)
+        kin_zero_rate = np.full(kin_idx.size, np.nan, dtype=float)
+        kin_non_na_rate = np.isfinite(kin_arr).mean(axis=0)
+
+        low_info = np.zeros(kin_idx.size, dtype=bool)
+        zero_heavy = np.zeros(kin_idx.size, dtype=bool)
+        zero_thr = self.max_zero_rate
+        use_zero_gate = (
+            zero_thr is not None
+            and np.isfinite(zero_thr)
+            and 0.0 <= float(zero_thr) < 1.0
+        )
+
+        for local_j in range(kin_idx.size):
+            valid = np.isfinite(kin_arr[:, local_j])
+            if float(kin_non_na_rate[local_j]) < float(self.min_non_na_rate):
+                low_info[local_j] = True
+                continue
+
+            xv = kin_arr[valid, local_j]
+            if xv.size > 0:
+                kin_zero_rate[local_j] = float(np.mean(xv == 0.0))
+            if use_zero_gate and np.isfinite(kin_zero_rate[local_j]):
+                if float(kin_zero_rate[local_j]) > float(zero_thr):
+                    zero_heavy[local_j] = True
+                    continue
+
+            yv = y_arr[valid]
+            if np.unique(xv).size < int(self.min_n_unique) or np.unique(yv).size < 2:
+                low_info[local_j] = True
+                continue
+
+            try:
+                auc = float(roc_auc_score(yv, xv))
+            except Exception:  # noqa: BLE001
+                low_info[local_j] = True
+                continue
+
+            if np.isfinite(auc):
+                kin_scores[local_j] = float(abs(auc - 0.5) * 2.0)
+            else:
+                low_info[local_j] = True
+
+        eligible_local = np.where(np.isfinite(kin_scores))[0]
+        self.n_kin_eligible_ = int(eligible_local.size)
+
+        if eligible_local.size == 0:
+            selected_kin_global = np.array([], dtype=int)
+            dropped_collinear = 0
+            k_eff = 0
+        else:
+            k_eff = min(k_cfg, int(eligible_local.size))
+            order = sorted(
+                eligible_local.tolist(),
+                key=lambda j: (-float(kin_scores[j]), feature_names[int(kin_idx[j])]),
+            )
+
+            kin_z = _impute_standardize_matrix(kin_arr)
+            base_z = (
+                _impute_standardize_matrix(arr[:, base_idx])
+                if base_idx.size
+                else np.empty((arr.shape[0], 0))
+            )
+            denom = float(max(1, kin_z.shape[0]))
+            corr_kin_kin = np.abs((kin_z.T @ kin_z) / denom)
+            np.fill_diagonal(corr_kin_kin, 0.0)
+            corr_kin_base = (
+                np.abs((kin_z.T @ base_z) / denom)
+                if base_z.shape[1] > 0
+                else np.empty((kin_idx.size, 0))
+            )
+
+            corr_thr = self.max_abs_corr
+            use_corr_gate = (
+                corr_thr is not None
+                and np.isfinite(corr_thr)
+                and 0.0 < float(corr_thr) < 1.0
+            )
+            dropped_collinear_set: set[int] = set()
+            selected_local: list[int] = []
+
+            method = str(self.method).strip().lower()
+            if method == "mrmr":
+                remaining = set(order)
+                while remaining and len(selected_local) < k_eff:
+                    best_local = None
+                    best_score = -np.inf
+                    for local_j in sorted(
+                        remaining,
+                        key=lambda j: (
+                            -float(kin_scores[j]),
+                            feature_names[int(kin_idx[j])],
+                        ),
+                    ):
+                        if use_corr_gate:
+                            blocked = False
+                            if selected_local and np.any(
+                                corr_kin_kin[
+                                    local_j, np.asarray(selected_local, dtype=int)
+                                ]
+                                > float(corr_thr)
+                            ):
+                                blocked = True
+                            if (
+                                not blocked
+                                and self.corr_gate_against_baseline
+                                and corr_kin_base.shape[1] > 0
+                                and float(np.max(corr_kin_base[local_j, :]))
+                                > float(corr_thr)
+                            ):
+                                blocked = True
+                            if blocked:
+                                dropped_collinear_set.add(local_j)
+                                continue
+
+                        redundancy_terms: list[float] = []
+                        if selected_local:
+                            redundancy_terms.append(
+                                float(
+                                    np.mean(
+                                        corr_kin_kin[
+                                            local_j,
+                                            np.asarray(selected_local, dtype=int),
+                                        ]
+                                    )
+                                )
+                            )
+                        if self.mrmr_include_baseline and corr_kin_base.shape[1] > 0:
+                            redundancy_terms.append(
+                                float(np.mean(corr_kin_base[local_j, :]))
+                            )
+
+                        redundancy = (
+                            float(np.mean(redundancy_terms))
+                            if redundancy_terms
+                            else 0.0
+                        )
+                        score = (
+                            float(kin_scores[local_j])
+                            - float(self.mrmr_redundancy_weight) * redundancy
+                        )
+
+                        if score > best_score or (
+                            np.isclose(score, best_score)
+                            and best_local is not None
+                            and feature_names[int(kin_idx[local_j])]
+                            < feature_names[int(kin_idx[best_local])]
+                        ):
+                            best_score = score
+                            best_local = local_j
+
+                    if best_local is None:
+                        break
+                    selected_local.append(best_local)
+                    remaining.remove(best_local)
+
+                # Backfill by relevance order if corr gate was restrictive.
+                if len(selected_local) < k_eff:
+                    selected_set = set(selected_local)
+                    for local_j in order:
+                        if len(selected_local) >= k_eff:
+                            break
+                        if local_j in selected_set:
+                            continue
+                        selected_local.append(local_j)
+            else:
+                for local_j in order:
+                    if len(selected_local) >= k_eff:
+                        break
+                    if use_corr_gate:
+                        blocked = False
+                        if selected_local and np.any(
+                            corr_kin_kin[local_j, np.asarray(selected_local, dtype=int)]
+                            > float(corr_thr)
+                        ):
+                            blocked = True
+                        if (
+                            not blocked
+                            and self.corr_gate_against_baseline
+                            and corr_kin_base.shape[1] > 0
+                            and float(np.max(corr_kin_base[local_j, :]))
+                            > float(corr_thr)
+                        ):
+                            blocked = True
+                        if blocked:
+                            dropped_collinear_set.add(local_j)
+                            continue
+                    selected_local.append(local_j)
+
+                # Backfill by relevance order if corr gate was restrictive.
+                if len(selected_local) < k_eff:
+                    selected_set = set(selected_local)
+                    for local_j in order:
+                        if len(selected_local) >= k_eff:
+                            break
+                        if local_j in selected_set:
+                            continue
+                        selected_local.append(local_j)
+
+            dropped_collinear = int(len(dropped_collinear_set))
+            selected_local = selected_local[:k_eff]
+            selected_kin_global = kin_idx[np.asarray(selected_local, dtype=int)]
+
+        keep = np.sort(np.concatenate([base_idx, selected_kin_global]).astype(int))
+        self.keep_indices_ = keep
+        self.n_selected_features_ = int(keep.size)
+        self.n_kin_selected_ = int(selected_kin_global.size)
+        self.n_dropped_low_info_ = int(low_info.sum())
+        self.n_dropped_zero_heavy_ = int(zero_heavy.sum())
+        self.n_dropped_collinear_ = int(dropped_collinear)
+        self.k_effective_ = int(k_eff)
+        self.feature_scores_ = kin_scores
+        self.feature_zero_rate_ = kin_zero_rate
+        self.kept_feature_names_ = [feature_names[i] for i in keep]
+        self.selected_kin_feature_names_ = [
+            feature_names[i] for i in np.sort(selected_kin_global).astype(int).tolist()
+        ]
+        return self
+
+    def transform(self, X: Any) -> np.ndarray:
+        arr = np.asarray(X, dtype=float)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        if not hasattr(self, "keep_indices_"):
+            raise RuntimeError(
+                "NumericKinematicAddonSelector must be fit before transform."
+            )
+        return arr[:, self.keep_indices_]
+
+
+def _build_numeric_selector(
+    *,
+    numeric_cols: list[str],
+    feature_select_mode: str,
+    feature_select_k: int,
+    feature_select_k_kin: int,
+    feature_select_kin_method: str,
+    feature_select_kinematic_prefixes: list[str],
+    feature_select_min_non_na_rate: float,
+    feature_select_min_n_unique: int,
+    feature_select_max_abs_corr: float | None,
+    feature_select_max_zero_rate: float | None,
+    feature_select_mrmr_redundancy_weight: float,
+    feature_select_mrmr_include_baseline: bool,
+    feature_select_corr_gate_against_baseline: bool,
+) -> BaseEstimator:
+    """Build numeric selector according to configured feature-selection mode."""
+    mode = str(feature_select_mode).strip().lower()
+    if mode in {"block_kinematic", "kinematic_addon", "kin_addon"}:
+        return NumericKinematicAddonSelector(
+            feature_names=numeric_cols,
+            enabled=True,
+            k_kin=feature_select_k_kin,
+            kinematic_prefixes=feature_select_kinematic_prefixes,
+            method=feature_select_kin_method,
+            min_non_na_rate=feature_select_min_non_na_rate,
+            min_n_unique=feature_select_min_n_unique,
+            max_abs_corr=feature_select_max_abs_corr,
+            max_zero_rate=feature_select_max_zero_rate,
+            mrmr_redundancy_weight=feature_select_mrmr_redundancy_weight,
+            mrmr_include_baseline=feature_select_mrmr_include_baseline,
+            corr_gate_against_baseline=feature_select_corr_gate_against_baseline,
+        )
+
+    return NumericTopKAUCSelector(
+        feature_names=numeric_cols,
+        enabled=True,
+        k=feature_select_k,
+        min_non_na_rate=feature_select_min_non_na_rate,
+        min_n_unique=feature_select_min_n_unique,
+        max_abs_corr=feature_select_max_abs_corr,
+        max_zero_rate=feature_select_max_zero_rate,
+    )
+
+
+def _build_model_pipeline(
+    model_type: str,
+    numeric_cols: list[str],
+    categorical_cols: list[str],
+    config: dict[str, Any],
+    random_state: int,
+    model_params_override: dict[str, Any] | None = None,
+) -> Pipeline:
+    """Construct model pipeline with dtype-aware preprocessing."""
+    model_params = dict(config.get("model_params", {}))
+    if model_params_override:
+        model_params.update(model_params_override)
+
+    feature_select_enabled = bool(model_params.get("feature_select_enabled", False))
+    feature_select_k = int(model_params.get("feature_select_k", 128))
+    feature_select_mode = str(model_params.get("feature_select_mode", "global_topk"))
+    feature_select_k_kin = int(model_params.get("feature_select_k_kin", 0))
+    feature_select_kin_method = str(
+        model_params.get("feature_select_kin_method", "topk_auc")
+    )
+    feature_select_kinematic_prefixes = _normalize_prefixes(
+        model_params.get("feature_select_kinematic_prefixes", None),
+        default_prefixes=["kinematic_"],
+    )
+    feature_select_mrmr_redundancy_weight = float(
+        model_params.get("feature_select_mrmr_redundancy_weight", 1.0)
+    )
+    feature_select_mrmr_include_baseline = bool(
+        model_params.get("feature_select_mrmr_include_baseline", True)
+    )
+    feature_select_corr_gate_against_baseline = bool(
+        model_params.get("feature_select_corr_gate_against_baseline", True)
+    )
+    feature_select_min_non_na_rate = float(
+        model_params.get("feature_select_min_non_na_rate", 0.2)
+    )
+    feature_select_min_n_unique = int(
+        model_params.get("feature_select_min_n_unique", 2)
+    )
+    feature_select_max_abs_corr_raw = model_params.get(
+        "feature_select_max_abs_corr", None
+    )
+    feature_select_max_abs_corr = (
+        None
+        if feature_select_max_abs_corr_raw in {None, "", "none", "null"}
+        else float(feature_select_max_abs_corr_raw)
+    )
+    feature_select_max_zero_rate_raw = model_params.get(
+        "feature_select_max_zero_rate", None
+    )
+    feature_select_max_zero_rate = (
+        None
+        if feature_select_max_zero_rate_raw in {None, "", "none", "null"}
+        else float(feature_select_max_zero_rate_raw)
+    )
+
+    if model_type == "rf":
+        numeric_steps: list[tuple[str, Any]] = []
+        if feature_select_enabled and numeric_cols:
+            numeric_steps.append(
+                (
+                    "feature_selector",
+                    _build_numeric_selector(
+                        numeric_cols=numeric_cols,
+                        feature_select_mode=feature_select_mode,
+                        feature_select_k=feature_select_k,
+                        feature_select_k_kin=feature_select_k_kin,
+                        feature_select_kin_method=feature_select_kin_method,
+                        feature_select_kinematic_prefixes=feature_select_kinematic_prefixes,
+                        feature_select_min_non_na_rate=feature_select_min_non_na_rate,
+                        feature_select_min_n_unique=feature_select_min_n_unique,
+                        feature_select_max_abs_corr=feature_select_max_abs_corr,
+                        feature_select_max_zero_rate=feature_select_max_zero_rate,
+                        feature_select_mrmr_redundancy_weight=feature_select_mrmr_redundancy_weight,
+                        feature_select_mrmr_include_baseline=feature_select_mrmr_include_baseline,
+                        feature_select_corr_gate_against_baseline=feature_select_corr_gate_against_baseline,
+                    ),
+                )
+            )
+        numeric_steps.append(("imputer", SimpleImputer(strategy="median")))
+        numeric_transformer = Pipeline(steps=numeric_steps)
+        cat_transformer = Pipeline(
+            steps=[
+                ("imputer", SimpleImputer(strategy="most_frequent")),
+                ("encoder", OneHotEncoder(handle_unknown="ignore")),
+            ]
+        )
+
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ("num", numeric_transformer, numeric_cols),
+                ("cat", cat_transformer, categorical_cols),
+            ],
+            remainder="drop",
+        )
+
+        model = RandomForestClassifier(
+            n_estimators=int(model_params.get("n_estimators", 300)),
+            max_depth=model_params.get("max_depth", None),
+            min_samples_leaf=int(model_params.get("min_samples_leaf", 1)),
+            class_weight="balanced",
+            random_state=random_state,
+            n_jobs=-1,
+        )
+    else:
+        numeric_steps = []
+        if feature_select_enabled and numeric_cols:
+            numeric_steps.append(
+                (
+                    "feature_selector",
+                    _build_numeric_selector(
+                        numeric_cols=numeric_cols,
+                        feature_select_mode=feature_select_mode,
+                        feature_select_k=feature_select_k,
+                        feature_select_k_kin=feature_select_k_kin,
+                        feature_select_kin_method=feature_select_kin_method,
+                        feature_select_kinematic_prefixes=feature_select_kinematic_prefixes,
+                        feature_select_min_non_na_rate=feature_select_min_non_na_rate,
+                        feature_select_min_n_unique=feature_select_min_n_unique,
+                        feature_select_max_abs_corr=feature_select_max_abs_corr,
+                        feature_select_max_zero_rate=feature_select_max_zero_rate,
+                        feature_select_mrmr_redundancy_weight=feature_select_mrmr_redundancy_weight,
+                        feature_select_mrmr_include_baseline=feature_select_mrmr_include_baseline,
+                        feature_select_corr_gate_against_baseline=feature_select_corr_gate_against_baseline,
+                    ),
+                )
+            )
+        numeric_steps.extend(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+            ]
+        )
+        numeric_transformer = Pipeline(steps=numeric_steps)
+        cat_transformer = Pipeline(
+            steps=[
+                ("imputer", SimpleImputer(strategy="most_frequent")),
+                ("encoder", OneHotEncoder(handle_unknown="ignore")),
+            ]
+        )
+
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ("num", numeric_transformer, numeric_cols),
+                ("cat", cat_transformer, categorical_cols),
+            ],
+            remainder="drop",
+        )
+
+        penalty = str(model_params.get("penalty", "l2")).lower()
+        solver_default = "saga" if penalty == "elasticnet" else "lbfgs"
+        solver = str(model_params.get("solver", solver_default))
+
+        model_kwargs: dict[str, Any] = {
+            "class_weight": "balanced",
+            "random_state": random_state,
+            "max_iter": int(model_params.get("max_iter", 1200)),
+            "solver": solver,
+            "penalty": penalty,
+            "C": float(model_params.get("C", 1.0)),
+        }
+        if penalty == "elasticnet":
+            model_kwargs["l1_ratio"] = float(model_params.get("l1_ratio", 0.5))
+
+        model = LogisticRegression(**model_kwargs)
+
+    return Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
+
+
+def _grid_values(value: Any, fallback: Any) -> list[Any]:
+    """Normalize scalar/list config values into a list for grid iteration."""
+    source = fallback if value is None else value
+    if isinstance(source, (list, tuple, np.ndarray, pd.Series)):
+        return list(source)
+    return [source]
+
+
+def _parse_optional_float_param(value: Any) -> float | None:
+    """Parse optional float config values, allowing None/null-like strings."""
+    if value in {None, "", "none", "null"}:
+        return None
+    maybe = safe_float(value)
+    if maybe is None or not np.isfinite(maybe):
+        return None
+    return float(maybe)
+
+
+def _build_nested_candidate_overrides(
+    model_params: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build nested-CV candidate override dictionaries from model_params grids."""
+    c_vals = [
+        float(v)
+        for v in _grid_values(
+            model_params.get("nested_c_grid"), model_params.get("C", 1.0)
+        )
+    ]
+    l1_vals = [
+        float(v)
+        for v in _grid_values(
+            model_params.get("nested_l1_ratio_grid"),
+            model_params.get("l1_ratio", 0.5),
+        )
+    ]
+    mode_vals = [
+        str(v)
+        for v in _grid_values(
+            model_params.get("nested_feature_select_mode_grid"),
+            model_params.get("feature_select_mode", "block_kinematic"),
+        )
+    ]
+    k_kin_vals = [
+        int(v)
+        for v in _grid_values(
+            model_params.get("nested_k_kin_grid"),
+            model_params.get("feature_select_k_kin", 0),
+        )
+    ]
+    kin_method_vals = [
+        str(v)
+        for v in _grid_values(
+            model_params.get("nested_kin_method_grid"),
+            model_params.get("feature_select_kin_method", "topk_auc"),
+        )
+    ]
+    max_corr_vals = [
+        _parse_optional_float_param(v)
+        for v in _grid_values(
+            model_params.get("nested_max_abs_corr_grid"),
+            model_params.get("feature_select_max_abs_corr", None),
+        )
+    ]
+    max_zero_vals = [
+        _parse_optional_float_param(v)
+        for v in _grid_values(
+            model_params.get("nested_max_zero_rate_grid"),
+            model_params.get("feature_select_max_zero_rate", None),
+        )
+    ]
+
+    candidates: list[dict[str, Any]] = []
+    seen_keys: set[tuple[tuple[str, str], ...]] = set()
+
+    for mode in mode_vals:
+        mode_name = str(mode).strip().lower()
+        use_kin_grid = mode_name in {"block_kinematic", "kinematic_addon", "kin_addon"}
+        mode_k_kin_vals = k_kin_vals if use_kin_grid else [0]
+        mode_kin_method_vals = (
+            kin_method_vals
+            if use_kin_grid
+            else [str(model_params.get("feature_select_kin_method", "topk_auc"))]
+        )
+
+        for c_val, l1_val, k_kin, kin_method, max_corr, max_zero in product(
+            c_vals,
+            l1_vals,
+            mode_k_kin_vals,
+            mode_kin_method_vals,
+            max_corr_vals,
+            max_zero_vals,
+        ):
+            override: dict[str, Any] = {
+                "C": float(c_val),
+                "l1_ratio": float(l1_val),
+                "feature_select_enabled": bool(
+                    model_params.get("feature_select_enabled", True)
+                ),
+                "feature_select_mode": str(mode),
+            }
+
+            if use_kin_grid:
+                override["feature_select_k_kin"] = int(k_kin)
+                override["feature_select_kin_method"] = str(kin_method)
+
+            if max_corr is None:
+                override["feature_select_max_abs_corr"] = None
+            else:
+                override["feature_select_max_abs_corr"] = float(max_corr)
+
+            if max_zero is None:
+                override["feature_select_max_zero_rate"] = None
+            else:
+                override["feature_select_max_zero_rate"] = float(max_zero)
+
+            key = tuple(sorted((k, str(v)) for k, v in override.items()))
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            candidates.append(override)
+
+    return candidates
+
+
+def _score_inner_cv_candidate(
+    *,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    model_type: str,
+    numeric_cols: list[str],
+    categorical_cols: list[str],
+    config: dict[str, Any],
+    random_state: int,
+    inner_splits: int,
+    candidate_override: dict[str, Any],
+) -> tuple[float, float, int]:
+    """Evaluate one candidate on inner CV and return mean/std AUC and count."""
+    y_arr = y_train.astype(int).to_numpy()
+    cv = StratifiedKFold(
+        n_splits=inner_splits,
+        shuffle=True,
+        random_state=random_state,
+    )
+
+    aucs: list[float] = []
+    for inner_tr, inner_va in cv.split(np.zeros(len(y_arr)), y_arr):
+        clf = _build_model_pipeline(
+            model_type=model_type,
+            numeric_cols=numeric_cols,
+            categorical_cols=categorical_cols,
+            config=config,
+            random_state=random_state,
+            model_params_override=candidate_override,
+        )
+        clf.fit(X_train.iloc[inner_tr], y_train.iloc[inner_tr])
+        yv = y_arr[inner_va]
+        if len(np.unique(yv)) < 2:
+            continue
+        prob = clf.predict_proba(X_train.iloc[inner_va])[:, 1]
+        aucs.append(float(roc_auc_score(yv, prob)))
+
+    if not aucs:
+        return float("nan"), float("nan"), 0
+    arr = np.asarray(aucs, dtype=float)
+    return float(np.mean(arr)), float(np.std(arr)), int(arr.size)
+
+
+def _pick_nested_candidate_for_outer_fold(
+    *,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    model_type: str,
+    numeric_cols: list[str],
+    categorical_cols: list[str],
+    config: dict[str, Any],
+    random_state: int,
+    outer_fold_idx: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Select best candidate via inner CV and return override + full inner results."""
+    model_params = config.get("model_params", {})
+    inner_splits = int(model_params.get("nested_inner_splits", 3))
+    inner_splits = max(2, inner_splits)
+
+    candidates = _build_nested_candidate_overrides(model_params)
+    if not candidates:
+        return {}, []
+
+    rows: list[dict[str, Any]] = []
+    inner_seed_base = int(model_params.get("nested_inner_random_state", random_state))
+    fold_seed = inner_seed_base + int(outer_fold_idx) * 997
+
+    for cand in candidates:
+        try:
+            mean_auc, std_auc, n_valid = _score_inner_cv_candidate(
+                X_train=X_train,
+                y_train=y_train,
+                model_type=model_type,
+                numeric_cols=numeric_cols,
+                categorical_cols=categorical_cols,
+                config=config,
+                random_state=fold_seed,
+                inner_splits=inner_splits,
+                candidate_override=cand,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logging.warning(
+                "Nested inner-CV candidate failed on outer fold %d with %s: %s",
+                outer_fold_idx,
+                cand,
+                exc,
+            )
+            mean_auc, std_auc, n_valid = float("nan"), float("nan"), 0
+
+        row = {
+            "outer_fold": int(outer_fold_idx),
+            "inner_auc_mean": mean_auc,
+            "inner_auc_std": std_auc,
+            "inner_auc_n_folds": int(n_valid),
+        }
+        row.update(cand)
+        rows.append(row)
+
+    valid_rows = [r for r in rows if np.isfinite(r["inner_auc_mean"])]
+    if not valid_rows:
+        logging.warning(
+            "No valid nested candidates for outer fold %d; using first candidate.",
+            outer_fold_idx,
+        )
+        return candidates[0], rows
+
+    def rank_key(row: dict[str, Any]) -> tuple[float, int, int, float, float]:
+        method = str(row.get("feature_select_kin_method", "topk_auc")).strip().lower()
+        method_rank = 0 if method == "topk_auc" else 1
+        return (
+            -float(row["inner_auc_mean"]),
+            int(row.get("feature_select_k_kin", 0)),
+            method_rank,
+            float(row.get("C", 1.0)),
+            float(row.get("l1_ratio", 0.5)),
+        )
+
+    best_row = sorted(valid_rows, key=rank_key)[0]
+    best_override = {
+        k: best_row[k]
+        for k in [
+            "C",
+            "l1_ratio",
+            "feature_select_enabled",
+            "feature_select_mode",
+            "feature_select_k_kin",
+            "feature_select_kin_method",
+            "feature_select_max_abs_corr",
+            "feature_select_max_zero_rate",
+        ]
+        if k in best_row
+    }
+    return best_override, rows
+
+
+def run_evaluation_pipeline(
+    df: pd.DataFrame, config: dict[str, Any], outdir: Path
+) -> None:
+    """Run evaluator-based cross-validation over configured model/features."""
+    context = prepare_evaluation_context(df, config)
+    fold_results_list, nested_rows = run_cross_validation_from_context(context)
+
+    if nested_rows:
+        nested_df = pd.DataFrame(nested_rows)
+        nested_df.to_csv(outdir / "nested_tuning_summary.csv", index=False)
+        if not nested_df.empty and "inner_auc_mean" in nested_df.columns:
+            best_per_fold = (
+                nested_df.sort_values(
+                    ["outer_fold", "inner_auc_mean", "feature_select_k_kin"],
+                    ascending=[True, False, True],
+                )
+                .groupby("outer_fold", as_index=False)
+                .head(1)
+            )
+            best_per_fold.to_csv(
+                outdir / "nested_tuning_best_per_fold.csv", index=False
+            )
+
+    logging.info("Aggregating fold metrics...")
+    kfold_results = context["evaluator"].aggregate_kfold_results(fold_results_list)
+
+    logging.info("Saving evaluator outputs to: %s", outdir)
+    context["evaluator"].save_results(kfold_results, outdir)
+
+    print("\n" + "=" * 48)
+    print(
+        f"Plots saved in: {outdir / context['evaluator'].model_name / 'plots'}"
+    )
+    print("=" * 48 + "\n")
+
+
+def prepare_evaluation_context(
+    df: pd.DataFrame,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Prepare evaluator inputs and deterministic fold splits for a config."""
+    label_col = config["data_paths"]["label_column"]
+    model_type = str(config["model_params"].get("model", "rf")).lower()
+    use_clinical_features = bool(
+        config.get("feature_toggles", {}).get("use_clinical", False)
+    )
+    feature_select_enabled = bool(
+        config["model_params"].get("feature_select_enabled", False)
+    )
+    nested_tune_enabled = bool(config["model_params"].get("nested_tune_enabled", False))
+
+    y = df[label_col].astype(int)
+    patient_ids = df["case_id"]
+
+    drop_cols = {
+        "case_id",
+        label_col,
+        "has_centerline_file",
+        "dataset",
+        "bilateral",
+        "tumor_subtype",
+    }
+    drop_cols.update({c for c in df.columns if "variant" in c and c != label_col})
+    if not use_clinical_features:
+        drop_cols.update(
+            {
+                "age",
+                "menopausal_status",
+                "breast_density",
+                "site",
+                "scanner_manufacturer",
+                "scanner_model",
+                "field_strength",
+                "echo_time",
+                "repetition_time",
+            }
+        )
+    group_col = str(config["model_params"].get("group_col", "site"))
+    if bool(config["model_params"].get("use_group_split", False)):
+        drop_cols.discard(group_col)
+    stratum_col = config["model_params"].get("stratum_col")
+    if stratum_col:
+        drop_cols.add(str(stratum_col))
+
+    X = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
+    if X.empty:
+        raise ValueError("No feature columns remain after dropping ID/label columns.")
+
+    categorical_cols = [
+        c
+        for c in X.columns
+        if pd.api.types.is_object_dtype(X[c])
+        or isinstance(X[c].dtype, pd.CategoricalDtype)
+        or pd.api.types.is_bool_dtype(X[c])
+    ]
+    numeric_cols = [c for c in X.columns if c not in categorical_cols]
+
+    evaluator, splits, stratum_col = create_splits_for_dataframe(
+        X=X,
+        y=y,
+        patient_ids=patient_ids,
+        cohort_df=df,
+        config=config,
+        model_name=config["experiment_setup"].get("name", "PCR_Model"),
+    )
+
+    return {
+        "config": config,
+        "df": df,
+        "label_col": label_col,
+        "model_type": model_type,
+        "random_state": random_state,
+        "feature_select_enabled": feature_select_enabled,
+        "nested_tune_enabled": nested_tune_enabled,
+        "stratum_col": stratum_col,
+        "X": X,
+        "y": y,
+        "patient_ids": patient_ids,
+        "numeric_cols": numeric_cols,
+        "categorical_cols": categorical_cols,
+        "evaluator": evaluator,
+        "splits": splits,
+    }
+
+
+def _log_feature_selector_stats(
+    *,
+    clf: Pipeline,
+    split: FoldSplit,
+    feature_select_enabled: bool,
+    numeric_cols: list[str],
+) -> None:
+    """Log per-fold selector statistics when available."""
+    if not (feature_select_enabled and numeric_cols):
+        return
+    try:
+        preprocessor = clf.named_steps.get("preprocessor")
+        if preprocessor is None or not hasattr(preprocessor, "named_transformers_"):
+            return
+        num_pipe = preprocessor.named_transformers_.get("num")
+        if num_pipe is None or not hasattr(num_pipe, "named_steps"):
+            return
+        fs = num_pipe.named_steps.get("feature_selector")
+        if fs is None:
+            fs = num_pipe.named_steps.get("topk_selector")
+        if fs is None or not hasattr(fs, "n_selected_features_"):
+            return
+        if hasattr(fs, "n_kin_selected_"):
+            logging.info(
+                "Fold %d numeric selector kept %d/%d "
+                "(base=%d, kin_selected=%d/%d, k_effective=%d, "
+                "drop_low_info=%d, drop_zero_heavy=%d, drop_collinear=%d)",
+                split.fold_idx,
+                int(getattr(fs, "n_selected_features_", np.nan)),
+                int(getattr(fs, "n_input_features_", np.nan)),
+                int(getattr(fs, "n_base_features_", 0)),
+                int(getattr(fs, "n_kin_selected_", 0)),
+                int(getattr(fs, "n_kin_features_total_", 0)),
+                int(getattr(fs, "k_effective_", np.nan)),
+                int(getattr(fs, "n_dropped_low_info_", 0)),
+                int(getattr(fs, "n_dropped_zero_heavy_", 0)),
+                int(getattr(fs, "n_dropped_collinear_", 0)),
+            )
+        else:
+            logging.info(
+                "Fold %d numeric top-k kept %d/%d "
+                "(k_effective=%d, drop_low_info=%d, drop_zero_heavy=%d, drop_collinear=%d)",
+                split.fold_idx,
+                int(getattr(fs, "n_selected_features_", np.nan)),
+                int(getattr(fs, "n_input_features_", np.nan)),
+                int(getattr(fs, "k_effective_", np.nan)),
+                int(getattr(fs, "n_dropped_low_info_", 0)),
+                int(getattr(fs, "n_dropped_zero_heavy_", 0)),
+                int(getattr(fs, "n_dropped_collinear_", 0)),
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def run_single_fold_from_context(
+    context: dict[str, Any],
+    split: FoldSplit,
+) -> tuple[FoldResults, list[dict[str, Any]], dict[str, Any] | None]:
+    """Run one outer fold from a prepared evaluation context."""
+    X = context["X"]
+    y = context["y"]
+    patient_ids = context["patient_ids"]
+    df = context["df"]
+    config = context["config"]
+    model_type = context["model_type"]
+    numeric_cols = context["numeric_cols"]
+    categorical_cols = context["categorical_cols"]
+    random_state = context["random_state"]
+    nested_tune_enabled = context["nested_tune_enabled"]
+    feature_select_enabled = context["feature_select_enabled"]
+    stratum_col = context["stratum_col"]
+
+    logging.info("Processing fold %d", split.fold_idx)
+    train_idx = split.train_indices
+    val_idx = split.val_indices
+
+    X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
+    X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
+
+    model_params_override: dict[str, Any] | None = None
+    nested_rows: list[dict[str, Any]] = []
+    if nested_tune_enabled:
+        model_params_override, nested_rows = _pick_nested_candidate_for_outer_fold(
+            X_train=X_train,
+            y_train=y_train,
+            model_type=model_type,
+            numeric_cols=numeric_cols,
+            categorical_cols=categorical_cols,
+            config=config,
+            random_state=random_state,
+            outer_fold_idx=split.fold_idx,
+        )
+        if model_params_override:
+            logging.info(
+                "Fold %d nested selected override: %s",
+                split.fold_idx,
+                model_params_override,
+            )
+
+    clf = _build_model_pipeline(
+        model_type=model_type,
+        numeric_cols=numeric_cols,
+        categorical_cols=categorical_cols,
+        config=config,
+        random_state=random_state,
+        model_params_override=model_params_override,
+    )
+    clf.fit(X_train, y_train)
+    _log_feature_selector_stats(
+        clf=clf,
+        split=split,
+        feature_select_enabled=feature_select_enabled,
+        numeric_cols=numeric_cols,
+    )
+
+    y_prob = clf.predict_proba(X_val)[:, 1]
+    y_pred = clf.predict(X_val)
+    val_pids = patient_ids.iloc[val_idx].to_numpy()
+
+    pred_df = pd.DataFrame(
+        {
+            "patient_id": val_pids,
+            "y_true": y_val.to_numpy(),
+            "y_pred": y_pred,
+            "y_prob": y_prob,
+        }
+    )
+    if stratum_col and stratum_col in df.columns:
+        pred_df["stratum"] = df.iloc[val_idx][stratum_col].astype(str).to_numpy()
+
+    return (
+        FoldResults(fold_idx=split.fold_idx, predictions=pred_df),
+        nested_rows,
+        model_params_override,
+    )
+
+
+def run_cross_validation_from_context(
+    context: dict[str, Any],
+    *,
+    selected_fold_indices: set[int] | None = None,
+) -> tuple[list[FoldResults], list[dict[str, Any]]]:
+    """Run cross-validation from a prepared context, optionally on selected folds."""
+    splits = context["splits"]
+    n_splits = len(splits)
+    logging.info("Starting %d-fold cross-validation...", n_splits)
+    fold_results_list: list[FoldResults] = []
+    nested_rows: list[dict[str, Any]] = []
+    for split in splits:
+        if selected_fold_indices is not None and split.fold_idx not in selected_fold_indices:
+            continue
+        fold_result, fold_nested_rows, _ = run_single_fold_from_context(context, split)
+        fold_results_list.append(fold_result)
+        nested_rows.extend(fold_nested_rows)
+    return fold_results_list, nested_rows
+
+
+def run_pipeline_from_config(
+    config: dict[str, Any],
+    outdir: Path,
+    *,
+    config_source: Path | None = None,
+) -> None:
+    """Run the full feature-build + evaluation pipeline for a loaded config."""
+    write_config_snapshot(config=config, outdir=outdir, config_source=config_source)
+
+    try:
+        merged_data = prepare_data(config, outdir)
+        run_evaluation_pipeline(merged_data, config, outdir)
+    except Exception as exc:  # noqa: BLE001
+        logging.error("Pipeline failed: %s", exc, exc_info=True)
+
+
+def main() -> None:
+    """Entry point."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
+
+    args = parse_args()
+    config = load_config(Path(args.config))
+    outdir = resolve_run_output_dir(config=config, outdir_override=args.outdir)
+    run_pipeline_from_config(config, outdir, config_source=Path(args.config))
+
+
+if __name__ == "__main__":
+    main()

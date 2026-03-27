@@ -8,7 +8,8 @@ name = "vanguard"
 dynamic = ["version"]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["evaluation*", "graph_extraction*", "modeling*"]
 
 [tool.ruff.lint]
 extend-select = [
@@ -44,12 +45,4 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"radiomics_baseline/scripts/test_*.py" = ["ANN001", "ANN101", "ANN201", "D101", "D102", "PLR2004"]
-"radiomics_baseline/scripts/radiomics_train.py" = ["ANN101", "D107"]
-
-[tool.pytest.ini_options]
-# Only treat actual test files as test modules. Importing every `*.py` during
-# collection is brittle (e.g., debug/one-off scripts) and makes CI fail on
-# unrelated import-time errors.
-testpaths = ["tests"]
-python_files = ["test_*.py"]
+"radiomics/scripts/radiomics_train.py" = ["ANN101", "D107"]

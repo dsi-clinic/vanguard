@@ -94,7 +94,7 @@ class Evaluator:
         patient_ids : np.ndarray | pd.Series, optional
             Patient IDs for tracking (recommended)
         model_name : str, default="model"
-            Name of the model (e.g., "radiomics_baseline", "non_imaging_baseline").
+            Name of the model (e.g., "radiomics", "train").
             Used for organizing outputs and comparing multiple models.
         random_state : int, default=42
             Random seed for reproducibility

@@ -51,7 +51,7 @@ Usage:
 
     # Selection from YAML config (CLI flags override config):
     python examples/baseline_model_example.py --model random \
-        --excel-metadata path/to/metadata.xlsx --config config/eval_selection_example.yaml
+        --excel-metadata path/to/metadata.xlsx --config docs/eval_selection_example.yaml
 
 Examples:
     python examples/baseline_model_example.py \
@@ -91,7 +91,7 @@ from evaluation.selection import (  # noqa: E402
     load_selection_criteria_from_yaml,
 )
 from evaluation.utils import prepare_predictions_df  # noqa: E402
-from src.utils.clinic_metadata import (  # noqa: E402
+from clinic_metadata import (  # noqa: E402
     get_patient_ids_from_excel,
     load_clinic_metadata_excel,
 )

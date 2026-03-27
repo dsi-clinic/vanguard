@@ -1,8 +1,6 @@
 # development tools
 ruff~=0.14
 pre-commit~=3.8
-coverage~=7.10
-pytest~=7.4
 ipykernel~=6.30
 jupyterlab~=4.0
 setuptools>=64.0.0
