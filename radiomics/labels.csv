@@ -1,4 +1,4 @@
-patient_id,pcr,tumor_subtype,site
+case_id,pcr,tumor_subtype,site
 DUKE_001,0,her2_pure,DUKE
 DUKE_002,0,triple_negative,DUKE
 DUKE_005,1,her2_enriched,DUKE

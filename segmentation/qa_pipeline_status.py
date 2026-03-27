@@ -50,9 +50,9 @@ class StageStatus:
 
 
 class StudyTimepoint(NamedTuple):
-    """Simple (study_id, timepoint) identifier."""
+    """Simple (case_id, timepoint) identifier."""
 
-    study_id: str
+    case_id: str
     timepoint: str
 
 
@@ -150,12 +150,12 @@ def parse_args() -> argparse.Namespace:
         ),
         help=(
             "Optional CSV/Excel file listing expected study IDs and timepoints "
-            "(e.g. one row per (study_id, timepoint))."
+            "(e.g. one row per (case_id, timepoint))."
         ),
     )
     parser.add_argument(
         "--id-column",
-        default="patient_id",
+        default="case_id",
         help="Column name in id-table for study / patient IDs.",
     )
     parser.add_argument(
@@ -285,7 +285,7 @@ def main() -> None:
             # Discover patient IDs from vessel segmentations (source/patient/images layout).
             vessel_ids: set[str] = set()
             for seg_path in iter_files(args.vessel_dir, "*_vessel_segmentation.npz"):
-                # Parent layout: .../<source>/<patient_id>/images/file.npz
+                # Parent layout: .../<source>/<case_id>/images/file.npz
                 parent = seg_path.parent
                 if parent.name == "images" and parent.parent is not None:
                     vessel_ids.add(parent.parent.name)
@@ -342,27 +342,27 @@ def main() -> None:
                         f"  ... and {len(missing_in_vessels_ids) - max_show} more",
                     )
         else:
-            # Full (study_id, timepoint) QA when timepoint column is available.
+            # Full (case_id, timepoint) QA when timepoint column is available.
             expected_pairs = {
                 StudyTimepoint(str(row[args.id_column]), str(row[tp_col]))
                 for _, row in id_table_df.iterrows()
             }
 
-            # Discover (study_id, timepoint) pairs from raw images.
+            # Discover (case_id, timepoint) pairs from raw images.
             image_pairs: set[StudyTimepoint] = set()
             patt_img = re.compile(
                 r"^(?P<study>.+)_(?P<tp>\d{4})\.nii\.gz$",
                 re.IGNORECASE,
             )
             for img_path in iter_files(args.images_dir, "*.nii.gz"):
-                study_id = img_path.parent.name
+                case_id = img_path.parent.name
                 m = patt_img.match(img_path.name)
                 if not m:
                     continue
                 tp = m.group("tp")
-                image_pairs.add(StudyTimepoint(study_id, tp))
+                image_pairs.add(StudyTimepoint(case_id, tp))
 
-            # Discover (study_id, timepoint) pairs from vessel segmentations.
+            # Discover (case_id, timepoint) pairs from vessel segmentations.
             vessel_pairs: set[StudyTimepoint] = set()
             patt_seg = re.compile(
                 r"^(?P<study>.+)_(?P<tp>\d{4})_vessel_segmentation\.npz$",
@@ -375,15 +375,15 @@ def main() -> None:
                 m = patt_seg.match(seg_path.name)
                 if not m:
                     continue
-                study_id = m.group("study")
+                case_id = m.group("study")
                 tp = m.group("tp")
-                vessel_pairs.add(StudyTimepoint(study_id, tp))
+                vessel_pairs.add(StudyTimepoint(case_id, tp))
 
             missing_in_images = sorted(expected_pairs - image_pairs)
             missing_in_vessels = sorted(expected_pairs - vessel_pairs)
 
             print(
-                "Total expected (study_id, timepoint) pairs: " f"{len(expected_pairs)}",
+                "Total expected (case_id, timepoint) pairs: " f"{len(expected_pairs)}",
             )
             print(
                 f"Found in raw images:                      {len(image_pairs)}",
@@ -403,7 +403,7 @@ def main() -> None:
             if missing_in_images:
                 print("\nFirst few missing in raw images:")
                 for pair in missing_in_images[:max_show]:
-                    print(f"  {pair.study_id}, timepoint {pair.timepoint}")
+                    print(f"  {pair.case_id}, timepoint {pair.timepoint}")
                 if len(missing_in_images) > max_show:
                     print(
                         f"  ... and {len(missing_in_images) - max_show} more",
@@ -412,7 +412,7 @@ def main() -> None:
             if missing_in_vessels:
                 print("\nFirst few missing in vessel segmentations:")
                 for pair in missing_in_vessels[:max_show]:
-                    print(f"  {pair.study_id}, timepoint {pair.timepoint}")
+                    print(f"  {pair.case_id}, timepoint {pair.timepoint}")
                 if len(missing_in_vessels) > max_show:
                     print(
                         f"  ... and {len(missing_in_vessels) - max_show} more",

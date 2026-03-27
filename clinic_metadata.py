@@ -41,7 +41,7 @@ def load_clinic_metadata_excel(
     >>> from pathlib import Path
     >>> df = load_clinic_metadata_excel(Path("metadata.xlsx"))
     >>> print(df.columns)
-    Index(['patient_id', 'site', 'dataset', ...], dtype='object')
+    Index(['case_id', 'site', 'dataset', ...], dtype='object')
     """
     if not excel_path.exists():
         raise FileNotFoundError(f"Excel file not found: {excel_path}")
@@ -61,10 +61,10 @@ def load_clinic_metadata_excel(
     return excel_df
 
 
-def get_patient_ids_from_excel(
+def get_case_ids_from_excel(
     excel_path: Path | str,
     *,
-    id_col: str = "patient_id",
+    id_col: str = "case_id",
     sheet_name: str | int | None = 0,
 ) -> np.ndarray:
     """Load an Excel metadata file and return the list of patient IDs (for cohort definition).
@@ -76,7 +76,7 @@ def get_patient_ids_from_excel(
     ----------
     excel_path : Path or str
         Path to the Excel file.
-    id_col : str, default="patient_id"
+    id_col : str, default="case_id"
         Column name containing patient IDs.
     sheet_name : str or int or None, default=0
         Sheet to read (passed to load_clinic_metadata_excel).
@@ -99,7 +99,7 @@ def get_patient_ids_from_excel(
 def build_split_annotations(
     metadata_df: pd.DataFrame,
     *,
-    id_col: str = "patient_id",
+    id_col: str = "case_id",
     group_col: str = "site",
     stratify_cols: list[str] | None = None,
     separator: str = "|",
@@ -110,7 +110,7 @@ def build_split_annotations(
     ----------
     metadata_df : pd.DataFrame
         DataFrame containing metadata with patient IDs, site, and stratum columns.
-    id_col : str, default="patient_id"
+    id_col : str, default="case_id"
         Column name for patient/sample IDs.
     group_col : str, default="site"
         Column name for grouping (e.g., site). Groups will not cross folds.
@@ -137,13 +137,13 @@ def build_split_annotations(
     Examples:
     --------
     >>> df = pd.DataFrame({
-    ...     "patient_id": ["P1", "P2", "P3"],
+    ...     "case_id": ["P1", "P2", "P3"],
     ...     "site": ["SiteA", "SiteB", "SiteA"],
     ...     "dataset": ["DS1", "DS1", "DS2"]
     ... })
     >>> annotations = build_split_annotations(df)
     >>> print(annotations.columns)
-    Index(['patient_id', 'group', 'stratum_key'], dtype='object')
+    Index(['case_id', 'group', 'stratum_key'], dtype='object')
     """
     if stratify_cols is None:
         stratify_cols = ["dataset"]
@@ -213,62 +213,62 @@ def build_split_annotations(
     return result
 
 
-def align_metadata_to_patient_ids(
+def align_metadata_to_case_ids(
     annotations_df: pd.DataFrame,
-    patient_ids: np.ndarray | pd.Series,
+    case_ids: np.ndarray | pd.Series,
     *,
-    id_col: str = "patient_id",
+    id_col: str = "case_id",
     warn_missing: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Align metadata annotations to a patient_ids array.
+    """Align metadata annotations to a case_ids array.
 
     Parameters
     ----------
     annotations_df : pd.DataFrame
         DataFrame from `build_split_annotations()` with columns:
         `id_col`, "group", "stratum_key".
-    patient_ids : np.ndarray | pd.Series
+    case_ids : np.ndarray | pd.Series
         Array of patient IDs to align with.
-    id_col : str, default="patient_id"
+    id_col : str, default="case_id"
         Column name for patient IDs in annotations_df.
     warn_missing : bool, default=True
-        Whether to warn if some patient_ids are missing from annotations.
+        Whether to warn if some case_ids are missing from annotations.
 
     Returns:
     -------
     tuple[np.ndarray, np.ndarray]
-        Tuple of (groups, stratify_labels) arrays, aligned to patient_ids.
+        Tuple of (groups, stratify_labels) arrays, aligned to case_ids.
         Missing patients will have NaN values (or raise error if all missing).
 
     Raises:
     ------
     ValueError
-        If no patient_ids match the annotations, or if alignment fails.
+        If no case_ids match the annotations, or if alignment fails.
 
     Examples:
     --------
     >>> annotations = pd.DataFrame({
-    ...     "patient_id": ["P1", "P2", "P3"],
+    ...     "case_id": ["P1", "P2", "P3"],
     ...     "group": ["SiteA", "SiteB", "SiteA"],
     ...     "stratum_key": ["DS1", "DS1", "DS2"]
     ... })
-    >>> patient_ids = np.array(["P1", "P2", "P3", "P4"])
-    >>> groups, strata = align_metadata_to_patient_ids(annotations, patient_ids)
+    >>> case_ids = np.array(["P1", "P2", "P3", "P4"])
+    >>> groups, strata = align_metadata_to_case_ids(annotations, case_ids)
     >>> print(groups)
     ['SiteA' 'SiteB' 'SiteA' nan]
     """
-    patient_ids_array = np.asarray(patient_ids)
+    case_ids_array = np.asarray(case_ids)
 
     # Create index from annotations
     annotations_indexed = annotations_df.set_index(id_col)
 
-    # Align: get groups and stratum_keys for each patient_id
+    # Align: get groups and stratum_keys for each case_id
     aligned_groups = []
     aligned_strata = []
 
     missing_patients = []
 
-    for pid in patient_ids_array:
+    for pid in case_ids_array:
         pid_str = str(pid)
         if pid_str in annotations_indexed.index:
             aligned_groups.append(annotations_indexed.loc[pid_str, "group"])
@@ -284,9 +284,9 @@ def align_metadata_to_patient_ids(
     # Warn about missing patients
     if missing_patients and warn_missing:
         n_missing = len(missing_patients)
-        n_total = len(patient_ids_array)
+        n_total = len(case_ids_array)
         warnings.warn(
-            f"{n_missing}/{n_total} patient_ids not found in annotations. "
+            f"{n_missing}/{n_total} case_ids not found in annotations. "
             f"First few missing: {missing_patients[:5]}",
             UserWarning,
             stacklevel=2,
@@ -296,8 +296,8 @@ def align_metadata_to_patient_ids(
     valid_mask = ~(pd.isna(groups_array) | pd.isna(strata_array))
     if not valid_mask.any():
         raise ValueError(
-            "No patient_ids matched the annotations. "
-            "Check that patient_id values match between data and metadata."
+            "No case_ids matched the annotations. "
+            "Check that case_id values match between data and metadata."
         )
 
     return groups_array, strata_array

@@ -9,7 +9,7 @@ import pandas as pd
 
 
 def _load_clinical_from_patient_info(patient_info_dir: Path) -> pd.DataFrame:
-    """Load per-patient clinical/imaging metadata from patient_info JSON files."""
+    """Load case-level clinical/imaging metadata from patient_info JSON files."""
     rows = []
     for fp in sorted(patient_info_dir.glob("*.json")):
         data = json.loads(fp.read_text())
@@ -19,7 +19,7 @@ def _load_clinical_from_patient_info(patient_info_dir: Path) -> pd.DataFrame:
 
         rows.append(
             {
-                "patient_id": data.get("patient_id"),
+                "case_id": data.get("case_id") or data.get("patient_id"),
                 "age": clinical_data.get("age"),
                 "menopausal_status": clinical_data.get("menopausal_status"),
                 "breast_density": clinical_data.get("breast_density"),
@@ -36,8 +36,8 @@ def _load_clinical_from_patient_info(patient_info_dir: Path) -> pd.DataFrame:
         )
 
     df = pd.DataFrame(rows)
-    if "patient_id" not in df.columns:
-        raise ValueError("patient_info JSONs did not produce a patient_id column.")
+    if "case_id" not in df.columns:
+        raise ValueError("patient_info JSONs did not produce a usable case_id column.")
     return df
 
 
@@ -47,8 +47,9 @@ def _load_clinical_from_excel(excel_path: Path) -> pd.DataFrame:
     rename_map = {
         "menopause": "menopausal_status",
         "menopausal status": "menopausal_status",
-        "patientid": "patient_id",
-        "patient id": "patient_id",
+        "patient_id": "case_id",
+        "patientid": "case_id",
+        "patient id": "case_id",
     }
     normalized_cols = {c: c.strip().lower() for c in df.columns}
     reverse_lookup = {v: k for k, v in normalized_cols.items()}
@@ -57,12 +58,12 @@ def _load_clinical_from_excel(excel_path: Path) -> pd.DataFrame:
         if src in reverse_lookup and dst not in df.columns:
             df = df.rename(columns={reverse_lookup[src]: dst})
 
-    if "patient_id" not in df.columns:
-        raise ValueError(f"{excel_path} must contain a patient_id column.")
+    if "case_id" not in df.columns:
+        raise ValueError(f"{excel_path} must contain a case_id column.")
 
     # Keep only columns we actively use in the pipeline if present.
     wanted = [
-        "patient_id",
+        "case_id",
         "age",
         "menopausal_status",
         "breast_density",

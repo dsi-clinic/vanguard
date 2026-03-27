@@ -1,4 +1,4 @@
-"""Command-line entrypoint for one graph-extraction study run."""
+"""Command-line entrypoint for one graph-extraction case run."""
 
 from __future__ import annotations
 
@@ -24,14 +24,14 @@ DEFAULT_TUMOR_MASK_DIR = Path(
 def build_parser() -> argparse.ArgumentParser:
     """Build CLI parser."""
     parser = argparse.ArgumentParser(
-        description="Run graph extraction and feature generation for one study."
+        description="Run graph extraction and feature generation for one case."
     )
-    parser.add_argument("--study-id", type=str, required=True)
+    parser.add_argument("--case-id", type=str, required=True)
     parser.add_argument(
         "--input-dir",
         type=Path,
         default=DEFAULT_SEGMENTATION_DIR,
-        help="Directory containing `<study-id>/images/*.npz` segmentation files.",
+        help="Directory containing `<case-id>/images/*.npz` segmentation files.",
     )
     parser.add_argument(
         "--output-dir", type=Path, required=True, help="Output directory."
@@ -42,8 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help=(
             "Skip tc4d skeleton extraction and recompute graph features only from "
-            "existing `<study>_skeleton_4d_exam_mask.npy` and "
-            "`<study>_skeleton_4d_exam_support_mask.npy` in --output-dir."
+            "existing `<case>_skeleton_4d_exam_mask.npy` and "
+            "`<case>_skeleton_4d_exam_support_mask.npy` in --output-dir."
         ),
     )
     parser.add_argument("--force-skeleton", action="store_true")
@@ -100,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TUMOR_MASK_DIR,
         help=(
             "Directory for optional tumor masks used in MIP overlays "
-            "(expected `<study-id>.nii.gz`)."
+            "(expected `<case-id>.nii.gz`)."
         ),
     )
 
@@ -118,7 +118,7 @@ def main() -> None:
     start = time.perf_counter()
     result = run_study_pipeline(
         input_dir=args.input_dir,
-        study_id=args.study_id,
+        case_id=args.case_id,
         output_dir=args.output_dir,
         features_only=bool(args.features_only),
         force_skeleton=args.force_skeleton,

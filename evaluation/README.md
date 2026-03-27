@@ -51,7 +51,7 @@ In short:
 
 To use the evaluator, your model only needs to produce a patient-level prediction table with these columns:
 
-- `patient_id`
+- `case_id`
 - `y_true`
 - `y_pred`
 - `y_prob`
@@ -102,13 +102,13 @@ Students still need to implement:
 from evaluation import Evaluator, FoldResults
 from evaluation.utils import prepare_predictions_df
 
-patient_ids = patient_manifest_df["patient_id"]
+case_ids = patient_manifest_df["case_id"]
 labels = patient_manifest_df["label"]
 
 evaluator = Evaluator(
     X=patient_manifest_df,
     y=labels,
-    patient_ids=patient_ids,
+    case_ids=case_ids,
     model_name="gnn_model",
     random_state=42,
 )
@@ -121,9 +121,9 @@ splits = evaluator.create_kfold_splits(
 
 fold_results = []
 for split in splits:
-    y_true, y_pred, y_prob, fold_patient_ids = run_your_model_for_one_fold(split)
+    y_true, y_pred, y_prob, fold_case_ids = run_your_model_for_one_fold(split)
     pred_df = prepare_predictions_df(
-        patient_ids=fold_patient_ids,
+        case_ids=fold_case_ids,
         y_true=y_true,
         y_pred=y_pred,
         y_prob=y_prob,

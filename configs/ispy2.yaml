@@ -65,5 +65,5 @@ data_paths:
   clinical_excel: "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
   labels_csv: "/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv"
   label_column: "pcr"
-  id_column: "patient_id"
+  id_column: "case_id"
   radiomics_csv: ""

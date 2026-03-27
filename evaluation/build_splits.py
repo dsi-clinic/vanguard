@@ -16,7 +16,7 @@ def create_splits_for_dataframe(
     *,
     X: pd.DataFrame,
     y: pd.Series,
-    patient_ids: pd.Series | np.ndarray,
+    case_ids: pd.Series | np.ndarray,
     cohort_df: pd.DataFrame,
     config: dict[str, Any],
     model_name: str,
@@ -34,7 +34,7 @@ def create_splits_for_dataframe(
     evaluator = Evaluator(
         X=X,
         y=y,
-        patient_ids=patient_ids,
+        case_ids=case_ids,
         model_name=model_name,
         random_state=random_state,
     )

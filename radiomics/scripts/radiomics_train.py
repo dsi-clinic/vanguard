@@ -16,7 +16,7 @@ Inputs
 ------
 - --train-features : CSV from radiomics_extract.py (rows = patients, cols = features)
 - --test-features  : CSV from radiomics_extract.py
-- --labels         : CSV with at least columns: patient_id,pcr[,subtype]
+- --labels         : CSV with at least columns: case_id,pcr[,subtype]
 - --output         : output directory to write metrics, plots, and model
 
 What this script does
@@ -35,7 +35,7 @@ What this script does
      per-subtype AUC via evaluation.metrics.compute_metrics_by_group).
    - Call evaluator.save_results() to write:
        <output>/metrics.json          (framework structure + radiomics extras)
-       <output>/predictions.csv       (patient_id, y_true, y_pred, y_prob[, subtype])
+       <output>/predictions.csv       (case_id, y_true, y_pred, y_prob[, subtype])
        <output>/plots/roc_curve.png   (seaborn ROC curve)
 8) Augment metrics.json with all radiomics-specific fields so that
    run_experiment.py can still read flat keys (auc_test, auc_train,
@@ -132,19 +132,19 @@ def load_features(path: str) -> pd.DataFrame:
 def load_labels(labels_csv: str) -> pd.DataFrame:
     """Load labels CSV and ensure it contains a 'pcr' column."""
     lab = pd.read_csv(labels_csv).copy()
-    if "patient_id" not in lab.columns:
-        msg = "labels.csv must contain column 'patient_id'"
+    if "case_id" not in lab.columns:
+        msg = "labels.csv must contain column 'case_id'"
         raise ValueError(msg)
-    dup = lab["patient_id"][lab["patient_id"].duplicated()].astype(str).unique()
+    dup = lab["case_id"][lab["case_id"].duplicated()].astype(str).unique()
     if len(dup) > 0:
         preview = ", ".join(dup[:DUPLICATE_PREVIEW_LIMIT])
         msg = (
-            f"labels.csv has duplicate patient_id values (n={len(dup)}): "
+            f"labels.csv has duplicate case_id values (n={len(dup)}): "
             f"{preview}{' ...' if len(dup) > DUPLICATE_PREVIEW_LIMIT else ''}"
         )
         raise ValueError(msg)
-    lab["patient_id"] = lab["patient_id"].astype(str)
-    lab = lab.set_index("patient_id")
+    lab["case_id"] = lab["case_id"].astype(str)
+    lab = lab.set_index("case_id")
     if "pcr" not in lab.columns:
         msg = "labels.csv must contain column 'pcr'"
         raise ValueError(msg)
@@ -243,7 +243,7 @@ def append_categorical_feature(
     if Xtr_new[added_cols].isna().all(axis=0).any():
         msg = (
             "one-hot categorical join produced all-NaN columns on train; "
-            "check patient_id index alignment"
+            "check case_id index alignment"
         )
         raise RuntimeError(msg)
     return Xtr_new, Xte_new, tr_dummies.columns.tolist()
@@ -1374,7 +1374,7 @@ def main() -> None:
     evaluator = Evaluator(
         X=Xtr,
         y=ytr,
-        patient_ids=Xtr.index,
+        case_ids=Xtr.index,
         model_name=outdir.name,
         random_state=42,
     )
@@ -1429,7 +1429,7 @@ def main() -> None:
 
             fold_pred_df = pd.DataFrame(
                 {
-                    "patient_id": split.val_patient_ids,
+                    "case_id": split.val_case_ids,
                     "y_true": y_fold_val,
                     "y_pred": y_pred_val,
                     "y_prob": y_prob_val,
@@ -1549,7 +1549,7 @@ def main() -> None:
 
         predictions_df = pd.DataFrame(
             {
-                "patient_id": Xte.index,
+                "case_id": Xte.index,
                 "y_true": yte,
                 "y_pred": ypred_te,
                 "y_prob": p_te,

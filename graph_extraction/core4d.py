@@ -72,7 +72,7 @@ def load_time_series_from_files(paths: list[Path]) -> np.ndarray:
 
 
 def discover_study_timepoints(
-    input_dir: Path, study_id: str
+    input_dir: Path, case_id: str
 ) -> tuple[list[Path], list[int]]:
     """Discover and sort timepoint files for one study id."""
     if not input_dir.exists():
@@ -80,25 +80,25 @@ def discover_study_timepoints(
     if not input_dir.is_dir():
         raise ValueError(f"Input path is not a directory: {input_dir}")
 
-    study_dir = input_dir / study_id
+    study_dir = input_dir / case_id
     images_dir = study_dir / "images"
     search_dir = images_dir if images_dir.exists() else study_dir
     if not search_dir.exists() or not search_dir.is_dir():
         raise ValueError(
             "Expected study directory layout `<input-dir>/<study-id>/images` "
-            f"for study_id='{study_id}', but not found under {input_dir}"
+            f"for case_id='{case_id}', but not found under {input_dir}"
         )
 
-    candidates = sorted(search_dir.glob(f"{study_id}_*_vessel_segmentation.npz"))
+    candidates = sorted(search_dir.glob(f"{case_id}_*_vessel_segmentation.npz"))
     if not candidates:
         raise ValueError(
-            "No candidate segmentation files found for study_id "
-            f"'{study_id}' in {search_dir}. Expected files like "
-            f"`{study_id}_0000_vessel_segmentation.npz`"
+            "No candidate segmentation files found for case_id "
+            f"'{case_id}' in {search_dir}. Expected files like "
+            f"`{case_id}_0000_vessel_segmentation.npz`"
         )
 
     patt = re.compile(
-        rf"{re.escape(study_id)}_(\d{{4}})_vessel_segmentation\.npz$",
+        rf"{re.escape(case_id)}_(\d{{4}})_vessel_segmentation\.npz$",
         flags=re.IGNORECASE,
     )
 
@@ -112,7 +112,7 @@ def discover_study_timepoints(
         example_names = ", ".join(p.name for p in candidates[:5])
         raise ValueError(
             "Found candidate files but none matched the expected timepoint pattern "
-            f"for study_id='{study_id}'. First candidates: {example_names}"
+            f"for case_id='{case_id}'. First candidates: {example_names}"
         )
 
     seen: dict[int, Path] = {}

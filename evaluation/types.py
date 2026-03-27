@@ -12,7 +12,7 @@ class FoldResults:
     """Results from a single k-fold fold."""
 
     fold_idx: int
-    predictions: pd.DataFrame  # columns: patient_id, y_true, y_pred, y_prob
+    predictions: pd.DataFrame  # columns: case_id, y_true, y_pred, y_prob
     metrics: dict[str, float] | None = None  # Optional pre-computed metrics
 
 
@@ -22,7 +22,7 @@ class KFoldResults:
 
     fold_metrics: list[dict[str, float]]
     aggregated_metrics: dict[str, dict[str, float]]
-    predictions: pd.DataFrame  # columns: patient_id, fold, y_true, y_pred, y_prob
+    predictions: pd.DataFrame  # columns: case_id, fold, y_true, y_pred, y_prob
     n_splits: int
     model_name: str
     run_name: str | None = None
@@ -33,6 +33,6 @@ class TrainTestResults:
     """Results from train/test evaluation."""
 
     metrics: dict[str, float]
-    predictions: pd.DataFrame  # columns: patient_id, y_true, y_pred, y_prob
+    predictions: pd.DataFrame  # columns: case_id, y_true, y_pred, y_prob
     model_name: str
     run_name: str | None = None

@@ -5,14 +5,14 @@ Helper script (optional) to build a labels.csv from patient-level JSON
 metadata, e.g.:
 
 {
-  "patient_id": "DUKE_001",
+  "case_id": "DUKE_001",
   "primary_lesion": {
     "pcr": true,
     "tumor_subtype": "HR+ HER2-"
   }
 }
 
-This script walks a directory of JSONs, picks out patient_id, pcr,
+This script walks a directory of JSONs, picks out case_id, pcr,
 and tumor_subtype, and writes a labels.csv that the rest of the pipeline can read.
 """
 
@@ -66,30 +66,30 @@ def main() -> None:
         with json_path.open() as f:
             data = json.load(f)
 
-        pid = data.get("patient_id")
+        pid = data.get("case_id")
         primary_lesion = data.get("primary_lesion", {}) or {}
         pcr_raw = primary_lesion.get("pcr")
         subtype = primary_lesion.get("tumor_subtype")
 
         if pid is None or pcr_raw is None:
-            print(f"[WARN] skipping {json_path.name}: missing patient_id or pcr")
+            print(f"[WARN] skipping {json_path.name}: missing case_id or pcr")
             continue
 
         rows.append(
             {
-                "patient_id": pid,
+                "case_id": pid,
                 "pcr": truthy_to_int(pcr_raw),
                 "subtype": subtype,
             }
         )
 
-    rows.sort(key=lambda row: str(row["patient_id"]))
+    rows.sort(key=lambda row: str(row["case_id"]))
 
     out_path = Path(args.out)
     with out_path.open("w", newline="") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["patient_id", "pcr", "subtype"],
+            fieldnames=["case_id", "pcr", "subtype"],
         )
         writer.writeheader()
         writer.writerows(rows)

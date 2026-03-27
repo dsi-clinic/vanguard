@@ -7,8 +7,8 @@ write feature tables to disk.
 Inputs:
 - --images : Directory path containing patient image files
 - --masks  : Directory path containing patient mask files
-- --labels : CSV with at least columns: patient_id,pcr[,subtype]
-- --splits : CSV with at least columns: patient_id,split
+- --labels : CSV with at least columns: case_id,pcr[,subtype]
+- --splits : CSV with at least columns: case_id,split
 - --output : output directory to write metrics, plots, and model
 - --params : PyRadiomics YAML configuration
 - --image-pattern  : Comma-separated template(s) for image paths relative
@@ -104,22 +104,22 @@ _MIN_PHASE_COLUMNS = 2
 
 # small helpers
 def load_csv(path: str) -> pd.DataFrame:
-    """Load a CSV file and ensure it contains a ``patient_id`` column."""
+    """Load a CSV file and ensure it contains a ``case_id`` column."""
     csv_path = Path(path)
     data = pd.read_csv(csv_path, comment="#")
-    if "patient_id" not in data.columns:
-        msg = f"{csv_path} must have patient_id"
+    if "case_id" not in data.columns:
+        msg = f"{csv_path} must have case_id"
         raise ValueError(msg)
     return data
 
 
-def ensure_unique_patient_ids(data: pd.DataFrame, tag: str) -> None:
+def ensure_unique_case_ids(data: pd.DataFrame, tag: str) -> None:
     """Fail fast if a metadata table contains duplicate patient IDs."""
-    dup = data["patient_id"][data["patient_id"].duplicated()].astype(str).unique()
+    dup = data["case_id"][data["case_id"].duplicated()].astype(str).unique()
     if len(dup) > 0:
         preview = ", ".join(dup[:_DUPLICATE_PREVIEW_LIMIT])
         msg = (
-            f"{tag} has duplicate patient_id values "
+            f"{tag} has duplicate case_id values "
             f"(n={len(dup)}): {preview}"
             f"{' ...' if len(dup) > _DUPLICATE_PREVIEW_LIMIT else ''}"
         )
@@ -304,9 +304,9 @@ def _checkpoint_row_path(rows_dir: Path, pid: str) -> Path:
 
 def write_checkpoint_row(rows_dir: Path, row: dict[str, Any]) -> None:
     """Atomically write one patient feature row to checkpoint storage."""
-    pid = str(row.get("patient_id", ""))
+    pid = str(row.get("case_id", ""))
     if not pid:
-        msg = "checkpoint row missing patient_id"
+        msg = "checkpoint row missing case_id"
         raise ValueError(msg)
 
     rows_dir.mkdir(parents=True, exist_ok=True)
@@ -334,10 +334,10 @@ def load_checkpoint_rows(rows_dir: Path) -> dict[str, dict[str, Any]]:
             )
             continue
 
-        pid = str(row.get("patient_id", ""))
+        pid = str(row.get("case_id", ""))
         if not pid:
             print(
-                f"[CHECKPOINT] skipping row cache without patient_id: {path}",
+                f"[CHECKPOINT] skipping row cache without case_id: {path}",
                 file=sys.stderr,
             )
             continue
@@ -668,7 +668,7 @@ def extract_for_pid(
         "hybrid_concat_threshold": hybrid_concat_threshold,
     }
 
-    out_row: dict[str, Any] = {"patient_id": pid}
+    out_row: dict[str, Any] = {"case_id": pid}
 
     extracted_any = False
     for pat in image_patterns:
@@ -828,7 +828,7 @@ def extract_split_features(
             )
             if checkpoint_rows_dir is not None:
                 write_checkpoint_row(checkpoint_rows_dir, row)
-            rows_by_pid[str(row["patient_id"])] = row
+            rows_by_pid[str(row["case_id"])] = row
     else:
         # Parallel execution. Each finished patient is checkpointed inside the
         # worker so progress survives interruptions/timeouts.
@@ -860,7 +860,7 @@ def extract_split_features(
             )
         )
         for row in new_rows:
-            rows_by_pid[str(row["patient_id"])] = row
+            rows_by_pid[str(row["case_id"])] = row
 
     missing = [pid for pid in pid_list if pid not in rows_by_pid]
     if missing:
@@ -873,8 +873,8 @@ def extract_split_features(
 
     ordered_rows = [rows_by_pid[pid] for pid in pid_list]
     if not ordered_rows:
-        return pd.DataFrame(index=pd.Index([], name="patient_id"))
-    return pd.DataFrame(ordered_rows).set_index("patient_id")
+        return pd.DataFrame(index=pd.Index([], name="case_id"))
+    return pd.DataFrame(ordered_rows).set_index("case_id")
 
 
 # simple numeric sanitizer for extractor (so trainer finds *_final.csv)
@@ -1159,14 +1159,14 @@ def main() -> None:
     outdir.mkdir(parents=True, exist_ok=True)
 
     # Load metadata
-    labels_df = load_csv(args.labels)[["patient_id", "pcr"]].copy()
+    labels_df = load_csv(args.labels)[["case_id", "pcr"]].copy()
     splits_df = load_csv(args.splits).copy()
-    ensure_unique_patient_ids(labels_df, "labels")
-    ensure_unique_patient_ids(splits_df, "splits")
-    labels_df["patient_id"] = labels_df["patient_id"].astype(str)
-    splits_df["patient_id"] = splits_df["patient_id"].astype(str)
-    labels = labels_df.set_index("patient_id")
-    splits = splits_df.set_index("patient_id")
+    ensure_unique_case_ids(labels_df, "labels")
+    ensure_unique_case_ids(splits_df, "splits")
+    labels_df["case_id"] = labels_df["case_id"].astype(str)
+    splits_df["case_id"] = splits_df["case_id"].astype(str)
+    labels = labels_df.set_index("case_id")
+    splits = splits_df.set_index("case_id")
     # Build extractor (optionally overriding mask label and force2D)
     extractor = build_extractor(
         args.params,

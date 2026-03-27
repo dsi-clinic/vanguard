@@ -64,8 +64,8 @@ def _apply_flip_spec(mask_zyx: np.ndarray, flip_spec: str) -> np.ndarray:
     return np.flip(mask_zyx, axis=tuple(axes))
 
 
-def _to_breast_mri_case_id_strict(study_id: str) -> str | None:
-    clean = str(study_id).strip()
+def _to_breast_mri_case_id_strict(case_id: str) -> str | None:
+    clean = str(case_id).strip()
     if clean == "":
         return None
 
@@ -126,13 +126,13 @@ def _resolve_breast_seg_path(
 def _resolve_tumor_mask_path(
     *,
     tumor_mask_dir: Path,
-    study_id: str,
+    case_id: str,
 ) -> Path | None:
     tumor_extensions = (".nii.gz", ".nii", ".nrrd")
     candidates: list[Path] = [
-        tumor_mask_dir / f"{study_id}{ext}" for ext in tumor_extensions
+        tumor_mask_dir / f"{case_id}{ext}" for ext in tumor_extensions
     ]
-    case_id = _to_breast_mri_case_id_strict(study_id)
+    case_id = _to_breast_mri_case_id_strict(case_id)
     if case_id is not None:
         candidates.extend(
             tumor_mask_dir / f"{case_id}{ext}" for ext in tumor_extensions
@@ -428,7 +428,7 @@ def _load_radiologist_vessel_mask_nrrd(
 
 def _maybe_load_radiologist_context_for_mip(
     *,
-    study_id: str,
+    case_id: str,
     shape_zyx: tuple[int, int, int],
     radiologist_annotations_dir: Path,
 ) -> dict[str, object]:
@@ -438,7 +438,7 @@ def _maybe_load_radiologist_context_for_mip(
     not break the main pipeline, so the function returns a status dictionary
     instead of raising when the reference data is unavailable.
     """
-    case_id = _to_breast_mri_case_id_strict(study_id)
+    case_id = _to_breast_mri_case_id_strict(case_id)
     if case_id is None:
         return {"status": "no_case_mapping", "resolved_case_id": None}
 
@@ -496,7 +496,7 @@ def _maybe_load_radiologist_context_for_mip(
 
 def _maybe_load_breast_context_for_alignment(
     *,
-    study_id: str,
+    case_id: str,
     shape_zyx: tuple[int, int, int],
     radiologist_annotations_dir: Path,
 ) -> tuple[np.ndarray | None, dict[str, object]]:
@@ -505,7 +505,7 @@ def _maybe_load_breast_context_for_alignment(
     We use the breast outline as a simple reference when deciding whether the
     tumor mask needs to be flipped to match the processed vessel outputs.
     """
-    case_id = _to_breast_mri_case_id_strict(study_id)
+    case_id = _to_breast_mri_case_id_strict(case_id)
     if case_id is None:
         return None, {"status": "no_case_mapping", "resolved_case_id": None}
 
@@ -552,7 +552,7 @@ def _maybe_load_breast_context_for_alignment(
 
 def _maybe_load_tumor_context_for_features(
     *,
-    study_id: str,
+    case_id: str,
     shape_zyx: tuple[int, int, int],
     tumor_mask_dir: Path,
     radiologist_annotations_dir: Path,
@@ -570,7 +570,7 @@ def _maybe_load_tumor_context_for_features(
     """
     resolved_tumor_path = _resolve_tumor_mask_path(
         tumor_mask_dir=tumor_mask_dir,
-        study_id=study_id,
+        case_id=case_id,
     )
     if resolved_tumor_path is None:
         return (
@@ -602,7 +602,7 @@ def _maybe_load_tumor_context_for_features(
         )
 
     breast_mask_model, breast_context = _maybe_load_breast_context_for_alignment(
-        study_id=study_id,
+        case_id=case_id,
         shape_zyx=shape_zyx,
         radiologist_annotations_dir=radiologist_annotations_dir,
     )

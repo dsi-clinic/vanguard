@@ -47,7 +47,7 @@ def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
         images_dir: Path to the images directory
 
     Returns:
-        List of tuples (patient_id, file_path)
+        List of tuples (case_id, file_path)
     """
     nii_files = []
 
@@ -56,14 +56,14 @@ def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
         d for d in os.listdir(images_dir) if (Path(images_dir) / d).is_dir()
     ]
 
-    for patient_id in patient_dirs:
-        patient_path = Path(images_dir) / patient_id
+    for case_id in patient_dirs:
+        patient_path = Path(images_dir) / case_id
 
         # Find all .nii.gz files in this patient directory
         files = list(patient_path.glob("*.nii.gz"))
 
         for file_path in files:
-            nii_files.append((patient_id, file_path))
+            nii_files.append((case_id, file_path))
 
     return nii_files
 
@@ -186,13 +186,13 @@ def process_single_file(
     """Process a single .nii.gz file through the complete pipeline.
 
     Args:
-        args: Tuple containing (patient_id, file_path, temp_dir, output_dir, breast_model_path, vessel_model_path)
+        args: Tuple containing (case_id, file_path, temp_dir, output_dir, breast_model_path, vessel_model_path)
 
     Returns:
-        Tuple of (patient_id, success, output_path)
+        Tuple of (case_id, success, output_path)
     """
     (
-        patient_id,
+        case_id,
         file_path,
         temp_dir,
         output_dir,
@@ -202,9 +202,9 @@ def process_single_file(
 
     try:
         # Create temporary directories for this file
-        step1_dir = Path(temp_dir) / f"{patient_id}_step1"
-        step2_dir = Path(temp_dir) / f"{patient_id}_step2"
-        step3_dir = Path(temp_dir) / f"{patient_id}_step3"
+        step1_dir = Path(temp_dir) / f"{case_id}_step1"
+        step2_dir = Path(temp_dir) / f"{case_id}_step2"
+        step3_dir = Path(temp_dir) / f"{case_id}_step3"
 
         step1_dir.mkdir(parents=True, exist_ok=True)
         step2_dir.mkdir(parents=True, exist_ok=True)
@@ -217,43 +217,43 @@ def process_single_file(
         # STEP-1: Preprocess
         step1_file = step1_dir / f"{base_name}.npy"
         if not preprocess_image(file_path, step1_file):
-            return patient_id, False, ""
+            return case_id, False, ""
 
         # STEP-2 & STEP-3: Complete segmentation pipeline
         if not run_vessel_segmentation(
             step1_dir, step2_dir, step3_dir, breast_model_path, vessel_model_path
         ):
-            return patient_id, False, ""
+            return case_id, False, ""
 
         # Move the STEP-3 result to output directory
         step3_file = step3_dir / f"{base_name}.npz"
-        output_file = build_output_path(Path(output_dir), patient_id, base_name)
+        output_file = build_output_path(Path(output_dir), case_id, base_name)
 
         if step3_file.exists():
             shutil.move(step3_file, output_file)
-            return patient_id, True, output_file
+            return case_id, True, output_file
         else:
-            return patient_id, False, ""
+            return case_id, False, ""
 
     except Exception as e:
-        print(f"Error processing {patient_id}: {e}")
-        return patient_id, False, ""
+        print(f"Error processing {case_id}: {e}")
+        return case_id, False, ""
 
 
-def build_output_path(output_dir: Path, patient_id: str, base_name: str) -> Path:
+def build_output_path(output_dir: Path, case_id: str, base_name: str) -> Path:
     """Build output path in a source/patient/images layout."""
-    source = patient_id.split("_")[0]
+    source = case_id.split("_")[0]
     timepoint = (
-        base_name[len(patient_id) + 1 :]
-        if base_name.startswith(f"{patient_id}_")
+        base_name[len(case_id) + 1 :]
+        if base_name.startswith(f"{case_id}_")
         else base_name
     )
     filename = (
-        f"{patient_id}_{timepoint}_vessel_segmentation.npz"
+        f"{case_id}_{timepoint}_vessel_segmentation.npz"
         if timepoint
-        else f"{patient_id}_vessel_segmentation.npz"
+        else f"{case_id}_vessel_segmentation.npz"
     )
-    output_subdir = output_dir / source / patient_id / "images"
+    output_subdir = output_dir / source / case_id / "images"
     output_subdir.mkdir(parents=True, exist_ok=True)
     return output_subdir / filename
 
@@ -427,11 +427,11 @@ def main() -> None:
     if args.resume:
         original_count = len(nii_files)
         nii_files = [
-            (patient_id, file_path)
-            for patient_id, file_path in nii_files
+            (case_id, file_path)
+            for case_id, file_path in nii_files
             if not build_output_path(
                 Path(args.output_dir),
-                patient_id,
+                case_id,
                 Path(file_path).name.replace(".nii.gz", ""),
             ).exists()
         ]
@@ -447,14 +447,14 @@ def main() -> None:
     # Prepare arguments for processing
     process_args = [
         (
-            patient_id,
+            case_id,
             file_path,
             args.temp_dir,
             args.output_dir,
             args.breast_model_path,
             args.vessel_model_path,
         )
-        for patient_id, file_path in nii_files
+        for case_id, file_path in nii_files
     ]
 
     # Process files
@@ -467,7 +467,7 @@ def main() -> None:
     if args.file_index is not None:
         # Process single file directly
         (
-            patient_id,
+            case_id,
             file_path,
             temp_dir,
             output_dir,
@@ -475,14 +475,14 @@ def main() -> None:
             vessel_model_path,
         ) = process_args[0]
         result = process_single_file(process_args[0])
-        patient_id, success, output_path = result
+        case_id, success, output_path = result
 
         if success:
             successful_files.append(output_path)
-            print(f"✓ {patient_id}: {output_path}")
+            print(f"✓ {case_id}: {output_path}")
         else:
-            failed_files.append(patient_id)
-            print(f"✗ {patient_id}: Failed")
+            failed_files.append(case_id)
+            print(f"✗ {case_id}: Failed")
     else:
         # Process multiple files in parallel
         with ProcessPoolExecutor(max_workers=args.max_workers) as executor:
@@ -494,14 +494,14 @@ def main() -> None:
 
             # Process completed tasks
             for i, future in enumerate(as_completed(future_to_patient), 1):
-                patient_id, success, output_path = future.result()
+                case_id, success, output_path = future.result()
 
                 if success:
                     successful_files.append(output_path)
-                    print(f"[{i}/{len(nii_files)}] ✓ {patient_id}: {output_path}")
+                    print(f"[{i}/{len(nii_files)}] ✓ {case_id}: {output_path}")
                 else:
-                    failed_files.append(patient_id)
-                    print(f"[{i}/{len(nii_files)}] ✗ {patient_id}: Failed")
+                    failed_files.append(case_id)
+                    print(f"[{i}/{len(nii_files)}] ✗ {case_id}: Failed")
 
     end_time = time.time()
 
@@ -519,8 +519,8 @@ def main() -> None:
 
     if failed_files:
         print("\nFailed files:")
-        for patient_id in failed_files:
-            print(f"  - {patient_id}")
+        for case_id in failed_files:
+            print(f"  - {case_id}")
 
     # Collect all STEP-3 vessel segmentation files
     all_npy_files = collect_all_step3_files(args.output_dir)

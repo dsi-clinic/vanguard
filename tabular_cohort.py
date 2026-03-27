@@ -96,7 +96,7 @@ def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
     if bilateral_filter is not None:
         try:
             clinical_df = get_clinical_features(config).rename(
-                columns={"patient_id": "case_id"}
+                columns={"case_id": "case_id"}
             )
             if "bilateral" in clinical_df.columns:
                 for _, rec in (
@@ -346,7 +346,7 @@ def build_modular_features(config: dict[str, Any]) -> pd.DataFrame:
         merged_df = build_centerline_features(config)
     elif use_clinical:
         clinical_df = get_clinical_features(config).rename(
-            columns={"patient_id": "case_id"}
+            columns={"case_id": "case_id"}
         )
         merged_df = clinical_df.copy()
     else:
@@ -357,7 +357,7 @@ def build_modular_features(config: dict[str, Any]) -> pd.DataFrame:
 
     try:
         all_clinical = get_clinical_features(config).rename(
-            columns={"patient_id": "case_id"}
+            columns={"case_id": "case_id"}
         )
     except Exception as exc:  # noqa: BLE001
         all_clinical = pd.DataFrame(columns=["case_id"])
@@ -448,8 +448,8 @@ def load_labels(path: Path, id_col: str, label_col: str) -> pd.DataFrame:
             obj = json.loads(path.read_text())
             df_labels = pd.DataFrame(obj)
 
-    if id_col not in df_labels.columns and "patient_id" in df_labels.columns:
-        df_labels = df_labels.rename(columns={"patient_id": id_col})
+    if id_col not in df_labels.columns and "case_id" in df_labels.columns:
+        df_labels = df_labels.rename(columns={"case_id": id_col})
 
     df_labels = df_labels.dropna(subset=[label_col])
     mapping = {"true": 1, "false": 0, "yes": 1, "no": 0}

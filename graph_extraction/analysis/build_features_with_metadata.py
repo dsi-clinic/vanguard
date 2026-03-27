@@ -32,9 +32,9 @@ from clinic_metadata import load_clinic_metadata_excel  # noqa: E402
 from tabular_cohort import build_features_from_feature_jsons  # noqa: E402
 
 
-def get_patient_id(path: Path, js: dict[str, Any]) -> str:
-    """Return patient_id from JSON; fallback to filename stem."""
-    pid = js.get("patient_id", path.stem)
+def get_case_id(path: Path, js: dict[str, Any]) -> str:
+    """Return case_id from JSON; fallback to filename stem."""
+    pid = js.get("case_id", path.stem)
     return str(pid) if pid else path.stem
 
 
@@ -91,7 +91,7 @@ def get_pcr(js: dict[str, Any]) -> int | None:
 
 
 def load_excel_laterality(
-    excel_path: Path, *, id_col: str = "patient_id"
+    excel_path: Path, *, id_col: str = "case_id"
 ) -> pd.DataFrame | None:
     """Load bilateral_mri from Excel and map to laterality.
 
@@ -141,7 +141,7 @@ def load_patient_info_metadata(patient_info_dir: Path) -> pd.DataFrame:
             continue
         rows.append(
             {
-                "patient_id": get_patient_id(p, js),
+                "case_id": get_case_id(p, js),
                 "site": get_site(js),
                 "dataset": get_dataset(js),
                 "manufacturer": get_manufacturer(js),
@@ -185,8 +185,8 @@ def main() -> None:
     parser.add_argument(
         "--id-col",
         type=str,
-        default="patient_id",
-        help="Excel column for patient/sample ID (default: patient_id)",
+        default="case_id",
+        help="Excel column for patient/sample ID (default: case_id)",
     )
     args = parser.parse_args()
 
@@ -214,16 +214,16 @@ def main() -> None:
     meta_df = load_patient_info_metadata(args.patient_info_dir)
     print(f"[features] Loaded metadata for {len(meta_df)} patients")
 
-    # Phase 1.2c: Join on case_id = patient_id
+    # Phase 1.2c: Join on case_id = case_id
     merged = feats_df.merge(
         meta_df,
         left_on="case_id",
-        right_on="patient_id",
+        right_on="case_id",
         how="left",
     )
-    # Drop duplicate patient_id if case_id was kept
-    if "patient_id" in merged.columns and "case_id" in merged.columns:
-        merged = merged.drop(columns=["patient_id"])
+    # Drop duplicate case_id if case_id was kept
+    if "case_id" in merged.columns and "case_id" in merged.columns:
+        merged = merged.drop(columns=["case_id"])
 
     # Phase 1.2d: Merge laterality from Excel (bilateral_mri: 0=unilateral, 1=bilateral)
     lat_df = load_excel_laterality(args.excel_metadata, id_col=args.id_col)

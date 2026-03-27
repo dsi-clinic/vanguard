@@ -28,7 +28,7 @@ from graph_extraction.graph_outputs import build_graph_outputs_from_centerline
 def run_study_pipeline(
     *,
     input_dir: Path,
-    study_id: str,
+    case_id: str,
     output_dir: Path,
     features_only: bool,
     force_skeleton: bool,
@@ -60,11 +60,11 @@ def run_study_pipeline(
     start = time.perf_counter()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    skeleton_path = output_dir / f"{study_id}_skeleton_4d_exam_mask.npy"
-    support_path = output_dir / f"{study_id}_skeleton_4d_exam_support_mask.npy"
-    manifold_path = output_dir / f"{study_id}_center_manifold_4d_mask.npy"
-    morphometry_path = output_dir / f"{study_id}_morphometry.json"
-    coverage_mip_path = output_dir / f"{study_id}_vessel_coverage_mip.png"
+    skeleton_path = output_dir / f"{case_id}_skeleton_4d_exam_mask.npy"
+    support_path = output_dir / f"{case_id}_skeleton_4d_exam_support_mask.npy"
+    manifold_path = output_dir / f"{case_id}_center_manifold_4d_mask.npy"
+    morphometry_path = output_dir / f"{case_id}_morphometry.json"
+    coverage_mip_path = output_dir / f"{case_id}_vessel_coverage_mip.png"
 
     skeleton_took = 0.0
     features_took = 0.0
@@ -105,7 +105,7 @@ def run_study_pipeline(
         t0 = time.perf_counter()
         discovered_files, discovered_timepoints = discover_study_timepoints(
             input_dir=input_dir,
-            study_id=study_id,
+            case_id=case_id,
         )
         priority_4d = load_time_series_from_files(
             discovered_files,
@@ -150,7 +150,7 @@ def run_study_pipeline(
             np.save(support_path, support_mask.astype(np.uint8))
 
     shape_zyx = tuple(int(v) for v in skeleton_mask.shape)
-    tumor_graph_features_path = output_dir / f"{study_id}_tumor_graph_features.json"
+    tumor_graph_features_path = output_dir / f"{case_id}_tumor_graph_features.json"
     tumor_mask_model: np.ndarray | None = None
     tumor_spacing_mm_zyx: tuple[float, float, float] | None = None
     tumor_context_for_summary: dict[str, object] | None = None
@@ -166,7 +166,7 @@ def run_study_pipeline(
             tumor_spacing_mm_zyx,
             tumor_context_for_summary,
         ) = _maybe_load_tumor_context_for_features(
-            study_id=study_id,
+            case_id=case_id,
             shape_zyx=shape_zyx,
             tumor_mask_dir=tumor_mask_dir,
             radiologist_annotations_dir=radiologist_annotations_dir,
@@ -189,7 +189,7 @@ def run_study_pipeline(
                 try:
                     k_files, k_timepoints = discover_study_timepoints(
                         input_dir=input_dir,
-                        study_id=study_id,
+                        case_id=case_id,
                     )
                     kinetic_priority_4d = load_time_series_from_files(k_files)
                     kinetic_timepoints = list(k_timepoints)
@@ -210,7 +210,7 @@ def run_study_pipeline(
 
             breast_reference_mask, breast_reference_context = (
                 _maybe_load_breast_context_for_alignment(
-                    study_id=study_id,
+                    case_id=case_id,
                     shape_zyx=shape_zyx,
                     radiologist_annotations_dir=radiologist_annotations_dir,
                 )
@@ -251,7 +251,7 @@ def run_study_pipeline(
         t2 = time.perf_counter()
         try:
             radiologist_context = _maybe_load_radiologist_context_for_mip(
-                study_id=study_id,
+                case_id=case_id,
                 shape_zyx=shape_zyx,
                 radiologist_annotations_dir=radiologist_annotations_dir,
             )
@@ -282,7 +282,7 @@ def run_study_pipeline(
                     tumor_spacing_mm_zyx,
                     tumor_context_for_summary,
                 ) = _maybe_load_tumor_context_for_features(
-                    study_id=study_id,
+                    case_id=case_id,
                     shape_zyx=shape_zyx,
                     tumor_mask_dir=tumor_mask_dir,
                     radiologist_annotations_dir=radiologist_annotations_dir,
@@ -306,7 +306,7 @@ def run_study_pipeline(
             coverage_mip_diag = render_vessel_coverage_mip(
                 row_masks=row_masks,
                 output_path=coverage_mip_path,
-                case_label=study_id,
+                case_label=case_id,
                 title_prefix=f"{method_label} vessel coverage mip",
                 radiologist_mask_zyx=radiologist_mask_viz,
                 breast_mask_zyx=breast_mask_viz,
@@ -345,7 +345,7 @@ def run_study_pipeline(
 
     return {
         "mode": "features_only" if features_only else "tc4d",
-        "study_id": study_id,
+        "case_id": case_id,
         "input_dir": str(input_dir),
         "algorithm": "tc4d",
         "features_only": bool(features_only),

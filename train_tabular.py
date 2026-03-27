@@ -1135,7 +1135,7 @@ def prepare_evaluation_context(
     nested_tune_enabled = bool(config["model_params"].get("nested_tune_enabled", False))
 
     y = df[label_col].astype(int)
-    patient_ids = df["case_id"]
+    case_ids = df["case_id"]
 
     drop_cols = {
         "case_id",
@@ -1183,7 +1183,7 @@ def prepare_evaluation_context(
     evaluator, splits, stratum_col = create_splits_for_dataframe(
         X=X,
         y=y,
-        patient_ids=patient_ids,
+        case_ids=case_ids,
         cohort_df=df,
         config=config,
         model_name=config["experiment_setup"].get("name", "PCR_Model"),
@@ -1200,7 +1200,7 @@ def prepare_evaluation_context(
         "stratum_col": stratum_col,
         "X": X,
         "y": y,
-        "patient_ids": patient_ids,
+        "case_ids": case_ids,
         "numeric_cols": numeric_cols,
         "categorical_cols": categorical_cols,
         "evaluator": evaluator,
@@ -1269,7 +1269,7 @@ def run_single_fold_from_context(
     """Run one outer fold from a prepared evaluation context."""
     X = context["X"]
     y = context["y"]
-    patient_ids = context["patient_ids"]
+    case_ids = context["case_ids"]
     df = context["df"]
     config = context["config"]
     model_type = context["model_type"]
@@ -1325,11 +1325,11 @@ def run_single_fold_from_context(
 
     y_prob = clf.predict_proba(X_val)[:, 1]
     y_pred = clf.predict(X_val)
-    val_pids = patient_ids.iloc[val_idx].to_numpy()
+    val_pids = case_ids.iloc[val_idx].to_numpy()
 
     pred_df = pd.DataFrame(
         {
-            "patient_id": val_pids,
+            "case_id": val_pids,
             "y_true": y_val.to_numpy(),
             "y_pred": y_pred,
             "y_prob": y_prob,

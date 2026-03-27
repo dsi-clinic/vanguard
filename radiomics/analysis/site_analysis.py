@@ -275,7 +275,7 @@ def loso_analysis(
         predictions.append(
             pd.DataFrame(
                 {
-                    "patient_id": Xte.index,
+                    "case_id": Xte.index,
                     "site": held_out,
                     "y_true": yte,
                     "y_prob": y_prob,
@@ -358,7 +358,7 @@ def main() -> None:
     )
     ap.add_argument("--labels", required=True)
     ap.add_argument(
-        "--splits", required=True, help="CSV with patient_id and split columns."
+        "--splits", required=True, help="CSV with case_id and split columns."
     )
     ap.add_argument("--output", required=True)
 
@@ -420,19 +420,19 @@ def main() -> None:
     Xte_raw = load_features(str(feat_dir / "features_test_final.csv"))
     labels = load_labels(args.labels)
     splits = pd.read_csv(args.splits).copy()
-    if "patient_id" not in splits.columns or "split" not in splits.columns:
-        msg = f"{args.splits} must contain columns: patient_id, split"
+    if "case_id" not in splits.columns or "split" not in splits.columns:
+        msg = f"{args.splits} must contain columns: case_id, split"
         raise ValueError(msg)
-    splits["patient_id"] = splits["patient_id"].astype(str)
-    dup = splits["patient_id"][splits["patient_id"].duplicated()].unique()
+    splits["case_id"] = splits["case_id"].astype(str)
+    dup = splits["case_id"][splits["case_id"].duplicated()].unique()
     if len(dup) > 0:
         preview = ", ".join(map(str, dup[:5]))
         msg = (
-            f"{args.splits} has duplicate patient_id values (n={len(dup)}): "
+            f"{args.splits} has duplicate case_id values (n={len(dup)}): "
             f"{preview}{' ...' if len(dup) > DUPLICATE_PREVIEW_LIMIT else ''}"
         )
         raise ValueError(msg)
-    split_map = splits.set_index("patient_id")["split"]
+    split_map = splits.set_index("case_id")["split"]
 
     missing_tr = Xtr_raw.index.difference(split_map.index)
     missing_te = Xte_raw.index.difference(split_map.index)

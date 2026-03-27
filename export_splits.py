@@ -41,7 +41,7 @@ Examples:
         --n-splits 3 \
         --group-col site \
         --stratify-cols dataset \
-        --id-col patient_id \
+        --id-col case_id \
         --report
 
     # Dataset selection (CLI or config)
@@ -78,7 +78,7 @@ def export_splits(
     n_splits: int = 5,
     random_state: int = 42,
     shuffle: bool = True,
-    id_col: str = "patient_id",
+    id_col: str = "case_id",
     group_col: str = "site",
     stratify_cols: list[str] | None = None,
     validate_exclusivity: bool = True,
@@ -101,7 +101,7 @@ def export_splits(
         Random seed for reproducibility.
     shuffle : bool, default=True
         Whether to shuffle before splitting.
-    id_col : str, default="patient_id"
+    id_col : str, default="case_id"
         Column name for patient/sample IDs.
     group_col : str, default="site"
         Column name for grouping (e.g., site). Groups will not cross folds.
@@ -117,7 +117,7 @@ def export_splits(
     Returns:
     -------
     pd.DataFrame or tuple[pd.DataFrame, dict]
-        DataFrame with columns: patient_id, fold_idx, site, stratum_key.
+        DataFrame with columns: case_id, fold_idx, site, stratum_key.
         If return_report=True, returns tuple of (DataFrame, report_dict).
     """
     return export_splits_to_csv(
@@ -180,8 +180,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--id-col",
         type=str,
-        default="patient_id",
-        help="Column name for patient/sample IDs (default: patient_id)",
+        default="case_id",
+        help="Column name for patient/sample IDs (default: case_id)",
     )
 
     parser.add_argument(

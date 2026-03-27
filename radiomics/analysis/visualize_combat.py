@@ -77,7 +77,7 @@ def extract_site(pid: str) -> str:
 def load_and_align(
     features_dir: Path, labels_path: Path
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load training features and labels, align by patient_id index."""
+    """Load training features and labels, align by case_id index."""
     feat_path = features_dir / "features_train_final.csv"
     X = load_features(str(feat_path))
     labels = load_labels(str(labels_path))

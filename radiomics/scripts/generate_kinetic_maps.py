@@ -312,7 +312,7 @@ def generate_maps_for_pid(
 
     Returns a summary dict with pid, n_phases, maps_generated, status.
     """
-    result: dict[str, Any] = {"patient_id": pid, "status": "success", "error": ""}
+    result: dict[str, Any] = {"case_id": pid, "status": "success", "error": ""}
 
     try:
         # Determine where to write maps
@@ -465,7 +465,7 @@ def main() -> None:
         "--splits",
         required=True,
         type=str,
-        help="CSV with patient_id and split columns.",
+        help="CSV with case_id and split columns.",
     )
     ap.add_argument(
         "--mask-pattern",
@@ -559,7 +559,7 @@ def main() -> None:
 
     # Load patient list from splits
     splits = pd.read_csv(args.splits)
-    pids = sorted({str(pid) for pid in splits["patient_id"].dropna().tolist()})
+    pids = sorted({str(pid) for pid in splits["case_id"].dropna().tolist()})
     print(f"[KINETIC] {len(pids)} patients from {args.splits}")
 
     # Generate maps in parallel
@@ -588,7 +588,7 @@ def main() -> None:
     if n_err > 0:
         print("\n[KINETIC] Errors:")
         for _, row in results_df[results_df["status"] == "error"].iterrows():
-            print(f"  {row['patient_id']}: {row['error']}")
+            print(f"  {row['case_id']}: {row['error']}")
 
     # Save summary
     summary_root = Path(args.output_dir) if args.output_dir else Path(args.images)

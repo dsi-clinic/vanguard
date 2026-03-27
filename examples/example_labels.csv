@@ -1,4 +1,4 @@
-patient_id,label,stratum
+case_id,label,stratum
 patient_001,0,HR+ HER2-
 patient_002,1,HR+ HER2-
 patient_003,0,HR- HER2+

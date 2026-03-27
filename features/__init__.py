@@ -6,7 +6,6 @@ from features import clinical, graph, kinematic, morph, tumor_size
 
 ANNOTATION_COLUMNS = {
     "case_id",
-    "patient_id",
     "dataset",
     "site",
     "bilateral",

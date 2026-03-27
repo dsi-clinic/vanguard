@@ -164,7 +164,7 @@ def main() -> None:
         evaluator = Evaluator(
             X=context["X"],
             y=context["y"],
-            patient_ids=context["patient_ids"],
+            case_ids=context["case_ids"],
             model_name=arm_name,
             random_state=context["random_state"],
         )

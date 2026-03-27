@@ -1,4 +1,4 @@
-patient_id,split
+case_id,split
 ISPY2_666147,train
 ISPY2_771151,train
 DUKE_884,test
