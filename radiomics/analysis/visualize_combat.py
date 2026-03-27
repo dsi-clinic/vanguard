@@ -69,7 +69,7 @@ HEATMAP_EPS = 1e-8
 
 
 def extract_site(pid: str) -> str:
-    """Extract site prefix from patient ID (e.g. ISPY2_0042 → ISPY2)."""
+    """Extract site prefix from case ID (e.g. ISPY2_0042 → ISPY2)."""
     m = re.match(r"^([A-Za-z]+\d*)", pid)
     return m.group(1) if m else "UNKNOWN"
 

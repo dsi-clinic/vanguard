@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Run PyRadiomics over all patients in a split and write feature tables to disk.
+"""Run PyRadiomics over all cases in a split and write feature tables to disk.
 
-Stage 1: Run PyRadiomics over all patients in a split and
+Stage 1: Run PyRadiomics over all cases in a split and
 write feature tables to disk.
 
 Inputs:
-- --images : Directory path containing patient image files
-- --masks  : Directory path containing patient mask files
+- --images : Directory path containing case image files
+- --masks  : Directory path containing case mask files
 - --labels : CSV with at least columns: case_id,pcr[,subtype]
 - --splits : CSV with at least columns: case_id,split
 - --output : output directory to write metrics, plots, and model
@@ -17,17 +17,17 @@ Inputs:
 - --force-2d       : Enable 2D texture extraction via PyRadiomics force2D.
 - --force-2d-dimension : Slice dimension for force2D (0=axial, 1=coronal, 2=sagittal).
 - --n-jobs         : Number of worker processes.
-- --no-resume      : Ignore cached patient checkpoints and recompute.
+- --no-resume      : Ignore cached case checkpoints and recompute.
 - --clear-checkpoint : Delete output/_checkpoint before running.
 
 What this script does:
 1) Loads labels and train/test split
-2) Checks that each patient has (at least) the first image phase + mask
-3) For each patient:
+2) Checks that each case has (at least) the first image phase + mask
+3) For each case:
     - For each requested image phase pattern (comma-separated)
         - Run PyRadiomics on tumor mask
         - Optionally build a peritumor shell (dilation in mm) and run again
-4) Flattens PyRadiomics dicts into a single row per patient
+4) Flattens PyRadiomics dicts into a single row per case
 5) Saves:
     - features_train.csv
     - features_test.csv
@@ -89,9 +89,9 @@ logging.basicConfig(level=logging.WARNING)
 logging.getLogger("radiomics").setLevel(logging.ERROR)
 
 # Tracks which non-scalar feature keys have already been logged in this process
-# so the debug message fires once per unique key rather than once per patient.
+# so the debug message fires once per unique key rather than once per case.
 # Note: joblib Parallel spawns separate processes, so each worker logs its first
-# patient independently — that is expected and acceptable.
+# case independently — that is expected and acceptable.
 _LOGGED_NON_SCALAR_KEYS: set[str] = set()
 _LOGGED_MISSING_IMAGE_PATTERNS: set[str] = set()
 _CHECKPOINT_VERSION = 1
@@ -114,7 +114,7 @@ def load_csv(path: str) -> pd.DataFrame:
 
 
 def ensure_unique_case_ids(data: pd.DataFrame, tag: str) -> None:
-    """Fail fast if a metadata table contains duplicate patient IDs."""
+    """Fail fast if a metadata table contains duplicate case IDs."""
     dup = data["case_id"][data["case_id"].duplicated()].astype(str).unique()
     if len(dup) > 0:
         preview = ", ".join(dup[:_DUPLICATE_PREVIEW_LIMIT])
@@ -296,14 +296,14 @@ def checkpoint_rows_dir(checkpoint_root: Path, split_name: str) -> Path:
 
 
 def _checkpoint_row_path(rows_dir: Path, pid: str) -> Path:
-    """Return the per-patient checkpoint path for a split cache directory."""
+    """Return the per-case checkpoint path for a split cache directory."""
     safe_pid = re.sub(r"[^\w.\-]", "_", str(pid))
     suffix = hashlib.sha256(str(pid).encode("utf-8")).hexdigest()[:10]
     return rows_dir / f"{safe_pid}__{suffix}.json"
 
 
 def write_checkpoint_row(rows_dir: Path, row: dict[str, Any]) -> None:
-    """Atomically write one patient feature row to checkpoint storage."""
+    """Atomically write one case feature row to checkpoint storage."""
     pid = str(row.get("case_id", ""))
     if not pid:
         msg = "checkpoint row missing case_id"
@@ -318,7 +318,7 @@ def write_checkpoint_row(rows_dir: Path, row: dict[str, Any]) -> None:
 
 
 def load_checkpoint_rows(rows_dir: Path) -> dict[str, dict[str, Any]]:
-    """Load all cached per-patient rows for one split."""
+    """Load all cached per-case rows for one split."""
     rows: dict[str, dict[str, Any]] = {}
     if not rows_dir.exists():
         return rows
@@ -632,7 +632,7 @@ def flatten_radiomics_result(
     return out
 
 
-# feature extraction for one patient (multi-phase)
+# feature extraction for one case (multi-phase)
 def extract_for_pid(
     pid: str,
     images_dir: str,
@@ -647,7 +647,7 @@ def extract_for_pid(
     aggregate_stats: list[str] | None = None,
     hybrid_concat_threshold: int = 5,
 ) -> dict[str, Any]:
-    """Extract radiomics features for a single patient across all phases.
+    """Extract radiomics features for a single case across all phases.
 
     Parameters:
     peri_mode:
@@ -677,7 +677,7 @@ def extract_for_pid(
             if allow_missing_image_patterns:
                 if pat not in _LOGGED_MISSING_IMAGE_PATTERNS:
                     print(
-                        "[WARN] optional image pattern missing for some patients; "
+                        "[WARN] optional image pattern missing for some cases; "
                         f"skipping missing files for pattern '{pat}' "
                         f"(example pid={pid})",
                         file=sys.stderr,
@@ -718,7 +718,7 @@ def extract_for_pid(
 
     if not extracted_any:
         msg = (
-            f"No image patterns were available for patient {pid}; "
+            f"No image patterns were available for case {pid}; "
             "cannot extract features."
         )
         raise RuntimeError(msg)
@@ -741,7 +741,7 @@ def extract_for_pid_with_checkpoint(
     hybrid_concat_threshold: int = 5,
     checkpoint_rows_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Extract one patient row and persist it to checkpoint storage."""
+    """Extract one case row and persist it to checkpoint storage."""
     row = extract_for_pid(
         pid,
         images_dir,
@@ -779,7 +779,7 @@ def extract_split_features(
     checkpoint_rows_dir: Path | None = None,
     resume: bool = True,
 ) -> pd.DataFrame:
-    """Extract features for a split with optional per-patient checkpointing."""
+    """Extract features for a split with optional per-case checkpointing."""
     pid_list = [str(pid) for pid in pids]
     rows_by_pid: dict[str, dict[str, Any]] = {}
     pending_pids = list(pid_list)
@@ -797,7 +797,7 @@ def extract_split_features(
                     file=sys.stderr,
                 )
 
-        # Keep only rows for this split's patient IDs.
+        # Keep only rows for this split's case IDs.
         rows_by_pid = {pid: rows_by_pid[pid] for pid in pid_list if pid in rows_by_pid}
         pending_pids = [pid for pid in pid_list if pid not in rows_by_pid]
         print(
@@ -830,7 +830,7 @@ def extract_split_features(
                 write_checkpoint_row(checkpoint_rows_dir, row)
             rows_by_pid[str(row["case_id"])] = row
     else:
-        # Parallel execution. Each finished patient is checkpointed inside the
+        # Parallel execution. Each finished case is checkpointed inside the
         # worker so progress survives interruptions/timeouts.
         checkpoint_dir_str = str(checkpoint_rows_dir) if checkpoint_rows_dir else None
         func = delayed(extract_for_pid_with_checkpoint)
@@ -866,7 +866,7 @@ def extract_split_features(
     if missing:
         preview = ", ".join(missing[:_DUPLICATE_PREVIEW_LIMIT])
         msg = (
-            "Extraction finished with missing patient rows: "
+            "Extraction finished with missing case rows: "
             f"{preview}{' ...' if len(missing) > _DUPLICATE_PREVIEW_LIMIT else ''}"
         )
         raise RuntimeError(msg)
@@ -1032,8 +1032,8 @@ def main() -> None:
         action="store_true",
         help=(
             "If set, missing image files for any requested pattern are skipped "
-            "per-patient instead of failing extraction. At least one pattern "
-            "must still be available for each patient."
+            "per-case instead of failing extraction. At least one pattern "
+            "must still be available for each case."
         ),
     )
     ap.add_argument(
@@ -1106,7 +1106,7 @@ def main() -> None:
         "--no-resume",
         action="store_true",
         help=(
-            "Disable checkpoint resume. When set, cached per-patient rows are "
+            "Disable checkpoint resume. When set, cached per-case rows are "
             "ignored and recomputed."
         ),
     )
@@ -1175,7 +1175,7 @@ def main() -> None:
         force_2d_dimension=args.force_2d_dimension,
     )
 
-    # Identify train/test patient IDs
+    # Identify train/test case IDs
     if "split" not in splits.columns:
         msg = f"{args.splits} must contain a 'split' column"
         raise ValueError(msg)
@@ -1193,7 +1193,7 @@ def main() -> None:
         s.strip() for s in args.phase_aggregate_stats.split(",") if s.strip()
     ]
 
-    # Prepare per-patient checkpointing
+    # Prepare per-case checkpointing
     checkpoint_root = prepare_checkpoint_root(
         outdir,
         clear_checkpoint=args.clear_checkpoint,

@@ -157,8 +157,8 @@ class Evaluator:
             List of FoldSplit objects, one per fold, containing:
             - train_indices: indices for training
             - val_indices: indices for validation
-            - train_case_ids: patient IDs for training (if available)
-            - val_case_ids: patient IDs for validation (if available)
+            - train_case_ids: case IDs for training (if available)
+            - val_case_ids: case IDs for validation (if available)
             If return_report=True and groups provided, returns tuple of (splits, report_dict).
 
         Examples:

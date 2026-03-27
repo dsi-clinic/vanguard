@@ -67,7 +67,7 @@ def get_case_ids_from_excel(
     id_col: str = "case_id",
     sheet_name: str | int | None = 0,
 ) -> np.ndarray:
-    """Load an Excel metadata file and return the list of patient IDs (for cohort definition).
+    """Load an Excel metadata file and return the list of case IDs (for cohort definition).
 
     Useful when you need the Excel-defined cohort (e.g. to generate synthetic data
     for those IDs) before creating splits.
@@ -77,14 +77,14 @@ def get_case_ids_from_excel(
     excel_path : Path or str
         Path to the Excel file.
     id_col : str, default="case_id"
-        Column name containing patient IDs.
+        Column name containing case IDs.
     sheet_name : str or int or None, default=0
         Sheet to read (passed to load_clinic_metadata_excel).
 
     Returns:
     -------
     np.ndarray
-        One-dimensional array of patient IDs as strings, in Excel row order.
+        One-dimensional array of case IDs as strings, in Excel row order.
     """
     excel_path = Path(excel_path)
     excel_df = load_clinic_metadata_excel(excel_path, sheet_name=sheet_name)
@@ -109,7 +109,7 @@ def build_split_annotations(
     Parameters
     ----------
     metadata_df : pd.DataFrame
-        DataFrame containing metadata with patient IDs, site, and stratum columns.
+        DataFrame containing metadata with case IDs, site, and stratum columns.
     id_col : str, default="case_id"
         Column name for patient/sample IDs.
     group_col : str, default="site"
@@ -125,7 +125,7 @@ def build_split_annotations(
     -------
     pd.DataFrame
         DataFrame with columns:
-        - `id_col`: Patient/sample IDs (from input)
+        - `id_col`: Case/sample IDs (from input)
         - "group": Group assignments (from `group_col`)
         - "stratum_key": Stratum keys (single column or composite)
 
@@ -228,9 +228,9 @@ def align_metadata_to_case_ids(
         DataFrame from `build_split_annotations()` with columns:
         `id_col`, "group", "stratum_key".
     case_ids : np.ndarray | pd.Series
-        Array of patient IDs to align with.
+        Array of case IDs to align with.
     id_col : str, default="case_id"
-        Column name for patient IDs in annotations_df.
+        Column name for case IDs in annotations_df.
     warn_missing : bool, default=True
         Whether to warn if some case_ids are missing from annotations.
 
@@ -238,7 +238,7 @@ def align_metadata_to_case_ids(
     -------
     tuple[np.ndarray, np.ndarray]
         Tuple of (groups, stratify_labels) arrays, aligned to case_ids.
-        Missing patients will have NaN values (or raise error if all missing).
+        Missing cases will have NaN values (or raise error if all missing).
 
     Raises:
     ------
@@ -266,7 +266,7 @@ def align_metadata_to_case_ids(
     aligned_groups = []
     aligned_strata = []
 
-    missing_patients = []
+    missing_case_ids = []
 
     for pid in case_ids_array:
         pid_str = str(pid)
@@ -276,18 +276,18 @@ def align_metadata_to_case_ids(
         else:
             aligned_groups.append(np.nan)
             aligned_strata.append(np.nan)
-            missing_patients.append(pid_str)
+            missing_case_ids.append(pid_str)
 
     groups_array = np.array(aligned_groups, dtype=object)
     strata_array = np.array(aligned_strata, dtype=object)
 
-    # Warn about missing patients
-    if missing_patients and warn_missing:
-        n_missing = len(missing_patients)
+    # Warn about missing case IDs
+    if missing_case_ids and warn_missing:
+        n_missing = len(missing_case_ids)
         n_total = len(case_ids_array)
         warnings.warn(
             f"{n_missing}/{n_total} case_ids not found in annotations. "
-            f"First few missing: {missing_patients[:5]}",
+            f"First few missing: {missing_case_ids[:5]}",
             UserWarning,
             stacklevel=2,
         )

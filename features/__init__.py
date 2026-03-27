@@ -20,7 +20,7 @@ FEATURE_BLOCK_ORDER = (
     kinematic.BLOCK_NAME,
 )
 FEATURE_BLOCK_DESCRIPTIONS = {
-    "clinical": "non-imaging patient and tumor metadata",
+    "clinical": "non-imaging case-level and tumor metadata",
     "tumor_size": "tumor size and peritumoral shell-size summaries from the tumor mask",
     "morph": "whole-network morphometry aggregates from the centerline graph",
     "graph": "tumor-centered structural vessel features, including burden, topology, and shape",

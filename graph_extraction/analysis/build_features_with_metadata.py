@@ -1,7 +1,7 @@
-"""Feature extraction from morphometry JSONs with patient_info metadata join.
+"""Feature extraction from morphometry JSONs with case-level metadata join.
 
 Produces features_raw.csv and features_with_metadata.csv for optional analysis.
-Requires saved morphometry JSONs and patient_info JSONs.
+Requires saved morphometry JSONs and case metadata JSONs.
 
 Usage:
     python graph_extraction/analysis/build_features_with_metadata.py \
@@ -130,7 +130,7 @@ def load_excel_laterality(
 
 
 def load_patient_info_metadata(patient_info_dir: Path) -> pd.DataFrame:
-    """Load patient_info JSONs into a DataFrame with metadata columns."""
+    """Load case metadata from patient_info JSON files."""
     rows: list[dict[str, Any]] = []
     for p in sorted(patient_info_dir.glob("*.json")):
         try:
@@ -156,7 +156,7 @@ def load_patient_info_metadata(patient_info_dir: Path) -> pd.DataFrame:
 def main() -> None:
     """Entry point for feature extraction with metadata join."""
     parser = argparse.ArgumentParser(
-        description="Extract morphometry features and join with patient_info metadata."
+        description="Extract morphometry features and join with case metadata."
     )
     parser.add_argument(
         "--morphometry-dir",
@@ -168,7 +168,7 @@ def main() -> None:
         "--patient-info-dir",
         type=Path,
         default=Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files"),
-        help="Directory with patient_info JSON files",
+        help="Directory with patient_info JSON files containing case metadata",
     )
     parser.add_argument(
         "--output-dir",
@@ -186,7 +186,7 @@ def main() -> None:
         "--id-col",
         type=str,
         default="case_id",
-        help="Excel column for patient/sample ID (default: case_id)",
+        help="Excel column containing case IDs (default: case_id)",
     )
     args = parser.parse_args()
 
@@ -202,7 +202,7 @@ def main() -> None:
         f"[features] features_raw.csv -> {raw_path} ({feats_df.shape[0]} cases, {feats_df.shape[1]} cols)"
     )
 
-    # Phase 1.2b: Load patient_info metadata
+    # Phase 1.2b: Load case metadata from patient_info JSONs
     if not args.patient_info_dir.exists():
         print(
             f"[features] WARNING: patient_info dir not found: {args.patient_info_dir}"
@@ -210,20 +210,16 @@ def main() -> None:
         print("[features] Writing features_raw.csv only (no metadata join)")
         return
 
-    print(f"[features] Loading patient_info from {args.patient_info_dir}")
+    print(f"[features] Loading case metadata from {args.patient_info_dir}")
     meta_df = load_patient_info_metadata(args.patient_info_dir)
-    print(f"[features] Loaded metadata for {len(meta_df)} patients")
+    print(f"[features] Loaded metadata for {len(meta_df)} cases")
 
-    # Phase 1.2c: Join on case_id = case_id
+    # Phase 1.2c: Join on case_id
     merged = feats_df.merge(
         meta_df,
-        left_on="case_id",
-        right_on="case_id",
+        on="case_id",
         how="left",
     )
-    # Drop duplicate case_id if case_id was kept
-    if "case_id" in merged.columns and "case_id" in merged.columns:
-        merged = merged.drop(columns=["case_id"])
 
     # Phase 1.2d: Merge laterality from Excel (bilateral_mri: 0=unilateral, 1=bilateral)
     lat_df = load_excel_laterality(args.excel_metadata, id_col=args.id_col)

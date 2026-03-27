@@ -183,7 +183,7 @@ Primary training config:
 Canonical feature blocks used by the tabular pipeline:
 
 - `clinical`
-  - non-imaging patient and tumor metadata
+  - non-imaging case-level and tumor metadata
 - `tumor_size`
   - tumor size and local tumor-region vessel burden summaries
 - `morph`

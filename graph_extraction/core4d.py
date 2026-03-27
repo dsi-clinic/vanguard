@@ -74,7 +74,7 @@ def load_time_series_from_files(paths: list[Path]) -> np.ndarray:
 def discover_study_timepoints(
     input_dir: Path, case_id: str
 ) -> tuple[list[Path], list[int]]:
-    """Discover and sort timepoint files for one study id."""
+    """Discover and sort timepoint files for one case ID."""
     if not input_dir.exists():
         raise ValueError(f"Input directory does not exist: {input_dir}")
     if not input_dir.is_dir():
@@ -85,7 +85,7 @@ def discover_study_timepoints(
     search_dir = images_dir if images_dir.exists() else study_dir
     if not search_dir.exists() or not search_dir.is_dir():
         raise ValueError(
-            "Expected study directory layout `<input-dir>/<study-id>/images` "
+            "Expected study directory layout `<input-dir>/<case-id>/images` "
             f"for case_id='{case_id}', but not found under {input_dir}"
         )
 
@@ -132,4 +132,3 @@ def discover_study_timepoints(
 
     ordered = sorted(seen.items(), key=lambda kv: kv[0])
     return [p for _, p in ordered], [tp for tp, _ in ordered]
-

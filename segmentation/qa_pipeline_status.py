@@ -149,21 +149,21 @@ def parse_args() -> argparse.Namespace:
             "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
         ),
         help=(
-            "Optional CSV/Excel file listing expected study IDs and timepoints "
+            "Optional CSV/Excel file listing expected case IDs and timepoints "
             "(e.g. one row per (case_id, timepoint))."
         ),
     )
     parser.add_argument(
         "--id-column",
         default="case_id",
-        help="Column name in id-table for study / patient IDs.",
+        help="Column name in id-table for case IDs.",
     )
     parser.add_argument(
         "--timepoint-column",
         default=None,
         help=(
             "Optional column name in id-table for timepoints. If omitted or "
-            "missing, QA is performed at the patient level only."
+                "missing, QA is performed at the case level only."
         ),
     )
     parser.add_argument(
@@ -270,19 +270,19 @@ def main() -> None:
         tp_col = args.timepoint_column
 
         if tp_col is None or tp_col not in id_table_df.columns:
-            # Patient-level QA only.
+            # Case-level QA only.
             expected_ids = {
                 str(v) for v in id_table_df[args.id_column].dropna().astype(str)
             }
 
-            # Discover patient IDs from raw images (directory names).
+            # Discover case IDs from raw images (directory names).
             image_ids: set[str] = set()
             if args.images_dir.exists():
                 for patient_dir in args.images_dir.iterdir():
                     if patient_dir.is_dir():
                         image_ids.add(patient_dir.name)
 
-            # Discover patient IDs from vessel segmentations (source/patient/images layout).
+            # Discover case IDs from vessel segmentations (source/case/images layout).
             vessel_ids: set[str] = set()
             for seg_path in iter_files(args.vessel_dir, "*_vessel_segmentation.npz"):
                 # Parent layout: .../<source>/<case_id>/images/file.npz
@@ -290,7 +290,7 @@ def main() -> None:
                 if parent.name == "images" and parent.parent is not None:
                     vessel_ids.add(parent.parent.name)
 
-            # Discover patient IDs from 4D centerline / graph outputs.
+            # Discover case IDs from 4D centerline / graph outputs.
             cl4_ids: set[str] = set()
             if args.centerlines_4d_dir.exists():
                 for patient_dir in args.centerlines_4d_dir.iterdir():
@@ -302,7 +302,7 @@ def main() -> None:
             missing_in_cl4_ids = sorted(expected_ids - cl4_ids)
 
             print(
-                f"Total expected patient IDs:               {len(expected_ids)}",
+                f"Total expected case IDs:                  {len(expected_ids)}",
             )
             print(f"Found in raw images:                      {len(image_ids)}")
             print(
@@ -312,20 +312,20 @@ def main() -> None:
                 "Found in 4D centerline / graph outputs:   " f"{len(cl4_ids)}",
             )
             print(
-                f"Missing patient IDs from raw images:      {len(missing_in_images_ids)}",
+                f"Missing case IDs from raw images:         {len(missing_in_images_ids)}",
             )
             print(
-                "Missing patient IDs from vessel "
-                f"segmentations:            {len(missing_in_vessels_ids)}",
+                "Missing case IDs from vessel "
+                f"segmentations:             {len(missing_in_vessels_ids)}",
             )
             print(
-                "Missing patient IDs from 4D centerline "
-                f"outputs:                  {len(missing_in_cl4_ids)}",
+                "Missing case IDs from 4D centerline "
+                f"outputs:                   {len(missing_in_cl4_ids)}",
             )
 
             max_show = 10
             if missing_in_images_ids:
-                print("\nFirst few missing patient IDs in raw images:")
+                print("\nFirst few missing case IDs in raw images:")
                 for pid in missing_in_images_ids[:max_show]:
                     print(f"  {pid}")
                 if len(missing_in_images_ids) > max_show:
@@ -334,7 +334,7 @@ def main() -> None:
                     )
 
             if missing_in_vessels_ids:
-                print("\nFirst few missing patient IDs in vessel segmentations:")
+                print("\nFirst few missing case IDs in vessel segmentations:")
                 for pid in missing_in_vessels_ids[:max_show]:
                     print(f"  {pid}")
                 if len(missing_in_vessels_ids) > max_show:

@@ -51,7 +51,7 @@ def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
     """
     nii_files = []
 
-    # Get all patient directories
+    # Get all case directories
     patient_dirs = [
         d for d in os.listdir(images_dir) if (Path(images_dir) / d).is_dir()
     ]
@@ -59,7 +59,7 @@ def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
     for case_id in patient_dirs:
         patient_path = Path(images_dir) / case_id
 
-        # Find all .nii.gz files in this patient directory
+        # Find all .nii.gz files in this case directory
         files = list(patient_path.glob("*.nii.gz"))
 
         for file_path in files:
@@ -241,7 +241,7 @@ def process_single_file(
 
 
 def build_output_path(output_dir: Path, case_id: str, base_name: str) -> Path:
-    """Build output path in a source/patient/images layout."""
+    """Build output path in a source/case/images layout."""
     source = case_id.split("_")[0]
     timepoint = (
         base_name[len(case_id) + 1 :]
@@ -288,7 +288,7 @@ def main() -> None:
     parser.add_argument(
         "--images-dir",
         default="/net/projects2/vanguard/MAMA-MIA-syn60868042/images",
-        help="Directory containing patient subdirectories with .nii.gz files",
+        help="Directory containing case subdirectories with .nii.gz files",
     )
 
     parser.add_argument(
@@ -333,7 +333,7 @@ def main() -> None:
         "--patient-limit",
         type=int,
         default=None,
-        help="Limit processing to first N patients (for testing)",
+        help="Limit processing to first N cases (for testing)",
     )
 
     parser.add_argument(

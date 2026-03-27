@@ -9,7 +9,7 @@ These examples are not the main project pipeline. They are here so a new student
 | File | Purpose |
 |------|---------|
 | `baseline_model_example.py` | Small end-to-end example that runs a random or logistic baseline through the evaluation framework |
-| `example_features.csv` | Sample patient-level feature table |
+| `example_features.csv` | Sample case-level feature table |
 | `example_labels.csv` | Sample labels table |
 | `README_CSV_EXAMPLE.md` | Required CSV columns for the sample example |
 

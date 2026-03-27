@@ -24,13 +24,13 @@ This package is the shared evaluation layer for the repository. Its job is to ma
 - `group-aware split`
   - a split that keeps related samples together, for example all studies from the same site
 - `prediction table`
-  - a table with one row per patient and columns for the true label and model output
+  - a table with one row per case and columns for the true label and model output
 
 ## When To Use `train_tabular.py`
 
 Use `train_tabular.py` when:
 
-- your inputs are patient-level feature tables
+- your inputs are case-level feature tables
 - you want the existing tabular pipeline
 - you want to train the current elastic-net or tree-based models from config
 
@@ -49,7 +49,7 @@ In short:
 
 ## Minimal Output Contract
 
-To use the evaluator, your model only needs to produce a patient-level prediction table with these columns:
+To use the evaluator, your model only needs to produce a case-level prediction table with these columns:
 
 - `case_id`
 - `y_true`
@@ -78,7 +78,7 @@ A future GNN should keep its own training code in `train_gnn.py`, then call into
 
 Typical pattern:
 
-1. Load patient IDs and labels.
+1. Load case IDs and labels.
 2. Create an evaluator and ask it for splits.
 3. For each split, train the model using your own code.
 4. Convert validation predictions into the standard prediction table.
@@ -102,11 +102,11 @@ Students still need to implement:
 from evaluation import Evaluator, FoldResults
 from evaluation.utils import prepare_predictions_df
 
-case_ids = patient_manifest_df["case_id"]
-labels = patient_manifest_df["label"]
+case_ids = case_manifest_df["case_id"]
+labels = case_manifest_df["label"]
 
 evaluator = Evaluator(
-    X=patient_manifest_df,
+    X=case_manifest_df,
     y=labels,
     case_ids=case_ids,
     model_name="gnn_model",
@@ -115,8 +115,8 @@ evaluator = Evaluator(
 
 splits = evaluator.create_kfold_splits(
     n_splits=5,
-    groups=patient_manifest_df["site"].to_numpy(),
-    stratify_labels=patient_manifest_df["tumor_subtype"].to_numpy(),
+    groups=case_manifest_df["site"].to_numpy(),
+    stratify_labels=case_manifest_df["tumor_subtype"].to_numpy(),
 )
 
 fold_results = []

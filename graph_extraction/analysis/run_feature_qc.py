@@ -225,7 +225,7 @@ def compute_qc_per_feature(
 ) -> pd.DataFrame:
     """Compute per-feature QC metrics: missingness, constant, NaN, Inf, outliers."""
     if id_cols is None:
-        id_cols = ["case_id", "case_id"]
+        id_cols = ["case_id"]
     feature_cols = [
         c
         for c in df.columns
@@ -297,7 +297,6 @@ def plot_core_distributions(df: pd.DataFrame, output_dir: Path) -> None:
     }
 
     id_cols = {
-        "case_id",
         "case_id",
         "site",
         "dataset",

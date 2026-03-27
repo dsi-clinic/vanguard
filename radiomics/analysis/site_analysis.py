@@ -66,7 +66,7 @@ DUPLICATE_PREVIEW_LIMIT = 5
 
 
 def extract_site(pid: str) -> str:
-    """Extract clinical site prefix from a patient ID.
+    """Extract clinical site prefix from a case ID.
 
     Examples: ``DUKE_001`` → ``DUKE``, ``ISPY2_0042`` → ``ISPY2``.
     """
@@ -75,7 +75,7 @@ def extract_site(pid: str) -> str:
 
 
 def assign_sites(index: pd.Index) -> pd.Series:
-    """Return a Series mapping each patient ID to its site."""
+    """Return a Series mapping each case ID to its site."""
     return pd.Series(
         [extract_site(str(pid)) for pid in index], index=index, name="site"
     )
@@ -438,7 +438,7 @@ def main() -> None:
     missing_te = Xte_raw.index.difference(split_map.index)
     if len(missing_tr) > 0 or len(missing_te) > 0:
         msg = (
-            "features contain patient IDs missing from splits file: "
+            "features contain case IDs missing from splits file: "
             f"missing_train={len(missing_tr)}, missing_test={len(missing_te)}"
         )
         raise ValueError(msg)

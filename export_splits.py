@@ -102,7 +102,7 @@ def export_splits(
     shuffle : bool, default=True
         Whether to shuffle before splitting.
     id_col : str, default="case_id"
-        Column name for patient/sample IDs.
+        Column name for case/sample IDs.
     group_col : str, default="site"
         Column name for grouping (e.g., site). Groups will not cross folds.
     stratify_cols : list[str] | None, default=None
@@ -181,7 +181,7 @@ def parse_args() -> argparse.Namespace:
         "--id-col",
         type=str,
         default="case_id",
-        help="Column name for patient/sample IDs (default: case_id)",
+        help="Column name for case/sample IDs (default: case_id)",
     )
 
     parser.add_argument(
@@ -294,7 +294,7 @@ def main() -> None:
 
         print(f"\n✓ Successfully exported splits to {args.output}")
         print(f"  Total rows: {len(splits_df)}")
-        print(f"  Unique patients: {splits_df[args.id_col].nunique()}")
+        print(f"  Unique cases: {splits_df[args.id_col].nunique()}")
         print(f"  Folds: {sorted(splits_df['fold_idx'].unique())}")
 
     except Exception as e:

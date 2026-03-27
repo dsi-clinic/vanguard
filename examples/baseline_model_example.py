@@ -134,7 +134,7 @@ def generate_synthetic_data(
     y : np.ndarray
         Binary labels (0 or 1)
     case_ids : np.ndarray
-        Patient IDs (from argument or generated as "patient_0000", ...)
+        Case IDs (from argument or generated as "case_0000", ...)
     """
     ids_provided = case_ids is not None
     if ids_provided:
@@ -151,7 +151,7 @@ def generate_synthetic_data(
     flip = rng.random(n_samples) < noise_flip_prob
     y[flip] = 1 - y[flip]
     if not ids_provided:
-        case_ids = np.array([f"patient_{i:04d}" for i in range(n_samples)])
+        case_ids = np.array([f"case_{i:04d}" for i in range(n_samples)])
     return X, y, case_ids
 
 
@@ -373,7 +373,7 @@ def run_train_test(
     X_train, y_train, X_test, y_test : np.ndarray
         Train and test data.
     case_ids_test : np.ndarray or None
-        Test set patient IDs.
+        Test set case IDs.
     model_name : str
         Model name for TrainTestResults.
     random_state : int

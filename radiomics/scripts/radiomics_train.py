@@ -14,7 +14,7 @@ runner remain fully backward-compatible.
 
 Inputs
 ------
-- --train-features : CSV from radiomics_extract.py (rows = patients, cols = features)
+- --train-features : CSV from radiomics_extract.py (rows = cases, cols = features)
 - --test-features  : CSV from radiomics_extract.py
 - --labels         : CSV with at least columns: case_id,pcr[,subtype]
 - --output         : output directory to write metrics, plots, and model
@@ -115,14 +115,14 @@ DUPLICATE_PREVIEW_LIMIT = 5
 # I/O helpers
 # ---------------------------
 def load_features(path: str) -> pd.DataFrame:
-    """Load feature CSV with patient IDs in the index."""
+    """Load feature CSV with case IDs in the index."""
     data = pd.read_csv(path, index_col=0)
     data.index = data.index.map(str)
     dup = data.index[data.index.duplicated()].unique()
     if len(dup) > 0:
         preview = ", ".join(map(str, dup[:DUPLICATE_PREVIEW_LIMIT]))
         msg = (
-            f"Feature table has duplicate patient IDs (n={len(dup)}): "
+            f"Feature table has duplicate case IDs (n={len(dup)}): "
             f"{preview}{' ...' if len(dup) > DUPLICATE_PREVIEW_LIMIT else ''}"
         )
         raise ValueError(msg)
@@ -1110,7 +1110,7 @@ def main() -> None:
         preview_tr = ", ".join(map(str, missing_tr[:DUPLICATE_PREVIEW_LIMIT]))
         preview_te = ", ".join(map(str, missing_te[:DUPLICATE_PREVIEW_LIMIT]))
         msg = (
-            "Feature rows contain patient IDs missing from labels.csv. "
+            "Feature rows contain case IDs missing from labels.csv. "
             f"missing_train={len(missing_tr)}"
             f"{' [' + preview_tr + (' ...' if len(missing_tr) > DUPLICATE_PREVIEW_LIMIT else '') + ']' if len(missing_tr) else ''}"  # noqa: E501
             ", "

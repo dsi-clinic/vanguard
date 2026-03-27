@@ -21,7 +21,7 @@ from sklearn.model_selection import (
 
 @dataclass
 class FoldSplit:
-    """Represents a single fold split (indices and optional patient IDs)."""
+    """Represents a single fold split (indices and optional case IDs)."""
 
     fold_idx: int
     train_indices: np.ndarray
@@ -51,7 +51,7 @@ def create_kfold_splits(
     y : np.ndarray
         Target labels (used for stratification when stratify=True).
     case_ids : np.ndarray, optional
-        Patient IDs for tracking.
+        Case IDs for tracking.
     n_splits : int, default=5
         Number of folds.
     stratify : bool, default=True
@@ -102,7 +102,7 @@ def create_kfold_splits(
             "val_indices": val_idx,
         }
 
-        # Add patient IDs if available
+        # Add case IDs if available
         if case_ids is not None:
             split_dict["train_case_ids"] = case_ids[train_idx]
             split_dict["val_case_ids"] = case_ids[val_idx]
@@ -417,7 +417,7 @@ def create_group_stratified_kfold_splits(
             "val_indices": val_idx,
         }
 
-        # Add patient IDs if available
+        # Add case IDs if available
         if case_ids is not None:
             split_dict["train_case_ids"] = case_ids[train_idx]
             split_dict["val_case_ids"] = case_ids[val_idx]
@@ -481,7 +481,7 @@ def _create_splits_from_excel_core(
 
     Internal core used by create_splits_from_excel() and export_splits_to_csv().
     When case_ids is provided, aligns to those IDs and returns splits with indices
-    into the provided array; when None, uses all patients from Excel.
+    into the provided array; when None, uses all cases from Excel.
 
     Returns:
     -------
@@ -526,7 +526,7 @@ def _create_splits_from_excel_core(
         stratify_cols=stratify_cols,
     )
     if verbose:
-        print(f"  Built annotations for {len(annotations)} patients")
+        print(f"  Built annotations for {len(annotations)} cases")
         print(f"  Unique groups: {sorted(annotations['group'].unique())}")
         print(f"  Unique strata: {sorted(annotations['stratum_key'].unique())}")
 
@@ -583,7 +583,7 @@ def _create_splits_from_excel_core(
 
     if len(case_ids_work) == 0:
         raise ValueError(
-            "No patients with valid group/stratum. Check Excel and case_ids."
+            "No cases with valid group/stratum. Check Excel and case_ids."
         )
 
     n_samples = len(case_ids_work)
@@ -633,7 +633,7 @@ def create_splits_from_excel(
     return_report: bool = False,
     selection_criteria: object | None = None,
 ) -> list[FoldSplit] | tuple[list[FoldSplit], dict]:
-    """Create group-stratified k-fold splits from Excel metadata, aligned to model patient IDs.
+    """Create group-stratified k-fold splits from Excel metadata, aligned to model case IDs.
 
     Models call this to get splits without writing/reading CSV. Returns FoldSplit objects
     with train_indices/val_indices into the provided case_ids array.
@@ -647,7 +647,7 @@ def create_splits_from_excel(
     excel_path : Path | str
         Path to Excel file with clinic metadata.
     case_ids : np.ndarray | pd.Series
-        Model's patient IDs (same order as X, y). Splits will be aligned to these.
+        Model's case IDs (same order as X, y). Splits will be aligned to these.
     n_splits : int, default=5
         Number of folds.
     random_state : int, default=42
@@ -655,7 +655,7 @@ def create_splits_from_excel(
     shuffle : bool, default=True
         Whether to shuffle before splitting.
     id_col : str, default="case_id"
-        Column name for patient IDs in Excel.
+        Column name for case IDs in Excel.
     group_col : str, default="site"
         Column name for grouping (e.g., site). Groups do not cross folds.
     stratify_cols : list[str] | None, default=None
@@ -719,7 +719,7 @@ def export_splits_to_csv(
 ) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     """Generate group-stratified k-fold splits from Excel and write to CSV.
 
-    Used by the export_splits CLI script. Uses all patients from Excel.
+    Used by the export_splits CLI script. Uses all cases from Excel.
 
     Parameters
     ----------

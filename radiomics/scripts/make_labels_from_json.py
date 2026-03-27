@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """make_labels_from_json.py
 
-Helper script (optional) to build a labels.csv from patient-level JSON
+Helper script (optional) to build a labels.csv from case-level JSON
 metadata, e.g.:
 
 {

@@ -73,7 +73,7 @@ def align_data(
     y: np.ndarray | pd.Series,
     case_ids: np.ndarray | pd.Series | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-    """Align features, labels, and patient IDs to ensure consistent indexing.
+    """Align features, labels, and case IDs to ensure consistent indexing.
 
     Parameters
     ----------
@@ -82,7 +82,7 @@ def align_data(
     y : np.ndarray | pd.Series
         Target labels.
     case_ids : np.ndarray | pd.Series, optional
-        Patient IDs.
+        Case IDs.
 
     Returns:
     -------
