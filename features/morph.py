@@ -10,6 +10,7 @@ import numpy as np
 from features._common import safe_float
 
 BLOCK_NAME = "morph"
+MAX_BIFURCATION_ANGLE_DEGREES = 180.0
 
 
 def matches_column(column: str) -> bool:
@@ -82,7 +83,7 @@ def extract_morphometry_features(morphometry_path: Path) -> dict[str, float]:
                         if (
                             maybe is not None
                             and np.isfinite(maybe)
-                            and 0.0 < maybe <= 180.0
+                            and 0.0 < maybe <= MAX_BIFURCATION_ANGLE_DEGREES
                         ):
                             bif_angle.append(maybe)
                         elif maybe is not None:

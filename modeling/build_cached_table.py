@@ -21,7 +21,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Entry point."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
     args = parse_args()
     with args.config.open(encoding="utf-8") as handle:
         config = yaml.safe_load(handle)

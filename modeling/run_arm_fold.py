@@ -7,14 +7,13 @@ import json
 import logging
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 import yaml
 
+from run_ablation_matrix import _normalize_ablation_arms
 from tabular_cohort import select_features
 from train_tabular import prepare_evaluation_context, run_single_fold_from_context
-from run_ablation_matrix import _normalize_ablation_arms
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,7 +29,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Entry point."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
     args = parse_args()
 
     with args.config.open(encoding="utf-8") as handle:

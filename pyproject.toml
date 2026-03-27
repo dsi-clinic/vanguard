@@ -37,7 +37,11 @@ ignore = [
   "D415",   # allow first line of doctstrings to end without punctuation
   "ANN002", # missing type on *args
   "ANN003", # missing type on **kwargs
+  "ANN101", # do not require explicit self annotations
+  "ANN401", # allow Any where it keeps interfaces readable
   "B905",   # won't work on python <3.10
+  "D102",   # public method docstrings are not required everywhere
+  "D107",   # __init__ docstrings are not required everywhere
   "S101",   # allow assertions (!!!)
 ]
 

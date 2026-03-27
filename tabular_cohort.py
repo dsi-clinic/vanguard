@@ -17,7 +17,6 @@ from features import (
     feature_block_for_column,
     normalize_selected_features,
 )
-from features._common import safe_float
 from features.clinical import SITE_COLUMNS
 from features.graph import (
     add_derived_graph_features,
@@ -41,7 +40,7 @@ def _as_optional_bool(value: Any) -> bool | None:
         return None
     if isinstance(value, bool):
         return value
-    if isinstance(value, (int, np.integer)):
+    if isinstance(value, int | np.integer):
         return bool(value)
     if isinstance(value, str):
         lower = value.strip().lower()
@@ -54,7 +53,6 @@ def _as_optional_bool(value: Any) -> bool | None:
     raise ValueError(f"Unable to parse optional bool from value: {value!r}")
 
 
-
 def build_features_from_feature_jsons(morphometry_dir: Path) -> pd.DataFrame:
     """Build a feature table directly from per-study morphometry JSON files."""
     rows: list[dict[str, Any]] = []
@@ -64,7 +62,6 @@ def build_features_from_feature_jsons(morphometry_dir: Path) -> pd.DataFrame:
         row.update(extract_morphometry_features(morphometry_path))
         rows.append(row)
     return pd.DataFrame(rows)
-
 
 
 def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
@@ -198,7 +195,9 @@ def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
             try:
                 summary = json.loads(summary_path.read_text())
             except Exception as exc:  # noqa: BLE001
-                logging.warning("Failed run_summary parse for %s: %s", summary_path, exc)
+                logging.warning(
+                    "Failed run_summary parse for %s: %s", summary_path, exc
+                )
                 summary = {}
 
         feature_stats = (
@@ -324,10 +323,9 @@ def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
             tumor_graph_exists_count,
             tumor_graph_loaded_count,
         )
-    df = pd.DataFrame(rows)
-    logging.info("Centerline feature table shape: %s", df.shape)
-    return df
-
+    centerline_df = pd.DataFrame(rows)
+    logging.info("Centerline feature table shape: %s", centerline_df.shape)
+    return centerline_df
 
 
 def build_modular_features(config: dict[str, Any]) -> pd.DataFrame:
@@ -429,7 +427,6 @@ def build_modular_features(config: dict[str, Any]) -> pd.DataFrame:
     return merged_df
 
 
-
 def load_labels(path: Path, id_col: str, label_col: str) -> pd.DataFrame:
     """Load labels from CSV or JSON and normalize to integer {0, 1}."""
     path = Path(path)
@@ -442,6 +439,7 @@ def load_labels(path: Path, id_col: str, label_col: str) -> pd.DataFrame:
                 try:
                     rows.append(json.loads(json_path.read_text()))
                 except Exception:  # noqa: BLE001
+                    logging.debug("Skipping unreadable label JSON: %s", json_path)
                     continue
             df_labels = pd.DataFrame(rows)
         else:
@@ -466,7 +464,6 @@ def load_labels(path: Path, id_col: str, label_col: str) -> pd.DataFrame:
     df_labels[label_col] = df_labels[label_col].astype(int)
 
     return df_labels[[id_col, label_col]].rename(columns={id_col: "case_id"})
-
 
 
 def select_features(
@@ -521,7 +518,6 @@ def select_features(
     return df[keep_columns + selected_feature_columns].copy()
 
 
-
 def prepare_data(config: dict[str, Any], outdir: Path) -> pd.DataFrame:
     """Load feature blocks, merge labels, and write the final labeled table."""
     feats_df = build_modular_features(config)
@@ -535,7 +531,9 @@ def prepare_data(config: dict[str, Any], outdir: Path) -> pd.DataFrame:
     merged_df = feats_df.merge(labels_df, on="case_id", how="inner")
     merged_df = select_features(
         merged_df,
-        selected_blocks=config.get("feature_toggles", {}).get("selected_features", None),
+        selected_blocks=config.get("feature_toggles", {}).get(
+            "selected_features", None
+        ),
         label_col=label_col,
     )
     merged_df.to_csv(outdir / "features_engineered_labeled.csv", index=False)

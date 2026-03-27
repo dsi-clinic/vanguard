@@ -13,13 +13,13 @@ import pandas as pd
 import yaml
 
 from evaluation import Evaluator, FoldResults
-from tabular_cohort import select_features
-from train_tabular import prepare_evaluation_context
 from run_ablation_matrix import (
     _add_baseline_deltas,
     _metrics_summary_row,
     _normalize_ablation_arms,
 )
+from tabular_cohort import select_features
+from train_tabular import prepare_evaluation_context
 
 
 def _write_auc_summary_plot(summary_df: pd.DataFrame, out_root: Path) -> None:
@@ -112,7 +112,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Entry point."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
     args = parse_args()
     with args.config.open(encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
@@ -151,12 +153,16 @@ def main() -> None:
         fold_results: list[FoldResults] = []
         nested_frames: list[pd.DataFrame] = []
         for split in context["splits"]:
-            fold_dir = args.out_root / "fold_results" / arm_name / f"fold_{split.fold_idx}"
+            fold_dir = (
+                args.out_root / "fold_results" / arm_name / f"fold_{split.fold_idx}"
+            )
             pred_path = fold_dir / "predictions.csv"
             if not pred_path.exists():
                 raise FileNotFoundError(f"Missing fold predictions: {pred_path}")
             pred_df = pd.read_csv(pred_path)
-            fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
+            fold_results.append(
+                FoldResults(fold_idx=split.fold_idx, predictions=pred_df)
+            )
             nested_path = fold_dir / "nested_tuning_summary.csv"
             if nested_path.exists():
                 nested_frames.append(pd.read_csv(nested_path))
@@ -172,7 +178,9 @@ def main() -> None:
         evaluator.save_results(kfold_results, runs_root)
 
         arm_results_dir = runs_root / arm_name
-        with (arm_results_dir / "config_used.yaml").open("w", encoding="utf-8") as handle:
+        with (arm_results_dir / "config_used.yaml").open(
+            "w", encoding="utf-8"
+        ) as handle:
             yaml.safe_dump(arm_config, handle, sort_keys=False)
         arm_df.to_csv(arm_results_dir / "features_engineered_labeled.csv", index=False)
 

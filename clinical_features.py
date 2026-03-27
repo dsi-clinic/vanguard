@@ -35,15 +35,15 @@ def _load_clinical_from_patient_info(patient_info_dir: Path) -> pd.DataFrame:
             }
         )
 
-    df = pd.DataFrame(rows)
-    if "case_id" not in df.columns:
+    clinical_df = pd.DataFrame(rows)
+    if "case_id" not in clinical_df.columns:
         raise ValueError("patient_info JSONs did not produce a usable case_id column.")
-    return df
+    return clinical_df
 
 
 def _load_clinical_from_excel(excel_path: Path) -> pd.DataFrame:
     """Load clinical metadata from Excel with basic column normalization."""
-    df = pd.read_excel(excel_path)
+    clinical_df = pd.read_excel(excel_path)
     rename_map = {
         "menopause": "menopausal_status",
         "menopausal status": "menopausal_status",
@@ -51,14 +51,14 @@ def _load_clinical_from_excel(excel_path: Path) -> pd.DataFrame:
         "patientid": "case_id",
         "patient id": "case_id",
     }
-    normalized_cols = {c: c.strip().lower() for c in df.columns}
+    normalized_cols = {c: c.strip().lower() for c in clinical_df.columns}
     reverse_lookup = {v: k for k, v in normalized_cols.items()}
 
     for src, dst in rename_map.items():
-        if src in reverse_lookup and dst not in df.columns:
-            df = df.rename(columns={reverse_lookup[src]: dst})
+        if src in reverse_lookup and dst not in clinical_df.columns:
+            clinical_df = clinical_df.rename(columns={reverse_lookup[src]: dst})
 
-    if "case_id" not in df.columns:
+    if "case_id" not in clinical_df.columns:
         raise ValueError(f"{excel_path} must contain a case_id column.")
 
     # Keep only columns we actively use in the pipeline if present.
@@ -77,8 +77,8 @@ def _load_clinical_from_excel(excel_path: Path) -> pd.DataFrame:
         "scanner_manufacturer",
         "scanner_model",
     ]
-    keep = [c for c in wanted if c in df.columns]
-    return df[keep].copy()
+    keep = [c for c in wanted if c in clinical_df.columns]
+    return clinical_df[keep].copy()
 
 
 def get_clinical_features(config: dict) -> pd.DataFrame:

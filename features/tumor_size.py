@@ -10,6 +10,7 @@ import numpy as np
 from scipy import ndimage
 
 from features._common import safe_float
+from graph_extraction.constants import NDIM_3D
 
 BLOCK_NAME = "tumor_size"
 METADATA_COLUMNS = {
@@ -46,6 +47,11 @@ def resolve_tumor_mask_path(
             try:
                 filename = pattern.format(case_id=case_id, dataset=dataset_name)
             except Exception:  # noqa: BLE001
+                logging.debug(
+                    "Skipping invalid tumor mask pattern %r for case %s",
+                    pattern,
+                    case_id,
+                )
                 continue
             candidate = root / filename
             if candidate in seen:
@@ -68,12 +74,12 @@ def load_tumor_mask_zyx(
 
     if path_lower.endswith(".npy"):
         arr = np.load(tumor_mask_path)
-        if arr.ndim < 3:
+        if arr.ndim < NDIM_3D:
             raise ValueError(
                 f"Unsupported tumor npy ndim={arr.ndim}: {tumor_mask_path}"
             )
-        if arr.ndim > 3:
-            lead_axes = tuple(range(arr.ndim - 3))
+        if arr.ndim > NDIM_3D:
+            lead_axes = tuple(range(arr.ndim - NDIM_3D))
             arr = np.any(arr > threshold, axis=lead_axes).astype(np.uint8)
     else:
         if not (
@@ -112,9 +118,9 @@ def parse_tumor_radii(values: Any) -> list[int]:
     """Parse and sanitize tumor-radius list from config."""
     if values is None:
         return [0, 2, 4, 8]
-    if isinstance(values, (int, float, np.integer, np.floating)):
+    if isinstance(values, int | float | np.integer | np.floating):
         values = [values]
-    if not isinstance(values, (list, tuple)):
+    if not isinstance(values, list | tuple):
         return [0, 2, 4, 8]
 
     radii: set[int] = set()

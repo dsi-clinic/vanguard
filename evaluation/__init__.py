@@ -28,6 +28,7 @@ Naming conventions
   run_train_test).
 """
 
+from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.evaluator import (
     Evaluator,
     FoldResults,
@@ -35,7 +36,6 @@ from evaluation.evaluator import (
     KFoldResults,
     TrainTestResults,
 )
-from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.kfold import create_splits_from_excel, export_splits_to_csv
 from evaluation.random_baseline import (
     compute_random_auc_distribution,

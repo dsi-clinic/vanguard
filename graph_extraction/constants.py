@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from graph_extraction.core4d import NDIM_3D, NDIM_4D
-
 DEFAULT_RADIOLOGIST_ANNOTATIONS_DIR = Path(
     "/net/projects2/vanguard/Duke-Breast-Cancer-MRI-Supplement-v3"
 )
@@ -14,6 +12,8 @@ DEFAULT_TUMOR_MASK_DIR = Path(
 )
 PROCESSING_VIZ_FLIP_SPEC = "z"
 VIZ_FLIP_SPECS = ("none", "z", "y", "x", "zy", "zx", "yx", "zyx")
+NDIM_3D = 3
+NDIM_4D = 4
 SEG_NRRD_MAX_LAYERS = 32
 TUMOR_NEAR_MM = 5.0
 TUMOR_BOUNDARY_NEAR_MM = 2.0

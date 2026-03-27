@@ -31,6 +31,8 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from evaluation.kfold import FoldSplit
 from features._common import safe_float
 
+MIN_BINARY_CLASSES = 2
+
 
 class NumericTopKAUCSelector(BaseEstimator, TransformerMixin):
     """Fold-safe train-fold top-K numeric feature selection by univariate AUC."""
@@ -110,7 +112,10 @@ class NumericTopKAUCSelector(BaseEstimator, TransformerMixin):
                 continue
 
             yv = y_arr[valid]
-            if np.unique(xv).size < int(self.min_n_unique) or np.unique(yv).size < 2:
+            if (
+                np.unique(xv).size < int(self.min_n_unique)
+                or np.unique(yv).size < MIN_BINARY_CLASSES
+            ):
                 low_info[j] = True
                 continue
 
@@ -339,7 +344,10 @@ class NumericKinematicAddonSelector(BaseEstimator, TransformerMixin):
                     continue
 
             yv = y_arr[valid]
-            if np.unique(xv).size < int(self.min_n_unique) or np.unique(yv).size < 2:
+            if (
+                np.unique(xv).size < int(self.min_n_unique)
+                or np.unique(yv).size < MIN_BINARY_CLASSES
+            ):
                 low_info[local_j] = True
                 continue
 
@@ -546,7 +554,7 @@ def normalize_prefixes(prefixes: Any, default_prefixes: list[str]) -> list[str]:
     elif isinstance(prefixes, str):
         cleaned = prefixes.strip()
         out = [cleaned] if cleaned else list(default_prefixes)
-    elif isinstance(prefixes, (list, tuple)):
+    elif isinstance(prefixes, list | tuple):
         out = [str(p).strip() for p in prefixes if str(p).strip()]
         out = out or list(default_prefixes)
     else:
@@ -796,7 +804,7 @@ def build_model_pipeline(
 def grid_values(value: Any, fallback: Any) -> list[Any]:
     """Normalize scalar/list config values into a list for grid iteration."""
     source = fallback if value is None else value
-    if isinstance(source, (list, tuple, np.ndarray, pd.Series)):
+    if isinstance(source, list | tuple | np.ndarray | pd.Series):
         return list(source)
     return [source]
 
@@ -811,7 +819,9 @@ def parse_optional_float_param(value: Any) -> float | None:
     return float(maybe)
 
 
-def build_nested_candidate_overrides(model_params: dict[str, Any]) -> list[dict[str, Any]]:
+def build_nested_candidate_overrides(
+    model_params: dict[str, Any],
+) -> list[dict[str, Any]]:
     """Build inner-CV candidate override dictionaries from config grids."""
     c_vals = [
         float(v)
@@ -944,7 +954,7 @@ def score_inner_cv_candidate(
         )
         clf.fit(X_train.iloc[inner_tr], y_train.iloc[inner_tr])
         yv = y_arr[inner_va]
-        if len(np.unique(yv)) < 2:
+        if len(np.unique(yv)) < MIN_BINARY_CLASSES:
             continue
         prob = clf.predict_proba(X_train.iloc[inner_va])[:, 1]
         aucs.append(float(roc_auc_score(yv, prob)))
@@ -1096,5 +1106,5 @@ def log_feature_selector_stats(
                 int(getattr(fs, "n_dropped_zero_heavy_", 0)),
                 int(getattr(fs, "n_dropped_collinear_", 0)),
             )
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logging.debug("Unable to log feature selector stats: %s", exc)

@@ -74,6 +74,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from clinic_metadata import (  # noqa: E402
+    get_case_ids_from_excel,
+    load_clinic_metadata_excel,
+)
 from evaluation import (  # noqa: E402
     Evaluator,
     FoldResults,
@@ -91,10 +95,6 @@ from evaluation.selection import (  # noqa: E402
     load_selection_criteria_from_yaml,
 )
 from evaluation.utils import prepare_predictions_df  # noqa: E402
-from clinic_metadata import (  # noqa: E402
-    get_case_ids_from_excel,
-    load_clinic_metadata_excel,
-)
 
 # ---------------------------------------------------------------------------
 # Section 1: Synthetic data generation

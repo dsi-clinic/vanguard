@@ -16,8 +16,8 @@ from graph_extraction.constants import (
     EARLY_CYCLE_FRACTION_MAJORITY,
     KINETIC_SIGNAL_EPS,
     MIN_KINETIC_TIMEPOINTS,
+    MIN_PATH_POINTS,
     NDIM_4D,
-    TUMOR_BOUNDARY_NEAR_MM,
     TUMOR_NEAR_MM,
     TUMOR_SHELL_SPECS,
 )
@@ -33,6 +33,7 @@ from graph_extraction.feature_stats import (
     _segment_tortuosity_mm,
     _shell_name_for_signed_distance,
     _weighted_linear_fit_stats,
+    _weighted_linear_slope,
 )
 
 BLOCK_NAME = "kinematic"

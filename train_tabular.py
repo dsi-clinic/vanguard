@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -73,9 +74,7 @@ def run_evaluation_pipeline(
     context["evaluator"].save_results(kfold_results, outdir)
 
     print("\n" + "=" * 48)
-    print(
-        f"Plots saved in: {outdir / context['evaluator'].model_name / 'plots'}"
-    )
+    print(f"Plots saved in: {outdir / context['evaluator'].model_name / 'plots'}")
     print("=" * 48 + "\n")
 
 
@@ -169,7 +168,6 @@ def prepare_evaluation_context(
     }
 
 
-
 def run_single_fold_from_context(
     context: dict[str, Any],
     split: FoldSplit,
@@ -178,7 +176,7 @@ def run_single_fold_from_context(
     X = context["X"]
     y = context["y"]
     case_ids = context["case_ids"]
-    df = context["df"]
+    cohort_df = context["df"]
     config = context["config"]
     model_type = context["model_type"]
     numeric_cols = context["numeric_cols"]
@@ -243,8 +241,8 @@ def run_single_fold_from_context(
             "y_prob": y_prob,
         }
     )
-    if stratum_col and stratum_col in df.columns:
-        pred_df["stratum"] = df.iloc[val_idx][stratum_col].astype(str).to_numpy()
+    if stratum_col and stratum_col in cohort_df.columns:
+        pred_df["stratum"] = cohort_df.iloc[val_idx][stratum_col].astype(str).to_numpy()
 
     return (
         FoldResults(fold_idx=split.fold_idx, predictions=pred_df),
@@ -265,7 +263,10 @@ def run_cross_validation_from_context(
     fold_results_list: list[FoldResults] = []
     nested_rows: list[dict[str, Any]] = []
     for split in splits:
-        if selected_fold_indices is not None and split.fold_idx not in selected_fold_indices:
+        if (
+            selected_fold_indices is not None
+            and split.fold_idx not in selected_fold_indices
+        ):
             continue
         fold_result, fold_nested_rows, _ = run_single_fold_from_context(context, split)
         fold_results_list.append(fold_result)

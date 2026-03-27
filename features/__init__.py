@@ -34,12 +34,10 @@ def normalize_selected_features(value: object) -> list[str] | None:
         return None
     if isinstance(value, str):
         raw_blocks = [value]
-    elif isinstance(value, (list, tuple, set)):
+    elif isinstance(value, list | tuple | set):
         raw_blocks = [str(v) for v in value]
     else:
-        raise ValueError(
-            "selected_features must be a string, list, tuple, or set."
-        )
+        raise ValueError("selected_features must be a string, list, tuple, or set.")
 
     normalized = {
         str(block).strip().lower() for block in raw_blocks if str(block).strip()

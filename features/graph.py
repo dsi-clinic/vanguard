@@ -12,9 +12,11 @@ import numpy as np
 from scipy import ndimage
 
 from features._common import flatten_numeric_payload, safe_float, safe_ratio
+from features.kinematic import compute_tumor_kinematic_feature_payload
 from graph_extraction.constants import (
     BIFURCATION_MIN_DEGREE,
     DEGREE_FOUR_PLUS,
+    MIN_PATH_POINTS,
     TUMOR_BOUNDARY_NEAR_MM,
     TUMOR_NEAR_MM,
     TUMOR_SHELL_SPECS,
@@ -23,13 +25,11 @@ from graph_extraction.feature_stats import (
     _safe_ratio,
     _segment_curvature_mean_per_mm,
     _segment_path_length_mm,
-    _segment_radius_mean_mm,
     _segment_tortuosity_mm,
     _shell_name_for_signed_distance,
     _signed_tumor_distance_mm,
     _weighted_quantiles,
 )
-from features.kinematic import compute_tumor_kinematic_feature_payload
 
 BLOCK_NAME = "graph"
 METADATA_PREFIXES = (

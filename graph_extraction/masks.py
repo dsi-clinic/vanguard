@@ -7,8 +7,12 @@ from pathlib import Path
 
 import numpy as np
 
-from graph_extraction.constants import NDIM_3D, SEG_NRRD_MAX_LAYERS, VIZ_FLIP_SPECS
-
+from graph_extraction.constants import (
+    NDIM_3D,
+    NDIM_4D,
+    SEG_NRRD_MAX_LAYERS,
+    VIZ_FLIP_SPECS,
+)
 
 _OFFSETS_3D = np.array(
     [

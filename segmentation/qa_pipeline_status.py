@@ -163,7 +163,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Optional column name in id-table for timepoints. If omitted or "
-                "missing, QA is performed at the case level only."
+            "missing, QA is performed at the case level only."
         ),
     )
     parser.add_argument(

@@ -7,6 +7,13 @@ from pathlib import Path
 
 import numpy as np
 
+from features.graph import compute_tumor_graph_feature_payload
+from graph_extraction.constants import NDIM_3D
+from graph_extraction.feature_stats import (
+    _collect_morphometry_qc,
+    _json_default,
+    mask_to_edges_bitmask,
+)
 from graph_extraction.skeleton_to_graph_primitives import (
     assign_component_labels,
     build_vessel_json,
@@ -16,14 +23,6 @@ from graph_extraction.skeleton_to_graph_primitives import (
     extract_segments,
     obtain_radius_map,
     segments_to_graph,
-)
-
-from graph_extraction.constants import NDIM_3D
-from features.graph import compute_tumor_graph_feature_payload
-from graph_extraction.feature_stats import (
-    _collect_morphometry_qc,
-    _json_default,
-    mask_to_edges_bitmask,
 )
 
 
@@ -65,7 +64,7 @@ def build_graph_outputs_from_centerline(
     strict_qc:
         If true, fail instead of warning when quality-check counters detect invalid values.
 
-    Returns
+    Returns:
     -------
     dict
         A small run summary with graph counts, quality-check status, and whether the

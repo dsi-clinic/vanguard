@@ -7,8 +7,6 @@ from pathlib import Path
 
 import numpy as np
 
-from graph_extraction.skeleton3d import skeletonize3d
-
 DEFAULT_SEGMENTATION_DIR = Path("/net/projects2/vanguard/vessel_segmentations")
 NDIM_3D = 3
 NDIM_4D = 4

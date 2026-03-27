@@ -11,7 +11,7 @@ def safe_float(value: Any) -> float | None:
     """Convert values to float when possible, otherwise return `None`."""
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float, np.integer, np.floating)):
+    if isinstance(value, int | float | np.integer | np.floating):
         return float(value)
     if isinstance(value, str):
         try:
@@ -67,7 +67,7 @@ def flatten_numeric_payload(value: Any, prefix: str, out: dict[str, float]) -> N
             flatten_numeric_payload(child, child_prefix, out)
         return
 
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         numeric_values: list[float] = []
         for item in value:
             maybe = safe_float(item)

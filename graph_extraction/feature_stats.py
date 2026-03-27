@@ -10,7 +10,6 @@ from scipy import ndimage
 from graph_extraction.constants import (
     BIFURCATION_MIN_DEGREE,
     MIN_CURVATURE_POINTS,
-    MIN_KINETIC_TIMEPOINTS,
     MIN_LINEAR_FIT_POINTS,
     MIN_PATH_POINTS,
     NDIM_3D,
@@ -254,7 +253,7 @@ def _segment_curvature_mean_per_mm(
     path: list[tuple[int, int, int]],
     spacing_mm_zyx: tuple[float, float, float],
 ) -> float:
-    """Estimate how sharply a segment bends on average.
+    r"""Estimate how sharply a segment bends on average.
 
     Larger values mean the path changes direction more quickly as you move along
     it. The unit is \"per millimeter\", so it is comparable across voxel sizes.

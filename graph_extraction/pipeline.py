@@ -7,22 +7,21 @@ from pathlib import Path
 
 import numpy as np
 
+from graph_extraction.constants import PROCESSING_VIZ_FLIP_SPEC
 from graph_extraction.core4d import (
     discover_study_timepoints,
     load_time_series_from_files,
 )
-from graph_extraction.tc4d import run_tc4d_from_priority
-from graph_extraction.vessel_mip import render_vessel_coverage_mip
-
-from graph_extraction.constants import PROCESSING_VIZ_FLIP_SPEC
+from graph_extraction.feature_stats import _repair_skeleton_support_consistency
+from graph_extraction.graph_outputs import build_graph_outputs_from_centerline
 from graph_extraction.masks import (
     _apply_flip_spec,
     _maybe_load_breast_context_for_alignment,
     _maybe_load_radiologist_context_for_mip,
     _maybe_load_tumor_context_for_features,
 )
-from graph_extraction.feature_stats import _repair_skeleton_support_consistency
-from graph_extraction.graph_outputs import build_graph_outputs_from_centerline
+from graph_extraction.tc4d import run_tc4d_from_priority
+from graph_extraction.vessel_mip import render_vessel_coverage_mip
 
 
 def run_study_pipeline(

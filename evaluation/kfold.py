@@ -491,12 +491,12 @@ def _create_splits_from_excel_core(
     stratify_labels : np.ndarray stratum labels
     report : dict with per_fold_site_counts, per_fold_stratum_counts, warnings, infeasible_constraints
     """
-    from evaluation.selection import apply_selection_criteria
     from clinic_metadata import (
         align_metadata_to_case_ids,
         build_split_annotations,
         load_clinic_metadata_excel,
     )
+    from evaluation.selection import apply_selection_criteria
 
     excel_path = Path(excel_path)
     if stratify_cols is None:
@@ -582,9 +582,7 @@ def _create_splits_from_excel_core(
         original_indices = np.where(valid_mask)[0]
 
     if len(case_ids_work) == 0:
-        raise ValueError(
-            "No cases with valid group/stratum. Check Excel and case_ids."
-        )
+        raise ValueError("No cases with valid group/stratum. Check Excel and case_ids.")
 
     n_samples = len(case_ids_work)
     X_dummy = np.zeros((n_samples, 1))
