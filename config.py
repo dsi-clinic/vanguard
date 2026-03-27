@@ -142,6 +142,52 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
+class ConfigNode(dict[str, Any]):
+    """Nested config mapping with both dict-style and attribute-style access."""
+
+    def __getattr__(self, key: str) -> Any:
+        """Return config values via attribute syntax."""
+        try:
+            return self[key]
+        except KeyError as exc:
+            raise AttributeError(key) from exc
+
+    def __setattr__(self, key: str, value: Any) -> None:
+        """Set config values via attribute syntax."""
+        self[key] = self._wrap(value)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Recursively wrap nested mappings on assignment."""
+        super().__setitem__(key, self._wrap(value))
+
+    @classmethod
+    def _wrap(cls: type[ConfigNode], value: Any) -> Any:
+        """Convert nested dicts to config nodes and recurse through lists."""
+        if isinstance(value, ConfigNode):
+            return value
+        if isinstance(value, dict):
+            wrapped = cls()
+            for nested_key, nested_value in value.items():
+                wrapped[nested_key] = nested_value
+            return wrapped
+        if isinstance(value, list):
+            return [cls._wrap(item) for item in value]
+        return value
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a plain nested dict for serialization."""
+        return to_plain_data(self)
+
+
+def to_plain_data(value: Any) -> Any:
+    """Convert config nodes and nested containers back to plain Python data."""
+    if isinstance(value, ConfigNode):
+        return {key: to_plain_data(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [to_plain_data(item) for item in value]
+    return value
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge nested dicts, replacing non-dict values wholesale."""
     merged = deepcopy(base)
@@ -153,10 +199,10 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
-def load_config(config_path: Path) -> dict[str, Any]:
-    """Load a YAML config and merge it onto the centralized defaults."""
+def load_config(config_path: Path) -> ConfigNode:
+    """Load a YAML config, apply defaults, and return an attribute-friendly node."""
     with Path(config_path).open(encoding="utf-8") as handle:
         loaded = yaml.safe_load(handle) or {}
     if not isinstance(loaded, dict):
         raise ValueError(f"Config must load as a mapping: {config_path}")
-    return _deep_merge(DEFAULT_CONFIG, loaded)
+    return ConfigNode._wrap(_deep_merge(DEFAULT_CONFIG, loaded))

@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from config import load_config
+from config import load_config, to_plain_data
 from run_ablation_matrix import _normalize_ablation_arms
 from tabular_cohort import select_features
 from train_tabular import prepare_evaluation_context, run_single_fold_from_context
@@ -99,7 +99,7 @@ def main() -> None:
             index=False,
         )
     with (fold_dir / "config_used.yaml").open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(arm_config, handle, sort_keys=False)
+        yaml.safe_dump(to_plain_data(arm_config), handle, sort_keys=False)
 
 
 if __name__ == "__main__":

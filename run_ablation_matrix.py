@@ -12,7 +12,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from config import DEFAULT_ABLATION_ARMS, load_config
+from config import DEFAULT_ABLATION_ARMS, load_config, to_plain_data
 from features import FEATURE_BLOCK_DESCRIPTIONS, normalize_selected_features
 from tabular_cohort import build_modular_features, load_labels, select_features
 from train_tabular import run_evaluation_pipeline
@@ -235,7 +235,7 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
     arms = _normalize_ablation_arms(config)
 
     with (outdir / "ablation_arms_used.yaml").open("w", encoding="utf-8") as handle:
-        yaml.safe_dump({"ablation_arms": arms}, handle, sort_keys=False)
+        yaml.safe_dump({"ablation_arms": to_plain_data(arms)}, handle, sort_keys=False)
 
     full_df = _prepare_full_dataset(config, arms, outdir)
     label_col = config["data_paths"]["label_column"]
@@ -271,7 +271,7 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
         arm_dir.mkdir(parents=True, exist_ok=True)
         arm_df.to_csv(arm_dir / "features_engineered_labeled.csv", index=False)
         with (arm_dir / "config_used.yaml").open("w", encoding="utf-8") as handle:
-            yaml.safe_dump(arm_config, handle, sort_keys=False)
+            yaml.safe_dump(to_plain_data(arm_config), handle, sort_keys=False)
 
         run_evaluation_pipeline(arm_df, arm_config, runs_root)
         summary_rows.append(

@@ -8,17 +8,18 @@ from typing import Any
 
 import yaml
 
+from config import ConfigNode, to_plain_data
 from config import load_config as load_defaulted_config
 
 
-def load_config(config_path: Path) -> dict[str, Any]:
+def load_config(config_path: Path) -> ConfigNode:
     """Load a YAML config and apply the centralized defaults."""
     return load_defaulted_config(config_path)
 
 
 def resolve_run_output_dir(
     *,
-    config: dict[str, Any],
+    config: dict[str, Any] | ConfigNode,
     outdir_override: Path | None = None,
 ) -> Path:
     """Resolve the output directory for one run."""
@@ -34,7 +35,7 @@ def resolve_run_output_dir(
 
 def write_config_snapshot(
     *,
-    config: dict[str, Any],
+    config: dict[str, Any] | ConfigNode,
     outdir: Path,
     config_source: Path | None = None,
 ) -> None:
@@ -48,4 +49,4 @@ def write_config_snapshot(
         return
 
     with outdir.joinpath("config_used.yaml").open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(config, handle, sort_keys=False)
+        yaml.safe_dump(to_plain_data(config), handle, sort_keys=False)

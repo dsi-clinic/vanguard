@@ -12,7 +12,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from config import load_config
+from config import load_config, to_plain_data
 from evaluation import Evaluator, FoldResults
 from run_ablation_matrix import (
     _add_baseline_deltas,
@@ -181,7 +181,7 @@ def main() -> None:
         with (arm_results_dir / "config_used.yaml").open(
             "w", encoding="utf-8"
         ) as handle:
-            yaml.safe_dump(arm_config, handle, sort_keys=False)
+            yaml.safe_dump(to_plain_data(arm_config), handle, sort_keys=False)
         arm_df.to_csv(arm_results_dir / "features_engineered_labeled.csv", index=False)
 
         if nested_frames:
