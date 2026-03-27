@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from config import load_config
 from run_ablation_matrix import _normalize_ablation_arms
 from tabular_cohort import select_features
 from train_tabular import prepare_evaluation_context, run_single_fold_from_context
@@ -34,8 +35,7 @@ def main() -> None:
     )
     args = parse_args()
 
-    with args.config.open(encoding="utf-8") as handle:
-        config = yaml.safe_load(handle)
+    config = load_config(args.config)
 
     arms = _normalize_ablation_arms(config)
     if args.arm_index < 0 or args.arm_index >= len(arms):

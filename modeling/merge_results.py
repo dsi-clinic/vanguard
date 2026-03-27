@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from config import load_config
 from evaluation import Evaluator, FoldResults
 from run_ablation_matrix import (
     _add_baseline_deltas,
@@ -116,8 +117,7 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
     args = parse_args()
-    with args.config.open(encoding="utf-8") as handle:
-        config = yaml.safe_load(handle)
+    config = load_config(args.config)
 
     arms = _normalize_ablation_arms(config)
     full_df = pd.read_csv(args.features_csv)
@@ -212,7 +212,7 @@ def main() -> None:
     summary_df, fold_df = _add_baseline_deltas(
         summary_df,
         fold_df,
-        baseline_arm_name=config.get("baseline_arm_name"),
+        baseline_arm_name=config["baseline_arm_name"],
     )
     summary_df.to_csv(args.out_root / "ablation_summary.csv", index=False)
     if not fold_df.empty:

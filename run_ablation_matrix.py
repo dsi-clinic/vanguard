@@ -12,48 +12,10 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from config import DEFAULT_ABLATION_ARMS, load_config
 from features import FEATURE_BLOCK_DESCRIPTIONS, normalize_selected_features
 from tabular_cohort import build_modular_features, load_labels, select_features
 from train_tabular import run_evaluation_pipeline
-
-DEFAULT_ABLATION_ARMS: list[dict[str, Any]] = [
-    {"name": "tumor_size_only", "selected_features": ["tumor_size"]},
-    {"name": "morph_only", "selected_features": ["morph"]},
-    {"name": "graph_only", "selected_features": ["graph"]},
-    {"name": "kinematic_only", "selected_features": ["kinematic"]},
-    {
-        "name": "tumor_size_plus_morph",
-        "selected_features": ["tumor_size", "morph"],
-    },
-    {
-        "name": "tumor_size_plus_graph",
-        "selected_features": ["tumor_size", "graph"],
-    },
-    {
-        "name": "tumor_size_plus_kinematic",
-        "selected_features": ["tumor_size", "kinematic"],
-    },
-    {
-        "name": "clinical_plus_tumor_size",
-        "selected_features": ["clinical", "tumor_size"],
-    },
-    {
-        "name": "clinical_plus_tumor_size_plus_morph",
-        "selected_features": ["clinical", "tumor_size", "morph"],
-    },
-    {
-        "name": "clinical_plus_tumor_size_plus_graph",
-        "selected_features": ["clinical", "tumor_size", "graph"],
-    },
-    {
-        "name": "clinical_plus_tumor_size_plus_kinematic",
-        "selected_features": ["clinical", "tumor_size", "kinematic"],
-    },
-    {
-        "name": "clinical_plus_tumor_size_plus_graph_plus_kinematic",
-        "selected_features": ["clinical", "tumor_size", "graph", "kinematic"],
-    },
-]
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,7 +38,7 @@ def parse_args() -> argparse.Namespace:
 
 def _normalize_ablation_arms(config: dict[str, Any]) -> list[dict[str, Any]]:
     """Return ablation arms from config or defaults."""
-    raw_arms = config.get("ablation_arms") or DEFAULT_ABLATION_ARMS
+    raw_arms = config["ablation_arms"] or DEFAULT_ABLATION_ARMS
     arms: list[dict[str, Any]] = []
     seen_names: set[str] = set()
 
@@ -134,7 +96,7 @@ def _prepare_full_dataset(
     features_df.to_csv(outdir / "features_full_raw.csv", index=False)
 
     label_col = full_config["data_paths"]["label_column"]
-    id_col = full_config["data_paths"].get("id_column", "case_id")
+    id_col = full_config["data_paths"]["id_column"]
     labels_df = load_labels(full_config["data_paths"]["labels_csv"], id_col, label_col)
 
     merged_df = features_df.merge(labels_df, on="case_id", how="inner")
@@ -331,7 +293,7 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
     summary_df, fold_df = _add_baseline_deltas(
         summary_df,
         fold_df,
-        baseline_arm_name=config.get("baseline_arm_name"),
+        baseline_arm_name=config["baseline_arm_name"],
     )
     summary_df.to_csv(outdir / "ablation_summary.csv", index=False)
     if not fold_df.empty:
@@ -346,8 +308,7 @@ def main() -> None:
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
     args = parse_args()
-    with args.config.open(encoding="utf-8") as handle:
-        config = yaml.safe_load(handle)
+    config = load_config(args.config)
     run_ablation_matrix(config, args.outdir)
 
 

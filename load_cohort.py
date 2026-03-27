@@ -8,11 +8,12 @@ from typing import Any
 
 import yaml
 
+from config import load_config as load_defaulted_config
+
 
 def load_config(config_path: Path) -> dict[str, Any]:
-    """Load a YAML config from disk."""
-    with Path(config_path).open(encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+    """Load a YAML config and apply the centralized defaults."""
+    return load_defaulted_config(config_path)
 
 
 def resolve_run_output_dir(

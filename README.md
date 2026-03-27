@@ -75,7 +75,7 @@ References:
 - dataset page: <https://github.com/LidiaGarrucho/MAMA-MIA>
 - reference: Garrucho et al., Synapse `syn60868042`
 
-On the DSI cluster, the configs in this repo default to shared paths under `/net/projects2/vanguard/...`. Treat those as editable defaults. If your paths differ, change the YAML config before running anything.
+Runtime defaults now live in [`config.py`](config.py). The YAML files under [`configs/`](configs/) only need to override the values for a specific run. On the DSI cluster, many of those defaults point at shared paths under `/net/projects2/vanguard/...`. If your environment differs, override the relevant `data_paths` values in your YAML file instead of editing code.
 
 ## Repository Structure
 
@@ -104,6 +104,8 @@ Supporting pieces:
   - `ispy2.yaml` for standard tabular training
   - `ablation.yaml` for broad feature-block ablations
   - `independent_signal.yaml` for the focused independent-signal matrix
+- `config.py`
+  - central source of runtime defaults shared across tabular training, GNN training, graph-dataset building, and ablation runs
 - `slurm/`
   - top-level Slurm submission wrappers for modeling runs
 - `results/`
@@ -180,6 +182,16 @@ Primary training config:
 
 - [`configs/ispy2.yaml`](configs/ispy2.yaml)
 
+Config pattern:
+
+- [`config.py`](config.py) defines the full default config shape
+- YAML files in [`configs/`](configs/) override only the values for a given run
+- in practice, most students only need to edit:
+  - `data_paths.*`
+  - `experiment_setup.name`
+  - selected `feature_toggles`
+  - selected `model_params`
+
 Canonical feature blocks used by the tabular pipeline:
 
 - `clinical`
@@ -195,7 +207,7 @@ Canonical feature blocks used by the tabular pipeline:
 
 The code definitions for those blocks live in [`features/`](features).
 
-Before running on a new system, review these config fields:
+Before running on a new system, review these config fields in your YAML override:
 
 - `data_paths.centerline_root`
 - `data_paths.tumor_mask_root`

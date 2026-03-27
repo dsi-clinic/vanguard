@@ -84,15 +84,13 @@ def prepare_evaluation_context(
 ) -> dict[str, Any]:
     """Prepare evaluator inputs and deterministic fold splits for a config."""
     label_col = config["data_paths"]["label_column"]
-    model_type = str(config["model_params"].get("model", "rf")).lower()
-    random_state = int(config["model_params"].get("random_state", 42))
-    use_clinical_features = bool(
-        config.get("feature_toggles", {}).get("use_clinical", False)
-    )
-    feature_select_enabled = bool(
-        config["model_params"].get("feature_select_enabled", False)
-    )
-    nested_tune_enabled = bool(config["model_params"].get("nested_tune_enabled", False))
+    model_params = config["model_params"]
+    toggles = config["feature_toggles"]
+    model_type = str(model_params["model"]).lower()
+    random_state = int(model_params["random_state"])
+    use_clinical_features = bool(toggles["use_clinical"])
+    feature_select_enabled = bool(model_params["feature_select_enabled"])
+    nested_tune_enabled = bool(model_params["nested_tune_enabled"])
 
     y = df[label_col].astype(int)
     case_ids = df["case_id"]
@@ -120,10 +118,10 @@ def prepare_evaluation_context(
                 "repetition_time",
             }
         )
-    group_col = str(config["model_params"].get("group_col", "site"))
-    if bool(config["model_params"].get("use_group_split", False)):
+    group_col = str(model_params["group_col"])
+    if bool(model_params["use_group_split"]):
         drop_cols.discard(group_col)
-    stratum_col = config["model_params"].get("stratum_col")
+    stratum_col = model_params["stratum_col"]
     if stratum_col:
         drop_cols.add(str(stratum_col))
 
@@ -146,7 +144,7 @@ def prepare_evaluation_context(
         case_ids=case_ids,
         cohort_df=df,
         config=config,
-        model_name=config["experiment_setup"].get("name", "PCR_Model"),
+        model_name=config["experiment_setup"]["name"],
     )
 
     return {

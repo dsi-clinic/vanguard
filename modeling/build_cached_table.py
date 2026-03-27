@@ -6,8 +6,7 @@ import argparse
 import logging
 from pathlib import Path
 
-import yaml
-
+from config import load_config
 from run_ablation_matrix import _normalize_ablation_arms, _prepare_full_dataset
 
 
@@ -25,8 +24,7 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
     args = parse_args()
-    with args.config.open(encoding="utf-8") as handle:
-        config = yaml.safe_load(handle)
+    config = load_config(args.config)
 
     args.outdir.mkdir(parents=True, exist_ok=True)
     arms = _normalize_ablation_arms(config)

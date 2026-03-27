@@ -66,29 +66,25 @@ def build_features_from_feature_jsons(morphometry_dir: Path) -> pd.DataFrame:
 
 def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
     """Build study-level vascular feature rows from saved centerline outputs."""
-    data_paths = config.get("data_paths", {})
-    toggles = config.get("feature_toggles", {})
+    data_paths = config["data_paths"]
+    toggles = config["feature_toggles"]
 
-    centerline_root = Path(data_paths.get("centerline_root", ""))
+    centerline_root = Path(data_paths["centerline_root"])
     if not centerline_root.exists():
         raise FileNotFoundError(f"Centerline root not found: {centerline_root}")
 
-    centerline_pattern = str(
-        toggles.get("centerline_file_pattern", "{case_id}_skeleton_4d_exam_mask.npy")
-    )
-    require_centerline_file = bool(toggles.get("require_centerline_file", True))
-    include_missing_centerline_rows = bool(
-        toggles.get("include_missing_centerline_rows", False)
-    )
-    include_morphometry = bool(toggles.get("use_morphometry", True))
-    include_tumor_graph_json = bool(toggles.get("use_tumor_graph_features_json", True))
-    dataset_include = toggles.get("dataset_include")
+    centerline_pattern = str(toggles["centerline_file_pattern"])
+    require_centerline_file = bool(toggles["require_centerline_file"])
+    include_missing_centerline_rows = bool(toggles["include_missing_centerline_rows"])
+    include_morphometry = bool(toggles["use_morphometry"])
+    include_tumor_graph_json = bool(toggles["use_tumor_graph_features_json"])
+    dataset_include = toggles["dataset_include"]
     dataset_allow: set[str] | None = None
     if dataset_include is not None:
         if isinstance(dataset_include, str):
             dataset_include = [dataset_include]
         dataset_allow = {str(v) for v in dataset_include}
-    bilateral_filter = _as_optional_bool(toggles.get("bilateral_filter", None))
+    bilateral_filter = _as_optional_bool(toggles["bilateral_filter"])
     bilateral_lookup: dict[str, bool | None] = {}
     if bilateral_filter is not None:
         try:
@@ -121,18 +117,11 @@ def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
                 exc,
             )
             bilateral_filter = None
-    include_tumor_local = bool(toggles.get("use_tumor_local_features", False))
-    tumor_mask_root = Path(
-        data_paths.get(
-            "tumor_mask_root",
-            "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert",
-        )
-    )
-    tumor_mask_pattern = str(toggles.get("tumor_mask_file_pattern", "{case_id}.nii.gz"))
-    tumor_threshold = float(toggles.get("tumor_mask_threshold", 0.5))
-    tumor_radii_voxels = parse_tumor_radii(
-        toggles.get("tumor_radius_voxels", [0, 2, 4, 8])
-    )
+    include_tumor_local = bool(toggles["use_tumor_local_features"])
+    tumor_mask_root = Path(data_paths["tumor_mask_root"])
+    tumor_mask_pattern = str(toggles["tumor_mask_file_pattern"])
+    tumor_threshold = float(toggles["tumor_mask_threshold"])
+    tumor_radii_voxels = parse_tumor_radii(toggles["tumor_radius_voxels"])
 
     if include_tumor_local and not tumor_mask_root.exists():
         logging.warning(
@@ -330,14 +319,14 @@ def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
 
 def build_modular_features(config: dict[str, Any]) -> pd.DataFrame:
     """Build and merge the requested feature blocks into one case-level table."""
-    toggles = config.get("feature_toggles", {})
+    toggles = config["feature_toggles"]
 
-    use_vascular = bool(toggles.get("use_vascular", False))
-    use_clinical = bool(toggles.get("use_clinical", False))
-    include_site_features = bool(toggles.get("include_site_features", True))
-    merge_how = str(toggles.get("merge_how", "inner"))
-    dataset_include = toggles.get("dataset_include")
-    bilateral_filter = _as_optional_bool(toggles.get("bilateral_filter", None))
+    use_vascular = bool(toggles["use_vascular"])
+    use_clinical = bool(toggles["use_clinical"])
+    include_site_features = bool(toggles["include_site_features"])
+    merge_how = str(toggles["merge_how"])
+    dataset_include = toggles["dataset_include"]
+    bilateral_filter = _as_optional_bool(toggles["bilateral_filter"])
 
     if use_vascular:
         logging.info("Loading vascular centerline features...")
@@ -525,15 +514,13 @@ def prepare_data(config: dict[str, Any], outdir: Path) -> pd.DataFrame:
 
     labels_path = config["data_paths"]["labels_csv"]
     label_col = config["data_paths"]["label_column"]
-    id_col = config["data_paths"].get("id_column", "case_id")
+    id_col = config["data_paths"]["id_column"]
 
     labels_df = load_labels(labels_path, id_col, label_col)
     merged_df = feats_df.merge(labels_df, on="case_id", how="inner")
     merged_df = select_features(
         merged_df,
-        selected_blocks=config.get("feature_toggles", {}).get(
-            "selected_features", None
-        ),
+        selected_blocks=config["feature_toggles"]["selected_features"],
         label_col=label_col,
     )
     merged_df.to_csv(outdir / "features_engineered_labeled.csv", index=False)

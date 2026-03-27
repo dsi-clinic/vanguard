@@ -27,6 +27,11 @@ Check or override these before running:
 - `FOLD_CPUS`, `FOLD_MEM`, `FOLD_TIME`
 - `MERGE_CPUS`, `MERGE_MEM`, `MERGE_TIME`
 
+Config note:
+
+- runtime defaults come from [`../config.py`](../config.py)
+- the YAML named by `CONFIG` only needs to override values for the specific experiment
+
 Typical use for the independent-signal matrix:
 
 ```bash

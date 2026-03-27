@@ -139,7 +139,13 @@ evaluator.save_results(kfold_results, output_dir)
 
 - [`../train_tabular.py`](../train_tabular.py)
 - [`../train_gnn.py`](../train_gnn.py)
+- [`../config.py`](../config.py)
 - [`../configs/ispy2.yaml`](../configs/ispy2.yaml)
 - [`../configs/ablation.yaml`](../configs/ablation.yaml)
 - [`../configs/independent_signal.yaml`](../configs/independent_signal.yaml)
 - [`../examples/baseline_model_example.py`](../examples/baseline_model_example.py)
+
+Config note:
+
+- [`../config.py`](../config.py) defines the repo-wide defaults used by the training and ablation entrypoints.
+- the YAML files under [`../configs/`](../configs/) only need to override values for a specific run.
