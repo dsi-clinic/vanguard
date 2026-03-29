@@ -79,7 +79,7 @@ class Evaluator:
         self: Evaluator,
         X: np.ndarray | pd.DataFrame,
         y: np.ndarray | pd.Series,
-        patient_ids: np.ndarray | pd.Series | None = None,
+        case_ids: np.ndarray | pd.Series | None = None,
         model_name: str = "model",
         random_state: int = 42,
     ) -> None:
@@ -91,10 +91,10 @@ class Evaluator:
             Feature matrix
         y : np.ndarray | pd.Series
             Target labels
-        patient_ids : np.ndarray | pd.Series, optional
+        case_ids : np.ndarray | pd.Series, optional
             Patient IDs for tracking (recommended)
         model_name : str, default="model"
-            Name of the model (e.g., "radiomics_baseline", "non_imaging_baseline").
+            Name of the model (e.g., "radiomics", "train").
             Used for organizing outputs and comparing multiple models.
         random_state : int, default=42
             Random seed for reproducibility
@@ -106,10 +106,10 @@ class Evaluator:
         Note: Model is NOT passed here - models handle their own training.
         """
         # Validate inputs
-        validate_inputs(X, y, patient_ids)
+        validate_inputs(X, y, case_ids)
 
         # Align and store data
-        self.X, self.y, self.patient_ids = align_data(X, y, patient_ids)
+        self.X, self.y, self.case_ids = align_data(X, y, case_ids)
         self.model_name = model_name
         self.random_state = random_state
 
@@ -157,8 +157,8 @@ class Evaluator:
             List of FoldSplit objects, one per fold, containing:
             - train_indices: indices for training
             - val_indices: indices for validation
-            - train_patient_ids: patient IDs for training (if available)
-            - val_patient_ids: patient IDs for validation (if available)
+            - train_case_ids: case IDs for training (if available)
+            - val_case_ids: case IDs for validation (if available)
             If return_report=True and groups provided, returns tuple of (splits, report_dict).
 
         Examples:
@@ -180,7 +180,7 @@ class Evaluator:
                 y=self.y,
                 groups=groups,
                 stratify_labels=stratify_labels,
-                patient_ids=self.patient_ids,
+                case_ids=self.case_ids,
                 n_splits=n_splits,
                 shuffle=shuffle,
                 random_state=self.random_state,
@@ -198,7 +198,7 @@ class Evaluator:
             split_dicts = create_kfold_splits(
                 X=self.X,
                 y=stratify_labels,  # Use stratify_labels for stratification
-                patient_ids=self.patient_ids,
+                case_ids=self.case_ids,
                 n_splits=n_splits,
                 stratify=True,  # Always stratify when stratify_labels provided
                 shuffle=shuffle,
@@ -210,7 +210,7 @@ class Evaluator:
             split_dicts = create_kfold_splits(
                 X=self.X,
                 y=self.y,
-                patient_ids=self.patient_ids,
+                case_ids=self.case_ids,
                 n_splits=n_splits,
                 stratify=stratify,
                 shuffle=shuffle,
@@ -226,8 +226,8 @@ class Evaluator:
                     fold_idx=split_dict["fold_idx"],
                     train_indices=split_dict["train_indices"],
                     val_indices=split_dict["val_indices"],
-                    train_patient_ids=split_dict["train_patient_ids"],
-                    val_patient_ids=split_dict["val_patient_ids"],
+                    train_case_ids=split_dict["train_case_ids"],
+                    val_case_ids=split_dict["val_case_ids"],
                 )
             )
 
@@ -247,7 +247,7 @@ class Evaluator:
         fold_results : list[FoldResults]
             List of results from model, one per fold. Each FoldResults contains:
             - fold_idx: fold number
-            - predictions: DataFrame with patient_id, y_true, y_pred, y_prob
+            - predictions: DataFrame with case_id, y_true, y_pred, y_prob
             - metrics: dict of metrics for this fold (optional, can compute from predictions)
 
         Returns:

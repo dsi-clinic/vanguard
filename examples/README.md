@@ -1,29 +1,26 @@
 # Examples
 
-Example scripts and sample data for running the evaluation pipeline.
+This directory contains small example scripts and sample data for the shared evaluation framework.
 
-## Purpose
-
-This directory provides a runnable entry point to the centralized evaluation system: load data (synthetic, CSV, or Excel-driven), define a baseline model (random or logistic), and run k-fold or train/test evaluation with optional cohort selection.
+These examples are not the main project pipeline. They are here so a new student can see the expected input format and output structure without needing the full breast MRI dataset.
 
 ## Contents
 
-| File | Description |
-|------|-------------|
-| `baseline_model_example.py` | Main example script: runs random or logistic baseline with k-fold or train/test evaluation; supports CSV features/labels, Excel metadata, and selection criteria (datasets, sites, tumor types, laterality). |
-| `example_features.csv` | Sample feature matrix (patient_id + numeric columns) for testing CSV-based runs. |
-| `example_labels.csv` | Sample labels (patient_id, label, optional stratum) for testing CSV-based runs. |
-| [README_CSV_EXAMPLE.md](README_CSV_EXAMPLE.md) | CSV format specification for `--features` and `--labels`. |
+| File | Purpose |
+|------|---------|
+| `baseline_model_example.py` | Small end-to-end example that runs a random or logistic baseline through the evaluation framework |
+| `example_features.csv` | Sample case-level feature table |
+| `example_labels.csv` | Sample labels table |
+| `README_CSV_EXAMPLE.md` | Required CSV columns for the sample example |
 
-## How to run
-
-**Random baseline with default synthetic data** (recommended for a quick check):
+## Quick Check
 
 ```bash
+micromamba activate vanguard
 python examples/baseline_model_example.py --model random --output results/baseline_example
 ```
 
-**With your own features and labels (CSV):**
+## Using Your Own CSV Files
 
 ```bash
 python examples/baseline_model_example.py --model random \
@@ -32,18 +29,13 @@ python examples/baseline_model_example.py --model random \
   --output results/baseline_example
 ```
 
-**With Excel metadata and dataset/site selection** (see main README §6.4):
+## Using Excel Metadata
 
 ```bash
 python examples/baseline_model_example.py --model random \
   --excel-metadata path/to/clinical_and_imaging_info.xlsx \
-  --datasets iSpy2 --output results/ispy2
+  --datasets iSpy2 \
+  --output results/ispy2
 ```
 
-**Logistic regression baseline** (with synthetic or provided data):
-
-```bash
-python examples/baseline_model_example.py --model logistic --output results/logistic_example
-```
-
-For more options (YAML config, unilateral-only, stratified export), see the main [README](../README.md) §6.4 (Evaluation Framework) and the Pipeline Workflow section. CSV column requirements are documented in [README_CSV_EXAMPLE.md](README_CSV_EXAMPLE.md).
+For more detail on the evaluation layer, see the main [README](../README.md) and [evaluation/README.md](../evaluation/README.md).

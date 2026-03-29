@@ -28,6 +28,7 @@ Naming conventions
   run_train_test).
 """
 
+from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.evaluator import (
     Evaluator,
     FoldResults,
@@ -58,6 +59,7 @@ __all__ = [
     "FoldSplit",
     "KFoldResults",
     "TrainTestResults",
+    "create_splits_for_dataframe",
     "create_splits_from_excel",
     "export_splits_to_csv",
     "SampleSelectionCriteria",

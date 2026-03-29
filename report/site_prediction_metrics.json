@@ -1,7 +1,0 @@
-{
-  "target": "site",
-  "n_samples": 1441,
-  "n_classes": 26,
-  "auc_macro": 0.8613252448341099,
-  "interpretation": "strong batch encoding (confounding risk)"
-}

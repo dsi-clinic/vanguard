@@ -1,4 +1,4 @@
-"""Single entrypoint for tc4d skeleton extraction and morphometry generation."""
+"""Command-line entrypoint for one graph-extraction case run."""
 
 from __future__ import annotations
 
@@ -24,20 +24,39 @@ DEFAULT_TUMOR_MASK_DIR = Path(
 def build_parser() -> argparse.ArgumentParser:
     """Build CLI parser."""
     parser = argparse.ArgumentParser(
-        description="Run tc4d skeleton extraction and morphometry in one pipeline."
+        description="Run graph extraction and feature generation for one case."
     )
-    parser.add_argument("--study-id", type=str, required=True)
+    parser.add_argument("--case-id", type=str, required=True)
     parser.add_argument(
         "--input-dir",
         type=Path,
         default=DEFAULT_SEGMENTATION_DIR,
-        help="Directory containing `<study-id>/images/*.npz` segmentation files.",
+        help="Directory containing `<case-id>/images/*.npz` segmentation files.",
     )
     parser.add_argument(
         "--output-dir", type=Path, required=True, help="Output directory."
     )
+    parser.add_argument(
+        "--features-only",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Skip tc4d skeleton extraction and recompute graph features only from "
+            "existing `<case>_skeleton_4d_exam_mask.npy` and "
+            "`<case>_skeleton_4d_exam_support_mask.npy` in --output-dir."
+        ),
+    )
     parser.add_argument("--force-skeleton", action="store_true")
     parser.add_argument("--force-features", action="store_true")
+    parser.add_argument(
+        "--strict-qc",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Fail run when morphometry QC detects invalid values "
+            "(e.g. non-positive/non-finite radii or duplicate segment endpoint pairs)."
+        ),
+    )
     parser.add_argument(
         "--save-exam-masks",
         action=argparse.BooleanOptionalAction,
@@ -81,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TUMOR_MASK_DIR,
         help=(
             "Directory for optional tumor masks used in MIP overlays "
-            "(expected `<study-id>.nii.gz`)."
+            "(expected `<case-id>.nii.gz`)."
         ),
     )
 
@@ -92,15 +111,19 @@ def main() -> None:
     """CLI entrypoint."""
     parser = build_parser()
     args = parser.parse_args()
-    from graph_extraction.processing import process_4d_study
+    if args.features_only and args.force_skeleton:
+        parser.error("`--features-only` cannot be combined with `--force-skeleton`.")
+    from graph_extraction.pipeline import run_study_pipeline
 
     start = time.perf_counter()
-    result = process_4d_study(
+    result = run_study_pipeline(
         input_dir=args.input_dir,
-        study_id=args.study_id,
+        case_id=args.case_id,
         output_dir=args.output_dir,
+        features_only=bool(args.features_only),
         force_skeleton=args.force_skeleton,
         force_features=args.force_features,
+        strict_qc=bool(args.strict_qc),
         save_exam_masks=args.save_exam_masks,
         save_center_manifold_mask=args.save_center_manifold_mask,
         render_mip=args.render_mip,
@@ -110,7 +133,7 @@ def main() -> None:
     )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    summary_path = args.output_dir / "processing_summary.json"
+    summary_path = args.output_dir / "run_summary.json"
     result["elapsed_seconds"] = float(time.perf_counter() - start)
     summary_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
 

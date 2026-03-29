@@ -160,10 +160,8 @@ output/
 out/
 feature_outdir/
 
-# Output directories (keep only small examples in git)
+# Output directories (keep only compact tracked summaries in git)
 output/
-graph_pruning_outdir/
-thinning_based_outdir/
 centerline_outputs/
 test_outputs/
 *.vtp
@@ -171,23 +169,28 @@ test_outputs/
 *-out/
 logs/
 debug_output/
-
-# Results shouldn't be commited as they can be regenerated easily
-results/**.claude/
-results/**
 test_breast_masks/
-radiomics_baseline/outputs/
-radiomics_baseline/figures/
-radiomics_baseline/kinetic_maps/
-radiomics_baseline/configs/generated/
-radiomics_baseline/configs/rerun/
-radiomics_baseline/configs/ablation_summary.csv
-radiomics_baseline/experiment_averages.csv
-radiomics_baseline/experiment_results.csv
-radiomics_baseline/lab_notebook.md
-radiomics_baseline/combat_plan.md
-radiomics_baseline/splits_v1.csv
-ml_pipeline/experiments/
+experiments/
+results/**.claude/
+radiomics/outputs/
+radiomics/figures/
+radiomics/kinetic_maps/
+radiomics/configs/generated/
+radiomics/configs/rerun/
+radiomics/configs/ablation_summary.csv
+radiomics/experiment_averages.csv
+radiomics/experiment_results.csv
+radiomics/lab_notebook.md
+radiomics/combat_plan.md
+radiomics/splits_v1.csv
+report/*.csv
+report/*.json
+report/figs/
+report/plots/
+report/tables/
+report/viz/
+DUKE_001_0001_mid.png
+DUKE_001_0001_with_mask.png
 *.backup
 
 # Gas Town (added by gt)

@@ -16,7 +16,7 @@ Usage:
     >>> # Or from CLI args:
     >>> criteria = build_selection_criteria_from_args(args)
     >>> # Or from YAML config:
-    >>> criteria = load_selection_criteria_from_yaml(Path("eval_config.yaml"))
+    >>> criteria = load_selection_criteria_from_yaml(Path("docs/eval_selection_example.yaml"))
 """
 
 from __future__ import annotations
@@ -312,7 +312,7 @@ def load_selection_criteria_from_yaml(
     Parameters
     ----------
     config_path : Path | str
-        Path to YAML file (e.g. eval_config.yaml).
+        Path to YAML file (e.g. docs/eval_selection_example.yaml).
 
     Returns:
     -------
@@ -328,7 +328,7 @@ def load_selection_criteria_from_yaml(
 
     Example:
     -------
-    Config file (eval_config.yaml)::
+    Config file (docs/eval_selection_example.yaml)::
 
         selection:
           datasets: [iSpy2, Duke]

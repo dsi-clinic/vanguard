@@ -13,7 +13,7 @@ MAX_CLASSES_FOR_BINARY = 2
 def validate_inputs(
     X: np.ndarray | pd.DataFrame,
     y: np.ndarray | pd.Series,
-    patient_ids: np.ndarray | pd.Series | None = None,
+    case_ids: np.ndarray | pd.Series | None = None,
 ) -> None:
     """Validate input data for consistency.
 
@@ -23,7 +23,7 @@ def validate_inputs(
         Feature matrix.
     y : np.ndarray | pd.Series
         Target labels (must be binary 0/1).
-    patient_ids : np.ndarray | pd.Series, optional
+    case_ids : np.ndarray | pd.Series, optional
         Patient IDs for tracking.
 
     Raises:
@@ -58,22 +58,22 @@ def validate_inputs(
     if not set(unique_labels).issubset({0, 1}):
         raise ValueError(f"y must contain only 0 and 1. Found labels: {unique_labels}")
 
-    # Check patient_ids if provided
-    if patient_ids is not None:
-        patient_ids_array = np.asarray(patient_ids)
-        if len(patient_ids_array) != n_samples:
+    # Check case_ids if provided
+    if case_ids is not None:
+        case_ids_array = np.asarray(case_ids)
+        if len(case_ids_array) != n_samples:
             raise ValueError(
-                f"patient_ids must have same length as X and y. "
-                f"Got {len(patient_ids_array)} expected {n_samples}"
+                f"case_ids must have same length as X and y. "
+                f"Got {len(case_ids_array)} expected {n_samples}"
             )
 
 
 def align_data(
     X: np.ndarray | pd.DataFrame,
     y: np.ndarray | pd.Series,
-    patient_ids: np.ndarray | pd.Series | None = None,
+    case_ids: np.ndarray | pd.Series | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-    """Align features, labels, and patient IDs to ensure consistent indexing.
+    """Align features, labels, and case IDs to ensure consistent indexing.
 
     Parameters
     ----------
@@ -81,13 +81,13 @@ def align_data(
         Feature matrix.
     y : np.ndarray | pd.Series
         Target labels.
-    patient_ids : np.ndarray | pd.Series, optional
-        Patient IDs.
+    case_ids : np.ndarray | pd.Series, optional
+        Case IDs.
 
     Returns:
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray | None]
-        Aligned (X, y, patient_ids) as numpy arrays.
+        Aligned (X, y, case_ids) as numpy arrays.
     """
     # Convert to numpy arrays
     if isinstance(X, pd.DataFrame):
@@ -107,20 +107,20 @@ def align_data(
         # Just use values
         y_array = y.to_numpy()
 
-    # Handle patient_ids
-    if patient_ids is not None:
-        if isinstance(patient_ids, pd.Series) and isinstance(X, pd.DataFrame):
-            patient_ids_array = patient_ids.loc[index].to_numpy()
+    # Handle case_ids
+    if case_ids is not None:
+        if isinstance(case_ids, pd.Series) and isinstance(X, pd.DataFrame):
+            case_ids_array = case_ids.loc[index].to_numpy()
         else:
-            patient_ids_array = np.asarray(patient_ids)
+            case_ids_array = np.asarray(case_ids)
     else:
-        patient_ids_array = None
+        case_ids_array = None
 
-    return X_array, y_array, patient_ids_array
+    return X_array, y_array, case_ids_array
 
 
 def prepare_predictions_df(
-    patient_ids: np.ndarray | pd.Series | None,
+    case_ids: np.ndarray | pd.Series | None,
     y_true: np.ndarray,
     y_pred: np.ndarray,
     y_prob: np.ndarray,
@@ -129,11 +129,11 @@ def prepare_predictions_df(
     """Format predictions into a standardized DataFrame.
 
     Optional helper for building prediction tables used by the evaluator.
-    Columns: patient_id, y_true, y_pred, y_prob; optionally "fold" for k-fold.
+    Columns: case_id, y_true, y_pred, y_prob; optionally "fold" for k-fold.
 
     Parameters
     ----------
-    patient_ids : np.ndarray | pd.Series | None
+    case_ids : np.ndarray | pd.Series | None
         Patient IDs, or None to use integer indices.
     y_true : np.ndarray
         True labels.
@@ -149,11 +149,11 @@ def prepare_predictions_df(
     pd.DataFrame
         Standardized predictions table.
     """
-    if patient_ids is None:
-        patient_ids = np.arange(len(y_true))
+    if case_ids is None:
+        case_ids = np.arange(len(y_true))
 
     data = {
-        "patient_id": np.asarray(patient_ids),
+        "case_id": np.asarray(case_ids),
         "y_true": np.asarray(y_true),
         "y_pred": np.asarray(y_pred),
         "y_prob": np.asarray(y_prob),

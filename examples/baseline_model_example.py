@@ -33,7 +33,7 @@ Usage:
         --excel-metadata path/to/metadata.xlsx \
         --output results/baseline_example
 
-    # Excel + your own features/labels (must cover all Excel patient_ids):
+    # Excel + your own features/labels (must cover all Excel case_ids):
     python examples/baseline_model_example.py \
         --model random \
         --features path/to/features.csv \
@@ -51,7 +51,7 @@ Usage:
 
     # Selection from YAML config (CLI flags override config):
     python examples/baseline_model_example.py --model random \
-        --excel-metadata path/to/metadata.xlsx --config config/eval_selection_example.yaml
+        --excel-metadata path/to/metadata.xlsx --config docs/eval_selection_example.yaml
 
 Examples:
     python examples/baseline_model_example.py \
@@ -74,6 +74,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from clinic_metadata import (  # noqa: E402
+    get_case_ids_from_excel,
+    load_clinic_metadata_excel,
+)
 from evaluation import (  # noqa: E402
     Evaluator,
     FoldResults,
@@ -91,15 +95,11 @@ from evaluation.selection import (  # noqa: E402
     load_selection_criteria_from_yaml,
 )
 from evaluation.utils import prepare_predictions_df  # noqa: E402
-from src.utils.clinic_metadata import (  # noqa: E402
-    get_patient_ids_from_excel,
-    load_clinic_metadata_excel,
-)
 
 # ---------------------------------------------------------------------------
 # Section 1: Synthetic data generation
 # ---------------------------------------------------------------------------
-# The evaluation system is configuration-agnostic: it accepts (X, y, patient_ids)
+# The evaluation system is configuration-agnostic: it accepts (X, y, case_ids)
 # regardless of how they were loaded (synthetic, CSV, config, etc.). Model systems
 # are responsible for loading data; the evaluator only consumes arrays.
 
@@ -108,23 +108,23 @@ def generate_synthetic_data(
     n_samples: int = 200,
     n_features: int = 10,
     random_state: int = 42,
-    patient_ids: np.ndarray | None = None,
+    case_ids: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Generate synthetic binary classification data for testing.
 
     Why: Enables running the example without external data. The evaluation
-    system accepts (X, y, patient_ids) regardless of source.
+    system accepts (X, y, case_ids) regardless of source.
 
     Parameters
     ----------
     n_samples : int
-        Number of samples (ignored if patient_ids is provided).
+        Number of samples (ignored if case_ids is provided).
     n_features : int
         Number of features (ignored for random model; useful for logistic)
     random_state : int
         Seed for reproducibility
-    patient_ids : np.ndarray or None, optional
-        If provided, generate exactly len(patient_ids) samples and use these IDs.
+    case_ids : np.ndarray or None, optional
+        If provided, generate exactly len(case_ids) samples and use these IDs.
         Allows aligning synthetic data to an external cohort (e.g. from Excel).
 
     Returns:
@@ -133,13 +133,13 @@ def generate_synthetic_data(
         Feature matrix (n_samples, n_features)
     y : np.ndarray
         Binary labels (0 or 1)
-    patient_ids : np.ndarray
-        Patient IDs (from argument or generated as "patient_0000", ...)
+    case_ids : np.ndarray
+        Case IDs (from argument or generated as "case_0000", ...)
     """
-    ids_provided = patient_ids is not None
+    ids_provided = case_ids is not None
     if ids_provided:
-        patient_ids = np.asarray(patient_ids)
-        n_samples = len(patient_ids)
+        case_ids = np.asarray(case_ids)
+        n_samples = len(case_ids)
     rng = np.random.default_rng(random_state)
     # Simple separable-ish data: random features, label from threshold on first feature
     X = rng.standard_normal((n_samples, n_features))
@@ -151,8 +151,8 @@ def generate_synthetic_data(
     flip = rng.random(n_samples) < noise_flip_prob
     y[flip] = 1 - y[flip]
     if not ids_provided:
-        patient_ids = np.array([f"patient_{i:04d}" for i in range(n_samples)])
-    return X, y, patient_ids
+        case_ids = np.array([f"case_{i:04d}" for i in range(n_samples)])
+    return X, y, case_ids
 
 
 def load_data_from_csv(
@@ -162,32 +162,32 @@ def load_data_from_csv(
     """Load features and labels from CSV files.
 
     Expects:
-        - features_path: CSV with one row per sample, optional 'patient_id' column
-        - labels_path: CSV with columns 'patient_id' (or index), 'label' (0/1),
+        - features_path: CSV with one row per sample, optional 'case_id' column
+        - labels_path: CSV with columns 'case_id' (or index), 'label' (0/1),
           and optionally 'stratum' or 'subtype' for subgroup reporting
 
     Returns:
     -------
-    X, y, patient_ids, stratum
+    X, y, case_ids, stratum
         stratum is None if labels have no 'stratum' or 'subtype' column.
     """
     X_df = pd.read_csv(features_path)
     y_df = pd.read_csv(labels_path)
 
-    if "patient_id" in X_df.columns:
-        patient_ids = X_df["patient_id"].to_numpy()
-        X = X_df.drop(columns=["patient_id"]).to_numpy()
+    if "case_id" in X_df.columns:
+        case_ids = X_df["case_id"].to_numpy()
+        X = X_df.drop(columns=["case_id"]).to_numpy()
     else:
-        patient_ids = np.array([f"sample_{i}" for i in range(len(X_df))])
+        case_ids = np.array([f"sample_{i}" for i in range(len(X_df))])
         X = X_df.to_numpy()
 
     stratum = None
-    if "patient_id" in y_df.columns and "label" in y_df.columns:
-        # Align by patient_id if present in both
-        merged = X_df.merge(y_df, on="patient_id", how="inner")
-        if "patient_id" in merged.columns:
-            patient_ids = merged["patient_id"].to_numpy()
-            drop_cols = ["patient_id", "label"]
+    if "case_id" in y_df.columns and "label" in y_df.columns:
+        # Align by case_id if present in both
+        merged = X_df.merge(y_df, on="case_id", how="inner")
+        if "case_id" in merged.columns:
+            case_ids = merged["case_id"].to_numpy()
+            drop_cols = ["case_id", "label"]
             for col in ("stratum", "subtype"):
                 if col in merged.columns:
                     stratum = merged[col].astype(str).to_numpy()
@@ -200,9 +200,9 @@ def load_data_from_csv(
 
     if len(y) != len(X):
         raise ValueError(f"Features and labels length mismatch: {len(X)} vs {len(y)}")
-    if len(patient_ids) != len(X):
-        patient_ids = np.array([f"sample_{i}" for i in range(len(X))])
-    return X, y, patient_ids, stratum
+    if len(case_ids) != len(X):
+        case_ids = np.array([f"sample_{i}" for i in range(len(X))])
+    return X, y, case_ids, stratum
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +248,7 @@ def predict_random(
 # Section 3: K-fold and train/test runners
 # ---------------------------------------------------------------------------
 # Generic run_kfold: takes splits and a predictor that returns (y_true, y_pred,
-# y_prob, patient_ids) per fold. Generic run_train_test: takes a predictor that
+# y_prob, case_ids) per fold. Generic run_train_test: takes a predictor that
 # returns (y_pred, y_prob) for the test set. Model adapters (random, logistic)
 # are built with a random_state and passed to these runners.
 
@@ -265,8 +265,8 @@ def _get_predictions_random(
     y_pred, y_prob = predict_random(n_val, random_state=random_state + split.fold_idx)
     y_true = y[split.val_indices]
     pid = (
-        split.val_patient_ids
-        if split.val_patient_ids is not None
+        split.val_case_ids
+        if split.val_case_ids is not None
         else np.array([f"val_{i}" for i in range(n_val)])
     )
     return y_true, y_pred, y_prob, pid
@@ -289,8 +289,8 @@ def _get_predictions_logistic(
     y_pred = model.predict(X_val)
     y_prob = model.predict_proba(X_val)[:, 1]
     pid = (
-        split.val_patient_ids
-        if split.val_patient_ids is not None
+        split.val_case_ids
+        if split.val_case_ids is not None
         else np.array([f"val_{i}" for i in range(len(y_val))])
     )
     return y_val, y_pred, y_prob, pid
@@ -308,7 +308,7 @@ def run_kfold(
     """Run k-fold evaluation with a given predictor.
 
     For each split, get_predictions_for_fold(split, X, y, stratum) is called
-    and must return (y_true, y_pred, y_prob, patient_ids). Predictions are
+    and must return (y_true, y_pred, y_prob, case_ids). Predictions are
     assembled with prepare_predictions_df and optional stratum column.
 
     Parameters
@@ -322,7 +322,7 @@ def run_kfold(
     splits : list[FoldSplit]
         K-fold splits (from evaluator.create_kfold_splits or create_splits_from_excel).
     get_predictions_for_fold : callable
-        (split, X, y, stratum) -> (y_true, y_pred, y_prob, patient_ids).
+        (split, X, y, stratum) -> (y_true, y_pred, y_prob, case_ids).
     stratum : np.ndarray, optional
         Stratum labels aligned to X/y for per-stratum reporting.
     log_progress : bool, default=True
@@ -355,14 +355,14 @@ def run_train_test(
     y_train: np.ndarray,
     X_test: np.ndarray,
     y_test: np.ndarray,
-    patient_ids_test: np.ndarray | None,
+    case_ids_test: np.ndarray | None,
     model_name: str,
     random_state: int,
     stratum_test: np.ndarray | None = None,
 ) -> TrainTestResults:
     """Run train/test evaluation with a given predictor.
 
-    get_predictions_fn(X_train, y_train, X_test, y_test, patient_ids_test,
+    get_predictions_fn(X_train, y_train, X_test, y_test, case_ids_test,
     stratum_test, random_state) must return (y_pred, y_prob). Predictions
     DataFrame and metrics are built here.
 
@@ -372,8 +372,8 @@ def run_train_test(
         Returns (y_pred, y_prob) for the test set.
     X_train, y_train, X_test, y_test : np.ndarray
         Train and test data.
-    patient_ids_test : np.ndarray or None
-        Test set patient IDs.
+    case_ids_test : np.ndarray or None
+        Test set case IDs.
     model_name : str
         Model name for TrainTestResults.
     random_state : int
@@ -388,12 +388,12 @@ def run_train_test(
     from evaluation.metrics import compute_binary_metrics
 
     y_pred, y_prob = get_predictions_fn(
-        X_train, y_train, X_test, y_test, patient_ids_test, stratum_test, random_state
+        X_train, y_train, X_test, y_test, case_ids_test, stratum_test, random_state
     )
     n = len(y_test)
-    if patient_ids_test is None:
-        patient_ids_test = np.array([f"test_{i}" for i in range(n)])
-    pred_df = prepare_predictions_df(patient_ids_test, y_test, y_pred, y_prob)
+    if case_ids_test is None:
+        case_ids_test = np.array([f"test_{i}" for i in range(n)])
+    pred_df = prepare_predictions_df(case_ids_test, y_test, y_pred, y_prob)
     if stratum_test is not None:
         pred_df["stratum"] = stratum_test
     metrics = compute_binary_metrics(y_test, y_pred, y_prob)
@@ -410,7 +410,7 @@ def _train_test_predictions_random(
     y_train: np.ndarray,
     X_test: np.ndarray,
     y_test: np.ndarray,
-    patient_ids_test: np.ndarray | None,
+    case_ids_test: np.ndarray | None,
     stratum_test: np.ndarray | None,
     random_state: int,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -425,7 +425,7 @@ def _train_test_predictions_logistic(
     y_train: np.ndarray,
     X_test: np.ndarray,
     y_test: np.ndarray,
-    patient_ids_test: np.ndarray | None,
+    case_ids_test: np.ndarray | None,
     stratum_test: np.ndarray | None,
     random_state: int,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -610,12 +610,12 @@ def main() -> None:
                 site_col="site",
                 verbose=True,
             )
-            excel_patient_ids = metadata_df["patient_id"].astype(str).to_numpy()
+            excel_case_ids = metadata_df["case_id"].astype(str).to_numpy()
         else:
-            excel_patient_ids = get_patient_ids_from_excel(args.excel_metadata)
-        X, y, patient_ids = generate_synthetic_data(
+            excel_case_ids = get_case_ids_from_excel(args.excel_metadata)
+        X, y, case_ids = generate_synthetic_data(
             random_state=args.random_state,
-            patient_ids=excel_patient_ids,
+            case_ids=excel_case_ids,
         )
         do_train_test = False
         X_train, X_test = X, None
@@ -623,14 +623,14 @@ def main() -> None:
         pid_test = None
         stratum = None
     elif args.features is not None and args.labels is not None:
-        X, y, patient_ids, stratum = load_data_from_csv(args.features, args.labels)
+        X, y, case_ids, stratum = load_data_from_csv(args.features, args.labels)
         # For train/test we'd need a fixed split; with CSV we only do k-fold here for simplicity
         do_train_test = False
         X_train, X_test = X, None
         y_train, y_test = y, None
         pid_test = None
     else:
-        X, y, patient_ids = generate_synthetic_data(random_state=args.random_state)
+        X, y, case_ids = generate_synthetic_data(random_state=args.random_state)
         n = len(y)
         from sklearn.model_selection import train_test_split
 
@@ -643,12 +643,12 @@ def main() -> None:
         )
         X_train, X_test = X[train_idx], X[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
-        pid_test = patient_ids[test_idx]
+        pid_test = case_ids[test_idx]
         stratum = None  # no stratum for synthetic data unless added
         do_train_test = True
 
     model_name = "random_baseline" if args.model == "random" else "logistic_baseline"
-    train_pids = patient_ids if not do_train_test else patient_ids[train_idx]
+    train_pids = case_ids if not do_train_test else case_ids[train_idx]
 
     logger.info(
         "Starting k-fold evaluation (n_splits=%d, n_runs=%d)",
@@ -672,7 +672,7 @@ def main() -> None:
         evaluator = Evaluator(
             X=X_train,
             y=y_train,
-            patient_ids=train_pids,
+            case_ids=train_pids,
             model_name=model_name,
             random_state=seed,
         )
@@ -681,7 +681,7 @@ def main() -> None:
         if args.excel_metadata is not None:
             splits = create_splits_from_excel(
                 excel_path=args.excel_metadata,
-                patient_ids=train_pids,
+                case_ids=train_pids,
                 n_splits=args.n_splits,
                 random_state=seed,
                 selection_criteria=selection_criteria,
@@ -732,7 +732,7 @@ def main() -> None:
     evaluator = Evaluator(
         X=X_train,
         y=y_train,
-        patient_ids=train_pids,
+        case_ids=train_pids,
         model_name=model_name,
         random_state=args.random_state,
     )

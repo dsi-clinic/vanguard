@@ -8,7 +8,8 @@ name = "vanguard"
 dynamic = ["version"]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["evaluation*", "graph_extraction*", "modeling*"]
 
 [tool.ruff.lint]
 extend-select = [
@@ -36,7 +37,11 @@ ignore = [
   "D415",   # allow first line of doctstrings to end without punctuation
   "ANN002", # missing type on *args
   "ANN003", # missing type on **kwargs
+  "ANN101", # do not require explicit self annotations
+  "ANN401", # allow Any where it keeps interfaces readable
   "B905",   # won't work on python <3.10
+  "D102",   # public method docstrings are not required everywhere
+  "D107",   # __init__ docstrings are not required everywhere
   "S101",   # allow assertions (!!!)
 ]
 
@@ -44,12 +49,4 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"radiomics_baseline/scripts/test_*.py" = ["ANN001", "ANN101", "ANN201", "D101", "D102", "PLR2004"]
-"radiomics_baseline/scripts/radiomics_train.py" = ["ANN101", "D107"]
-
-[tool.pytest.ini_options]
-# Only treat actual test files as test modules. Importing every `*.py` during
-# collection is brittle (e.g., debug/one-off scripts) and makes CI fail on
-# unrelated import-time errors.
-testpaths = ["tests"]
-python_files = ["test_*.py"]
+"radiomics/scripts/radiomics_train.py" = ["ANN101", "D107"]
