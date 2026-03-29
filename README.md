@@ -228,7 +228,7 @@ Current entrypoints:
 - [`configs/deepsets_ispy2.yaml`](configs/deepsets_ispy2.yaml)
   - starting config for the I-SPY2 Deep Sets baseline
 - [`slurm/submit_deepsets_pipeline.sh`](slurm/submit_deepsets_pipeline.sh)
-  - submits dataset building first and then training with a dependency
+  - submits the full Deep Sets workflow from one command
 
 The starter point-level feature is intentionally minimal:
 
@@ -255,6 +255,12 @@ OUT_ROOT=../experiments/deepsets_ispy2_test1 \
 
 The wrapper writes a run-local config under the output directory and fills in
 `data_paths.deepsets_manifest_csv` automatically after the dataset build step.
+
+Internally, the wrapper chains three dependent Slurm stages:
+
+- parallel point-set building
+- manifest merging
+- model training
 
 - `data_paths.deepsets_manifest_csv` if you already built the dataset
 - or rerun [`build_deepsets_dataset.py`](build_deepsets_dataset.py) from the current centerline outputs

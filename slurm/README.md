@@ -10,12 +10,10 @@ These scripts submit pCR modeling experiments from the top-level training and ab
   - wrapper that submits the cached-table job, the arm/fold array job, and the merge job
 - `submit_ablation_arm_fold_array.slurm`
   - per-task worker for one arm/fold pair
-- `submit_build_deepsets_dataset.slurm`
-  - builds one tumor-local Deep Sets point set per case
-- `submit_train_deepsets.slurm`
-  - trains the baseline Deep Sets model from a saved manifest
 - `submit_deepsets_pipeline.sh`
-  - wrapper that submits Deep Sets dataset building first and training second
+  - user-facing wrapper that submits the full Deep Sets workflow
+- `deepsets_job.slurm`
+  - one parameterized job script used for Deep Sets build, merge, and train stages
 
 ## Recommended Entry Point
 
@@ -75,5 +73,8 @@ What the wrapper does:
 
 1. copies the base YAML to `OUT_ROOT/deepsets_runtime_config.yaml`
 2. fills in `data_paths.deepsets_manifest_csv`
-3. submits `submit_build_deepsets_dataset.slurm`
-4. submits `submit_train_deepsets.slurm` with `afterok` dependency on the build job
+3. submits a build array through `deepsets_job.slurm` with `MODE=build`
+4. submits a manifest-merge job through `deepsets_job.slurm` with `MODE=merge`
+5. submits a training job through `deepsets_job.slurm` with `MODE=train`
+
+This keeps the student-facing interface to one command while still parallelizing dataset creation.

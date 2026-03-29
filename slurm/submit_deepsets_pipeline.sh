@@ -52,8 +52,11 @@ BUILD_ARRAY_JOB_ID="$({
     --cpus-per-task="${BUILD_CPUS}" \
     --mem="${BUILD_MEM}" \
     --time="${BUILD_TIME}" \
-    --export=ALL,REPO_ROOT="${REPO_ROOT}",CONFIG="${RUNTIME_CONFIG}",OUT_ROOT="${OUT_ROOT}",NUM_SHARDS="${BUILD_SHARDS}" \
-    "${SCRIPT_DIR}/submit_build_deepsets_dataset_array.slurm"
+    --job-name="deepsets-build" \
+    --output="${REPO_ROOT}/logs/deepsets-build-%A-%a.out" \
+    --error="${REPO_ROOT}/logs/deepsets-build-%A-%a.err" \
+    --export=ALL,MODE=build,REPO_ROOT="${REPO_ROOT}",CONFIG="${RUNTIME_CONFIG}",OUT_ROOT="${OUT_ROOT}",NUM_SHARDS="${BUILD_SHARDS}" \
+    "${SCRIPT_DIR}/deepsets_job.slurm"
 })"
 
 MERGE_JOB_ID="$({
@@ -63,8 +66,11 @@ MERGE_JOB_ID="$({
     --cpus-per-task="${MERGE_CPUS}" \
     --mem="${MERGE_MEM}" \
     --time="${MERGE_TIME}" \
-    --export=ALL,REPO_ROOT="${REPO_ROOT}",OUT_ROOT="${OUT_ROOT}" \
-    "${SCRIPT_DIR}/submit_merge_deepsets_manifest.slurm"
+    --job-name="deepsets-merge" \
+    --output="${REPO_ROOT}/logs/deepsets-merge-%j.out" \
+    --error="${REPO_ROOT}/logs/deepsets-merge-%j.err" \
+    --export=ALL,MODE=merge,REPO_ROOT="${REPO_ROOT}",OUT_ROOT="${OUT_ROOT}" \
+    "${SCRIPT_DIR}/deepsets_job.slurm"
 })"
 
 TRAIN_JOB_ID="$({
@@ -74,8 +80,11 @@ TRAIN_JOB_ID="$({
     --cpus-per-task="${TRAIN_CPUS}" \
     --mem="${TRAIN_MEM}" \
     --time="${TRAIN_TIME}" \
-    --export=ALL,REPO_ROOT="${REPO_ROOT}",CONFIG="${RUNTIME_CONFIG}",OUTDIR="${TRAIN_OUTDIR}" \
-    "${SCRIPT_DIR}/submit_train_deepsets.slurm"
+    --job-name="deepsets-train" \
+    --output="${REPO_ROOT}/logs/deepsets-train-%j.out" \
+    --error="${REPO_ROOT}/logs/deepsets-train-%j.err" \
+    --export=ALL,MODE=train,REPO_ROOT="${REPO_ROOT}",CONFIG="${RUNTIME_CONFIG}",OUTDIR="${TRAIN_OUTDIR}" \
+    "${SCRIPT_DIR}/deepsets_job.slurm"
 })"
 
 cat <<MSG
