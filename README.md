@@ -219,6 +219,10 @@ Before running on a new system, review these config fields in your YAML override
 
 Deep Sets is the current learned set-model baseline in this repo. It does not use graph message passing. Instead, it treats each case as a variable-length set of tumor-local vessel points, maps each point through a shared MLP, sums those embeddings, and then predicts pCR from the pooled case representation.
 
+Reference:
+
+- Zaheer et al., Deep Sets: <https://arxiv.org/abs/1703.06114>
+
 Current entrypoints:
 
 - [`build_deepsets_dataset.py`](build_deepsets_dataset.py)

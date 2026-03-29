@@ -77,4 +77,3 @@ What the wrapper does:
 4. submits a manifest-merge job through `deepsets_job.slurm` with `MODE=merge`
 5. submits a training job through `deepsets_job.slurm` with `MODE=train`
 
-This keeps the student-facing interface to one command while still parallelizing dataset creation.
