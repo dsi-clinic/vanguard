@@ -122,9 +122,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dropout": 0.2,
         "learning_rate": 1e-3,
         "weight_decay": 1e-4,
-        "gnn_local_radius_floor_mm": 20.0,
-        "gnn_local_radius_scale": 2.0,
-        "gnn_local_radius_cap_mm": 60.0,
     },
     "data_paths": {
         "centerline_root": "",
@@ -135,8 +132,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "label_column": "pcr",
         "id_column": "case_id",
         "radiomics_csv": "",
-        "graph_manifest_csv": "",
-        "graph_label_column": "label",
     },
     "ablation_arms": deepcopy(DEFAULT_ABLATION_ARMS),
 }

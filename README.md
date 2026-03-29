@@ -94,8 +94,6 @@ Supporting pieces:
 
 - `features/`
   - canonical definitions of the five modeling blocks: `clinical`, `tumor_size`, `morph`, `graph`, and `kinematic`
-- `train_gnn.py`
-  - template for a future graph neural network training path that reuses the shared evaluator
 - `evaluation/`
   - shared split generation, metrics, result aggregation, and output saving used across model families
 - `modeling/`
@@ -105,7 +103,7 @@ Supporting pieces:
   - `ablation.yaml` for broad feature-block ablations
   - `independent_signal.yaml` for the focused independent-signal matrix
 - `config.py`
-  - central source of runtime defaults shared across tabular training, GNN training, graph-dataset building, and ablation runs
+  - central source of runtime defaults shared across tabular training and ablation runs
 - `slurm/`
   - top-level Slurm submission wrappers for modeling runs
 - `results/`
@@ -223,8 +221,6 @@ Current users:
 
 - `train_tabular.py`
   - tabular clinical, vessel, and radiomics models
-- `train_gnn.py`
-  - scaffold for a future GNN runner that should reuse the same split logic and saved-output format
 
 Start here:
 

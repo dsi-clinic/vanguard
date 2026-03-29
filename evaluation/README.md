@@ -74,7 +74,7 @@ For multi-fold runs, each fold is stored as a `FoldResults` object. The framewor
 
 ## Reusing This For A New Model
 
-A future GNN should keep its own training code in `train_gnn.py`, then call into `evaluation/` for the parts that should stay consistent across models.
+A future custom model should keep its own training code in its own entrypoint, then call into `evaluation/` for the parts that should stay consistent across models.
 
 Typical pattern:
 
@@ -83,18 +83,6 @@ Typical pattern:
 3. For each split, train the model using your own code.
 4. Convert validation predictions into the standard prediction table.
 5. Aggregate the fold results and save them.
-
-The current `train_gnn.py` template already gives students:
-
-- required manifest columns
-- suggested config keys for graph data
-- a helper that converts fold predictions into the evaluator-ready table
-
-Students still need to implement:
-
-- manifest loading
-- graph dataset construction
-- the actual per-fold training loop
 
 ## Example Skeleton
 
@@ -109,7 +97,7 @@ evaluator = Evaluator(
     X=case_manifest_df,
     y=labels,
     case_ids=case_ids,
-    model_name="gnn_model",
+    model_name="custom_model",
     random_state=42,
 )
 
@@ -138,7 +126,6 @@ evaluator.save_results(kfold_results, output_dir)
 ## Related Files
 
 - [`../train_tabular.py`](../train_tabular.py)
-- [`../train_gnn.py`](../train_gnn.py)
 - [`../config.py`](../config.py)
 - [`../configs/ispy2.yaml`](../configs/ispy2.yaml)
 - [`../configs/ablation.yaml`](../configs/ablation.yaml)
