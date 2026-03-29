@@ -34,5 +34,9 @@ This file collects links that have been useful for this project. Start with the 
 
 - PyTorch tutorial
   - <https://pytorch.org/tutorials/beginner/basics/intro.html>
+- PyTorch Geometric colabs
+  - <https://pytorch-geometric.readthedocs.io/en/latest/get_started/colabs.html>
+- Deep Sets paper: <https://arxiv.org/abs/1703.06114>
+  - <https://distill.pub/2021/gnn-intro/>
 - Stanford CS224W archive
   - <https://web.archive.org/web/20210620085703/http://web.stanford.edu/class/cs224w/>

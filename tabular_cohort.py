@@ -435,8 +435,12 @@ def load_labels(path: Path, id_col: str, label_col: str) -> pd.DataFrame:
             obj = json.loads(path.read_text())
             df_labels = pd.DataFrame(obj)
 
-    if id_col not in df_labels.columns and "case_id" in df_labels.columns:
-        df_labels = df_labels.rename(columns={"case_id": id_col})
+    if id_col not in df_labels.columns:
+        fallback_id_columns = ("case_id", "patient_id", "study_id")
+        for fallback_column in fallback_id_columns:
+            if fallback_column in df_labels.columns:
+                df_labels = df_labels.rename(columns={fallback_column: id_col})
+                break
 
     df_labels = df_labels.dropna(subset=[label_col])
     mapping = {"true": 1, "false": 0, "yes": 1, "no": 0}

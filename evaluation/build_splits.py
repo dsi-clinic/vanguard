@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from evaluation import Evaluator
+from evaluation.evaluator import Evaluator
 from evaluation.kfold import FoldSplit
 
 
