@@ -94,6 +94,8 @@ Supporting pieces:
 
 - `features/`
   - canonical definitions of the five modeling blocks: `clinical`, `tumor_size`, `morph`, `graph`, and `kinematic`
+- `train_deepsets.py`
+  - plain-PyTorch Deep Sets baseline over tumor-local vessel points that reuses the shared evaluator
 - `evaluation/`
   - shared split generation, metrics, result aggregation, and output saving used across model families
 - `modeling/`
@@ -103,7 +105,7 @@ Supporting pieces:
   - `ablation.yaml` for broad feature-block ablations
   - `independent_signal.yaml` for the focused independent-signal matrix
 - `config.py`
-  - central source of runtime defaults shared across tabular training and ablation runs
+  - central source of runtime defaults shared across tabular training, Deep Sets training, point-set building, and ablation runs
 - `slurm/`
   - top-level Slurm submission wrappers for modeling runs
 - `results/`
@@ -213,6 +215,60 @@ Before running on a new system, review these config fields in your YAML override
 - `data_paths.clinical_excel`
 - `data_paths.labels_csv`
 
+## Deep Sets Modeling
+
+Deep Sets is the current learned set-model baseline in this repo. It does not use graph message passing. Instead, it treats each case as a variable-length set of tumor-local vessel points, maps each point through a shared MLP, sums those embeddings, and then predicts pCR from the pooled case representation.
+
+Reference:
+
+- Zaheer et al., Deep Sets: <https://arxiv.org/abs/1703.06114>
+
+Current entrypoints:
+
+- [`build_deepsets_dataset.py`](build_deepsets_dataset.py)
+  - builds one tumor-local point set per case from saved centerline and support masks
+- [`train_deepsets.py`](train_deepsets.py)
+  - trains the baseline Deep Sets classifier using the shared evaluator
+- [`configs/deepsets_ispy2.yaml`](configs/deepsets_ispy2.yaml)
+  - starting config for the I-SPY2 Deep Sets baseline
+- [`slurm/submit_deepsets_pipeline.sh`](slurm/submit_deepsets_pipeline.sh)
+  - submits the full Deep Sets workflow from one command
+
+The starter point-level feature is intentionally minimal:
+
+- a simple pointwise curvature proxy
+
+Students are expected to add richer point features after the scaffold is working.
+
+Before running on a new system, review:
+
+- `data_paths.centerline_root`
+- `data_paths.tumor_mask_root`
+- `data_paths.patient_info_dir`
+- `data_paths.clinical_excel`
+- `data_paths.labels_csv`
+
+Typical run on the DSI cluster:
+
+```bash
+cd slurm
+CONFIG=../configs/deepsets_ispy2.yaml \
+OUT_ROOT=../experiments/deepsets_ispy2_test1 \
+./submit_deepsets_pipeline.sh
+```
+
+The wrapper writes a run-local config under the output directory and fills in
+`data_paths.deepsets_manifest_csv` automatically after the dataset build step.
+
+Internally, the wrapper chains three dependent Slurm stages:
+
+- parallel point-set building
+- manifest merging
+- model training
+
+- `data_paths.deepsets_manifest_csv` if you already built the dataset
+- or rerun [`build_deepsets_dataset.py`](build_deepsets_dataset.py) from the current centerline outputs
+
 ## Evaluation Framework
 
 The `evaluation/` package is the shared comparison layer for this repo. It creates train/validation splits, computes metrics, saves fold outputs, and keeps the output format consistent across different model families.
@@ -221,6 +277,8 @@ Current users:
 
 - `train_tabular.py`
   - tabular clinical, vessel, and radiomics models
+- `train_deepsets.py`
+  - Deep Sets baseline over tumor-local vessel point sets
 
 Start here:
 

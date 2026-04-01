@@ -38,7 +38,7 @@ Use `train_tabular.py` when:
 
 Use `evaluation/` directly when:
 
-- you are adding a new model family such as a GNN
+- you are adding a new model family such as Deep Sets
 - your model has its own training loop
 - you still want to reuse the same folds, metrics, and saved outputs
 
@@ -74,7 +74,7 @@ For multi-fold runs, each fold is stored as a `FoldResults` object. The framewor
 
 ## Reusing This For A New Model
 
-A future custom model should keep its own training code in its own entrypoint, then call into `evaluation/` for the parts that should stay consistent across models.
+A future learned set model should keep its own training code in `train_deepsets.py`, then call into `evaluation/` for the parts that should stay consistent across models.
 
 Typical pattern:
 
@@ -83,6 +83,18 @@ Typical pattern:
 3. For each split, train the model using your own code.
 4. Convert validation predictions into the standard prediction table.
 5. Aggregate the fold results and save them.
+
+The current `train_deepsets.py` template already gives students:
+
+- required manifest columns
+- suggested config keys for point-set data
+- a helper that converts fold predictions into the evaluator-ready table
+
+Students still need to implement:
+
+- manifest loading
+- point-set feature design
+- the actual per-fold training loop
 
 ## Example Skeleton
 
@@ -97,7 +109,7 @@ evaluator = Evaluator(
     X=case_manifest_df,
     y=labels,
     case_ids=case_ids,
-    model_name="custom_model",
+    model_name="deepsets_model",
     random_state=42,
 )
 
@@ -126,6 +138,7 @@ evaluator.save_results(kfold_results, output_dir)
 ## Related Files
 
 - [`../train_tabular.py`](../train_tabular.py)
+- [`../train_deepsets.py`](../train_deepsets.py)
 - [`../config.py`](../config.py)
 - [`../configs/ispy2.yaml`](../configs/ispy2.yaml)
 - [`../configs/ablation.yaml`](../configs/ablation.yaml)

@@ -122,6 +122,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dropout": 0.2,
         "learning_rate": 1e-3,
         "weight_decay": 1e-4,
+        "deepsets_local_radius_floor_mm": 50.0,
+        "deepsets_local_radius_scale": 2.0,
+        "deepsets_local_radius_cap_mm": 60.0,
     },
     "data_paths": {
         "centerline_root": "",
@@ -132,6 +135,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "label_column": "pcr",
         "id_column": "case_id",
         "radiomics_csv": "",
+        "deepsets_manifest_csv": "",
+        "deepsets_label_column": "label",
     },
     "ablation_arms": deepcopy(DEFAULT_ABLATION_ARMS),
 }
