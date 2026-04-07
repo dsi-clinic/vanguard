@@ -1,0 +1,10 @@
+arm_name,model_family,auc_mean,auc_std,feature_selection_mode,nested_tuning_on,n_features,n_samples,status
+clinical_plus_tumor_size,lr,0.5710268577915636,0.04587460419355369,global_topk,True,14,808,ok
+clinical_plus_tumor_size,rf,0.544770843447314,0.0602659254757791,global_topk,False,14,808,ok
+clinical_plus_tumor_size,xgb,0.5265988118929295,0.044645315515502236,global_topk,False,14,808,ok
+clinical_plus_tumor_size_plus_kinematic,lr,0.586721495250907,0.041230490018400706,block_kinematic,True,836,808,ok
+clinical_plus_tumor_size_plus_kinematic,rf,0.5763923785982609,0.03782193643040672,block_kinematic,False,836,808,ok
+clinical_plus_tumor_size_plus_kinematic,xgb,0.5620281634987517,0.05908602135468971,block_kinematic,False,836,808,ok
+clinical_plus_tumor_size_plus_vessel_all,lr,0.5905513926102162,0.03394386300566698,block_kinematic,True,933,808,ok
+clinical_plus_tumor_size_plus_vessel_all,rf,0.6034057586998763,0.03799576458431607,block_kinematic,False,933,808,ok
+clinical_plus_tumor_size_plus_vessel_all,xgb,0.6064163402398697,0.027645355962243743,block_kinematic,False,933,808,ok

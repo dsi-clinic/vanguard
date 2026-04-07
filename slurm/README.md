@@ -6,6 +6,8 @@ These scripts submit pCR modeling experiments from the top-level training and ab
 
 - `submit_feature_ablation.slurm`
   - serial feature-block matrix run using `run_ablation_matrix.py`
+- `submit_model_family_matrix.slurm`
+  - focused model-family x feature-arm matrix run using `run_model_family_matrix.py`
 - `submit_independent_signal_matrix_array.sh`
   - wrapper that submits the cached-table job, the arm/fold array job, and the merge job
 - `submit_ablation_arm_fold_array.slurm`
@@ -49,6 +51,21 @@ To test different arms:
 
 1. edit `ablation_arms` in `../configs/independent_signal.yaml`
 2. submit again to a fresh `OUT_ROOT`
+
+## Model-Family Matrix
+
+Run the focused model-family matrix (lr/rf/xgb over selected arms):
+
+```bash
+cd slurm
+CONFIG=../configs/model_family_matrix.yaml \
+OUT_ROOT=../experiments/model_family_matrix_ispy2 \
+sbatch submit_model_family_matrix.slurm
+```
+
+Primary output:
+
+- `OUT_ROOT/model_family_matrix_summary.csv`
 
 ## Deep Sets Workflow
 

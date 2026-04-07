@@ -679,7 +679,9 @@ def build_model_pipeline(
         else float(feature_select_max_zero_rate_raw)
     )
 
-    if model_type == "rf":
+    normalized_model_type = str(model_type).strip().lower()
+
+    if normalized_model_type == "rf":
         numeric_steps: list[tuple[str, Any]] = []
         if feature_select_enabled and numeric_cols:
             numeric_steps.append(
@@ -727,7 +729,72 @@ def build_model_pipeline(
             random_state=random_state,
             n_jobs=-1,
         )
-    else:
+    elif normalized_model_type in {"xgb", "xgboost"}:
+        numeric_steps = [("imputer", SimpleImputer(strategy="median"))]
+        if feature_select_enabled and numeric_cols:
+            numeric_steps.insert(
+                0,
+                (
+                    "feature_selector",
+                    build_numeric_selector(
+                        numeric_cols=numeric_cols,
+                        feature_select_mode=feature_select_mode,
+                        feature_select_k=feature_select_k,
+                        feature_select_k_kin=feature_select_k_kin,
+                        feature_select_kin_method=feature_select_kin_method,
+                        feature_select_kinematic_prefixes=feature_select_kinematic_prefixes,
+                        feature_select_min_non_na_rate=feature_select_min_non_na_rate,
+                        feature_select_min_n_unique=feature_select_min_n_unique,
+                        feature_select_max_abs_corr=feature_select_max_abs_corr,
+                        feature_select_max_zero_rate=feature_select_max_zero_rate,
+                        feature_select_mrmr_redundancy_weight=feature_select_mrmr_redundancy_weight,
+                        feature_select_mrmr_include_baseline=feature_select_mrmr_include_baseline,
+                        feature_select_corr_gate_against_baseline=feature_select_corr_gate_against_baseline,
+                    ),
+                ),
+            )
+
+        numeric_transformer = Pipeline(steps=numeric_steps)
+        cat_transformer = Pipeline(
+            steps=[
+                ("imputer", SimpleImputer(strategy="most_frequent")),
+                ("encoder", OneHotEncoder(handle_unknown="ignore")),
+            ]
+        )
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ("num", numeric_transformer, numeric_cols),
+                ("cat", cat_transformer, categorical_cols),
+            ],
+            remainder="drop",
+        )
+
+        try:
+            from xgboost import XGBClassifier
+        except ImportError as exc:  # pragma: no cover - environment dependent
+            raise ImportError(
+                "XGBoost model requested but package is not installed. "
+                "Install with `pip install xgboost`."
+            ) from exc
+
+        model = XGBClassifier(
+            n_estimators=int(model_params.n_estimators),
+            max_depth=int(model_params.max_depth)
+            if model_params.max_depth is not None
+            else None,
+            learning_rate=float(getattr(model_params, "xgb_learning_rate", 0.05)),
+            subsample=float(getattr(model_params, "xgb_subsample", 0.8)),
+            colsample_bytree=float(getattr(model_params, "xgb_colsample_bytree", 0.8)),
+            min_child_weight=float(getattr(model_params, "xgb_min_child_weight", 1.0)),
+            reg_alpha=float(getattr(model_params, "xgb_reg_alpha", 0.0)),
+            reg_lambda=float(getattr(model_params, "xgb_reg_lambda", 1.0)),
+            gamma=float(getattr(model_params, "xgb_gamma", 0.0)),
+            random_state=random_state,
+            objective="binary:logistic",
+            eval_metric="auc",
+            n_jobs=-1,
+        )
+    elif normalized_model_type in {"lr", "logreg", "logistic"}:
         numeric_steps: list[tuple[str, Any]] = []
         if feature_select_enabled and numeric_cols:
             numeric_steps.append(
@@ -788,6 +855,10 @@ def build_model_pipeline(
             model_kwargs["l1_ratio"] = float(model_params.l1_ratio)
 
         model = LogisticRegression(**model_kwargs)
+    else:
+        raise ValueError(
+            f"Unsupported model_type={model_type!r}. Expected one of: lr, rf, xgb."
+        )
 
     return Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
 
