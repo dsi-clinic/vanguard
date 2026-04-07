@@ -17,12 +17,14 @@ Arms (both configs):
 
 ## Run on the cluster
 
-From the repo root:
+From the **repository root** (so `SLURM_SUBMIT_DIR` is correct):
 
 ```bash
-cd slurm
-sbatch submit_issue118_baseline_arms.slurm
+cd ~/vanguard
+sbatch slurm/submit_issue118_baseline_arms.slurm
 ```
+
+Slurm sets `SLURM_SUBMIT_DIR` to that directory; the batch script uses it as `REPO_ROOT` because `$0` is not reliable under Slurm.
 
 Optional overrides (fresh output roots, same configs):
 

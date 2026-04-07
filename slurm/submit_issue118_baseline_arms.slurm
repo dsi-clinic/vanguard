@@ -8,7 +8,12 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Under Slurm, $0 may point at a copy under /var/spool/slurmd — use submit cwd.
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_ROOT="${SLURM_SUBMIT_DIR}"
+else
+  REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+fi
 cd "${REPO_ROOT}"
 
 # Non-interactive Slurm jobs often lack micromamba on PATH; match submit_feature_ablation.slurm.
