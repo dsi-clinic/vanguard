@@ -73,9 +73,9 @@ def test_gradient_flow(pooling: str) -> None:
     loss.backward()
     for name, param in model.named_parameters():
         assert param.grad is not None, f"No gradient for {name} with pooling={pooling}"
-        assert param.grad.abs().sum() > 0, (
-            f"Zero gradient for {name} with pooling={pooling}"
-        )
+        assert (
+            param.grad.abs().sum() > 0
+        ), f"Zero gradient for {name} with pooling={pooling}"
 
 
 def test_default_pooling_is_mean_max_logcount() -> None:
