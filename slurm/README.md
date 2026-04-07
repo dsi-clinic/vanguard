@@ -8,6 +8,8 @@ These scripts submit pCR modeling experiments from the top-level training and ab
   - serial feature-block matrix run using `run_ablation_matrix.py`
 - `submit_model_family_matrix.slurm`
   - focused model-family x feature-arm matrix run using `run_model_family_matrix.py`
+- `submit_model_family_robustness.slurm`
+  - robustness checks for top model families across split strategies using `run_model_family_robustness.py`
 - `submit_independent_signal_matrix_array.sh`
   - wrapper that submits the cached-table job, the arm/fold array job, and the merge job
 - `submit_ablation_arm_fold_array.slurm`
@@ -66,6 +68,23 @@ sbatch submit_model_family_matrix.slurm
 Primary output:
 
 - `OUT_ROOT/model_family_matrix_summary.csv`
+
+## Model-Family Robustness (#117)
+
+Run robustness checks for selected top families (for example `lr` and `xgb`) under
+both standard CV and site-exclusive group CV:
+
+```bash
+cd slurm
+CONFIG=../configs/model_family_robustness.yaml \
+OUT_ROOT=../experiments/model_family_robustness_ispy2 \
+sbatch submit_model_family_robustness.slurm
+```
+
+Primary outputs:
+
+- `OUT_ROOT/model_family_robustness_summary.csv`
+- `OUT_ROOT/model_family_robustness_subtype_summary.csv`
 
 ## Deep Sets Workflow
 

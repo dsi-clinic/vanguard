@@ -90,3 +90,5 @@ Recommended families to carry into the next project step:
 
 `rf` is close to `xgb` on the richest arm and can be kept as a tie-breaker, but it is not the top pick overall for follow-up experiments.
 
+Follow-up robustness checks for `lr` and `xgb` (standard vs site-exclusive CV) are documented in `docs/model_family_robustness_117.md`.
+
