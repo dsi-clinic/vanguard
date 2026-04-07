@@ -54,8 +54,8 @@ N_TASKS=$(( N_ARMS * N_SPLITS ))
 ARRAY_SPEC="0-$((N_TASKS - 1))"
 FEATURES_CSV="${OUT_ROOT}/features_full_labeled.csv"
 
-CACHE_WRAP="bash -lc 'source ~/.bashrc || true; if command -v micromamba >/dev/null 2>&1; then eval \"\$(micromamba shell hook -s bash)\"; micromamba activate vanguard; fi; python -m modeling.build_cached_table --config \"${CONFIG}\" --outdir \"${OUT_ROOT}\"'"
-MERGE_WRAP="bash -lc 'source ~/.bashrc || true; if command -v micromamba >/dev/null 2>&1; then eval \"\$(micromamba shell hook -s bash)\"; micromamba activate vanguard; fi; python -m modeling.merge_results --config \"${CONFIG}\" --features-csv \"${FEATURES_CSV}\" --out-root \"${OUT_ROOT}\"'"
+CACHE_WRAP="bash -lc 'source ~/.bashrc || true; if command -v micromamba >/dev/null 2>&1; then eval \"\$(micromamba shell hook -s bash)\"; micromamba activate vanguard; fi; cd \"${REPO_ROOT}\"; python -m modeling.build_cached_table --config \"${CONFIG}\" --outdir \"${OUT_ROOT}\"'"
+MERGE_WRAP="bash -lc 'source ~/.bashrc || true; if command -v micromamba >/dev/null 2>&1; then eval \"\$(micromamba shell hook -s bash)\"; micromamba activate vanguard; fi; cd \"${REPO_ROOT}\"; python -m modeling.merge_results --config \"${CONFIG}\" --features-csv \"${FEATURES_CSV}\" --out-root \"${OUT_ROOT}\"'"
 
 CACHE_JOB_ID="$(
   sbatch --parsable \
