@@ -10,6 +10,8 @@ These scripts submit pCR modeling experiments from the top-level training and ab
   - focused model-family x feature-arm matrix run using `run_model_family_matrix.py`
 - `submit_model_family_robustness.slurm`
   - robustness checks for top model families across split strategies using `run_model_family_robustness.py`
+- `submit_issue118_baseline_arms.slurm`
+  - Issue #118 baseline vessel arms for `lr` and `xgb` via `run_ablation_matrix.py` + merged summary
 - `submit_independent_signal_matrix_array.sh`
   - wrapper that submits the cached-table job, the arm/fold array job, and the merge job
 - `submit_ablation_arm_fold_array.slurm`
@@ -85,6 +87,23 @@ Primary outputs:
 
 - `OUT_ROOT/model_family_robustness_summary.csv`
 - `OUT_ROOT/model_family_robustness_subtype_summary.csv`
+
+## Issue #118 — Baseline vessel arms (`lr` + `xgb`)
+
+Runs five arms (clinical+tumor through full vessel stack) for both families and writes a merged CSV:
+
+```bash
+cd slurm
+sbatch submit_issue118_baseline_arms.slurm
+```
+
+Defaults write:
+
+- `../experiments/issue118_baseline_arms_lr/ablation_summary.csv`
+- `../experiments/issue118_baseline_arms_xgb/ablation_summary.csv`
+- `../experiments/issue118_baseline_arms_merged/issue118_baseline_arms_combined.csv`
+
+Details: `docs/issue118_baseline_comparison.md`
 
 ## Deep Sets Workflow
 
