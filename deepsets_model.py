@@ -93,9 +93,7 @@ class DeepSetsClassifier(nn.Module):
             dropout=dropout,
         )
 
-    def _pool(
-        self, encoded: torch.Tensor, batch_index: torch.Tensor
-    ) -> torch.Tensor:
+    def _pool(self, encoded: torch.Tensor, batch_index: torch.Tensor) -> torch.Tensor:
         """Aggregate point embeddings into one vector per case."""
         batch_size = int(batch_index.max().item()) + 1 if batch_index.numel() else 0
         latent_dim = encoded.shape[1]
@@ -117,9 +115,7 @@ class DeepSetsClassifier(nn.Module):
             if self.pooling == "sum":
                 chunks.append(pooled_sum)
             else:
-                counts = torch.bincount(
-                    batch_index, minlength=batch_size
-                ).clamp_min(1)
+                counts = torch.bincount(batch_index, minlength=batch_size).clamp_min(1)
                 counts = counts.to(
                     device=encoded.device, dtype=encoded.dtype
                 ).unsqueeze(1)
@@ -135,16 +131,12 @@ class DeepSetsClassifier(nn.Module):
             for i in range(batch_size):
                 mask = batch_index == i
                 if mask.any():
-                    pooled_max[i] = encoded[mask].max(dim=0).values
+                    pooled_max[i] = encoded[mask].max(dim=0)[0]
             chunks.append(pooled_max)
 
         if needs_logcount:
-            counts = torch.bincount(
-                batch_index, minlength=batch_size
-            ).clamp_min(1)
-            counts = counts.to(
-                device=encoded.device, dtype=encoded.dtype
-            ).unsqueeze(1)
+            counts = torch.bincount(batch_index, minlength=batch_size).clamp_min(1)
+            counts = counts.to(device=encoded.device, dtype=encoded.dtype).unsqueeze(1)
             chunks.append(torch.log(counts))
 
         return torch.cat(chunks, dim=1)
