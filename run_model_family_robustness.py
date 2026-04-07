@@ -26,6 +26,7 @@ from train_tabular import run_evaluation_pipeline
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Run model-family robustness matrix.")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--outdir", type=Path, required=True)
@@ -225,13 +226,12 @@ def _extract_subtype_rows(
 
 
 def run_model_family_robustness(config: dict[str, Any], outdir: Path) -> None:
+    """Run robustness cells from config and write merged summary tables."""
     outdir.mkdir(parents=True, exist_ok=True)
     arms = _normalize_arms(config)
     families = _normalize_model_families(config)
     split_modes = _normalize_split_modes(config)
-    family_overrides = to_plain_data(
-        deepcopy(config.get("model_family_overrides", {}))
-    )
+    family_overrides = to_plain_data(deepcopy(config.get("model_family_overrides", {})))
 
     with (outdir / "robustness_definition_used.yaml").open("w", encoding="utf-8") as h:
         yaml.safe_dump(
@@ -272,13 +272,17 @@ def run_model_family_robustness(config: dict[str, Any], outdir: Path) -> None:
                 run_cfg.experiment_setup.name = run_name
                 run_cfg.feature_toggles.selected_features = blocks
                 run_cfg.feature_toggles.use_clinical = "clinical" in blocks
-                run_cfg.feature_toggles.use_vascular = any(b != "clinical" for b in blocks)
+                run_cfg.feature_toggles.use_vascular = any(
+                    b != "clinical" for b in blocks
+                )
                 run_cfg.feature_toggles.update(arm.get("feature_toggles_override", {}))
 
                 run_cfg.model_params.model = family
                 run_cfg.model_params.update(arm.get("model_params_override", {}))
                 run_cfg.model_params.update(family_overrides.get(family, {}))
-                run_cfg.model_params.use_group_split = bool(split_mode["use_group_split"])
+                run_cfg.model_params.use_group_split = bool(
+                    split_mode["use_group_split"]
+                )
                 run_cfg.model_params.update(split_mode.get("model_params_override", {}))
 
                 run_dir = runs_root / run_name
@@ -323,7 +327,11 @@ def run_model_family_robustness(config: dict[str, Any], outdir: Path) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    """Entry point."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
     args = parse_args()
     cfg = load_config(args.config)
     run_model_family_robustness(cfg, args.outdir)
