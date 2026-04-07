@@ -65,6 +65,7 @@ def describe_required_deepsets_config() -> dict[str, str]:
         "model_params.learning_rate": "Adam learning rate.",
         "model_params.hidden_dim": "Hidden width used by the phi and rho MLPs.",
         "model_params.num_layers": "Number of layers in the phi and rho MLPs.",
+        "model_params.pooling": "Pooling variant: mean, max, sum, mean_max, or mean_max_logcount.",
     }
 
 
@@ -336,6 +337,7 @@ def fit_predict_one_fold(
     dropout = float(params.dropout)
     learning_rate = float(params.learning_rate)
     weight_decay = float(params.weight_decay)
+    pooling = str(params.get("pooling", "mean_max_logcount"))
     device = _resolve_device(config)
     random_state = int(params.random_state)
     torch.manual_seed(random_state + int(split.fold_idx))
@@ -354,6 +356,7 @@ def fit_predict_one_fold(
         phi_layers=num_layers,
         rho_layers=num_layers,
         dropout=dropout,
+        pooling=pooling,
     ).to(device)
     optimizer = torch.optim.Adam(
         model.parameters(),
