@@ -16,12 +16,17 @@ else
 fi
 cd "${REPO_ROOT}"
 
-# Non-interactive Slurm jobs often lack micromamba on PATH; match submit_feature_ablation.slurm.
+# Batch jobs often lack conda/micromamba on PATH; `activate` can fail under `set -e`.
+# Use `micromamba run` (same idea as submit_model_family_matrix.slurm).
 source "${HOME}/.bashrc" || true
-if command -v micromamba >/dev/null 2>&1; then
-  eval "$(micromamba shell hook -s bash)"
-  micromamba activate vanguard
+if ! command -v micromamba >/dev/null 2>&1; then
+  echo "ERROR: micromamba not on PATH after sourcing ~/.bashrc" >&2
+  exit 1
 fi
+
+runpy() {
+  micromamba run -n vanguard python "$@"
+}
 
 LR_CONFIG="${LR_CONFIG:-configs/issue118_baseline_arms_lr.yaml}"
 XGB_CONFIG="${XGB_CONFIG:-configs/issue118_baseline_arms_xgb.yaml}"
@@ -33,16 +38,16 @@ echo "REPO_ROOT=${REPO_ROOT}"
 echo "LR_CONFIG=${LR_CONFIG} LR_OUT=${LR_OUT}"
 echo "XGB_CONFIG=${XGB_CONFIG} XGB_OUT=${XGB_OUT}"
 
-python run_ablation_matrix.py \
+runpy run_ablation_matrix.py \
   --config "${LR_CONFIG}" \
   --outdir "${LR_OUT}"
 
-python run_ablation_matrix.py \
+runpy run_ablation_matrix.py \
   --config "${XGB_CONFIG}" \
   --outdir "${XGB_OUT}"
 
 mkdir -p "${MERGED_DIR}"
-python merge_issue118_summaries.py \
+runpy merge_issue118_summaries.py \
   --lr-summary "${LR_OUT}/ablation_summary.csv" \
   --xgb-summary "${XGB_OUT}/ablation_summary.csv" \
   --out "${MERGED_DIR}/issue118_baseline_arms_combined.csv"
