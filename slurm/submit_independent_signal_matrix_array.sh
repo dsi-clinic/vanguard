@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CONFIG="${CONFIG:-${REPO_ROOT}/configs/independent_signal.yaml}"
 OUT_ROOT="${OUT_ROOT:-${REPO_ROOT}/experiments/independent_signal_q3_array}"
 PARTITION="${PARTITION:-general}"
+ENV_PYTHON="${ENV_PYTHON:-${HOME}/micromamba/envs/vanguard/bin/python}"
 
 CACHE_CPUS="${CACHE_CPUS:-8}"
 CACHE_MEM="${CACHE_MEM:-64G}"
@@ -28,7 +29,7 @@ if [[ ! -f "${CONFIG}" ]]; then
 fi
 
 N_SPLITS="$(
-  python - <<PY
+  "${ENV_PYTHON}" - <<PY
 import yaml
 from pathlib import Path
 conf = yaml.safe_load(Path("${CONFIG}").read_text())
@@ -37,7 +38,7 @@ PY
 )"
 
 N_ARMS="$(
-  python - <<PY
+  "${ENV_PYTHON}" - <<PY
 import yaml
 from pathlib import Path
 conf = yaml.safe_load(Path("${CONFIG}").read_text())
@@ -54,8 +55,8 @@ N_TASKS=$(( N_ARMS * N_SPLITS ))
 ARRAY_SPEC="0-$((N_TASKS - 1))"
 FEATURES_CSV="${OUT_ROOT}/features_full_labeled.csv"
 
-CACHE_WRAP="bash -lc 'source ~/.bashrc || true; if command -v micromamba >/dev/null 2>&1; then eval \"\$(micromamba shell hook -s bash)\"; micromamba activate vanguard; fi; python -m modeling.build_cached_table --config \"${CONFIG}\" --outdir \"${OUT_ROOT}\"'"
-MERGE_WRAP="bash -lc 'source ~/.bashrc || true; if command -v micromamba >/dev/null 2>&1; then eval \"\$(micromamba shell hook -s bash)\"; micromamba activate vanguard; fi; python -m modeling.merge_results --config \"${CONFIG}\" --features-csv \"${FEATURES_CSV}\" --out-root \"${OUT_ROOT}\"'"
+CACHE_WRAP="bash -lc 'source ~/.bashrc || true; cd \"${REPO_ROOT}\"; if command -v micromamba >/dev/null 2>&1; then eval \"\$(micromamba shell hook -s bash)\"; micromamba activate vanguard; fi; "${ENV_PYTHON}" -m modeling.build_cached_table --config \"${CONFIG}\" --outdir \"${OUT_ROOT}\"'"
+MERGE_WRAP="bash -lc 'source ~/.bashrc || true; cd \"${REPO_ROOT}\"; if command -v micromamba >/dev/null 2>&1; then eval \"\$(micromamba shell hook -s bash)\"; micromamba activate vanguard; fi; "${ENV_PYTHON}" -m modeling.merge_results --config \"${CONFIG}\" --features-csv \"${FEATURES_CSV}\" --out-root \"${OUT_ROOT}\"'"
 
 CACHE_JOB_ID="$(
   sbatch --parsable \
@@ -76,7 +77,7 @@ ARRAY_JOB_ID="$(
     --cpus-per-task="${FOLD_CPUS}" \
     --mem="${FOLD_MEM}" \
     --time="${FOLD_TIME}" \
-    --export=ALL,REPO_ROOT="${REPO_ROOT}",CONFIG="${CONFIG}",FEATURES_CSV="${FEATURES_CSV}",OUT_ROOT="${OUT_ROOT}",N_SPLITS="${N_SPLITS}" \
+    --export=ALL,REPO_ROOT="${REPO_ROOT}",CONFIG="${CONFIG}",FEATURES_CSV="${FEATURES_CSV}",OUT_ROOT="${OUT_ROOT}",N_SPLITS="${N_SPLITS}",ENV_PYTHON="${ENV_PYTHON}" \
     "${SCRIPT_DIR}/submit_ablation_arm_fold_array.slurm"
 )"
 
