@@ -146,6 +146,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_label_column": "label",
     },
     "ablation_arms": deepcopy(DEFAULT_ABLATION_ARMS),
+    # Optional multipliers for run_ablation_matrix (Issue #116 / #117 style experiments).
+    "model_families": None,
+    "split_mode_matrix": None,
+    "model_family_overrides": {},
+    "baseline_run_name": None,
+    "export_subtype_summary": False,
 }
 
 

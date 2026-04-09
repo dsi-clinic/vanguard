@@ -2,76 +2,49 @@
 
 ## What this delivers
 
-A reproducible rerun of the **five vessel baseline arms** from the issue description, using the **frozen families** from #116 / #117:
+A reproducible rerun of the **five vessel baseline arms** from the issue description, using **one** `run_ablation_matrix.py` job with:
 
-- **`lr`**: nested tuning on (`issue118_baseline_arms_lr.yaml`)
-- **`xgb`**: nested tuning off (`issue118_baseline_arms_xgb.yaml`)
+- `model_families: [lr, xgb]`
+- `split_mode_matrix: [{ name: cv, use_group_split: false }]`
+- per-family overrides (nested tuning on for `lr`, off for `xgb`)
 
-Arms (both configs):
+Arms:
 
-1. `clinical + tumor_size` (baseline; deltas vs this arm are in `ablation_summary.csv`)
+1. `clinical + tumor_size` (baseline for deltas)
 2. `clinical + tumor_size + morph`
 3. `clinical + tumor_size + graph`
 4. `clinical + tumor_size + kinematic`
-5. `clinical + tumor_size + morph + graph + kinematic` (`clinical_plus_tumor_size_plus_vessel_all`)
+5. `clinical + tumor_size + morph + graph + kinematic`
+
+Run IDs look like `clinical_plus_tumor_size__lr__cv` and `clinical_plus_tumor_size__xgb__cv`.
 
 ## Run on the cluster
 
-From the **repository root** (so `SLURM_SUBMIT_DIR` is correct):
+From the **repository root**:
 
 ```bash
 cd ~/vanguard
 sbatch slurm/submit_issue118_baseline_arms.slurm
 ```
 
-Slurm sets `SLURM_SUBMIT_DIR` to that directory; the batch script uses it as `REPO_ROOT` because `$0` is not reliable under Slurm.
-
-Optional overrides (fresh output roots, same configs):
+Optional overrides:
 
 ```bash
-LR_OUT=../experiments/issue118_baseline_arms_lr_run2 \
-XGB_OUT=../experiments/issue118_baseline_arms_xgb_run2 \
-MERGED_DIR=../experiments/issue118_baseline_arms_merged_run2 \
-sbatch submit_issue118_baseline_arms.slurm
+CONFIG=configs/issue118_baseline_arms.yaml \
+OUTDIR=experiments/issue118_baseline_arms_run2 \
+sbatch slurm/submit_issue118_baseline_arms.slurm
 ```
+
+Logs: `logs/issue118-baseline-<jobid>.out`
 
 ## Outputs
 
-Per model family:
+- `OUTDIR/ablation_summary.csv` — includes **`auc_std`** and **`ap_mean` / `ap_std`** when AP is defined on each fold
+- `OUTDIR/runs/<run_name>/` — per-run `metrics.json`, predictions, plots
+- `baseline_run_name: clinical_plus_tumor_size__lr__cv` fills delta columns vs that row
 
-- `experiments/issue118_baseline_arms_lr/` — `ablation_summary.csv`, `runs/<arm>/metrics.json`, …
-- `experiments/issue118_baseline_arms_xgb/` — same layout
+## Radiomics baseline row
 
-Merged:
-
-- `experiments/issue118_baseline_arms_merged/issue118_baseline_arms_combined.csv` — long table with `model_family` column
-
-`ablation_summary.csv` already includes **`auc_mean_delta_vs_clinical_plus_tumor_size`** when the baseline arm is present.
-
-## Radiomics baseline row (you fill from `metrics.json`)
-
-Strongest / closest matched radiomics run on your side is typically under the radiomics workflow, e.g.:
-
-`radiomics/outputs/peri5_multiphase_logreg/training/metrics.json`
-
-**Do not assume metrics are comparable 1:1.** In the short write-up for the PR / issue, spell out at least:
-
-| Topic | Tabular (#118) | Radiomics (example peri-5 multiphase) |
-|--------|------------------|----------------------------------------|
-| Cohort filter | ISPY2, `bilateral_filter: false` (YAML) | MAMA-MIA paths in radiomics config |
-| Labels | `pcr_labels.csv` / `pcr` column | radiomics `labels` / `label_column` in that config |
-| Splits | stratified k-fold CV in evaluator | train/test split in radiomics pipeline |
-| Features | vessel + clinical tabular blocks | PyRadiomics / peri-tumoral extraction |
-
-Pull **`auc_test`**, **`auc_train_cv`**, or whatever your radiomics `metrics.json` exposes, and add **one row** (or small table) next to the best tabular arm(s) from `issue118_baseline_arms_combined.csv`.
-
-## Short answers for the issue checklist (after runs)
-
-Use the merged CSV and subtype/strata plots under each `runs/<arm>/` as needed:
-
-- **Which single vessel block helped most?** — Compare `auc_mean_delta_vs_clinical_plus_tumor_size` for morph-only, graph-only, kinematic-only rows (per `model_family`).
-- **Does the full combo beat any single block?** — Compare `clinical_plus_tumor_size_plus_vessel_all` to the three single-block arms.
-- **Is the gain over clinical + tumor_size meaningful?** — Judge delta magnitude and `auc_std`; tie to #117 if you report site-exclusive behavior elsewhere.
-- **vs radiomics** — Same cohort label, different pipeline; keep the mismatch table above visible.
+Use your strongest matched radiomics `metrics.json` (e.g. under `radiomics/outputs/.../training/`). Document cohort, splits, labels, and preprocessing differences vs this tabular CV setup.
 
 Refs #118

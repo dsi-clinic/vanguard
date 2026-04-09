@@ -2,24 +2,26 @@
 
 ## What this checks
 
-For the top families from Issue #116 (`lr`, `xgb`), we compare:
+For top families from Issue #116 (`lr`, `xgb`), we compare:
 
-- **Standard stratified CV** (`use_group_split: false`)
-- **Site-exclusive group-aware CV** (`use_group_split: true`, `group_col: site`)
+- **Standard CV** (`split_mode_matrix` entry with `use_group_split: false`)
+- **Site-exclusive group CV** (`use_group_split: true`, `group_col: site`)
 
-We keep `stratum_col: tumor_subtype` so subtype-specific AUC appears in evaluator outputs.
+`stratum_col: tumor_subtype` stays on so subtype metrics appear in each run’s `metrics.json`.
 
-Frozen feature arm for this run: **clinical + tumor_size + morph + graph + kinematic** (`clinical_plus_tumor_size_plus_vessel_all`).
+Frozen feature arm: **clinical + tumor_size + morph + graph + kinematic**.
 
 ## Reproducible artifacts
 
 - Config: `configs/model_family_robustness.yaml`
-- Runner: `run_model_family_robustness.py`
+- Same runner as feature ablation: `run_ablation_matrix.py`
 - Slurm: `slurm/submit_model_family_robustness.slurm`
-- Full run outputs (on cluster): `experiments/model_family_robustness_ispy2/`
+- Outputs (example): `experiments/model_family_robustness_ispy2/`
+  - `ablation_summary.csv` — **AUC mean and `auc_std` over folds**
+  - `ablation_subtype_summary.csv` — subtype AUC rows (`export_subtype_summary: true`)
 - PR snapshots: `results/model_family_robustness_ispy2_summary.csv`, `results/model_family_robustness_ispy2_subtype_summary.csv`
 
-## Overall results (AUC mean ± std)
+## Overall results (AUC mean ± std, prior run)
 
 | Model | Standard CV | Site-exclusive CV |
 |-------|-------------|---------------------|
@@ -28,9 +30,8 @@ Frozen feature arm for this run: **clinical + tumor_size + morph + graph + kinem
 
 ## Plain-English conclusion
 
-- **Logistic regression** loses a lot of mean AUC when evaluated with site-exclusive folds. That suggests **site leakage or site-driven signal** may be inflating standard-CV performance for LR on this arm.
-- **XGBoost** keeps a similar **mean** AUC under site-exclusive folds, but **fold variability increases** (higher std). So it looks **more stable in average level** across split strategies, with **more variance** between folds when sites are held out.
-- Subtype AUCs are not identical across strata (see subtype CSV); **luminal_b** and **triple_negative** are relatively weaker under site CV for both models, which is worth mentioning in write-ups.
+- **LR** loses a lot of mean AUC under site-exclusive folds (possible site-related signal in standard CV).
+- **XGB** keeps similar **mean** AUC; **std** rises under site splits.
+- **Most robust on mean AUC under site splits:** **XGB**; LR remains the simpler baseline but needs cautious interpretation under site-exclusive evaluation.
 
-**Most robust for “does not collapse under site splits” on mean AUC:** **`xgb`**.  
-**Simplest baseline to interpret** remains **`lr`**, but it should be interpreted cautiously under site-exclusive evaluation for this arm.
+Refs #117

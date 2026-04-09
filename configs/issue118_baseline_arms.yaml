@@ -1,7 +1,7 @@
-# Issue #118: same arms as issue118_baseline_arms_lr.yaml but frozen XGB setup (#116).
-# Nested tuning off; block_kinematic on arms that include kinematic features.
+# Issue #118: five baseline vessel arms x (lr, xgb) via run_ablation_matrix.py.
 
-baseline_arm_name: "clinical_plus_tumor_size"
+baseline_arm_name: clinical_plus_tumor_size
+baseline_run_name: clinical_plus_tumor_size__lr__cv
 
 feature_toggles:
   use_vascular: true
@@ -22,11 +22,11 @@ feature_toggles:
   selected_features: null
 
 experiment_setup:
-  name: "tc4d_issue118_baseline_xgb"
+  name: "tc4d_issue118_baseline"
   base_outdir: "./experiments"
 
 model_params:
-  model: "xgb"
+  model: "lr"
   penalty: "elasticnet"
   solver: "saga"
   l1_ratio: 0.5
@@ -47,7 +47,7 @@ model_params:
   feature_select_mrmr_redundancy_weight: 1.0
   feature_select_mrmr_include_baseline: true
   feature_select_corr_gate_against_baseline: true
-  nested_tune_enabled: false
+  nested_tune_enabled: true
   nested_inner_splits: 3
   nested_c_grid: [0.5, 1.0, 2.0]
   nested_l1_ratio_grid: [0.25, 0.5, 0.75]
@@ -79,6 +79,20 @@ data_paths:
   label_column: "pcr"
   id_column: "case_id"
   radiomics_csv: ""
+
+model_families:
+  - lr
+  - xgb
+
+split_mode_matrix:
+  - name: cv
+    use_group_split: false
+
+model_family_overrides:
+  lr:
+    nested_tune_enabled: true
+  xgb:
+    nested_tune_enabled: false
 
 ablation_arms:
   - name: "clinical_plus_tumor_size"

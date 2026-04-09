@@ -4,16 +4,24 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=logs/%x-%j.out
 
 set -euo pipefail
 
-CONFIG="${CONFIG:-../configs/model_family_robustness.yaml}"
-OUT_ROOT="${OUT_ROOT:-../experiments/model_family_robustness_ispy2}"
+REPO_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+mkdir -p "${REPO_ROOT}/logs"
+cd "${REPO_ROOT}"
 
-echo "CONFIG=${CONFIG}"
-echo "OUT_ROOT=${OUT_ROOT}"
+source "${HOME}/.bashrc" || true
+if command -v micromamba >/dev/null 2>&1; then
+  eval "$(micromamba shell hook -s bash)"
+  micromamba activate vanguard
+fi
 
-micromamba run -n vanguard python ../run_model_family_robustness.py \
-  --config "${CONFIG}" \
-  --outdir "${OUT_ROOT}"
+CONFIG="${CONFIG:-configs/model_family_robustness.yaml}"
+OUTDIR="${OUTDIR:-experiments/model_family_robustness_ispy2}"
+
+echo "REPO_ROOT=${REPO_ROOT}"
+echo "CONFIG=${CONFIG} OUTDIR=${OUTDIR}"
+
+python run_ablation_matrix.py --config "${CONFIG}" --outdir "${OUTDIR}"

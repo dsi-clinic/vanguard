@@ -1,5 +1,4 @@
-# Robustness checks for Issue #117.
-# Freeze top families from #116 and compare standard vs site-group CV.
+# Robustness checks for Issue #117 via run_ablation_matrix.py.
 
 feature_toggles:
   use_vascular: true
@@ -78,16 +77,14 @@ data_paths:
   id_column: "case_id"
   radiomics_csv: ""
 
-model_families: ["lr", "xgb"]
+model_families:
+  - lr
+  - xgb
 
-robustness_arms:
-  - name: "clinical_plus_tumor_size_plus_vessel_all"
-    selected_features: ["clinical", "tumor_size", "morph", "graph", "kinematic"]
-
-robustness_split_modes:
-  - name: "standard_cv"
+split_mode_matrix:
+  - name: standard_cv
     use_group_split: false
-  - name: "site_group_cv"
+  - name: site_group_cv
     use_group_split: true
 
 model_family_overrides:
@@ -97,3 +94,9 @@ model_family_overrides:
   xgb:
     nested_tune_enabled: false
     feature_select_mode: "block_kinematic"
+
+export_subtype_summary: true
+
+ablation_arms:
+  - name: "clinical_plus_tumor_size_plus_vessel_all"
+    selected_features: ["clinical", "tumor_size", "morph", "graph", "kinematic"]

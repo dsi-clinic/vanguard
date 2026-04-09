@@ -1,7 +1,5 @@
-# Focused model-family x feature-arm matrix for Project 2.
-#
-# Goal: keep feature arms fixed, swap model family fairly.
-# This config starts with three arms and three families (lr/rf/xgb).
+# Focused model-family x feature-arm matrix for Project 2 (Issue #116).
+# Uses run_ablation_matrix.py with model_families + split_mode_matrix.
 
 feature_toggles:
   use_vascular: true
@@ -59,7 +57,6 @@ model_params:
   n_estimators: 400
   max_depth: null
   min_samples_leaf: 1
-  # XGBoost defaults
   xgb_learning_rate: 0.05
   xgb_subsample: 0.8
   xgb_colsample_bytree: 0.8
@@ -81,13 +78,15 @@ data_paths:
   id_column: "case_id"
   radiomics_csv: ""
 
-# Families to compare (mapped in runner): logistic, random forest, xgboost.
 model_families:
   - lr
   - rf
   - xgb
 
-# Optional family-specific override knobs.
+split_mode_matrix:
+  - name: cv
+    use_group_split: false
+
 model_family_overrides:
   lr:
     nested_tune_enabled: true
@@ -98,8 +97,10 @@ model_family_overrides:
   xgb:
     nested_tune_enabled: false
 
-# Focused arm set requested in issue #116.
-model_family_arms:
+baseline_arm_name: clinical_plus_tumor_size
+baseline_run_name: clinical_plus_tumor_size__lr__cv
+
+ablation_arms:
   - name: "clinical_plus_tumor_size"
     selected_features: ["clinical", "tumor_size"]
 
@@ -116,4 +117,3 @@ model_family_arms:
       feature_select_mode: "block_kinematic"
       feature_select_k_kin: 16
       feature_select_kin_method: "mrmr"
-

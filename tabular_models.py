@@ -774,7 +774,9 @@ def build_model_pipeline(
         except ImportError as exc:  # pragma: no cover - environment dependent
             raise ImportError(
                 "XGBoost model requested but package is not installed. "
-                "Install with `pip install xgboost`."
+                "Install xgboost in the vanguard env (see environment.yml / requirements.txt), "
+                "e.g. `micromamba install -n vanguard -c conda-forge xgboost` "
+                "or `pip install xgboost`, then retry."
             ) from exc
 
         model = XGBClassifier(
@@ -793,6 +795,7 @@ def build_model_pipeline(
             objective="binary:logistic",
             eval_metric="auc",
             n_jobs=-1,
+            tree_method="hist",
         )
     elif normalized_model_type in {"lr", "logreg", "logistic"}:
         numeric_steps: list[tuple[str, Any]] = []
