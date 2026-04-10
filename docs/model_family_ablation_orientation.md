@@ -42,9 +42,8 @@
 - `clinical_plus_tumor_size_plus_kinematic`: lr > rf > xgb
 - `clinical_plus_tumor_size_plus_vessel_all`: xgb > rf > lr
 
-## Guidance answers
+## Conclusion (Issue #116) — families to carry forward
 
-- Nonlinear models beat LR on the **richest** vessel arm only; LR wins simpler arms.
-- Carry **LR + XGB** forward; RF optional tie-breaker.
+**Recommend carrying forward logistic regression (`lr`) and XGBoost (`xgb`).** On the matrix run in `results/model_family_matrix_ispy2_summary.csv`, **`lr` had the best mean AUC on the two simpler arms** (clinical + tumor_size, and + kinematic). **On the richest arm** (clinical + tumor_size + morph + graph + kinematic), **`xgb` had the best mean AUC** (with the lowest AUC std among the three families on that arm). **Random forest** was never the top family on any arm in this matrix, so it is optional at most—not a default carry-forward.
 
 Follow-up robustness (#117): `docs/model_family_robustness_117.md`.

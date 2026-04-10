@@ -28,10 +28,8 @@ Frozen feature arm: **clinical + tumor_size + morph + graph + kinematic**.
 | `lr`  | 0.595 ± 0.032 | 0.523 ± 0.060 |
 | `xgb` | 0.606 ± 0.028 | 0.608 ± 0.054 |
 
-## Plain-English conclusion
+## Conclusion (Issue #117) — robustness claim supported by site-exclusive CV
 
-- **LR** loses a lot of mean AUC under site-exclusive folds (possible site-related signal in standard CV).
-- **XGB** keeps similar **mean** AUC; **std** rises under site splits.
-- **Most robust on mean AUC under site splits:** **XGB**; LR remains the simpler baseline but needs cautious interpretation under site-exclusive evaluation.
+**Claim we think the numbers support:** On the full vessel arm, **mean AUC for XGBoost stayed essentially the same** when switching from standard CV to **site-exclusive** folds (≈0.606 vs ≈0.608 in `results/model_family_robustness_ispy2_summary.csv`), while **mean AUC for logistic regression dropped substantially** (≈0.595 vs ≈0.523). So **XGBoost looks more stable under a “no shared site between train and validation” evaluation** on this setup; **LR’s standard-CV number is harder to trust** as a guide to out-of-site behavior here. We are **not** claiming XGB is universally better—only that **under this stress test, LR’s performance collapses more than XGB’s**, and XGB’s fold-to-fold spread widens under site splits (higher `auc_std`) even though the mean stays flat.
 
 Refs #117
