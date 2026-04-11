@@ -6,6 +6,12 @@ These scripts submit pCR modeling experiments from the top-level training and ab
 
 - `submit_feature_ablation.slurm`
   - serial feature-block matrix run using `run_ablation_matrix.py`
+- `submit_model_family_matrix.slurm`
+  - Issue #116 matrix: `model_families` × `ablation_arms` via `run_ablation_matrix.py`
+- `submit_model_family_robustness.slurm`
+  - Issue #117: top families × `split_mode_matrix` via `run_ablation_matrix.py`
+- `submit_issue118_baseline_arms.slurm`
+  - Issue #118: five baseline arms × (`lr`, `xgb`) in one `run_ablation_matrix.py` run
 - `submit_independent_signal_matrix_array.sh`
   - wrapper that submits the cached-table job, the arm/fold array job, and the merge job
 - `submit_ablation_arm_fold_array.slurm`
@@ -14,6 +20,20 @@ These scripts submit pCR modeling experiments from the top-level training and ab
   - user-facing wrapper that submits the full Deep Sets workflow
 - `deepsets_job.slurm`
   - one parameterized job script used for Deep Sets build, merge, and train stages
+
+## Slurm usage (robust paths)
+
+Submit from the **repository root** so `SLURM_SUBMIT_DIR` points at the repo (scripts `cd` there and write logs under `logs/`).
+
+```bash
+cd /path/to/vanguard
+sbatch slurm/submit_model_family_matrix.slurm
+```
+
+Override config/output with env vars (each script echoes what it uses):
+
+- `CONFIG` — path to YAML under the repo, e.g. `configs/model_family_matrix.yaml`
+- `OUTDIR` — experiment output directory, e.g. `experiments/my_run`
 
 ## Recommended Entry Point
 
@@ -50,6 +70,49 @@ To test different arms:
 1. edit `ablation_arms` in `../configs/independent_signal.yaml`
 2. submit again to a fresh `OUT_ROOT`
 
+## Model-Family Matrix (#116)
+
+```bash
+cd ~/vanguard
+CONFIG=configs/model_family_matrix.yaml \
+OUTDIR=experiments/model_family_matrix_ispy2 \
+sbatch slurm/submit_model_family_matrix.slurm
+```
+
+Primary output:
+
+- `OUTDIR/ablation_summary.csv` (includes `auc_std`, `ap_mean` / `ap_std` when folds support AP)
+- `OUTDIR/ablation_matrix_meta.yaml`
+
+## Model-Family Robustness (#117)
+
+```bash
+cd ~/vanguard
+CONFIG=configs/model_family_robustness.yaml \
+OUTDIR=experiments/model_family_robustness_ispy2 \
+sbatch slurm/submit_model_family_robustness.slurm
+```
+
+Primary outputs:
+
+- `OUTDIR/ablation_summary.csv`
+- `OUTDIR/ablation_subtype_summary.csv` (when `export_subtype_summary: true` in config)
+
+## Issue #118 — Baseline vessel arms (`lr` + `xgb`)
+
+Single ablation run (both families in one table):
+
+```bash
+cd ~/vanguard
+CONFIG=configs/issue118_baseline_arms.yaml \
+OUTDIR=experiments/issue118_baseline_arms \
+sbatch slurm/submit_issue118_baseline_arms.slurm
+```
+
+Output: `OUTDIR/ablation_summary.csv`
+
+Details: `docs/issue118_baseline_comparison.md`
+
 ## Deep Sets Workflow
 
 Typical Deep Sets run:
@@ -76,4 +139,3 @@ What the wrapper does:
 3. submits a build array through `deepsets_job.slurm` with `MODE=build`
 4. submits a manifest-merge job through `deepsets_job.slurm` with `MODE=merge`
 5. submits a training job through `deepsets_job.slurm` with `MODE=train`
-

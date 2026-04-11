@@ -1,0 +1,102 @@
+# Robustness checks for Issue #117 via run_ablation_matrix.py.
+
+feature_toggles:
+  use_vascular: true
+  use_morphometry: true
+  require_centerline_file: true
+  include_missing_centerline_rows: false
+  use_clinical: true
+  include_site_features: false
+  dataset_include: ["ISPY2"]
+  bilateral_filter: false
+  use_tumor_local_features: true
+  use_tumor_graph_features_json: true
+  tumor_mask_file_pattern: "{case_id}.nii.gz"
+  tumor_mask_threshold: 0.5
+  tumor_radius_voxels: [0, 2, 4, 8]
+  use_radiomics: false
+  merge_how: "inner"
+  selected_features: null
+
+experiment_setup:
+  name: "tc4d_model_family_robustness_ispy2"
+  base_outdir: "./experiments"
+
+model_params:
+  model: "lr"
+  penalty: "elasticnet"
+  solver: "saga"
+  l1_ratio: 0.5
+  C: 1.0
+  n_splits: 5
+  random_state: 42
+  max_iter: 5000
+  feature_select_enabled: true
+  feature_select_mode: "block_kinematic"
+  feature_select_k: 64
+  feature_select_k_kin: 16
+  feature_select_kin_method: "mrmr"
+  feature_select_kinematic_prefixes: ["kinematic_"]
+  feature_select_max_abs_corr: 0.95
+  feature_select_max_zero_rate: 0.95
+  feature_select_min_non_na_rate: 0.2
+  feature_select_min_n_unique: 2
+  feature_select_mrmr_redundancy_weight: 1.0
+  feature_select_mrmr_include_baseline: true
+  feature_select_corr_gate_against_baseline: true
+  nested_tune_enabled: false
+  nested_inner_splits: 3
+  nested_c_grid: [0.5, 1.0, 2.0]
+  nested_l1_ratio_grid: [0.25, 0.5, 0.75]
+  nested_feature_select_mode_grid: ["block_kinematic"]
+  nested_k_kin_grid: [8, 16, 32]
+  nested_kin_method_grid: ["topk_auc", "mrmr"]
+  nested_max_abs_corr_grid: [0.9, 0.95]
+  nested_max_zero_rate_grid: [0.9, 0.95]
+  n_estimators: 400
+  max_depth: null
+  min_samples_leaf: 1
+  xgb_learning_rate: 0.05
+  xgb_subsample: 0.8
+  xgb_colsample_bytree: 0.8
+  xgb_min_child_weight: 1.0
+  xgb_reg_alpha: 0.0
+  xgb_reg_lambda: 1.0
+  xgb_gamma: 0.0
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "tumor_subtype"
+
+data_paths:
+  centerline_root: "/net/projects2/vanguard/centerlines_tc4d/studies"
+  tumor_mask_root: "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
+  patient_info_dir: "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files"
+  clinical_excel: "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
+  labels_csv: "/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv"
+  label_column: "pcr"
+  id_column: "case_id"
+  radiomics_csv: ""
+
+model_families:
+  - lr
+  - xgb
+
+split_mode_matrix:
+  - name: standard_cv
+    use_group_split: false
+  - name: site_group_cv
+    use_group_split: true
+
+model_family_overrides:
+  lr:
+    nested_tune_enabled: true
+    feature_select_mode: "block_kinematic"
+  xgb:
+    nested_tune_enabled: false
+    feature_select_mode: "block_kinematic"
+
+export_subtype_summary: true
+
+ablation_arms:
+  - name: "clinical_plus_tumor_size_plus_vessel_all"
+    selected_features: ["clinical", "tumor_size", "morph", "graph", "kinematic"]

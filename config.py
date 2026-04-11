@@ -111,6 +111,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "n_estimators": 300,
         "max_depth": None,
         "min_samples_leaf": 1,
+        "xgb_learning_rate": 0.05,
+        "xgb_subsample": 0.8,
+        "xgb_colsample_bytree": 0.8,
+        "xgb_min_child_weight": 1.0,
+        "xgb_reg_alpha": 0.0,
+        "xgb_reg_lambda": 1.0,
+        "xgb_gamma": 0.0,
         "use_group_split": False,
         "group_col": "site",
         "stratum_col": "tumor_subtype",
@@ -140,6 +147,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_label_column": "label",
     },
     "ablation_arms": deepcopy(DEFAULT_ABLATION_ARMS),
+    # Optional multipliers for run_ablation_matrix (Issue #116 / #117 style experiments).
+    "model_families": None,
+    "split_mode_matrix": None,
+    "model_family_overrides": {},
+    "baseline_run_name": None,
+    "export_subtype_summary": False,
 }
 
 

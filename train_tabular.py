@@ -51,9 +51,14 @@ def run_evaluation_pipeline(
     context = prepare_evaluation_context(df, config)
     fold_results_list, nested_rows = run_cross_validation_from_context(context)
 
+    # Nested tuning CSVs must live under the per-run directory (same leaf as metrics.json)
+    # so concurrent ablation / matrix runs do not overwrite each other.
+    run_subdir = outdir / str(config.experiment_setup.name)
+    run_subdir.mkdir(parents=True, exist_ok=True)
+
     if nested_rows:
         nested_df = pd.DataFrame(nested_rows)
-        nested_df.to_csv(outdir / "nested_tuning_summary.csv", index=False)
+        nested_df.to_csv(run_subdir / "nested_tuning_summary.csv", index=False)
         if not nested_df.empty and "inner_auc_mean" in nested_df.columns:
             best_per_fold = (
                 nested_df.sort_values(
@@ -64,7 +69,7 @@ def run_evaluation_pipeline(
                 .head(1)
             )
             best_per_fold.to_csv(
-                outdir / "nested_tuning_best_per_fold.csv", index=False
+                run_subdir / "nested_tuning_best_per_fold.csv", index=False
             )
 
     logging.info("Aggregating fold metrics...")
