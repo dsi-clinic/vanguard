@@ -133,6 +133,7 @@ def load_tumor_mask_zyx(
         raise ValueError(f"Tumor mask is empty after thresholding: {tumor_mask_path}")
     return mask
 
+
 OFFSETS_3D = np.array(
     [
         (dz, dy, dx)
@@ -165,7 +166,9 @@ def _align_zyx_candidates(
     )
 
 
-def _load_sitk_volume_zyx(path: Path, expected_shape_zyx: tuple[int, int, int]) -> np.ndarray:
+def _load_sitk_volume_zyx(
+    path: Path, expected_shape_zyx: tuple[int, int, int]
+) -> np.ndarray:
     image = sitk.ReadImage(str(path))
     arr = sitk.GetArrayFromImage(image)
     return _align_zyx_candidates(arr, expected_shape_zyx)
@@ -435,7 +438,11 @@ def main() -> None:
             volume_zyx = _load_sitk_volume_zyx(dce_path, shape_zyx)
             source_tag = "clinical"
 
-        slice_z = int(args.slice_z) if args.slice_z is not None else _choose_axial_slice_z(tumor_mask)
+        slice_z = (
+            int(args.slice_z)
+            if args.slice_z is not None
+            else _choose_axial_slice_z(tumor_mask)
+        )
         signed_dist_mm = _build_signed_distance_mm(tumor_mask, spacing_mm_zyx)
         coords_xyz, neighbor_map = _build_neighbor_map(skeleton)
 
@@ -466,8 +473,9 @@ def main() -> None:
         if finite.size == 0:
             vmin, vmax = 0.0, 1.0
         else:
-            vmin, vmax = float(np.percentile(finite, 1.0)), float(
-                np.percentile(finite, 99.0)
+            vmin, vmax = (
+                float(np.percentile(finite, 1.0)),
+                float(np.percentile(finite, 99.0)),
             )
             if not math.isfinite(vmin) or not math.isfinite(vmax) or vmax <= vmin:
                 vmin, vmax = float(finite.min()), float(finite.max())
@@ -477,9 +485,7 @@ def main() -> None:
         fig, ax = plt.subplots(1, 1, figsize=(8, 8))
         ax.imshow(slice_img, cmap="gray", origin="lower", vmin=vmin, vmax=vmax)
         if np.any(mask_slice > CONTOUR_LEVEL):
-            ax.contour(
-                mask_slice, levels=[CONTOUR_LEVEL], colors="red", linewidths=1.5
-            )
+            ax.contour(mask_slice, levels=[CONTOUR_LEVEL], colors="red", linewidths=1.5)
         if xs:
             sc = ax.scatter(
                 xs,
@@ -500,7 +506,10 @@ def main() -> None:
         ax.set_ylabel("y (voxel)")
         fig.tight_layout()
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", case_id)
-        out_path = args.out_dir / f"alignment_{source_tag}_{safe}_z{slice_z}_t{args.time_index:04d}.png"
+        out_path = (
+            args.out_dir
+            / f"alignment_{source_tag}_{safe}_z{slice_z}_t{args.time_index:04d}.png"
+        )
         fig.savefig(out_path, dpi=150)
         plt.close(fig)
         print(f"Wrote {out_path}")
