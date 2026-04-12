@@ -44,3 +44,5 @@ dependencies:
   - pip:
       - git+https://github.com/AIM-Harvard/pyradiomics.git@v3.1.0
       - unet
+      # Tabular XGBoost (Issue #116+); matches requirements.txt
+      - xgboost~=2.1

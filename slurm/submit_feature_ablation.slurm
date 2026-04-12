@@ -4,12 +4,12 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=08:00:00
-#SBATCH --output=logs/ml-feature-ablation-%j.out
-#SBATCH --error=logs/ml-feature-ablation-%j.err
+#SBATCH --output=logs/%x-%j.out
+#SBATCH --error=logs/%x-%j.err
 
 set -euo pipefail
 
-REPO_ROOT="${REPO_ROOT:-$PWD}"
+REPO_ROOT="${SLURM_SUBMIT_DIR:-${REPO_ROOT:-$PWD}}"
 CONFIG="${CONFIG:-configs/ablation.yaml}"
 OUTDIR="${OUTDIR:-experiments/feature_ablation_q3}"
 

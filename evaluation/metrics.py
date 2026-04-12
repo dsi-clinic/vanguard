@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 # Constants
 MIN_CLASSES_FOR_BINARY = 2
@@ -61,6 +61,28 @@ def compute_auc(
 
 # Register AUC metric
 METRIC_REGISTRY["auc"] = compute_auc
+
+
+def compute_ap(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    y_prob: np.ndarray | None = None,
+) -> dict[str, float]:
+    """Average precision (area under PR curve); reported as key ``ap``."""
+    if y_prob is None:
+        raise ValueError("y_prob is required for AP computation")
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    unique_labels = np.unique(y_true)
+    if len(unique_labels) < MIN_CLASSES_FOR_BINARY:
+        return {"ap": float("nan")}
+    try:
+        return {"ap": float(average_precision_score(y_true, y_prob))}
+    except ValueError:
+        return {"ap": float("nan")}
+
+
+METRIC_REGISTRY["ap"] = compute_ap
 
 
 def compute_binary_metrics(
