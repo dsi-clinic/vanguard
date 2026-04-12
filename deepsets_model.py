@@ -88,13 +88,13 @@ class DeepSetsClassifier(nn.Module):
         pooled_mean = pooled_sum / counts
 
         idx = batch_index.unsqueeze(1).expand_as(encoded).long()
+        pooled_max = torch.full(
+            (batch_size, encoded.shape[1]),
+            fill_value=torch.finfo(encoded.dtype).min,
+            dtype=encoded.dtype,
+            device=encoded.device,
+        )
         if getattr(encoded, "scatter_reduce_", None) is not None:
-            pooled_max = torch.full(
-                (batch_size, encoded.shape[1]),
-                fill_value=torch.finfo(encoded.dtype).min,
-                dtype=encoded.dtype,
-                device=encoded.device,
-            )
             pooled_max.scatter_reduce_(
                 0,
                 idx,
@@ -104,11 +104,12 @@ class DeepSetsClassifier(nn.Module):
             )
         else:
             pooled_max = torch.scatter_reduce(
-                encoded,
+                pooled_max,
                 0,
                 idx,
+                encoded,
                 reduce="amax",
-                output_size=batch_size,
+                include_self=True,
             )
             empty_rows = counts_raw == 0
             if empty_rows.any():
