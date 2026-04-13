@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -41,11 +42,10 @@ class SavedSetLookup:
         """Load one case tensor package by case ID."""
         case_key = str(case_id)
         if case_key not in self._cache:
-            payload = torch.load(
-                self._path_by_case[case_key],
-                map_location="cpu",
-                weights_only=False,
-            )
+            _load_kw: dict[str, Any] = {"map_location": "cpu"}
+            if "weights_only" in inspect.signature(torch.load).parameters:
+                _load_kw["weights_only"] = False
+            payload = torch.load(self._path_by_case[case_key], **_load_kw)
             if not isinstance(payload, dict):
                 raise TypeError(f"Expected dict payload for case {case_key}")
             self._cache[case_key] = payload

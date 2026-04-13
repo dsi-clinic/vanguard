@@ -82,23 +82,39 @@ class DeepSetsClassifier(nn.Module):
             device=encoded.device,
         )
         pooled_sum.index_add_(0, batch_index, encoded)
-        counts = torch.bincount(batch_index, minlength=batch_size).clamp_min(1)
+        counts_raw = torch.bincount(batch_index, minlength=batch_size)
+        counts = counts_raw.clamp_min(1)
         counts = counts.to(device=encoded.device, dtype=encoded.dtype).unsqueeze(1)
         pooled_mean = pooled_sum / counts
 
+        idx = batch_index.unsqueeze(1).expand_as(encoded).long()
         pooled_max = torch.full(
             (batch_size, encoded.shape[1]),
             fill_value=torch.finfo(encoded.dtype).min,
             dtype=encoded.dtype,
             device=encoded.device,
         )
-        pooled_max.scatter_reduce_(
-            0,
-            batch_index.unsqueeze(1).expand_as(encoded),
-            encoded,
-            reduce="amax",
-            include_self=True,
-        )
+        if getattr(encoded, "scatter_reduce_", None) is not None:
+            pooled_max.scatter_reduce_(
+                0,
+                idx,
+                encoded,
+                reduce="amax",
+                include_self=True,
+            )
+        else:
+            pooled_max = torch.scatter_reduce(
+                pooled_max,
+                0,
+                idx,
+                encoded,
+                reduce="amax",
+                include_self=True,
+            )
+            empty_rows = counts_raw == 0
+            if empty_rows.any():
+                pooled_max = pooled_max.clone()
+                pooled_max[empty_rows] = torch.finfo(encoded.dtype).min
         log_counts = torch.log(counts)
         pooled = torch.cat([pooled_mean, pooled_max, log_counts], dim=1)
         return self.rho(pooled).view(-1)

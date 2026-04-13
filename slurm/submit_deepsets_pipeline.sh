@@ -8,6 +8,21 @@ CONFIG="${CONFIG:-${REPO_ROOT}/configs/deepsets_ispy2.yaml}"
 OUT_ROOT="${OUT_ROOT:-${REPO_ROOT}/experiments/deepsets_ispy2}"
 PARTITION="${PARTITION:-general}"
 
+# Resolve OUT_ROOT to an absolute path. Relative paths are interpreted from
+# slurm/ (SCRIPT_DIR) so examples like OUT_ROOT=../experiments/foo match the
+# directory used when the submit script runs "cd slurm" — compute jobs use
+# cwd REPO_ROOT, so passing a bare ../experiments/... CONFIG breaks there.
+_resolve_out_root() {
+  local out="$1"
+  if [[ "${out}" != /* ]]; then
+    ( cd "${SCRIPT_DIR}" && mkdir -p "${out}" && cd "${out}" && pwd )
+  else
+    mkdir -p "${out}"
+    ( cd "${out}" && pwd )
+  fi
+}
+OUT_ROOT="$(_resolve_out_root "${OUT_ROOT}")"
+
 BUILD_CPUS="${BUILD_CPUS:-8}"
 BUILD_MEM="${BUILD_MEM:-64G}"
 BUILD_TIME="${BUILD_TIME:-02:00:00}"
@@ -21,7 +36,7 @@ MERGE_CPUS="${MERGE_CPUS:-2}"
 MERGE_MEM="${MERGE_MEM:-8G}"
 MERGE_TIME="${MERGE_TIME:-00:30:00}"
 
-mkdir -p "${REPO_ROOT}/logs" "${OUT_ROOT}"
+mkdir -p "${REPO_ROOT}/logs"
 
 if [[ ! -f "${CONFIG}" ]]; then
   echo "Config not found: ${CONFIG}" >&2
