@@ -22,13 +22,13 @@ FOLD_INDEX=$(( TASK_ID % N_SPLITS ))
 mkdir -p "${REPO_ROOT}/logs"
 cd "${REPO_ROOT}"
 
-source ~/.bashrc || true
-if command -v micromamba >/dev/null 2>&1; then
-  eval "$(micromamba shell hook -s bash)"
-  micromamba activate vanguard
+ENV_PYTHON="${ENV_PYTHON:-${HOME}/micromamba/envs/vanguard/bin/python}"
+if [[ ! -x "${ENV_PYTHON}" ]]; then
+  echo "env python not found at ${ENV_PYTHON}" >&2
+  exit 1
 fi
 
-python -m modeling.run_arm_fold \
+"${ENV_PYTHON}" -m modeling.run_arm_fold \
   --config "${CONFIG}" \
   --features-csv "${FEATURES_CSV}" \
   --arm-index "${ARM_INDEX}" \
