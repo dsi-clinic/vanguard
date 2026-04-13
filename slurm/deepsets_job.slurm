@@ -7,7 +7,7 @@
 #SBATCH --output=logs/deepsets-%x-%j.out
 #SBATCH --error=logs/deepsets-%x-%j.err
 
-set -euo pipefail
+set -eo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$PWD}"
 MODE="${MODE:?MODE is required}"
