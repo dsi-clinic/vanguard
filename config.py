@@ -129,6 +129,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dropout": 0.2,
         "learning_rate": 1e-3,
         "weight_decay": 1e-4,
+        "pooling": "mean_max_logcount",
         "deepsets_local_radius_floor_mm": 50.0,
         "deepsets_local_radius_scale": 2.0,
         "deepsets_local_radius_cap_mm": 60.0,
