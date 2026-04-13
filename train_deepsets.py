@@ -236,14 +236,10 @@ def build_loss_fn(
     """Instantiate the training loss function from config."""
     loss_name = str(config.model_params.get("loss", "weighted_bce"))
     if loss_name not in LOSS_CHOICES:
-        raise ValueError(
-            f"Unknown loss {loss_name!r}. Choose from {LOSS_CHOICES}."
-        )
+        raise ValueError(f"Unknown loss {loss_name!r}. Choose from {LOSS_CHOICES}.")
     if loss_name == "weighted_bce":
         pos_weight_value = (
-            float(negative_count) / float(positive_count)
-            if positive_count > 0
-            else 1.0
+            float(negative_count) / float(positive_count) if positive_count > 0 else 1.0
         )
         return nn.BCEWithLogitsLoss(
             pos_weight=torch.tensor(
