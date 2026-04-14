@@ -53,6 +53,8 @@ For each study, the pipeline can write:
 - optional debug images
   - vessel coverage MIPs and other inspection outputs
 
+The Deep Sets dataset builder consumes the **skeleton** mask only today; **support**, **morphometry**, and **tumor_graph_features** are documented for other models. See [`docs/deepsets_issue119/README.md`](../docs/deepsets_issue119/README.md) for a short audit, candidate point features, and DCE–skeleton alignment QA.
+
 ## Environment and Compute
 
 - Activate `vanguard` before running Python commands.
