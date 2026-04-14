@@ -39,6 +39,7 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
+from deepsets_volume_align import align_zyx_volume_to_shape
 from load_cohort import load_config
 
 CONTOUR_LEVEL = 0.5
@@ -148,30 +149,12 @@ ENDPOINT_DEGREE = 1
 CHAIN_DEGREE = 2
 
 
-def _align_zyx_candidates(
-    volume: np.ndarray, expected_shape_zyx: tuple[int, int, int]
-) -> np.ndarray:
-    """Pick axis order so ``volume`` matches ``expected_shape_zyx`` (same as tumor loader)."""
-    candidates = [
-        np.asarray(volume),
-        np.transpose(np.asarray(volume), (1, 2, 0)),
-        np.transpose(np.asarray(volume), (2, 1, 0)),
-    ]
-    for candidate in candidates:
-        if tuple(int(v) for v in candidate.shape) == expected_shape_zyx:
-            return candidate.astype(np.float32, copy=False)
-    raise ValueError(
-        f"Shape mismatch after axis permutations: expected {expected_shape_zyx}, "
-        f"raw {np.asarray(volume).shape}"
-    )
-
-
 def _load_sitk_volume_zyx(
     path: Path, expected_shape_zyx: tuple[int, int, int]
 ) -> np.ndarray:
     image = sitk.ReadImage(str(path))
     arr = sitk.GetArrayFromImage(image)
-    return _align_zyx_candidates(arr, expected_shape_zyx)
+    return align_zyx_volume_to_shape(arr, expected_shape_zyx)
 
 
 def _load_mask_with_spacing(
@@ -311,7 +294,7 @@ def _load_vessel_timepoint(
         raise ValueError(f"NPZ at {path} has no 'vessel' array")
     arr = np.asarray(loaded["vessel"], dtype=np.float32)
     loaded.close()
-    return _align_zyx_candidates(arr, expected_shape_zyx)
+    return align_zyx_volume_to_shape(arr, expected_shape_zyx)
 
 
 def parse_args() -> argparse.Namespace:
