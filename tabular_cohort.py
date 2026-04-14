@@ -25,6 +25,7 @@ from features.graph import (
     load_tumor_graph_payload,
     resolve_tumor_graph_features_path,
 )
+from features.second_order import add_second_order_features
 from features.kinematic import extract_kinematic_json_features
 from features.morph import extract_morphometry_features
 from features.tumor_size import (
@@ -279,6 +280,7 @@ def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
                     )
 
         add_derived_graph_features(row)
+        add_second_order_features(row)
         rows.append(row)
 
         if idx % 300 == 0:
