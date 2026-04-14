@@ -206,6 +206,7 @@ def _train_one_epoch(
     optimizer: torch.optim.Optimizer,
     loss_fn: nn.Module,
     device: torch.device,
+    max_grad_norm: float = 0.0,
 ) -> float:
     """Run one training epoch."""
     model.train()
@@ -219,6 +220,8 @@ def _train_one_epoch(
         logits = model(x, batch_index)
         loss = loss_fn(logits, targets)
         loss.backward()
+        if max_grad_norm > 0.0:
+            nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
         optimizer.step()
         batch_size = int(targets.numel())
         total_loss += float(loss.item()) * batch_size
@@ -327,7 +330,7 @@ def fit_predict_one_fold(
     manifest_df: pd.DataFrame,
     split: FoldSplit,
     config: dict[str, Any],
-) -> tuple[pd.Series, np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
+) -> tuple[pd.Series, np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]], int]:
     """Train the starter Deep Sets model for one fold and return validation predictions."""
     params = config.model_params
     batch_size = int(params.batch_size)
@@ -338,6 +341,7 @@ def fit_predict_one_fold(
     learning_rate = float(params.learning_rate)
     weight_decay = float(params.weight_decay)
     pooling = str(params.get("pooling", "mean_max_logcount"))
+    max_grad_norm = float(params.get("max_grad_norm", 0.0))
     device = _resolve_device(config)
     random_state = int(params.random_state)
     torch.manual_seed(random_state + int(split.fold_idx))
@@ -363,6 +367,21 @@ def fit_predict_one_fold(
         lr=learning_rate,
         weight_decay=weight_decay,
     )
+
+    scheduler_name = str(params.get("lr_scheduler", "none")).lower()
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
+    if scheduler_name == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=epochs
+        )
+    elif scheduler_name == "plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=float(params.get("lr_scheduler_factor", 0.5)),
+            patience=int(params.get("lr_scheduler_patience", 5)),
+        )
+
     positive_count = int(train_df[config.data_paths.deepsets_label_column].sum())
     negative_count = int(len(train_df) - positive_count)
     pos_weight_value = (
@@ -380,6 +399,12 @@ def fit_predict_one_fold(
     )
     loss_history: list[dict[str, float]] = []
 
+    patience = int(params.get("early_stopping_patience", 0))
+    best_val_loss = float("inf")
+    best_epoch = 0
+    best_state_dict: dict[str, torch.Tensor] | None = None
+    epochs_without_improvement = 0
+
     for epoch_idx in range(epochs):
         train_loss = _train_one_epoch(
             model=model,
@@ -387,6 +412,7 @@ def fit_predict_one_fold(
             optimizer=optimizer,
             loss_fn=loss_fn,
             device=device,
+            max_grad_norm=max_grad_norm,
         )
         val_loss = _evaluate_loss(
             model=model,
@@ -400,6 +426,7 @@ def fit_predict_one_fold(
                 "epoch": float(epoch_idx + 1),
                 "train_loss": float(train_loss),
                 "val_loss": float(val_loss),
+                "lr": float(optimizer.param_groups[0]["lr"]),
             }
         )
         logging.info(
@@ -411,14 +438,84 @@ def fit_predict_one_fold(
             val_loss,
         )
 
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_epoch = epoch_idx + 1
+            best_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+
+        if scheduler is not None:
+            if scheduler_name == "plateau":
+                scheduler.step(val_loss)
+            else:
+                scheduler.step()
+
+        if patience > 0 and epochs_without_improvement >= patience:
+            logging.info(
+                "fold %d early stopping at epoch %d (best epoch %d, best val_loss %.4f)",
+                split.fold_idx,
+                epoch_idx + 1,
+                best_epoch,
+                best_val_loss,
+            )
+            break
+
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+        logging.info(
+            "fold %d restored best model from epoch %d", split.fold_idx, best_epoch
+        )
+
     y_true, y_pred, y_prob, case_ids = _predict_loader(
         model=model, loader=val_loader, device=device
     )
-    return pd.Series(case_ids, dtype=str), y_true, y_pred, y_prob, loss_history
+    return pd.Series(case_ids, dtype=str), y_true, y_pred, y_prob, loss_history, best_epoch
 
 
 def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
-    """Run the minimal Deep Sets training/evaluation pipeline."""
+    """Run the Deep Sets training/evaluation pipeline.
+
+    Outputs saved to ``<outdir>/<model_name>/``:
+
+    Training diagnostics:
+        loss_history.csv
+            Per-fold, per-epoch train and validation loss with learning rate.
+        loss_by_epoch.png
+            Training and validation loss curves for all folds.
+        fold_diagnostics.csv
+            Per-fold summary: best epoch, total epochs run, best and final
+            validation loss, validation set size, point-count statistics
+            (mean/min/max), fallback case count, predicted-probability
+            standard deviation, and a collapsed-probability flag (std < 0.01).
+
+    Probability diagnostics:
+        probability_distribution.png
+            Histogram of predicted probabilities across all folds.
+        probability_summary.json
+            Mean, std, min, median, max of predicted probabilities and the
+            positive-prediction rate at threshold 0.5.
+
+    Evaluation results (written by evaluator):
+        metrics.json
+            Overall and per-subgroup AUC, accuracy, etc. Subgroup metrics
+            appear when a stratum column (e.g. tumor_subtype) is present
+            in the manifest.
+        predictions.csv
+            Per-case predictions across all folds.
+
+    Stabilization features (controlled via config model_params):
+        early_stopping_patience
+            Stop training when validation loss has not improved for N
+            consecutive epochs (0 = disabled). Best-epoch model weights
+            are restored before prediction.
+        max_grad_norm
+            Clip gradient norm to this value each step (0.0 = disabled).
+        lr_scheduler
+            "cosine" (CosineAnnealingLR) or "plateau" (ReduceLROnPlateau)
+            to decay the learning rate during training ("none" = disabled).
+    """
     manifest_df = load_deepsets_manifest(config)
     validate_deepsets_manifest(manifest_df, config)
     label_col = config.data_paths.deepsets_label_column
@@ -446,12 +543,15 @@ def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
 
     fold_results: list[FoldResults] = []
     all_loss_rows: list[dict[str, float]] = []
+    fold_diagnostics: list[dict[str, object]] = []
     for split in splits:
-        fold_case_ids, y_true, y_pred, y_prob, loss_history = fit_predict_one_fold(
-            dataset=dataset,
-            manifest_df=manifest_df,
-            split=split,
-            config=config,
+        fold_case_ids, y_true, y_pred, y_prob, loss_history, best_epoch = (
+            fit_predict_one_fold(
+                dataset=dataset,
+                manifest_df=manifest_df,
+                split=split,
+                config=config,
+            )
         )
         all_loss_rows.extend(loss_history)
         pred_df = build_fold_prediction_table(
@@ -465,6 +565,35 @@ def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
         )
         fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
 
+        fold_val_df = manifest_df.iloc[split.val_indices]
+        num_points = fold_val_df["num_points"]
+        fallback_count = int(fold_val_df["used_fallback_nearest_points"].sum())
+        prob_std = float(np.std(y_prob))
+        collapsed_threshold = 0.01
+        collapsed = bool(prob_std < collapsed_threshold)
+        fold_diagnostics.append(
+            {
+                "fold": int(split.fold_idx),
+                "best_epoch": best_epoch,
+                "total_epochs": len(loss_history),
+                "best_val_loss": float(min(h["val_loss"] for h in loss_history)),
+                "final_val_loss": float(loss_history[-1]["val_loss"]),
+                "val_cases": len(y_true),
+                "num_points_mean": float(num_points.mean()),
+                "num_points_min": int(num_points.min()),
+                "num_points_max": int(num_points.max()),
+                "fallback_cases": fallback_count,
+                "prob_std": prob_std,
+                "collapsed_probabilities": collapsed,
+            }
+        )
+        if collapsed:
+            logging.warning(
+                "fold %d: collapsed probability distribution (std=%.4f)",
+                split.fold_idx,
+                prob_std,
+            )
+
     kfold_results = evaluator.aggregate_kfold_results(fold_results)
     evaluator.save_results(kfold_results, outdir)
     model_dir = outdir / config.experiment_setup.name
@@ -473,6 +602,9 @@ def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
     if not loss_history_df.empty:
         loss_history_df.to_csv(model_dir / "loss_history.csv", index=False)
         _plot_loss_history(loss_history_df, model_dir / "loss_by_epoch.png")
+    diag_df = pd.DataFrame(fold_diagnostics)
+    if not diag_df.empty:
+        diag_df.to_csv(model_dir / "fold_diagnostics.csv", index=False)
     _plot_probability_distribution(
         kfold_results.predictions,
         model_dir / "probability_distribution.png",
