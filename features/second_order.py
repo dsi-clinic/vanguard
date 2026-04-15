@@ -80,7 +80,6 @@ def add_second_order_features(row: dict[str, Any]) -> None:
     When called on a DataFrame row converted to a dict the same logic
     applies; features whose source columns are absent will be NaN.
     """
-
     # ------------------------------------------------------------------
     # tumor_size block
     # ------------------------------------------------------------------
@@ -144,9 +143,7 @@ def add_second_order_features(row: dict[str, Any]) -> None:
         row.get("per_shell_topology_shell_5_10mm_shell_volume_burden_mm3"),
         row.get("per_shell_topology_shell_10_20mm_shell_volume_burden_mm3"),
     )
-    row["graph_core_to_periphery_volume_ratio"] = safe_ratio(
-        core_vol, periphery_vol
-    )
+    row["graph_core_to_periphery_volume_ratio"] = safe_ratio(core_vol, periphery_vol)
 
     # near-branching enrichment: (near bifurcation rate) / (global bifurcation rate)
     near_bif = _sum_finite(
@@ -173,16 +170,18 @@ def add_second_order_features(row: dict[str, Any]) -> None:
     # ------------------------------------------------------------------
     _tte_prefix = "kinematic_shell_kinetics_{shell}_time_to_enhancement_hurdle_value_given_signal_median"
     _peak_prefix = "kinematic_shell_kinetics_{shell}_peak_enhancement_hurdle_value_given_signal_median"
-    _washin_prefix = "kinematic_shell_kinetics_{shell}_washin_slope_hurdle_value_given_signal_median"
+    _washin_prefix = (
+        "kinematic_shell_kinetics_{shell}_washin_slope_hurdle_value_given_signal_median"
+    )
     _washout_prefix = "kinematic_shell_kinetics_{shell}_washout_slope_hurdle_value_given_signal_median"
 
     core_tte = _mean_finite(
-        row.get(_tte_prefix.format(shell="inside_tumor")),
-        row.get(_tte_prefix.format(shell="shell_0_2mm")),
+        row.get(_tte_prefix.format(shell="inside_tumor")),  # noqa: S604
+        row.get(_tte_prefix.format(shell="shell_0_2mm")),  # noqa: S604
     )
     periphery_tte = _mean_finite(
-        row.get(_tte_prefix.format(shell="shell_5_10mm")),
-        row.get(_tte_prefix.format(shell="shell_10_20mm")),
+        row.get(_tte_prefix.format(shell="shell_5_10mm")),  # noqa: S604
+        row.get(_tte_prefix.format(shell="shell_10_20mm")),  # noqa: S604
     )
     row["kinematic_core_to_periphery_tte_delta"] = (
         float(core_tte - periphery_tte)
@@ -191,24 +190,24 @@ def add_second_order_features(row: dict[str, Any]) -> None:
     )
 
     core_peak = _mean_finite(
-        row.get(_peak_prefix.format(shell="inside_tumor")),
-        row.get(_peak_prefix.format(shell="shell_0_2mm")),
+        row.get(_peak_prefix.format(shell="inside_tumor")),  # noqa: S604
+        row.get(_peak_prefix.format(shell="shell_0_2mm")),  # noqa: S604
     )
     periphery_peak = _mean_finite(
-        row.get(_peak_prefix.format(shell="shell_5_10mm")),
-        row.get(_peak_prefix.format(shell="shell_10_20mm")),
+        row.get(_peak_prefix.format(shell="shell_5_10mm")),  # noqa: S604
+        row.get(_peak_prefix.format(shell="shell_10_20mm")),  # noqa: S604
     )
     row["kinematic_core_to_periphery_peak_ratio"] = safe_ratio(
         core_peak, periphery_peak
     )
 
     near_washin = _mean_finite(
-        row.get(_washin_prefix.format(shell="inside_tumor")),
-        row.get(_washin_prefix.format(shell="shell_0_2mm")),
+        row.get(_washin_prefix.format(shell="inside_tumor")),  # noqa: S604
+        row.get(_washin_prefix.format(shell="shell_0_2mm")),  # noqa: S604
     )
     near_washout = _mean_finite(
-        row.get(_washout_prefix.format(shell="inside_tumor")),
-        row.get(_washout_prefix.format(shell="shell_0_2mm")),
+        row.get(_washout_prefix.format(shell="inside_tumor")),  # noqa: S604
+        row.get(_washout_prefix.format(shell="shell_0_2mm")),  # noqa: S604
     )
     row["kinematic_near_washin_to_washout_ratio"] = _abs_ratio(
         near_washin, near_washout
