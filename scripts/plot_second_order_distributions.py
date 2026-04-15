@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Plot distribution histograms and summary statistics for second-order
-engineered features and their first-order sources.
+"""Plot distribution histograms and summary statistics for second-order features.
+
+Covers both second-order engineered features and their first-order sources.
 
 Usage (from ``vanguard/``)::
 
@@ -79,7 +80,10 @@ FIRST_ORDER_SOURCE_COLUMNS: tuple[str, ...] = (
 _ABBREVIATIONS: list[tuple[str, str]] = [
     ("per_shell_topology_", "pst_"),
     ("kinematic_shell_kinetics_", "ksk_"),
-    ("kinematic_arrival_delay_vs_reference_near_tumor_segments_", "kin_arr_delay_ref_near_"),
+    (
+        "kinematic_arrival_delay_vs_reference_near_tumor_segments_",
+        "kin_arr_delay_ref_near_",
+    ),
     ("kinematic_", "kin_"),
     ("boundary_crossing_", "bc_"),
     ("tumor_burden_", "tb_"),
@@ -99,6 +103,7 @@ def _abbreviate(name: str) -> str:
 
 # ── summary table ───────────────────────────────────────────────────────────
 
+
 def _summarize(df: pd.DataFrame, columns: tuple[str, ...]) -> pd.DataFrame:
     """Descriptive statistics per feature, matching the original CSV schema."""
     n_total = len(df)
@@ -108,37 +113,42 @@ def _summarize(df: pd.DataFrame, columns: tuple[str, ...]) -> pd.DataFrame:
         vals = df[col].dropna() if present else pd.Series(dtype=float)
         n = len(vals)
         if n > 0:
-            rows.append({
-                "feature": col,
-                "present": True,
-                "n_valid": n,
-                "pct_valid": f"{100 * n / n_total:.1f}%",
-                "mean": vals.mean(),
-                "std": vals.std(),
-                "min": vals.min(),
-                "q25": vals.quantile(0.25),
-                "median": vals.median(),
-                "q75": vals.quantile(0.75),
-                "max": vals.max(),
-            })
+            rows.append(
+                {
+                    "feature": col,
+                    "present": True,
+                    "n_valid": n,
+                    "pct_valid": f"{100 * n / n_total:.1f}%",
+                    "mean": vals.mean(),
+                    "std": vals.std(),
+                    "min": vals.min(),
+                    "q25": vals.quantile(0.25),
+                    "median": vals.median(),
+                    "q75": vals.quantile(0.75),
+                    "max": vals.max(),
+                }
+            )
         else:
-            rows.append({
-                "feature": col,
-                "present": present,
-                "n_valid": 0,
-                "pct_valid": "0.0%",
-                "mean": "",
-                "std": "",
-                "min": "",
-                "q25": "",
-                "median": "",
-                "q75": "",
-                "max": "",
-            })
+            rows.append(
+                {
+                    "feature": col,
+                    "present": present,
+                    "n_valid": 0,
+                    "pct_valid": "0.0%",
+                    "mean": "",
+                    "std": "",
+                    "min": "",
+                    "q25": "",
+                    "median": "",
+                    "q75": "",
+                    "max": "",
+                }
+            )
     return pd.DataFrame(rows)
 
 
 # ── plotting ────────────────────────────────────────────────────────────────
+
 
 def _plot_distributions(
     df: pd.DataFrame,
@@ -189,6 +199,7 @@ def _plot_distributions(
 
 # ── main ────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     """Entry point."""
     ap = argparse.ArgumentParser(
@@ -205,26 +216,28 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    df = pd.read_csv(args.input_csv)
+    features = pd.read_csv(args.input_csv)
     outdir = args.output_dir or args.input_csv.parent
     outdir.mkdir(parents=True, exist_ok=True)
 
-    _summarize(df, SECOND_ORDER_COLUMNS).to_csv(
-        outdir / "summary_second_order.csv", index=False,
+    _summarize(features, SECOND_ORDER_COLUMNS).to_csv(
+        outdir / "summary_second_order.csv",
+        index=False,
     )
-    _summarize(df, FIRST_ORDER_SOURCE_COLUMNS).to_csv(
-        outdir / "summary_first_order_sources.csv", index=False,
+    _summarize(features, FIRST_ORDER_SOURCE_COLUMNS).to_csv(
+        outdir / "summary_first_order_sources.csv",
+        index=False,
     )
 
     _plot_distributions(
-        df,
+        features,
         SECOND_ORDER_COLUMNS,
         "second-order feature distributions (1st-99th pctl)",
         outdir / "distributions_second_order.png",
         color="tab:blue",
     )
     _plot_distributions(
-        df,
+        features,
         FIRST_ORDER_SOURCE_COLUMNS,
         "first-order source feature distributions (1st-99th pctl)",
         outdir / "distributions_first_order_sources.png",
