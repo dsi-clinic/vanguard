@@ -42,22 +42,28 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    df = pd.read_csv(args.input_csv)
-    n_before = len(df.columns)
-    logging.info("Loaded %s: %d rows x %d columns", args.input_csv, len(df), n_before)
+    features = pd.read_csv(args.input_csv)
+    n_before = len(features.columns)
+    logging.info(
+        "Loaded %s: %d rows x %d columns", args.input_csv, len(features), n_before
+    )
 
-    for _, row_series in df.iterrows():
+    for _, row_series in features.iterrows():
         row_dict = row_series.to_dict()
         add_second_order_features(row_dict)
         for col in SECOND_ORDER_COLUMNS:
-            df.at[row_series.name, col] = row_dict[col]
+            features.loc[row_series.name, col] = row_dict[col]
 
-    n_added = len(df.columns) - n_before
-    logging.info("Added %d second-order columns: %s", n_added, list(SECOND_ORDER_COLUMNS))
+    n_added = len(features.columns) - n_before
+    logging.info(
+        "Added %d second-order columns: %s", n_added, list(SECOND_ORDER_COLUMNS)
+    )
 
     out_path = args.output or args.input_csv
-    df.to_csv(out_path, index=False)
-    logging.info("Wrote %s: %d rows x %d columns", out_path, len(df), len(df.columns))
+    features.to_csv(out_path, index=False)
+    logging.info(
+        "Wrote %s: %d rows x %d columns", out_path, len(features), len(features.columns)
+    )
 
 
 if __name__ == "__main__":
