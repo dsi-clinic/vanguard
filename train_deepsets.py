@@ -371,9 +371,7 @@ def fit_predict_one_fold(
     scheduler_name = str(params.get("lr_scheduler", "none")).lower()
     scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
     if scheduler_name == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=epochs
-        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     elif scheduler_name == "plateau":
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
@@ -471,7 +469,14 @@ def fit_predict_one_fold(
     y_true, y_pred, y_prob, case_ids = _predict_loader(
         model=model, loader=val_loader, device=device
     )
-    return pd.Series(case_ids, dtype=str), y_true, y_pred, y_prob, loss_history, best_epoch
+    return (
+        pd.Series(case_ids, dtype=str),
+        y_true,
+        y_pred,
+        y_prob,
+        loss_history,
+        best_epoch,
+    )
 
 
 def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
