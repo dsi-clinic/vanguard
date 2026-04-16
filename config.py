@@ -71,6 +71,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "merge_how": "inner",
         "selected_features": None,
         "centerline_file_pattern": "{case_id}_skeleton_4d_exam_mask.npy",
+        "toy_perfect_feature": False,
+        "toy_only": False,
     },
     "experiment_setup": {
         "name": "vanguard_run",
