@@ -497,9 +497,7 @@ def fit_predict_one_fold(
             best_val_loss = val_loss
             best_epoch = epoch_idx + 1
             if track_best_state:
-                best_state_dict = {
-                    k: v.clone() for k, v in model.state_dict().items()
-                }
+                best_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1

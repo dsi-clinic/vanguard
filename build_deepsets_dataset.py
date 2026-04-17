@@ -327,7 +327,9 @@ def main() -> None:
 
     total_cases = int(len(manifest_source))
     optional_metadata_cols = [
-        c for c in ("site", "tumor_subtype", "bilateral") if c in manifest_source.columns
+        c
+        for c in ("site", "tumor_subtype", "bilateral")
+        if c in manifest_source.columns
     ]
     progress_every = 50
     skipped_missing_centerline = 0
