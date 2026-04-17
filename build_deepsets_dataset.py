@@ -35,6 +35,15 @@ FALLBACK_NEAREST_POINT_COUNT = 64
 POINT_FEATURE_NAMES = ["curvature_rad"]
 
 
+def _str_or_empty(val: object) -> str:
+    """Coerce to string, but map pandas missing values to ``""``.
+
+    Why: plain ``str(NaN)`` yields the literal ``"nan"``, which survives
+    ``dropna()`` downstream and pollutes per-subgroup metrics as a fake group.
+    """
+    return "" if pd.isna(val) else str(val)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -444,9 +453,9 @@ def main() -> None:
                 "set_path": str(set_path),
                 "label": int(row.label),
                 "dataset": dataset_name,
-                "site": str(getattr(row, "site", "")),
-                "tumor_subtype": str(getattr(row, "tumor_subtype", "")),
-                "bilateral": str(getattr(row, "bilateral", "")),
+                "site": _str_or_empty(getattr(row, "site", "")),
+                "tumor_subtype": _str_or_empty(getattr(row, "tumor_subtype", "")),
+                "bilateral": _str_or_empty(getattr(row, "bilateral", "")),
                 "num_points": int(case_set["num_points"]),
                 "local_radius_mm": float(case_set["local_radius_mm"]),
                 "tumor_equiv_radius_mm": float(case_set["tumor_equiv_radius_mm"]),
