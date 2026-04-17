@@ -640,13 +640,19 @@ def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
         prob_std = float(np.std(y_prob))
         collapsed_threshold = 0.01
         collapsed = bool(prob_std < collapsed_threshold)
+        if loss_history:
+            best_val_loss_val = float(min(h["val_loss"] for h in loss_history))
+            final_val_loss_val = float(loss_history[-1]["val_loss"])
+        else:
+            best_val_loss_val = float("nan")
+            final_val_loss_val = float("nan")
         fold_diagnostics.append(
             {
                 "fold": int(split.fold_idx),
                 "best_epoch": best_epoch,
                 "total_epochs": len(loss_history),
-                "best_val_loss": float(min(h["val_loss"] for h in loss_history)),
-                "final_val_loss": float(loss_history[-1]["val_loss"]),
+                "best_val_loss": best_val_loss_val,
+                "final_val_loss": final_val_loss_val,
                 "val_cases": len(y_true),
                 "num_points_mean": float(num_points.mean()),
                 "num_points_min": int(num_points.min()),
