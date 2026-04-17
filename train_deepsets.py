@@ -66,6 +66,7 @@ def describe_required_deepsets_config() -> dict[str, str]:
         "model_params.hidden_dim": "Hidden width used by the phi and rho MLPs.",
         "model_params.num_layers": "Number of layers in the phi and rho MLPs.",
         "model_params.pooling": "Pooling variant: mean, max, sum, mean_max, or mean_max_logcount.",
+        "model_params.loss": "Loss function: weighted_bce, unweighted_bce, or focal.",
     }
 
 
@@ -198,6 +199,59 @@ def _build_loaders(
         collate_fn=collate_case_sets,
     )
     return train_loader, val_loader, train_df, val_df
+
+
+class FocalWithLogitsLoss(nn.Module):
+    """Sigmoid focal loss for class-imbalanced binary classification.
+
+    Applies a modulating factor (1 - p_t)^gamma to down-weight easy examples,
+    with an optional alpha balancing term.
+    """
+
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0) -> None:
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        bce = torch.nn.functional.binary_cross_entropy_with_logits(
+            logits, targets, reduction="none"
+        )
+        probs = torch.sigmoid(logits)
+        p_t = targets * probs + (1.0 - targets) * (1.0 - probs)
+        alpha_t = targets * self.alpha + (1.0 - targets) * (1.0 - self.alpha)
+        focal_weight = alpha_t * (1.0 - p_t) ** self.gamma
+        return (focal_weight * bce).mean()
+
+
+LOSS_CHOICES = ("weighted_bce", "unweighted_bce", "focal")
+
+
+def build_loss_fn(
+    config: dict[str, Any],
+    positive_count: int,
+    negative_count: int,
+    device: torch.device,
+) -> nn.Module:
+    """Instantiate the training loss function from config."""
+    loss_name = str(config.model_params.get("loss", "weighted_bce"))
+    if loss_name not in LOSS_CHOICES:
+        raise ValueError(f"Unknown loss {loss_name!r}. Choose from {LOSS_CHOICES}.")
+    if loss_name == "weighted_bce":
+        pos_weight_value = (
+            float(negative_count) / float(positive_count) if positive_count > 0 else 1.0
+        )
+        return nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor(
+                [pos_weight_value], dtype=torch.float32, device=device
+            )
+        )
+    if loss_name == "unweighted_bce":
+        return nn.BCEWithLogitsLoss()
+    # focal
+    alpha = float(config.model_params.get("focal_alpha", 0.25))
+    gamma = float(config.model_params.get("focal_gamma", 2.0))
+    return FocalWithLogitsLoss(alpha=alpha, gamma=gamma)
 
 
 def _train_one_epoch(
@@ -382,18 +436,19 @@ def fit_predict_one_fold(
 
     positive_count = int(train_df[config.data_paths.deepsets_label_column].sum())
     negative_count = int(len(train_df) - positive_count)
-    pos_weight_value = (
-        float(negative_count) / float(positive_count) if positive_count > 0 else 1.0
-    )
+    loss_name = str(config.model_params.get("loss", "weighted_bce"))
     logging.info(
-        "fold %d class balance: positives=%d negatives=%d pos_weight=%.4f",
+        "fold %d class balance: positives=%d negatives=%d loss=%s",
         split.fold_idx,
         positive_count,
         negative_count,
-        pos_weight_value,
+        loss_name,
     )
-    loss_fn = nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor([pos_weight_value], dtype=torch.float32, device=device)
+    loss_fn = build_loss_fn(
+        config=config,
+        positive_count=positive_count,
+        negative_count=negative_count,
+        device=device,
     )
     loss_history: list[dict[str, float]] = []
 

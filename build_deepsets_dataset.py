@@ -188,6 +188,8 @@ def _build_case_set(
     spacing_mm_zyx: tuple[float, float, float],
     local_radius_mm: float,
     tumor_equiv_radius_mm: float,
+    toy_perfect_feature: bool = False,
+    toy_only: bool = False,
 ) -> dict[str, Any] | None:
     """Build one tumor-local point set for Deep Sets."""
     coords_xyz, neighbor_map = _build_neighbor_map(skeleton_mask_zyx)
@@ -209,7 +211,12 @@ def _build_case_set(
             neighbor_xyz=neighbors,
             spacing_mm_zyx=spacing_mm_zyx,
         )
-        row = [float(curvature_rad)]
+        if toy_only:
+            row = [float(label)]
+        else:
+            row = [float(curvature_rad)]
+            if toy_perfect_feature:
+                row.append(float(label))
         candidate_rows.append((float(signed_distance_mm), row))
         if signed_distance_mm <= float(local_radius_mm):
             feature_rows.append(row)
@@ -226,7 +233,12 @@ def _build_case_set(
         "x": torch.tensor(feature_rows, dtype=torch.float32),
         "y": torch.tensor([int(label)], dtype=torch.float32),
         "case_id": str(case_id),
-        "feature_names": list(POINT_FEATURE_NAMES),
+        "feature_names": (
+            ["toy_perfect_label"]
+            if toy_only
+            else list(POINT_FEATURE_NAMES)
+            + (["toy_perfect_label"] if toy_perfect_feature else [])
+        ),
         "local_radius_mm": float(local_radius_mm),
         "tumor_equiv_radius_mm": float(tumor_equiv_radius_mm),
         "num_points": int(len(feature_rows)),
@@ -271,6 +283,13 @@ def main() -> None:
     skeleton_pattern = str(toggles.centerline_file_pattern)
     dataset_include = toggles.dataset_include
     bilateral_filter = _as_optional_bool(toggles.bilateral_filter)
+    toy_perfect_feature = bool(getattr(toggles, "toy_perfect_feature", False))
+    toy_only = bool(getattr(toggles, "toy_only", False))
+    if toy_perfect_feature or toy_only:
+        logging.warning(
+            "TOY EXPERIMENT MODE: injecting perfect label feature into every point. "
+            "Results will be artificially perfect. Do NOT use for real experiments."
+        )
 
     labels_df = load_labels(
         Path(data_paths.labels_csv),
@@ -378,6 +397,8 @@ def main() -> None:
                 spacing_mm_zyx=spacing_mm_zyx,
                 local_radius_mm=local_radius_mm,
                 tumor_equiv_radius_mm=tumor_equiv_radius_mm,
+                toy_perfect_feature=toy_perfect_feature,
+                toy_only=toy_only,
             )
         except Exception as exc:  # noqa: BLE001
             failed_case_builds += 1
