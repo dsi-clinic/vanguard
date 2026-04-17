@@ -453,6 +453,8 @@ def fit_predict_one_fold(
     loss_history: list[dict[str, float]] = []
 
     patience = int(params.get("early_stopping_patience", 0))
+    restore_best_epoch = bool(params.get("restore_best_epoch", False))
+    track_best_state = patience > 0 or restore_best_epoch
     best_val_loss = float("inf")
     best_epoch = 0
     best_state_dict: dict[str, torch.Tensor] | None = None
@@ -494,7 +496,10 @@ def fit_predict_one_fold(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch_idx + 1
-            best_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
+            if track_best_state:
+                best_state_dict = {
+                    k: v.clone() for k, v in model.state_dict().items()
+                }
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
@@ -515,7 +520,7 @@ def fit_predict_one_fold(
             )
             break
 
-    if best_state_dict is not None:
+    if restore_best_epoch and best_state_dict is not None:
         model.load_state_dict(best_state_dict)
         logging.info(
             "fold %d restored best model from epoch %d", split.fold_idx, best_epoch
@@ -568,8 +573,12 @@ def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
     Stabilization features (controlled via config model_params):
         early_stopping_patience
             Stop training when validation loss has not improved for N
-            consecutive epochs (0 = disabled). Best-epoch model weights
-            are restored before prediction.
+            consecutive epochs (0 = disabled).
+        restore_best_epoch
+            If True, restore model weights from the best validation-loss
+            epoch before prediction (default False = use the weights from
+            the final trained epoch). The best epoch is always recorded
+            in fold_diagnostics.csv regardless of this setting.
         max_grad_norm
             Clip gradient norm to this value each step (0.0 = disabled).
         lr_scheduler

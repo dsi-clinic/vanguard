@@ -133,6 +133,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "weight_decay": 1e-4,
         "pooling": "mean_max_logcount",
         "early_stopping_patience": 0,
+        "restore_best_epoch": False,
         "max_grad_norm": 0.0,
         "lr_scheduler": "none",
         "lr_scheduler_factor": 0.5,
