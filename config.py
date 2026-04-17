@@ -71,6 +71,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "merge_how": "inner",
         "selected_features": None,
         "centerline_file_pattern": "{case_id}_skeleton_4d_exam_mask.npy",
+        "toy_perfect_feature": False,
+        "toy_only": False,
     },
     "experiment_setup": {
         "name": "vanguard_run",
@@ -130,6 +132,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "learning_rate": 1e-3,
         "weight_decay": 1e-4,
         "pooling": "mean_max_logcount",
+        "loss": "weighted_bce",
+        "focal_alpha": 0.25,
+        "focal_gamma": 2.0,
         "deepsets_local_radius_floor_mm": 50.0,
         "deepsets_local_radius_scale": 2.0,
         "deepsets_local_radius_cap_mm": 60.0,
