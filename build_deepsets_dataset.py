@@ -35,6 +35,15 @@ FALLBACK_NEAREST_POINT_COUNT = 64
 POINT_FEATURE_NAMES = ["curvature_rad"]
 
 
+def _str_or_empty(val: object) -> str:
+    """Coerce to string, but map pandas missing values to ``""``.
+
+    Why: plain ``str(NaN)`` yields the literal ``"nan"``, which survives
+    ``dropna()`` downstream and pollutes per-subgroup metrics as a fake group.
+    """
+    return "" if pd.isna(val) else str(val)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -317,6 +326,11 @@ def main() -> None:
         )
 
     total_cases = int(len(manifest_source))
+    optional_metadata_cols = [
+        c
+        for c in ("site", "tumor_subtype", "bilateral")
+        if c in manifest_source.columns
+    ]
     progress_every = 50
     skipped_missing_centerline = 0
     skipped_missing_tumor_mask = 0
@@ -438,20 +452,21 @@ def main() -> None:
 
         set_path = set_dir / f"{case_id}.pt"
         torch.save(case_set, set_path)
-        rows.append(
-            {
-                "case_id": case_id,
-                "set_path": str(set_path),
-                "label": int(row.label),
-                "dataset": dataset_name,
-                "num_points": int(case_set["num_points"]),
-                "local_radius_mm": float(case_set["local_radius_mm"]),
-                "tumor_equiv_radius_mm": float(case_set["tumor_equiv_radius_mm"]),
-                "used_fallback_nearest_points": int(
-                    case_set["used_fallback_nearest_points"]
-                ),
-            }
-        )
+        manifest_row = {
+            "case_id": case_id,
+            "set_path": str(set_path),
+            "label": int(row.label),
+            "dataset": dataset_name,
+            "num_points": int(case_set["num_points"]),
+            "local_radius_mm": float(case_set["local_radius_mm"]),
+            "tumor_equiv_radius_mm": float(case_set["tumor_equiv_radius_mm"]),
+            "used_fallback_nearest_points": int(
+                case_set["used_fallback_nearest_points"]
+            ),
+        }
+        for col in optional_metadata_cols:
+            manifest_row[col] = _str_or_empty(getattr(row, col, ""))
+        rows.append(manifest_row)
 
         if index % progress_every == 0 or index == total_cases:
             logging.info(
