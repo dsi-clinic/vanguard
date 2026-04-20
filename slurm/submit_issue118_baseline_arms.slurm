@@ -14,8 +14,12 @@ cd "${REPO_ROOT}"
 
 source "${HOME}/.bashrc" || true
 if command -v micromamba >/dev/null 2>&1; then
+  # Some conda activate.d scripts read optional vars (e.g. MKL_INTERFACE_LAYER)
+  # and fail under `set -u`; relax nounset only around activation.
+  set +u
   eval "$(micromamba shell hook -s bash)"
   micromamba activate vanguard
+  set -u
 fi
 
 CONFIG="${CONFIG:-configs/issue118_baseline_arms.yaml}"
