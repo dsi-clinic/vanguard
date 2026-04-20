@@ -65,9 +65,11 @@ def _normalize_ablation_arms(config: dict[str, Any]) -> list[dict[str, Any]]:
         arm = {
             "name": name,
             "selected_features": normalized_blocks,
-            "model_params_override": deepcopy(raw_arm.get("model_params_override", {})),
-            "feature_toggles_override": deepcopy(
-                raw_arm.get("feature_toggles_override", {})
+            "model_params_override": to_plain_data(
+                deepcopy(raw_arm.get("model_params_override", {}))
+            ),
+            "feature_toggles_override": to_plain_data(
+                deepcopy(raw_arm.get("feature_toggles_override", {}))
             ),
         }
         arms.append(arm)
@@ -121,8 +123,8 @@ def _normalize_split_modes(config: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "name": name,
                 "use_group_split": bool(item.get("use_group_split", False)),
-                "model_params_override": deepcopy(
-                    item.get("model_params_override", {})
+                "model_params_override": to_plain_data(
+                    deepcopy(item.get("model_params_override", {}))
                 ),
             }
         )
@@ -369,7 +371,9 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
     families = _normalize_model_families(config)
     modes = _normalize_split_modes(config)
     multi = _multi_combo(families, modes)
-    family_overrides = dict(config.get("model_family_overrides") or {})
+    family_overrides = to_plain_data(
+        deepcopy(config.get("model_family_overrides") or {})
+    )
 
     matrix_meta = {
         "ablation_arms": to_plain_data(arms),
