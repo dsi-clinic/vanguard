@@ -35,6 +35,15 @@ FALLBACK_NEAREST_POINT_COUNT = 64
 POINT_FEATURE_NAMES = ["curvature_rad"]
 
 
+def _str_or_empty(val: object) -> str:
+    """Coerce to string, but map pandas missing values to ``""``.
+
+    Why: plain ``str(NaN)`` yields the literal ``"nan"``, which survives
+    ``dropna()`` downstream and pollutes per-subgroup metrics as a fake group.
+    """
+    return "" if pd.isna(val) else str(val)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -188,6 +197,8 @@ def _build_case_set(
     spacing_mm_zyx: tuple[float, float, float],
     local_radius_mm: float,
     tumor_equiv_radius_mm: float,
+    toy_perfect_feature: bool = False,
+    toy_only: bool = False,
 ) -> dict[str, Any] | None:
     """Build one tumor-local point set for Deep Sets."""
     coords_xyz, neighbor_map = _build_neighbor_map(skeleton_mask_zyx)
@@ -209,7 +220,12 @@ def _build_case_set(
             neighbor_xyz=neighbors,
             spacing_mm_zyx=spacing_mm_zyx,
         )
-        row = [float(curvature_rad)]
+        if toy_only:
+            row = [float(label)]
+        else:
+            row = [float(curvature_rad)]
+            if toy_perfect_feature:
+                row.append(float(label))
         candidate_rows.append((float(signed_distance_mm), row))
         if signed_distance_mm <= float(local_radius_mm):
             feature_rows.append(row)
@@ -226,7 +242,12 @@ def _build_case_set(
         "x": torch.tensor(feature_rows, dtype=torch.float32),
         "y": torch.tensor([int(label)], dtype=torch.float32),
         "case_id": str(case_id),
-        "feature_names": list(POINT_FEATURE_NAMES),
+        "feature_names": (
+            ["toy_perfect_label"]
+            if toy_only
+            else list(POINT_FEATURE_NAMES)
+            + (["toy_perfect_label"] if toy_perfect_feature else [])
+        ),
         "local_radius_mm": float(local_radius_mm),
         "tumor_equiv_radius_mm": float(tumor_equiv_radius_mm),
         "num_points": int(len(feature_rows)),
@@ -271,6 +292,13 @@ def main() -> None:
     skeleton_pattern = str(toggles.centerline_file_pattern)
     dataset_include = toggles.dataset_include
     bilateral_filter = _as_optional_bool(toggles.bilateral_filter)
+    toy_perfect_feature = bool(getattr(toggles, "toy_perfect_feature", False))
+    toy_only = bool(getattr(toggles, "toy_only", False))
+    if toy_perfect_feature or toy_only:
+        logging.warning(
+            "TOY EXPERIMENT MODE: injecting perfect label feature into every point. "
+            "Results will be artificially perfect. Do NOT use for real experiments."
+        )
 
     labels_df = load_labels(
         Path(data_paths.labels_csv),
@@ -298,6 +326,11 @@ def main() -> None:
         )
 
     total_cases = int(len(manifest_source))
+    optional_metadata_cols = [
+        c
+        for c in ("site", "tumor_subtype", "bilateral")
+        if c in manifest_source.columns
+    ]
     progress_every = 50
     skipped_missing_centerline = 0
     skipped_missing_tumor_mask = 0
@@ -378,6 +411,8 @@ def main() -> None:
                 spacing_mm_zyx=spacing_mm_zyx,
                 local_radius_mm=local_radius_mm,
                 tumor_equiv_radius_mm=tumor_equiv_radius_mm,
+                toy_perfect_feature=toy_perfect_feature,
+                toy_only=toy_only,
             )
         except Exception as exc:  # noqa: BLE001
             failed_case_builds += 1
@@ -417,20 +452,21 @@ def main() -> None:
 
         set_path = set_dir / f"{case_id}.pt"
         torch.save(case_set, set_path)
-        rows.append(
-            {
-                "case_id": case_id,
-                "set_path": str(set_path),
-                "label": int(row.label),
-                "dataset": dataset_name,
-                "num_points": int(case_set["num_points"]),
-                "local_radius_mm": float(case_set["local_radius_mm"]),
-                "tumor_equiv_radius_mm": float(case_set["tumor_equiv_radius_mm"]),
-                "used_fallback_nearest_points": int(
-                    case_set["used_fallback_nearest_points"]
-                ),
-            }
-        )
+        manifest_row = {
+            "case_id": case_id,
+            "set_path": str(set_path),
+            "label": int(row.label),
+            "dataset": dataset_name,
+            "num_points": int(case_set["num_points"]),
+            "local_radius_mm": float(case_set["local_radius_mm"]),
+            "tumor_equiv_radius_mm": float(case_set["tumor_equiv_radius_mm"]),
+            "used_fallback_nearest_points": int(
+                case_set["used_fallback_nearest_points"]
+            ),
+        }
+        for col in optional_metadata_cols:
+            manifest_row[col] = _str_or_empty(getattr(row, col, ""))
+        rows.append(manifest_row)
 
         if index % progress_every == 0 or index == total_cases:
             logging.info(
