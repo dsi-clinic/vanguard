@@ -62,34 +62,69 @@ def _plot_distribution_grid(
     out_path: Path,
     *,
     max_cols: int = 4,
+    all_expected_cols: list[str] | None = None,
 ) -> None:
-    """Plot a grid of distribution panels, one per feature, colored by label."""
-    n_features = len(feature_cols)
-    n_cols = min(max_cols, n_features)
-    n_rows = math.ceil(n_features / n_cols)
+    """Plot a grid of distribution panels, one per feature, colored by label.
+
+    Parameters
+    ----------
+    all_expected_cols : list[str] | None
+        The full list of expected columns (before filtering to those present in
+        *df*).  When provided, columns that were expected but absent from *df*
+        are shown as grayed-out panels with an explanatory note.
+    """
+    missing_cols = []
+    if all_expected_cols is not None:
+        missing_cols = [c for c in all_expected_cols if c not in df.columns]
+    display_cols = list(feature_cols) + missing_cols
+
+    n_features = len(display_cols)
+    n_cols = min(max_cols, n_features) if n_features else 1
+    n_rows = math.ceil(n_features / n_cols) if n_features else 1
 
     fig, axes = plt.subplots(
         n_rows, n_cols,
         figsize=(5 * n_cols, 4 * n_rows),
         constrained_layout=True,
     )
-    if n_features == 1:
+    if n_features <= 1:
         axes = np.array([axes])
     axes = np.atleast_2d(axes)
 
     group_0 = df[df[label_col] == 0]
     group_1 = df[df[label_col] == 1]
 
-    for idx, col in enumerate(feature_cols):
+    for idx, col in enumerate(display_cols):
         row_idx, col_idx = divmod(idx, n_cols)
         ax = axes[row_idx, col_idx]
+
+        if col in missing_cols:
+            ax.set_facecolor("#f0f0f0")
+            ax.text(
+                0.5, 0.5,
+                "source column not\npresent in input CSV",
+                transform=ax.transAxes, ha="center", va="center",
+                fontsize=9, color="#888888", style="italic",
+            )
+            ax.set_title(col, fontsize=9, color="#999999")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            continue
 
         vals_0 = group_0[col].dropna()
         vals_1 = group_1[col].dropna()
 
         if vals_0.empty and vals_1.empty:
-            ax.set_title(f"{col}\n(no data)", fontsize=9)
-            ax.set_visible(True)
+            ax.set_facecolor("#f0f0f0")
+            ax.text(
+                0.5, 0.5,
+                "all values NaN\n(source columns may be\nmissing from pipeline)",
+                transform=ax.transAxes, ha="center", va="center",
+                fontsize=9, color="#888888", style="italic",
+            )
+            ax.set_title(col, fontsize=9, color="#999999")
+            ax.set_xticks([])
+            ax.set_yticks([])
             continue
 
         bins = min(40, max(10, int(np.sqrt(len(vals_0) + len(vals_1)))))
@@ -178,25 +213,21 @@ def main() -> None:
 
     # --- Second-order features ---
     second_order_present = [c for c in SECOND_ORDER_COLUMNS if c in df.columns]
-    if second_order_present:
-        _plot_distribution_grid(
-            df, second_order_present, args.label_col,
-            title="Second-Order Feature Distributions: pCR vs non-pCR",
-            out_path=outdir / "distributions_second_order_by_pcr.png",
-        )
-    else:
-        logging.warning("No second-order columns found in input.")
+    _plot_distribution_grid(
+        df, second_order_present, args.label_col,
+        title="Second-Order Feature Distributions: pCR vs non-pCR",
+        out_path=outdir / "distributions_second_order_by_pcr.png",
+        all_expected_cols=list(SECOND_ORDER_COLUMNS),
+    )
 
     # --- First-order source features ---
     first_order_present = [c for c in FIRST_ORDER_SOURCE_COLUMNS if c in df.columns]
-    if first_order_present:
-        _plot_distribution_grid(
-            df, first_order_present, args.label_col,
-            title="First-Order Source Feature Distributions: pCR vs non-pCR",
-            out_path=outdir / "distributions_first_order_by_pcr.png",
-        )
-    else:
-        logging.warning("No first-order source columns found in input.")
+    _plot_distribution_grid(
+        df, first_order_present, args.label_col,
+        title="First-Order Source Feature Distributions: pCR vs non-pCR",
+        out_path=outdir / "distributions_first_order_by_pcr.png",
+        all_expected_cols=list(FIRST_ORDER_SOURCE_COLUMNS),
+    )
 
     logging.info("Done.")
 
