@@ -32,9 +32,17 @@ from features.second_order import SECOND_ORDER_COLUMNS
 
 # Features whose source data was never computed into the JSON payloads and
 # therefore require a full re-extraction from raw imaging data.
-NEEDS_REEXTRACTION: frozenset[str] = frozenset({
-    "kinematic_crossing_early_fraction",
-})
+NEEDS_REEXTRACTION: frozenset[str] = frozenset(
+    {
+        "kinematic_crossing_early_fraction",
+    }
+)
+
+_MIN_KDE_SAMPLES = 5
+_MIN_MANNWHITNEY_SAMPLES = 3
+_P_THRESHOLD_3STAR = 0.001
+_P_THRESHOLD_2STAR = 0.01
+_P_THRESHOLD_1STAR = 0.05
 
 # First-order source columns that are used to derive the second-order features.
 # These are the direct inputs referenced in second_order.py.
@@ -89,7 +97,8 @@ def _plot_distribution_grid(
     n_rows = math.ceil(n_features / n_cols) if n_features else 1
 
     fig, axes = plt.subplots(
-        n_rows, n_cols,
+        n_rows,
+        n_cols,
         figsize=(5 * n_cols, 4 * n_rows),
         constrained_layout=True,
     )
@@ -107,10 +116,15 @@ def _plot_distribution_grid(
         if col in missing_cols:
             ax.set_facecolor("#f0f0f0")
             ax.text(
-                0.5, 0.5,
+                0.5,
+                0.5,
                 "source column not\npresent in input CSV",
-                transform=ax.transAxes, ha="center", va="center",
-                fontsize=9, color="#888888", style="italic",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=9,
+                color="#888888",
+                style="italic",
             )
             ax.set_title(col, fontsize=9, color="#999999")
             ax.set_xticks([])
@@ -125,11 +139,19 @@ def _plot_distribution_grid(
             if col in NEEDS_REEXTRACTION:
                 reason = "requires re-extraction\nfrom raw imaging data"
             else:
-                reason = "all values NaN\n(source columns may be\nmissing from pipeline)"
+                reason = (
+                    "all values NaN\n(source columns may be\nmissing from pipeline)"
+                )
             ax.text(
-                0.5, 0.5, reason,
-                transform=ax.transAxes, ha="center", va="center",
-                fontsize=9, color="#888888", style="italic",
+                0.5,
+                0.5,
+                reason,
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=9,
+                color="#888888",
+                style="italic",
             )
             ax.set_title(col, fontsize=9, color="#999999")
             ax.set_xticks([])
@@ -138,43 +160,75 @@ def _plot_distribution_grid(
 
         bins = min(40, max(10, int(np.sqrt(len(vals_0) + len(vals_1)))))
 
-        ax.hist(vals_0, bins=bins, alpha=0.5, density=True,
-                label=f"non-pCR (n={len(vals_0)})", color="#3274A1", edgecolor="white", linewidth=0.3)
-        ax.hist(vals_1, bins=bins, alpha=0.5, density=True,
-                label=f"pCR (n={len(vals_1)})", color="#E1812C", edgecolor="white", linewidth=0.3)
+        ax.hist(
+            vals_0,
+            bins=bins,
+            alpha=0.5,
+            density=True,
+            label=f"non-pCR (n={len(vals_0)})",
+            color="#3274A1",
+            edgecolor="white",
+            linewidth=0.3,
+        )
+        ax.hist(
+            vals_1,
+            bins=bins,
+            alpha=0.5,
+            density=True,
+            label=f"pCR (n={len(vals_1)})",
+            color="#E1812C",
+            edgecolor="white",
+            linewidth=0.3,
+        )
 
         # KDE overlay
         for vals, color in [(vals_0, "#3274A1"), (vals_1, "#E1812C")]:
-            if len(vals) > 5:
+            if len(vals) > _MIN_KDE_SAMPLES:
                 try:
-                    sns.kdeplot(vals, ax=ax, color=color, linewidth=1.5, warn_singular=False)
+                    sns.kdeplot(
+                        vals, ax=ax, color=color, linewidth=1.5, warn_singular=False
+                    )
                 except Exception:  # noqa: BLE001
-                    pass
+                    logging.debug("KDE failed for %s", col)
 
         # Mann-Whitney U test
-        if len(vals_0) >= 3 and len(vals_1) >= 3:
+        if (
+            len(vals_0) >= _MIN_MANNWHITNEY_SAMPLES
+            and len(vals_1) >= _MIN_MANNWHITNEY_SAMPLES
+        ):
             try:
                 _, pval = stats.mannwhitneyu(vals_0, vals_1, alternative="two-sided")
                 significance = ""
-                if pval < 0.001:
+                if pval < _P_THRESHOLD_3STAR:
                     significance = " ***"
-                elif pval < 0.01:
+                elif pval < _P_THRESHOLD_2STAR:
                     significance = " **"
-                elif pval < 0.05:
+                elif pval < _P_THRESHOLD_1STAR:
                     significance = " *"
                 ax.text(
-                    0.97, 0.95,
+                    0.97,
+                    0.95,
                     f"p={pval:.3g}{significance}",
                     transform=ax.transAxes,
-                    ha="right", va="top",
+                    ha="right",
+                    va="top",
                     fontsize=8,
-                    bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "alpha": 0.8},
+                    bbox={
+                        "boxstyle": "round,pad=0.3",
+                        "facecolor": "white",
+                        "alpha": 0.8,
+                    },
                 )
             except Exception:  # noqa: BLE001
-                pass
+                logging.debug("Mann-Whitney U test failed for %s", col)
 
         # Truncate long column names for readability
-        short_name = col.replace("tumor_size_", "ts_").replace("kinematic_", "kin_").replace("morph_", "m_").replace("graph_", "g_")
+        short_name = (
+            col.replace("tumor_size_", "ts_")
+            .replace("kinematic_", "kin_")
+            .replace("morph_", "m_")
+            .replace("graph_", "g_")
+        )
         ax.set_title(short_name, fontsize=9, fontweight="bold")
         ax.set_xlabel("")
         ax.set_ylabel("")
@@ -200,39 +254,58 @@ def main() -> None:
     )
 
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("input_csv", type=Path, help="Path to features_engineered_labeled.csv")
     ap.add_argument(
-        "-o", "--outdir", type=Path, default=None,
+        "input_csv", type=Path, help="Path to features_engineered_labeled.csv"
+    )
+    ap.add_argument(
+        "-o",
+        "--outdir",
+        type=Path,
+        default=None,
         help="Output directory (default: same as input CSV)",
     )
     ap.add_argument(
-        "--label-col", type=str, default="pcr", help="Label column name",
+        "--label-col",
+        type=str,
+        default="pcr",
+        help="Label column name",
     )
     args = ap.parse_args()
 
     outdir = args.outdir or args.input_csv.parent
     outdir.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_csv(args.input_csv)
-    logging.info("Loaded %s: %d rows x %d cols", args.input_csv, len(df), len(df.columns))
+    features = pd.read_csv(args.input_csv)
+    logging.info(
+        "Loaded %s: %d rows x %d cols",
+        args.input_csv,
+        len(features),
+        len(features.columns),
+    )
     logging.info(
         "Label distribution: %s",
-        df[args.label_col].value_counts().to_dict(),
+        features[args.label_col].value_counts().to_dict(),
     )
 
     # --- Second-order features ---
-    second_order_present = [c for c in SECOND_ORDER_COLUMNS if c in df.columns]
+    second_order_present = [c for c in SECOND_ORDER_COLUMNS if c in features.columns]
     _plot_distribution_grid(
-        df, second_order_present, args.label_col,
+        features,
+        second_order_present,
+        args.label_col,
         title="Second-Order Feature Distributions: pCR vs non-pCR",
         out_path=outdir / "distributions_second_order_by_pcr.png",
         all_expected_cols=list(SECOND_ORDER_COLUMNS),
     )
 
     # --- First-order source features ---
-    first_order_present = [c for c in FIRST_ORDER_SOURCE_COLUMNS if c in df.columns]
+    first_order_present = [
+        c for c in FIRST_ORDER_SOURCE_COLUMNS if c in features.columns
+    ]
     _plot_distribution_grid(
-        df, first_order_present, args.label_col,
+        features,
+        first_order_present,
+        args.label_col,
         title="First-Order Source Feature Distributions: pCR vs non-pCR",
         out_path=outdir / "distributions_first_order_by_pcr.png",
         all_expected_cols=list(FIRST_ORDER_SOURCE_COLUMNS),
