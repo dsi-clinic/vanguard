@@ -30,6 +30,12 @@ from scipy import stats
 
 from features.second_order import SECOND_ORDER_COLUMNS
 
+# Features whose source data was never computed into the JSON payloads and
+# therefore require a full re-extraction from raw imaging data.
+NEEDS_REEXTRACTION: frozenset[str] = frozenset({
+    "kinematic_crossing_early_fraction",
+})
+
 # First-order source columns that are used to derive the second-order features.
 # These are the direct inputs referenced in second_order.py.
 FIRST_ORDER_SOURCE_COLUMNS: tuple[str, ...] = (
@@ -116,9 +122,12 @@ def _plot_distribution_grid(
 
         if vals_0.empty and vals_1.empty:
             ax.set_facecolor("#f0f0f0")
+            if col in NEEDS_REEXTRACTION:
+                reason = "requires re-extraction\nfrom raw imaging data"
+            else:
+                reason = "all values NaN\n(source columns may be\nmissing from pipeline)"
             ax.text(
-                0.5, 0.5,
-                "all values NaN\n(source columns may be\nmissing from pipeline)",
+                0.5, 0.5, reason,
                 transform=ax.transAxes, ha="center", va="center",
                 fontsize=9, color="#888888", style="italic",
             )
