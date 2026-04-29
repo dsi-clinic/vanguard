@@ -29,9 +29,9 @@ three `(CONFIG, OUT_ROOT)` pairs in one loop.
 
 | Config path | Mean validation AUC (or primary metric) | Notes |
 |-------------|------------------------------------------|-------|
-| `configs/deepsets_ispy2_pointfeat_baseline.yaml` | _TBD_ | _TBD_ |
-| `configs/deepsets_ispy2_pointfeat_geom_topo.yaml` | _TBD_ | _TBD_ |
-| `configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml` | _TBD_ | _TBD_ |
+| `configs/deepsets_ispy2_pointfeat_baseline.yaml` | `0.5323` | From `experiments/deepsets_ispy2_pointfeat_baseline/train/deepsets_ispy2_pointfeat_baseline_20260421_125620/deepsets_ispy2_pointfeat_baseline/metrics.json` (`aggregated_metrics.auc.mean`). |
+| `configs/deepsets_ispy2_pointfeat_geom_topo.yaml` | `0.5138` | From `experiments/deepsets_ispy2_pointfeat_geom_topo/train/deepsets_ispy2_pointfeat_geom_topo_20260421_130516/deepsets_ispy2_pointfeat_geom_topo/metrics.json` (`aggregated_metrics.auc.mean`). |
+| `configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml` | _Artifact missing_ | `logs/deepsets-train-816756.err` shows the full 5-fold/40-epoch run completed, but the corresponding `metrics.json` was not present under `experiments/deepsets_ispy2_pointfeat_geom_topo_dynamic/train` at documentation time. |
 
 Metrics are written under the training run directory (see
 `evaluation/evaluator.py` `save_results` output for
@@ -39,5 +39,17 @@ Metrics are written under the training run directory (see
 
 ## Interpretation (fill after training)
 
-_Short note on whether geometry/topology and dynamic features helped versus the
-baseline, based on the table above._
+In the available on-disk metrics, geometry+topology underperformed the baseline
+(`0.5138` vs `0.5323` mean validation AUC), so these added point features did
+not improve this fixed-training setup. Dynamic-feature directionality is still
+undetermined from artifacts currently present in the repository because the
+dynamic-arm training logs exist but its `metrics.json` output was missing.
+
+## Smoke build/merge path confirmation
+
+- Slurm logs indicate successful build shards and merge for the fixed arm runs:
+  - dynamic build shards: `logs/deepsets-build-816757-*.err` (all complete);
+  - merge: `logs/deepsets-merge-816755.err` (empty error log; success path).
+- Local smoke merge also succeeded on current artifacts:
+  - `python merge_deepsets_manifest.py --output-dir /home/lunad/vanguard/experiments/deepsets_ispy2_pointfeat_geom_topo_dynamic`
+  - output present: `experiments/deepsets_ispy2_pointfeat_geom_topo_dynamic/deepsets_manifest.csv`.
