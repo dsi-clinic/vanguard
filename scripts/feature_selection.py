@@ -4,7 +4,7 @@
 Three-stage pipeline with nested cross-validation to prevent data leakage:
   1. Pre-filter: drop all-NaN, near-constant, and highly correlated features
   2. Univariate screening: Mann-Whitney U test with BH FDR correction
-  3. L1-regularized logistic regression with cross-validated C
+  3. Elastic-net logistic regression with cross-validated alpha
 
 All supervised steps run inside each outer CV fold to produce unbiased
 performance estimates.  A final model is then fit on all data to produce
@@ -31,9 +31,13 @@ import pandas as pd
 from scipy import stats
 from scipy.stats import false_discovery_control
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegressionCV
+from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import roc_auc_score, roc_curve
-from sklearn.model_selection import RepeatedStratifiedKFold, StratifiedKFold
+from sklearn.model_selection import (
+    GridSearchCV,
+    RepeatedStratifiedKFold,
+    StratifiedKFold,
+)
 from sklearn.preprocessing import StandardScaler
 
 matplotlib.use("Agg")
@@ -52,7 +56,8 @@ _NON_FEATURE_COLUMNS = frozenset(
 )
 
 _CORRELATION_THRESHOLD = 0.8
-_UNIVARIATE_P_THRESHOLD = 0.1
+_UNIVARIATE_P_THRESHOLD = 0.2
+_ELASTIC_NET_L1_RATIO = 0.5
 _MIN_MANNWHITNEY_SAMPLES = 3
 _NEAR_CONSTANT_STD = 1e-10
 _MIN_COVERAGE_FRACTION = 0.5
@@ -204,31 +209,51 @@ def stage2_univariate(
     return kept, results_df
 
 
-def _fit_lasso_lr(
+def _fit_elastic_net(
     x_scaled: np.ndarray,
     y: np.ndarray,
     feature_cols: list[str],
-) -> tuple[LogisticRegressionCV, list[str], pd.DataFrame]:
-    """Fit L1-regularized logistic regression and return model + selected features."""
+) -> tuple[SGDClassifier, list[str], pd.DataFrame]:
+    """Fit elastic-net logistic regression via SGDClassifier with CV-tuned alpha.
+
+    Uses SGDClassifier with loss='log_loss' and penalty='elasticnet' to support
+    a mix of L1 and L2 regularization.  The L1/L2 ratio is controlled by
+    ``_ELASTIC_NET_L1_RATIO``.
+    """
     cv = StratifiedKFold(n_splits=_CV_FOLDS, shuffle=True, random_state=_RANDOM_STATE)
-    model = LogisticRegressionCV(
-        penalty="l1",
-        solver="saga",
-        Cs=20,
-        cv=cv,
-        scoring="roc_auc",
+    base_model = SGDClassifier(
+        loss="log_loss",
+        penalty="elasticnet",
+        l1_ratio=_ELASTIC_NET_L1_RATIO,
         class_weight="balanced",
         max_iter=5000,
         random_state=_RANDOM_STATE,
-        n_jobs=-1,
     )
-    model.fit(x_scaled, y)
+    param_grid = {"alpha": np.logspace(-5, -1, 20)}
+    search = GridSearchCV(
+        base_model,
+        param_grid,
+        cv=cv,
+        scoring="roc_auc",
+        n_jobs=-1,
+        refit=True,
+    )
+    search.fit(x_scaled, y)
+    model = search.best_estimator_
 
     coefs = model.coef_[0]
     coef_df = pd.DataFrame({"feature": feature_cols, "coefficient": coefs}).sort_values(
         "coefficient", key=abs, ascending=False
     )
     selected = list(coef_df[coef_df["coefficient"].abs() > 0]["feature"])
+
+    logging.info(
+        "Elastic net: best α=%.4g, l1_ratio=%.1f, %d/%d features selected",
+        search.best_params_["alpha"],
+        _ELASTIC_NET_L1_RATIO,
+        len(selected),
+        len(feature_cols),
+    )
     return model, selected, coef_df
 
 
@@ -260,7 +285,7 @@ def run_nested_cv(
 
     Outer loop: RepeatedStratifiedKFold for performance estimation.
     Inside each outer training fold:
-        Stage 1 → Stage 2 (with BH) → impute → scale → L1 logistic regression
+        Stage 1 → Stage 2 (with BH) → impute → scale → elastic-net logistic regression
     Evaluate on the held-out outer test fold.
 
     Returns a dict with per-fold AUCs, feature selection frequencies, and
@@ -324,7 +349,7 @@ def run_nested_cv(
         x_test = scaler.transform(imputer.transform(test_df[s2_cols]))
 
         # Stage 3: L1 logistic regression on train
-        model, selected, _ = _fit_lasso_lr(x_train, y_train, s2_cols)
+        model, selected, _ = _fit_elastic_net(x_train, y_train, s2_cols)
 
         # Predict on held-out test fold using the CV-tuned model
         y_proba = model.predict_proba(x_test)[:, 1]
@@ -511,7 +536,7 @@ def plot_final_coefficients(
     ax.barh(short_names, top["coefficient"], color=colors)
     ax.set_xlabel("Logistic Regression Coefficient")
     ax.set_title(
-        f"Final Model: Top {top_n} Selected Features (L1 Logistic Regression)\n"
+        f"Final Model: Top {top_n} Selected Features (Elastic Net)\n"
         f"Nested CV AUC: {cv_mean:.3f} ± {cv_std:.3f} | "
         f"{len(selected)} features selected\n"
         "(coefficients from full-data refit — not an unbiased estimate)",
@@ -603,7 +628,7 @@ def main() -> None:
     x_all = scaler.fit_transform(imputer.fit_transform(features[stage2_cols]))
     y_all = features[args.label_col].to_numpy()
 
-    _, selected_features, coef_df = _fit_lasso_lr(x_all, y_all, stage2_cols)
+    _, selected_features, coef_df = _fit_elastic_net(x_all, y_all, stage2_cols)
     coef_df.to_csv(outdir / "lasso_coefficients.csv", index=False)
 
     # Save selected features
