@@ -20,13 +20,21 @@ Each case file is a `dict` with at least:
 
 | Field | Meaning |
 |--------|---------|
-| `x` | `float32` tensor of shape `[num_points, num_features]`. **Only** `curvature_rad` is stored today. |
+| `x` | `float32` tensor of shape `[num_points, num_features]`. Columns depend on `model_params.deepsets_point_feature_set`. |
 | `y` | Scalar label tensor. |
 | `case_id` | String study identifier. |
-| `feature_names` | List aligned with columns of `x` (currently `["curvature_rad"]`). |
+| `feature_names` | Ordered list aligned with columns of `x`. |
 | `local_radius_mm`, `tumor_equiv_radius_mm` | Tumor-local inclusion radius metadata (case-level). |
 | `num_points` | Number of rows in `x`. |
 | `used_fallback_nearest_points` | Whether the nearest-64 fallback ran when no points passed the distance filter. |
+| `point_feature_set` | Active feature regime (`baseline`, `geometry_topology`, `geometry_topology_dynamic`). |
+| `kinetic_timepoint_count` | Number of loaded timepoints for dynamic regime (0 otherwise). |
+
+Feature regimes currently implemented in [`build_deepsets_dataset.py`](../../build_deepsets_dataset.py):
+
+- `baseline` -> `["curvature_rad"]`
+- `geometry_topology` -> signed-distance shells, topology flags, centroid offsets, support radius
+- `geometry_topology_dynamic` -> `geometry_topology` plus voxelwise dynamic kinetics and reference-relative scalars
 
 **Not stored per point (but computed during the build):**
 
@@ -37,13 +45,18 @@ Each case file is a `dict` with at least:
 
 Written by the builder with columns:
 
-`case_id`, `set_path`, `label`, `dataset`, `num_points`, `local_radius_mm`, `tumor_equiv_radius_mm`, `used_fallback_nearest_points`.
+`case_id`, `set_path`, `label`, `dataset`, `num_points`, `local_radius_mm`, `tumor_equiv_radius_mm`, `used_fallback_nearest_points`, `point_feature_set`, `kinetic_timepoint_count`.
 
-Training requires `case_id`, `set_path`, and the label column from config (`data_paths.deepsets_label_column`, default `label`).
+Training requires `case_id`, `set_path`, and the label column from config (`data_paths.deepsets_label_column`, default `label`). Feature layout consistency is validated at collate time via `feature_names` + tensor width checks in [`deepsets_data.py`](../../deepsets_data.py).
 
-### Upstream artifacts (documented in graph extraction) not used by the Deep Sets builder
+### Upstream artifacts and how the builder uses them
 
-The builder reads **only** the exam skeleton mask (`{case_id}_skeleton_4d_exam_mask.npy` under `centerline_root / dataset / case_id`). It does **not** currently consume:
+The builder always reads the exam skeleton mask (`{case_id}_skeleton_4d_exam_mask.npy` under `centerline_root / dataset / case_id`) and tumor mask. Additional artifacts are consumed by feature regime:
+
+- `geometry_topology` / `geometry_topology_dynamic`: optional `{case_id}_skeleton_4d_exam_support_mask.npy` for local vessel support radius (`support_radius_mm`, `support_radius_available`).
+- `geometry_topology_dynamic`: vessel 4D time-series under `data_paths.vessel_segmentation_root`, shape-aligned to skeleton via [`deepsets_volume_align.py`](../../deepsets_volume_align.py). If alignment fails, dynamic features are zeroed for that case (`kinetic_signal_ok=0`).
+
+Not consumed by this path today:
 
 - `{case_id}_skeleton_4d_exam_support_mask.npy` — vessel support used for local radius in graph extraction
 - `{case_id}_morphometry.json` — segment-level geometry and graph primitives
@@ -80,22 +93,15 @@ These paths were checked on the shared filesystem; they match [`configs/deepsets
 
 ---
 
-## 3. Candidate point features
+## 3. Implemented point-feature contract
 
-| Feature name | Short description | Extra inputs vs today | Computable from existing on-disk artifacts? |
-|--------------|-------------------|------------------------|-----------------------------------------------|
-| `signed_distance_tumor_mm` | Signed distance to tumor boundary (mm) | Tumor mask + spacing (already in builder) | Yes (persist or recompute) |
-| `abs_distance_tumor_mm` | `abs(signed_distance_tumor_mm)` | Same | Yes |
-| `inside_tumor` | Indicator `signed_distance < 0` | Same | Yes |
-| `shell_bin` / `shell_onehot` | Distance-to-boundary shells (mm bins) | Shell definitions (e.g. mirror graph / tumor_size shells) | Yes |
-| `offset_from_tumor_centroid_norm` | Normalized vector from tumor centroid to point | Tumor COM + skeleton indices | Yes |
-| `local_vessel_radius_mm` | EDT radius from support mask | `{case_id}_skeleton_4d_exam_support_mask.npy` | Yes (file sits next to skeleton) |
-| `skeleton_node_degree` | 26-neighborhood degree on skeleton | Skeleton only | Yes |
-| `is_endpoint` / `is_chain` / `is_junction` | Flags for degree 1 / 2 / ≥3 | Skeleton only | Yes |
-| `direction_to_tumor_centroid` | Unit vector from point to centroid (3 channels) | Tumor mask + skeleton | Yes |
-| `curvature_rad` | Current shipped feature | Skeleton + spacing | Yes |
-| `dce_intensity_*` | Intensities or simple wash metrics at each point | Registered **clinical** DCE **or** vessel NPZ time series | Needs chosen source + alignment QA |
-| `graph_segment_radius`, tortuosity-style locals | Map voxels to morphometry segments | `{case_id}_morphometry.json` + graph primitives | Needs JSON + join logic |
+Feature names are source-of-truth from `deepsets_point_feature_names()` in [`build_deepsets_dataset.py`](../../build_deepsets_dataset.py), and serialized into each case payload as `feature_names`.
+
+Current regimes:
+
+- `baseline`: `curvature_rad`.
+- `geometry_topology`: signed distance, absolute distance, in-tumor flag, shell one-hot bins, node degree flags, xyz centroid offsets, support EDT radius, support-availability flag.
+- `geometry_topology_dynamic`: all geometry/topology features plus arrival/peak timing, enhancement amplitudes, wash-in/out slopes, positive AUC, reference-relative peak/AUC, and validity flags.
 
 **Dynamic features:** clinical DCE and vessel NPZs answer **different** questions—clinical overlays show anatomy; NPZ phases are **grid-identical** to tc4d inputs. Any new feature should state which grid it uses.
 
@@ -152,7 +158,19 @@ We therefore treat **clinical DCE alignment with saved skeleton and expert tumor
 
 ---
 
-## 5. Out of scope (this note)
+## 5. Reproducibility checklist (issue #119 deliverable)
+
+1. Build a manifest with the intended feature regime config (for example `configs/deepsets_ispy2_pointfeat_geom_topo.yaml` or `configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml`).
+2. Verify one payload contract on disk:
+   - `x.shape[1] == len(feature_names)`
+   - `point_feature_set` matches config
+   - dynamic runs expose nonzero `kinetic_timepoint_count` where vessel 4D is available
+3. Run alignment QA overlays with [`scripts/deepsets_alignment_check.py`](../../scripts/deepsets_alignment_check.py) for representative cases and archive figures under `docs/deepsets_issue119/figures/`.
+4. Train with [`train_deepsets.py`](../../train_deepsets.py) using the same manifest and keep `write_config_snapshot` output for provenance.
+5. Record config path, git SHA, and generated figure names in experiment notes for auditability.
+
+---
+
+## 6. Out of scope (this note)
 
 - Changing [`deepsets_model.py`](../../deepsets_model.py) architecture
-- Extending [`build_deepsets_dataset.py`](../../build_deepsets_dataset.py) to emit new columns (follow-up implementation work after feature selection)
