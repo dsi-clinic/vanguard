@@ -71,6 +71,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "merge_how": "inner",
         "selected_features": None,
         "centerline_file_pattern": "{case_id}_skeleton_4d_exam_mask.npy",
+        "deepsets_support_mask_pattern": "{case_id}_skeleton_4d_exam_support_mask.npy",
         "toy_perfect_feature": False,
         "toy_only": False,
     },
@@ -144,6 +145,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_local_radius_floor_mm": 50.0,
         "deepsets_local_radius_scale": 2.0,
         "deepsets_local_radius_cap_mm": 60.0,
+        "deepsets_point_feature_set": "baseline",
     },
     "data_paths": {
         "centerline_root": "",
@@ -156,6 +158,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "radiomics_csv": "",
         "deepsets_manifest_csv": "",
         "deepsets_label_column": "label",
+        "vessel_segmentation_root": "",
     },
     "ablation_arms": deepcopy(DEFAULT_ABLATION_ARMS),
     # Optional multipliers for run_ablation_matrix (Issue #116 / #117 style experiments).

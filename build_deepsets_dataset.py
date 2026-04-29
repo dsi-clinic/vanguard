@@ -14,7 +14,23 @@ import torch
 from scipy import ndimage
 
 from clinical_features import get_clinical_features
+from deepsets_volume_align import align_zyx_4d_to_shape
 from features.tumor_size import load_tumor_mask_zyx, resolve_tumor_mask_path
+from graph_extraction.constants import (
+    BIFURCATION_MIN_DEGREE,
+    KINETIC_SIGNAL_EPS,
+    MIN_KINETIC_TIMEPOINTS,
+    NDIM_4D,
+)
+from graph_extraction.core4d import (
+    discover_study_timepoints,
+    load_time_series_from_files,
+)
+from graph_extraction.feature_stats import (
+    _arrival_index_from_enhancement,
+    _safe_ratio,
+    _shell_name_for_signed_distance,
+)
 from load_cohort import load_config
 from tabular_cohort import _as_optional_bool, load_labels
 
@@ -30,9 +46,221 @@ OFFSETS_3D = np.array(
 )
 ENDPOINT_DEGREE = 1
 CHAIN_DEGREE = 2
-BIFURCATION_DEGREE = 3
 FALLBACK_NEAREST_POINT_COUNT = 64
-POINT_FEATURE_NAMES = ["curvature_rad"]
+_REF_PEAK_EPS = 1e-10
+
+DEEPSETS_FEATURE_BASELINE = "baseline"
+DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY = "geometry_topology"
+DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC = "geometry_topology_dynamic"
+VALID_DEEPSETS_POINT_FEATURE_SETS: frozenset[str] = frozenset(
+    {
+        DEEPSETS_FEATURE_BASELINE,
+        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY,
+        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+    }
+)
+
+
+def deepsets_point_feature_names(regime: str) -> list[str]:
+    """Ordered feature column names for a Deep Sets point-feature regime."""
+    if regime == DEEPSETS_FEATURE_BASELINE:
+        return ["curvature_rad"]
+    geom_topo = [
+        "signed_distance_mm",
+        "abs_signed_distance_mm",
+        "inside_tumor",
+        "shell_0_2mm",
+        "shell_2_5mm",
+        "shell_5_10mm",
+        "shell_ge_10mm",
+        "degree",
+        "is_endpoint",
+        "is_chain",
+        "is_bifurcation",
+        "offset_x_mm",
+        "offset_y_mm",
+        "offset_z_mm",
+        "support_radius_mm",
+        "support_radius_available",
+    ]
+    if regime == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY:
+        return list(geom_topo)
+    if regime == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC:
+        return list(
+            geom_topo
+            + [
+                "arrival_index_norm",
+                "has_arrival",
+                "peak_index_norm",
+                "peak_enhancement",
+                "washin_slope",
+                "washout_slope",
+                "positive_enhancement_auc",
+                "peak_rel_reference",
+                "auc_rel_reference",
+                "kinetic_signal_ok",
+                "reference_ok",
+            ]
+        )
+    raise ValueError(
+        f"Unknown deepsets_point_feature_set {regime!r}; expected one of "
+        f"{sorted(VALID_DEEPSETS_POINT_FEATURE_SETS)}"
+    )
+
+
+def _outside_shell_one_hot_four(
+    signed_distance_mm: float,
+) -> tuple[float, float, float, float]:
+    """One-hot for outside shells; all zero when inside tumor (signed < 0)."""
+    if signed_distance_mm < 0.0:
+        return (0.0, 0.0, 0.0, 0.0)
+    name = _shell_name_for_signed_distance(float(signed_distance_mm))
+    if name == "shell_0_2mm":
+        return (1.0, 0.0, 0.0, 0.0)
+    if name == "shell_2_5mm":
+        return (0.0, 1.0, 0.0, 0.0)
+    if name == "shell_5_10mm":
+        return (0.0, 0.0, 1.0, 0.0)
+    if name in ("shell_10_20mm", "shell_gt20mm"):
+        return (0.0, 0.0, 0.0, 1.0)
+    return (0.0, 0.0, 0.0, 0.0)
+
+
+def _tumor_centroid_xyz_mm(
+    tumor_mask_zyx: np.ndarray,
+    spacing_mm_zyx: tuple[float, float, float],
+) -> np.ndarray:
+    """Tumor centroid in mm, shape (3,) as x, y, z."""
+    tumor_coords_zyx = np.argwhere(np.asarray(tumor_mask_zyx, dtype=bool))
+    if tumor_coords_zyx.size == 0:
+        return np.zeros(3, dtype=np.float32)
+    centroid_zyx = np.mean(tumor_coords_zyx.astype(np.float64), axis=0)
+    sz, sy, sx = (
+        float(spacing_mm_zyx[0]),
+        float(spacing_mm_zyx[1]),
+        float(spacing_mm_zyx[2]),
+    )
+    return np.asarray(
+        [centroid_zyx[2] * sx, centroid_zyx[1] * sy, centroid_zyx[0] * sz],
+        dtype=np.float32,
+    )
+
+
+def _reference_enhancement_baseline(
+    signal_4d: np.ndarray,
+    support: np.ndarray,
+    tumor: np.ndarray,
+) -> tuple[float, float]:
+    """Reference peak enhancement and positive AUC (kinematic-style, no breast ref mask)."""
+    support = np.asarray(support, dtype=bool)
+    tumor = np.asarray(tumor, dtype=bool)
+    ref_mask = np.ones_like(support, dtype=bool)
+    ref_cand = (~support) & (~tumor)
+    if np.any(ref_cand):
+        ref_mask = ref_cand
+    n_t = int(signal_4d.shape[0])
+    time_axis = np.arange(n_t, dtype=float)
+    ref_curve = np.asarray(
+        [float(np.mean(signal_4d[t][ref_mask])) for t in range(n_t)],
+        dtype=float,
+    )
+    ref_enh = ref_curve - float(ref_curve[0])
+    peak = float(np.max(np.maximum(ref_enh, 0.0)))
+    auc = float(np.trapz(np.maximum(ref_enh, 0.0), x=time_axis))
+    return peak, auc
+
+
+def _dynamic_features_for_voxel(
+    *,
+    signal_4d: np.ndarray | None,
+    xyz_vox: tuple[int, int, int],
+    ref_peak_enh: float,
+    ref_auc_pos: float,
+) -> tuple[
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+]:
+    """Return the 11 dynamic scalars in feature-name order (or zeros if no signal)."""
+    if signal_4d is None or signal_4d.ndim != NDIM_4D:
+        return (0.0,) * 11
+    n_t = int(signal_4d.shape[0])
+    kinetic_ok = (
+        1.0 if n_t >= MIN_KINETIC_TIMEPOINTS and np.all(np.isfinite(signal_4d)) else 0.0
+    )
+    if kinetic_ok == 0.0:
+        return (0.0,) * 9 + (0.0, 0.0)
+    x, y, z = (int(v) for v in xyz_vox)
+    z = int(np.clip(z, 0, signal_4d.shape[1] - 1))
+    y = int(np.clip(y, 0, signal_4d.shape[2] - 1))
+    x = int(np.clip(x, 0, signal_4d.shape[3] - 1))
+    curve = np.asarray(signal_4d[:, z, y, x], dtype=float)
+    enh = curve - float(curve[0])
+    time_axis = np.arange(n_t, dtype=float)
+    tte_idx = _arrival_index_from_enhancement(enh)
+    arrival_norm = (
+        float(tte_idx) / float(max(1, n_t - 1)) if tte_idx is not None else 0.0
+    )
+    has_arr = 1.0 if tte_idx is not None else 0.0
+    peak_idx = int(np.argmax(enh))
+    peak_norm = float(peak_idx) / float(max(1, n_t - 1))
+    peak_enh = float(np.max(enh))
+    start_idx = 0 if tte_idx is None else int(tte_idx)
+    washin_den = float(time_axis[peak_idx] - time_axis[start_idx])
+    washin_slope = (
+        float((enh[peak_idx] - enh[start_idx]) / washin_den)
+        if washin_den > 0.0
+        else 0.0
+    )
+    washout_den = float(time_axis[-1] - time_axis[peak_idx])
+    washout_slope = (
+        float((enh[-1] - enh[peak_idx]) / washout_den) if washout_den > 0.0 else 0.0
+    )
+    auc = float(np.trapz(np.maximum(enh, 0.0), x=time_axis))
+    peak_rel = _safe_ratio(max(peak_enh, 0.0), max(ref_peak_enh, 1e-12))
+    auc_rel = _safe_ratio(max(auc, 0.0), max(ref_auc_pos, 1e-12))
+    ref_ok = 1.0 if ref_peak_enh > _REF_PEAK_EPS else 0.0
+    return (
+        arrival_norm,
+        has_arr,
+        peak_norm,
+        peak_enh,
+        washin_slope,
+        washout_slope,
+        auc,
+        peak_rel,
+        auc_rel,
+        kinetic_ok,
+        ref_ok,
+    )
+
+
+def _try_load_vessel_4d(
+    *,
+    vessel_root: Path | None,
+    case_id: str,
+    expected_shape_zyx: tuple[int, int, int],
+) -> np.ndarray | None:
+    if vessel_root is None or not str(vessel_root).strip():
+        return None
+    root = Path(vessel_root)
+    if not root.exists():
+        return None
+    try:
+        paths, _ = discover_study_timepoints(root, case_id)
+        arr = load_time_series_from_files(paths)
+        return align_zyx_4d_to_shape(arr, expected_shape_zyx)
+    except (OSError, ValueError) as exc:
+        logging.warning("Vessel 4D unavailable for %s: %s", case_id, exc)
+        return None
 
 
 def _str_or_empty(val: object) -> str:
@@ -197,10 +425,15 @@ def _build_case_set(
     spacing_mm_zyx: tuple[float, float, float],
     local_radius_mm: float,
     tumor_equiv_radius_mm: float,
+    point_feature_set: str,
+    support_edt_mm_zyx: np.ndarray | None,
+    support_radius_available_scalar: float,
+    signal_4d: np.ndarray | None,
     toy_perfect_feature: bool = False,
     toy_only: bool = False,
 ) -> dict[str, Any] | None:
     """Build one tumor-local point set for Deep Sets."""
+    feature_names = deepsets_point_feature_names(point_feature_set)
     coords_xyz, neighbor_map = _build_neighbor_map(skeleton_mask_zyx)
     if not coords_xyz:
         return None
@@ -210,22 +443,94 @@ def _build_case_set(
     if tumor_coords_zyx.size == 0:
         return None
 
+    centroid_xyz_mm = _tumor_centroid_xyz_mm(tumor_mask_zyx, spacing_mm_zyx)
+    tumor_b = np.asarray(tumor_mask_zyx, dtype=bool)
+
+    ref_peak = 0.0
+    ref_auc = 0.0
+    support_for_ref: np.ndarray
+    if signal_4d is not None and signal_4d.ndim == NDIM_4D:
+        support_for_ref = np.any(signal_4d > KINETIC_SIGNAL_EPS, axis=0)
+    else:
+        support_for_ref = (
+            np.ones_like(tumor_b, dtype=bool)
+            if support_edt_mm_zyx is None
+            else np.ones_like(tumor_b, dtype=bool)
+        )
+    if support_edt_mm_zyx is not None:
+        support_for_ref = (
+            np.asarray(support_edt_mm_zyx > 0.0, dtype=bool) | support_for_ref
+        )
+    if signal_4d is not None and signal_4d.ndim == NDIM_4D:
+        ref_peak, ref_auc = _reference_enhancement_baseline(
+            signal_4d, support_for_ref, tumor_b
+        )
+
+    kinetic_tp = int(signal_4d.shape[0]) if signal_4d is not None else 0
+
+    def _one_row(xyz_vox: tuple[int, int, int]) -> list[float]:
+        signed_distance_mm = _sample_signed_distance_mm(xyz_vox, signed_dist_mm)
+        neighbors = neighbor_map[xyz_vox]
+        deg = len(neighbors)
+        if point_feature_set == DEEPSETS_FEATURE_BASELINE:
+            curvature_rad = _compute_curvature(
+                xyz_vox=xyz_vox,
+                neighbor_xyz=neighbors,
+                spacing_mm_zyx=spacing_mm_zyx,
+            )
+            return [float(curvature_rad)]
+
+        pmm = _point_mm(xyz_vox, spacing_mm_zyx)
+        off = pmm - centroid_xyz_mm
+        s0, s1, s2, s3 = _outside_shell_one_hot_four(signed_distance_mm)
+        sup_r = 0.0
+        if support_edt_mm_zyx is not None:
+            xv, yv, zv = (int(v) for v in xyz_vox)
+            zv = int(np.clip(zv, 0, support_edt_mm_zyx.shape[0] - 1))
+            yv = int(np.clip(yv, 0, support_edt_mm_zyx.shape[1] - 1))
+            xv = int(np.clip(xv, 0, support_edt_mm_zyx.shape[2] - 1))
+            sup_r = float(support_edt_mm_zyx[zv, yv, xv])
+        row = [
+            float(signed_distance_mm),
+            float(abs(signed_distance_mm)),
+            1.0 if signed_distance_mm < 0.0 else 0.0,
+            s0,
+            s1,
+            s2,
+            s3,
+            float(deg),
+            1.0 if deg == ENDPOINT_DEGREE else 0.0,
+            1.0 if deg == CHAIN_DEGREE else 0.0,
+            1.0 if deg >= BIFURCATION_MIN_DEGREE else 0.0,
+            float(off[0]),
+            float(off[1]),
+            float(off[2]),
+            sup_r,
+            support_radius_available_scalar,
+        ]
+        if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY:
+            return row
+        dyn = _dynamic_features_for_voxel(
+            signal_4d=signal_4d,
+            xyz_vox=xyz_vox,
+            ref_peak_enh=ref_peak,
+            ref_auc_pos=ref_auc,
+        )
+        return row + list(dyn)
+
     candidate_rows: list[tuple[float, list[float]]] = []
     feature_rows: list[list[float]] = []
     for xyz_vox in coords_xyz:
         signed_distance_mm = _sample_signed_distance_mm(xyz_vox, signed_dist_mm)
-        neighbors = neighbor_map[xyz_vox]
-        curvature_rad = _compute_curvature(
-            xyz_vox=xyz_vox,
-            neighbor_xyz=neighbors,
-            spacing_mm_zyx=spacing_mm_zyx,
-        )
+        row = _one_row(xyz_vox)
+        if len(row) != len(feature_names):
+            raise RuntimeError(
+                f"Feature count mismatch for {case_id}: row={len(row)} names={len(feature_names)}"
+            )
         if toy_only:
             row = [float(label)]
-        else:
-            row = [float(curvature_rad)]
-            if toy_perfect_feature:
-                row.append(float(label))
+        elif toy_perfect_feature:
+            row = list(row) + [float(label)]
         candidate_rows.append((float(signed_distance_mm), row))
         if signed_distance_mm <= float(local_radius_mm):
             feature_rows.append(row)
@@ -238,20 +543,24 @@ def _build_case_set(
     if not feature_rows:
         return None
 
+    output_feature_names = (
+        ["toy_perfect_label"]
+        if toy_only
+        else list(feature_names)
+        + (["toy_perfect_label"] if toy_perfect_feature else [])
+    )
+
     return {
         "x": torch.tensor(feature_rows, dtype=torch.float32),
         "y": torch.tensor([int(label)], dtype=torch.float32),
         "case_id": str(case_id),
-        "feature_names": (
-            ["toy_perfect_label"]
-            if toy_only
-            else list(POINT_FEATURE_NAMES)
-            + (["toy_perfect_label"] if toy_perfect_feature else [])
-        ),
+        "feature_names": output_feature_names,
         "local_radius_mm": float(local_radius_mm),
         "tumor_equiv_radius_mm": float(tumor_equiv_radius_mm),
         "num_points": int(len(feature_rows)),
         "used_fallback_nearest_points": float(used_fallback),
+        "point_feature_set": str(point_feature_set),
+        "kinetic_timepoint_count": int(kinetic_tp),
     }
 
 
@@ -276,6 +585,14 @@ def main() -> None:
     manifest_parts_dir.mkdir(parents=True, exist_ok=True)
 
     params = config.model_params
+    point_feature_set = str(
+        getattr(params, "deepsets_point_feature_set", DEEPSETS_FEATURE_BASELINE)
+    )
+    if point_feature_set not in VALID_DEEPSETS_POINT_FEATURE_SETS:
+        raise ValueError(
+            f"Invalid model_params.deepsets_point_feature_set={point_feature_set!r}; "
+            f"expected one of {sorted(VALID_DEEPSETS_POINT_FEATURE_SETS)}"
+        )
     radius_floor_mm = float(params.deepsets_local_radius_floor_mm)
     radius_scale = float(params.deepsets_local_radius_scale)
     radius_cap_raw = params.deepsets_local_radius_cap_mm
@@ -290,6 +607,13 @@ def main() -> None:
     tumor_mask_pattern = str(toggles.tumor_mask_file_pattern)
     tumor_threshold = float(toggles.tumor_mask_threshold)
     skeleton_pattern = str(toggles.centerline_file_pattern)
+    support_pattern = str(
+        getattr(
+            toggles,
+            "deepsets_support_mask_pattern",
+            "{case_id}_skeleton_4d_exam_support_mask.npy",
+        )
+    )
     dataset_include = toggles.dataset_include
     bilateral_filter = _as_optional_bool(toggles.bilateral_filter)
     toy_perfect_feature = bool(getattr(toggles, "toy_perfect_feature", False))
@@ -339,10 +663,16 @@ def main() -> None:
     fallback_case_sets = 0
     rows: list[dict[str, Any]] = []
 
+    vessel_root_raw = getattr(data_paths, "vessel_segmentation_root", "") or ""
+    vessel_root_opt = (
+        Path(str(vessel_root_raw)) if str(vessel_root_raw).strip() else None
+    )
+
     logging.info(
-        "Starting Deep Sets dataset build for %d cases into %s",
+        "Starting Deep Sets dataset build for %d cases into %s (point_feature_set=%s)",
         total_cases,
         output_dir,
+        point_feature_set,
     )
 
     for index, row in enumerate(manifest_source.itertuples(index=False), start=1):
@@ -403,6 +733,41 @@ def main() -> None:
                 radius_scale=radius_scale,
                 radius_cap_mm=radius_cap_mm,
             )
+            sk_shape = tuple(int(v) for v in skeleton_mask.shape)
+            support_path = study_dir / support_pattern.format(case_id=case_id)
+            support_edt_mm_zyx: np.ndarray | None = None
+            support_radius_available_scalar = 0.0
+            if support_path.exists():
+                try:
+                    sup_mask = np.load(support_path).astype(bool, copy=False)
+                    if tuple(sup_mask.shape) == sk_shape:
+                        support_edt_mm_zyx = ndimage.distance_transform_edt(
+                            sup_mask,
+                            sampling=spacing_mm_zyx,
+                        ).astype(np.float32, copy=False)
+                        support_radius_available_scalar = 1.0
+                except (OSError, ValueError) as sup_exc:
+                    logging.warning(
+                        "Could not load support mask for %s (%s): %s",
+                        case_id,
+                        support_path,
+                        sup_exc,
+                    )
+            signal_4d: np.ndarray | None = None
+            if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC:
+                signal_4d = _try_load_vessel_4d(
+                    vessel_root=vessel_root_opt,
+                    case_id=case_id,
+                    expected_shape_zyx=sk_shape,
+                )
+                if signal_4d is not None and tuple(signal_4d.shape[1:]) != sk_shape:
+                    logging.warning(
+                        "Vessel 4D shape mismatch for %s: %s vs skeleton %s; skipping dynamics",
+                        case_id,
+                        signal_4d.shape,
+                        sk_shape,
+                    )
+                    signal_4d = None
             case_set = _build_case_set(
                 case_id=case_id,
                 label=int(row.label),
@@ -411,6 +776,10 @@ def main() -> None:
                 spacing_mm_zyx=spacing_mm_zyx,
                 local_radius_mm=local_radius_mm,
                 tumor_equiv_radius_mm=tumor_equiv_radius_mm,
+                point_feature_set=point_feature_set,
+                support_edt_mm_zyx=support_edt_mm_zyx,
+                support_radius_available_scalar=support_radius_available_scalar,
+                signal_4d=signal_4d,
                 toy_perfect_feature=toy_perfect_feature,
                 toy_only=toy_only,
             )

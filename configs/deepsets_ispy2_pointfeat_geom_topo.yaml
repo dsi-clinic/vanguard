@@ -1,9 +1,10 @@
+# Deep Sets ISPY2 — geometry + topology point features (issue #120 arm 2).
 feature_toggles:
   dataset_include: ["ISPY2"]
   tumor_mask_file_pattern: "{case_id}.nii.gz"
 
 experiment_setup:
-  name: "deepsets_ispy2"
+  name: "deepsets_ispy2_pointfeat_geom_topo"
   base_outdir: "./experiments"
 
 model_params:
@@ -20,7 +21,7 @@ model_params:
   deepsets_local_radius_floor_mm: 50.0
   deepsets_local_radius_scale: 2.0
   deepsets_local_radius_cap_mm: 60.0
-  deepsets_point_feature_set: "baseline"
+  deepsets_point_feature_set: "geometry_topology"
 
 data_paths:
   centerline_root: "/net/projects2/vanguard/centerlines_tc4d/studies"
