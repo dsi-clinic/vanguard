@@ -1,11 +1,21 @@
 """Tests for configurable pooling in DeepSetsClassifier."""
+# ruff: noqa: E402,I001
 
 from __future__ import annotations
 
-import pytest
-import torch
+import importlib.util
 
-from deepsets_model import POOLING_CHOICES, DeepSetsClassifier, _pooling_width
+import pytest
+
+TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
+pytestmark = pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is not installed")
+
+if TORCH_AVAILABLE:
+    import torch
+
+    from deepsets_model import POOLING_CHOICES, DeepSetsClassifier, _pooling_width
+else:
+    POOLING_CHOICES = ("mean", "max", "sum", "mean_max", "mean_max_logcount")
 
 INPUT_DIM = 4
 HIDDEN_DIM = 8

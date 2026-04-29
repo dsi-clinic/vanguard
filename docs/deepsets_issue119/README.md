@@ -20,17 +20,17 @@ Each case file is a `dict` with at least:
 
 | Field | Meaning |
 |--------|---------|
-| `x` | `float32` tensor of shape `[num_points, num_features]`. **Only** `curvature_rad` is stored today. |
+| `x` | `float32` tensor of shape `[num_points, num_features]`. Defaults to **only** `curvature_rad`; expanded point features are opt-in via config. |
 | `y` | Scalar label tensor. |
 | `case_id` | String study identifier. |
-| `feature_names` | List aligned with columns of `x` (currently `["curvature_rad"]`). |
+| `feature_names` | List aligned with columns of `x` (default `["curvature_rad"]`, or the configured `feature_toggles.deepsets_point_features`). |
 | `local_radius_mm`, `tumor_equiv_radius_mm` | Tumor-local inclusion radius metadata (case-level). |
 | `num_points` | Number of rows in `x`. |
 | `used_fallback_nearest_points` | Whether the nearest-64 fallback ran when no points passed the distance filter. |
 
-**Not stored per point (but computed during the build):**
+**Not stored per point unless opted in:**
 
-- Signed distance to the tumor boundary (mm) is used only to **filter** points (`signed_distance_mm <= local_radius_mm`) and for fallback ordering; it is **not** written into `x`.
+- Signed distance to the tumor boundary (mm) is always used to **filter** points (`signed_distance_mm <= local_radius_mm`) and for fallback ordering. It is written into `x` only when `signed_distance_tumor_mm` is requested.
 - Voxel `(x, y, z)` coordinates are **not** saved; order follows `numpy.argwhere` on the full skeleton mask, then the inclusion rule.
 
 ### Manifest (`deepsets_manifest.csv`)
@@ -43,9 +43,8 @@ Training requires `case_id`, `set_path`, and the label column from config (`data
 
 ### Upstream artifacts (documented in graph extraction) not used by the Deep Sets builder
 
-The builder reads **only** the exam skeleton mask (`{case_id}_skeleton_4d_exam_mask.npy` under `centerline_root / dataset / case_id`). It does **not** currently consume:
+The default builder reads the exam skeleton mask (`{case_id}_skeleton_4d_exam_mask.npy` under `centerline_root / dataset / case_id`). It also reads `{case_id}_skeleton_4d_exam_support_mask.npy` only when `local_vessel_radius_mm` is requested. It does **not** currently consume:
 
-- `{case_id}_skeleton_4d_exam_support_mask.npy` — vessel support used for local radius in graph extraction
 - `{case_id}_morphometry.json` — segment-level geometry and graph primitives
 - `{case_id}_tumor_graph_features.json` — tumor-centered summaries (shells, topology, kinetics)
 - The multi-timepoint inputs used for kinematic features in the graph pipeline (clinical DCE NIfTIs vs vessel-segmentation NPZs, depending on cohort layout)
@@ -80,7 +79,7 @@ These paths were checked on the shared filesystem; they match [`configs/deepsets
 
 ---
 
-## 3. Candidate point features
+## 3. Opt-in and candidate point features
 
 | Feature name | Short description | Extra inputs vs today | Computable from existing on-disk artifacts? |
 |--------------|-------------------|------------------------|-----------------------------------------------|
@@ -98,6 +97,28 @@ These paths were checked on the shared filesystem; they match [`configs/deepsets
 | `graph_segment_radius`, tortuosity-style locals | Map voxels to morphometry segments | `{case_id}_morphometry.json` + graph primitives | Needs JSON + join logic |
 
 **Dynamic features:** clinical DCE and vessel NPZs answer **different** questions—clinical overlays show anatomy; NPZ phases are **grid-identical** to tc4d inputs. Any new feature should state which grid it uses.
+
+Opt-in expanded point-feature example:
+
+```yaml
+feature_toggles:
+  deepsets_point_features:
+    - curvature_rad
+    - signed_distance_tumor_mm
+    - abs_distance_tumor_mm
+    - inside_tumor
+    - skeleton_node_degree
+    - is_endpoint
+    - is_chain
+    - is_junction
+    - offset_from_tumor_centroid_norm_x
+    - offset_from_tumor_centroid_norm_y
+    - offset_from_tumor_centroid_norm_z
+    - direction_to_tumor_centroid_x
+    - direction_to_tumor_centroid_y
+    - direction_to_tumor_centroid_z
+    - local_vessel_radius_mm
+```
 
 ---
 
@@ -155,4 +176,5 @@ We therefore treat **clinical DCE alignment with saved skeleton and expert tumor
 ## 5. Out of scope (this note)
 
 - Changing [`deepsets_model.py`](../../deepsets_model.py) architecture
-- Extending [`build_deepsets_dataset.py`](../../build_deepsets_dataset.py) to emit new columns (follow-up implementation work after feature selection)
+- Adding DCE/NPZ time-series sampled point features
+- Joining point rows back to morphometry segments for segment-level locals

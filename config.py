@@ -71,6 +71,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "merge_how": "inner",
         "selected_features": None,
         "centerline_file_pattern": "{case_id}_skeleton_4d_exam_mask.npy",
+        "deepsets_point_features": ["curvature_rad"],
         "toy_perfect_feature": False,
         "toy_only": False,
     },

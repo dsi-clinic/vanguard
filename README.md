@@ -238,7 +238,33 @@ The starter point-level feature is intentionally minimal:
 
 - a simple pointwise curvature proxy
 
-Students are expected to add richer point features after the scaffold is working.
+Richer point features are opt-in through `feature_toggles.deepsets_point_features`.
+The default remains `["curvature_rad"]` so existing configs keep the legacy
+curvature-only payload. Example expanded feature list:
+
+```yaml
+feature_toggles:
+  deepsets_point_features:
+    - curvature_rad
+    - signed_distance_tumor_mm
+    - abs_distance_tumor_mm
+    - inside_tumor
+    - skeleton_node_degree
+    - is_endpoint
+    - is_chain
+    - is_junction
+    - offset_from_tumor_centroid_norm_x
+    - offset_from_tumor_centroid_norm_y
+    - offset_from_tumor_centroid_norm_z
+    - direction_to_tumor_centroid_x
+    - direction_to_tumor_centroid_y
+    - direction_to_tumor_centroid_z
+    - local_vessel_radius_mm
+```
+
+When `local_vessel_radius_mm` is requested, the builder expects
+`{case_id}_skeleton_4d_exam_support_mask.npy` beside the skeleton mask. Cases
+without a usable support mask are skipped and counted in the build logs.
 
 Before running on a new system, review:
 
