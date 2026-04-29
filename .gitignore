@@ -197,3 +197,8 @@ DUKE_001_0001_with_mask.png
 .runtime/
 .claude/commands/
 .logs/
+
+# Local tooling / one-off venvs (issue #119)
+.venv_issue119/
+_pip119/
+.mplconfig119/

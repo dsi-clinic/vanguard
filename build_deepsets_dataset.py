@@ -529,10 +529,8 @@ def _build_case_set(
             )
         if toy_only:
             row = [float(label)]
-        else:
-            row = [float(curvature_rad)]
-            if toy_perfect_feature:
-                row.append(float(label))
+        elif toy_perfect_feature:
+            row = list(row) + [float(label)]
         candidate_rows.append((float(signed_distance_mm), row))
         if signed_distance_mm <= float(local_radius_mm):
             feature_rows.append(row)
@@ -545,17 +543,18 @@ def _build_case_set(
     if not feature_rows:
         return None
 
+    output_feature_names = (
+        ["toy_perfect_label"]
+        if toy_only
+        else list(feature_names)
+        + (["toy_perfect_label"] if toy_perfect_feature else [])
+    )
+
     return {
         "x": torch.tensor(feature_rows, dtype=torch.float32),
         "y": torch.tensor([int(label)], dtype=torch.float32),
         "case_id": str(case_id),
-        "feature_names": list(feature_names),
-        "feature_names": (
-            ["toy_perfect_label"]
-            if toy_only
-            else list(POINT_FEATURE_NAMES)
-            + (["toy_perfect_label"] if toy_perfect_feature else [])
-        ),
+        "feature_names": output_feature_names,
         "local_radius_mm": float(local_radius_mm),
         "tumor_equiv_radius_mm": float(tumor_equiv_radius_mm),
         "num_points": int(len(feature_rows)),
