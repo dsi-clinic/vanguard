@@ -673,6 +673,26 @@ def compute_tumor_kinematic_feature_payload(
     }
 
     crossing_rows = [r for r in all_rows if bool(r["crosses_boundary"])]
+    crossing_early_volume = float(
+        np.sum(
+            [
+                float(r["volume_burden_mm3"])
+                for r in crossing_rows
+                if bool(r["early_enhancing"])
+            ]
+        )
+    )
+    crossing_total_volume = float(
+        np.sum([float(r["volume_burden_mm3"]) for r in crossing_rows])
+    )
+    early_fraction["count_fraction_crossing"] = _safe_ratio(
+        float(sum(1 for r in crossing_rows if bool(r["early_enhancing"]))),
+        float(len(crossing_rows)),
+    )
+    early_fraction["volume_fraction_crossing"] = _safe_ratio(
+        crossing_early_volume,
+        crossing_total_volume,
+    )
     crossing_peak_weighted = float(
         np.sum(
             [
