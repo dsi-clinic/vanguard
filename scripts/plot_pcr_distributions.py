@@ -158,11 +158,13 @@ def _plot_distribution_grid(
             ax.set_yticks([])
             continue
 
-        bins = min(40, max(10, int(np.sqrt(len(vals_0) + len(vals_1)))))
+        n_bins = min(40, max(10, int(np.sqrt(len(vals_0) + len(vals_1)))))
+        combined = pd.concat([vals_0, vals_1])
+        bin_edges = np.linspace(combined.min(), combined.max(), n_bins + 1)
 
         ax.hist(
             vals_0,
-            bins=bins,
+            bins=bin_edges,
             alpha=0.5,
             density=True,
             label=f"non-pCR (n={len(vals_0)})",
@@ -172,7 +174,7 @@ def _plot_distribution_grid(
         )
         ax.hist(
             vals_1,
-            bins=bins,
+            bins=bin_edges,
             alpha=0.5,
             density=True,
             label=f"pCR (n={len(vals_1)})",
