@@ -343,9 +343,7 @@ def run_nested_cv(
         # Impute + scale fitted on train only
         imputer = SimpleImputer(strategy="median")
         scaler = StandardScaler()
-        x_train = scaler.fit_transform(
-            imputer.fit_transform(train_df[s2_cols])
-        )
+        x_train = scaler.fit_transform(imputer.fit_transform(train_df[s2_cols]))
         x_test = scaler.transform(imputer.transform(test_df[s2_cols]))
 
         # Stage 3: L1 logistic regression on train
@@ -357,7 +355,9 @@ def run_nested_cv(
         try:
             auc = roc_auc_score(y_test, y_proba)
         except ValueError:
-            logging.warning("Fold %d/%d: AUC computation failed", fold_idx + 1, total_folds)
+            logging.warning(
+                "Fold %d/%d: AUC computation failed", fold_idx + 1, total_folds
+            )
             continue
 
         fold_aucs.append(auc)
@@ -369,8 +369,7 @@ def run_nested_cv(
         roc_curves.append({"fpr": fpr, "tpr": tpr, "auc": auc, "fold": fold_idx})
 
         logging.info(
-            "Fold %d/%d: AUC=%.3f, %d features selected "
-            "(S1: %d → S2: %d → S3: %d)",
+            "Fold %d/%d: AUC=%.3f, %d features selected " "(S1: %d → S2: %d → S3: %d)",
             fold_idx + 1,
             total_folds,
             auc,
@@ -402,14 +401,20 @@ def run_nested_cv(
 # ── Visualizations ──────────────────────────────────────────────────────
 
 
-def plot_roc_curves(roc_curves: list[dict], cv_mean: float, cv_std: float,
-                    outdir: Path) -> None:
+def plot_roc_curves(
+    roc_curves: list[dict], cv_mean: float, cv_std: float, outdir: Path
+) -> None:
     """Plot per-fold ROC curves with mean AUC annotation."""
     fig, ax = plt.subplots(figsize=(8, 7), constrained_layout=True)
 
     for rc in roc_curves:
-        ax.plot(rc["fpr"], rc["tpr"], alpha=0.25, linewidth=1,
-                label=f'Fold {rc["fold"]} (AUC={rc["auc"]:.2f})')
+        ax.plot(
+            rc["fpr"],
+            rc["tpr"],
+            alpha=0.25,
+            linewidth=1,
+            label=f'Fold {rc["fold"]} (AUC={rc["auc"]:.2f})',
+        )
 
     ax.plot([0, 1], [0, 1], "--", color="gray", linewidth=0.8, label="Chance")
     ax.set_xlabel("False Positive Rate")
@@ -428,11 +433,17 @@ def plot_roc_curves(roc_curves: list[dict], cv_mean: float, cv_std: float,
 def plot_auc_distribution(fold_aucs: list[float], outdir: Path) -> None:
     """Box + strip plot of per-fold AUC scores."""
     fig, ax = plt.subplots(figsize=(6, 5), constrained_layout=True)
-    ax.boxplot(fold_aucs, vert=True, widths=0.4, patch_artist=True,
-               boxprops={"facecolor": "#D5E8D4", "edgecolor": "#333"},
-               medianprops={"color": "#E1812C", "linewidth": 2})
-    ax.scatter(np.ones(len(fold_aucs)), fold_aucs, alpha=0.5, color="#3274A1",
-               zorder=3, s=30)
+    ax.boxplot(
+        fold_aucs,
+        vert=True,
+        widths=0.4,
+        patch_artist=True,
+        boxprops={"facecolor": "#D5E8D4", "edgecolor": "#333"},
+        medianprops={"color": "#E1812C", "linewidth": 2},
+    )
+    ax.scatter(
+        np.ones(len(fold_aucs)), fold_aucs, alpha=0.5, color="#3274A1", zorder=3, s=30
+    )
     ax.axhline(y=0.5, color="gray", linestyle="--", linewidth=0.8, label="Chance")
     ax.set_ylabel("ROC AUC")
     ax.set_title(
@@ -447,8 +458,9 @@ def plot_auc_distribution(fold_aucs: list[float], outdir: Path) -> None:
     logging.info("Saved: %s", outdir / "nested_cv_auc_distribution.png")
 
 
-def plot_feature_stability(feature_counter: Counter, total_folds: int,
-                           outdir: Path) -> None:
+def plot_feature_stability(
+    feature_counter: Counter, total_folds: int, outdir: Path
+) -> None:
     """Horizontal bar chart of feature selection frequency across folds."""
     if not feature_counter:
         logging.warning("No features selected across folds — skipping stability plot")
@@ -459,11 +471,10 @@ def plot_feature_stability(feature_counter: Counter, total_folds: int,
     names = [_shorten_feature_name(f) for f, _ in reversed(most_common)]
     freqs = [c / total_folds for _, c in reversed(most_common)]
 
-    fig, ax = plt.subplots(
-        figsize=(10, max(6, top_n * 0.35)), constrained_layout=True
-    )
-    colors = ["#3274A1" if f >= _STABILITY_HIGHLIGHT_THRESHOLD else "#A0C4E8"
-              for f in freqs]
+    fig, ax = plt.subplots(figsize=(10, max(6, top_n * 0.35)), constrained_layout=True)
+    colors = [
+        "#3274A1" if f >= _STABILITY_HIGHLIGHT_THRESHOLD else "#A0C4E8" for f in freqs
+    ]
     ax.barh(names, freqs, color=colors)
     ax.set_xlabel("Selection Frequency (fraction of folds)")
     ax.set_title(
@@ -471,8 +482,9 @@ def plot_feature_stability(feature_counter: Counter, total_folds: int,
         f"Across {total_folds} nested CV folds",
         fontsize=11,
     )
-    ax.axvline(x=0.5, color="#E1812C", linestyle="--", linewidth=1,
-               label="50% threshold")
+    ax.axvline(
+        x=0.5, color="#E1812C", linestyle="--", linewidth=1, label="50% threshold"
+    )
     ax.set_xlim(0, 1.05)
     ax.tick_params(labelsize=8)
     ax.legend(fontsize=9)
@@ -492,15 +504,32 @@ def plot_pvalue_comparison(univariate_df: pd.DataFrame, outdir: Path) -> None:
     adj = univariate_df["p_adjusted"].to_numpy()
 
     passed = adj < _UNIVARIATE_P_THRESHOLD
-    ax.scatter(raw[~passed], adj[~passed], alpha=0.4, s=15, color="#999999",
-               label=f"Not significant (n={int((~passed).sum())})")
-    ax.scatter(raw[passed], adj[passed], alpha=0.6, s=25, color="#E1812C",
-               label=f"Significant after BH (n={int(passed.sum())})")
+    ax.scatter(
+        raw[~passed],
+        adj[~passed],
+        alpha=0.4,
+        s=15,
+        color="#999999",
+        label=f"Not significant (n={int((~passed).sum())})",
+    )
+    ax.scatter(
+        raw[passed],
+        adj[passed],
+        alpha=0.6,
+        s=25,
+        color="#E1812C",
+        label=f"Significant after BH (n={int(passed.sum())})",
+    )
 
     lims = [0, max(raw.max(), adj.max()) * 1.05]
     ax.plot(lims, lims, "--", color="gray", linewidth=0.8, label="y = x")
-    ax.axhline(y=_UNIVARIATE_P_THRESHOLD, color="#3274A1", linestyle=":",
-               linewidth=1, label=f"α = {_UNIVARIATE_P_THRESHOLD}")
+    ax.axhline(
+        y=_UNIVARIATE_P_THRESHOLD,
+        color="#3274A1",
+        linestyle=":",
+        linewidth=1,
+        label=f"α = {_UNIVARIATE_P_THRESHOLD}",
+    )
     ax.set_xlabel("Raw p-value")
     ax.set_ylabel("BH-adjusted p-value")
     ax.set_title(
@@ -636,16 +665,16 @@ def main() -> None:
     selected_df.to_csv(outdir / "selected_features.csv", index=False)
 
     # Visualize final coefficients
-    plot_final_coefficients(coef_df, cv_results["cv_mean"], cv_results["cv_std"], outdir)
+    plot_final_coefficients(
+        coef_df, cv_results["cv_mean"], cv_results["cv_std"], outdir
+    )
 
     # ── Summary ──
     logging.info("=== Feature Selection Summary ===")
     logging.info("  Input features: %d", len(feature_cols))
     logging.info("  After pre-filter (stage 1): %d", len(stage1_cols))
     logging.info("  After univariate screen (stage 2): %d", len(stage2_cols))
-    logging.info(
-        "  After L1 logistic regression (stage 3): %d", len(selected_features)
-    )
+    logging.info("  After L1 logistic regression (stage 3): %d", len(selected_features))
     logging.info(
         "  Nested CV AUC: %.3f ± %.3f (unbiased estimate)",
         cv_results["cv_mean"],
