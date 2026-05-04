@@ -938,6 +938,8 @@ def main() -> None:
             "used_fallback_nearest_points": int(
                 case_set["used_fallback_nearest_points"]
             ),
+            "point_feature_set": str(case_set["point_feature_set"]),
+            "kinetic_timepoint_count": int(case_set["kinetic_timepoint_count"]),
         }
         for col in optional_metadata_cols:
             manifest_row[col] = _str_or_empty(getattr(row, col, ""))
