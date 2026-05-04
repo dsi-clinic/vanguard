@@ -50,6 +50,24 @@ Interpretation:
 - `local_radius_with_fallback` keeps tumor-local selection by default while avoiding
   case drops via bounded fallback.
 
+## Comparison stats (ISPY2 cohort run)
+
+From `experiments/issue121_inclusion_compare/inclusion_rule_summary.csv`:
+
+| inclusion_rule | cases_written | cases_skipped | fallback_fraction | num_points_median | num_points_range |
+|---|---:|---:|---:|---:|---|
+| `local_radius_with_fallback` | 980 | 0 | 0.0449 | 517.5 | `1-3537` |
+| `local_radius_only` | 936 | 44 | 0.0 | 547.5 | `1-3537` |
+| `nearest_64_only` | 980 | 0 | 0.0 | 64.0 | `13-64` |
+
+![ISPY2 inclusion-rule comparison](deepsets_issue121_figures/inclusion_rule_comparison.png)
+
+The cohort run supports the default: `local_radius_with_fallback` preserves all
+980 cases while falling back in only 4.5% of cases. `local_radius_only` drops 44
+cases, and `nearest_64_only` keeps all cases but collapses the set size to a
+fixed nearest-neighbor sample that is less tied to the intended tumor-local
+radius rule.
+
 ## Reproduce comparison stats
 
 Use the Deep Sets build stage with a config that includes:
