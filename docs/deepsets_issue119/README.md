@@ -36,9 +36,9 @@ Feature regimes currently implemented in [`build_deepsets_dataset.py`](../../bui
 - `geometry_topology` -> signed-distance shells, topology flags, centroid offsets, support radius
 - `geometry_topology_dynamic` -> `geometry_topology` plus voxelwise dynamic kinetics and reference-relative scalars
 
-**Not stored per point (but computed during the build):**
+**Computed during the build but not always stored per point:**
 
-- Signed distance to the tumor boundary (mm) is used only to **filter** points (`signed_distance_mm <= local_radius_mm`) and for fallback ordering; it is **not** written into `x`.
+- Signed distance to the tumor boundary (mm) is always used to **filter** points (`signed_distance_mm <= local_radius_mm`) and for fallback ordering. It is written into `x` for `geometry_topology` and `geometry_topology_dynamic`, but not for `baseline`.
 - Voxel `(x, y, z)` coordinates are **not** saved; order follows `numpy.argwhere` on the full skeleton mask, then the inclusion rule.
 
 ### Manifest (`deepsets_manifest.csv`)
@@ -53,15 +53,17 @@ Training requires `case_id`, `set_path`, and the label column from config (`data
 
 The builder always reads the exam skeleton mask (`{case_id}_skeleton_4d_exam_mask.npy` under `centerline_root / dataset / case_id`) and tumor mask. Additional artifacts are consumed by feature regime:
 
+- All regimes: skeleton mask for point locations and topology, tumor mask for signed distance, tumor-local filtering, centroid offsets, and tumor-equivalent radius.
 - `geometry_topology` / `geometry_topology_dynamic`: optional `{case_id}_skeleton_4d_exam_support_mask.npy` for local vessel support radius (`support_radius_mm`, `support_radius_available`).
 - `geometry_topology_dynamic`: vessel 4D time-series under `data_paths.vessel_segmentation_root`, shape-aligned to skeleton via [`deepsets_volume_align.py`](../../deepsets_volume_align.py). If alignment fails, dynamic features are zeroed for that case (`kinetic_signal_ok=0`).
 
+The support mask is therefore **partially consumed** by Deep Sets: only its distance-transform radius and availability flag enter the point payload. The graph-pipeline summaries derived from support, morphometry, and tumor-local graph JSONs remain out of this path today.
+
 Not consumed by this path today:
 
-- `{case_id}_skeleton_4d_exam_support_mask.npy` — vessel support used for local radius in graph extraction
 - `{case_id}_morphometry.json` — segment-level geometry and graph primitives
 - `{case_id}_tumor_graph_features.json` — tumor-centered summaries (shells, topology, kinetics)
-- The multi-timepoint inputs used for kinematic features in the graph pipeline (clinical DCE NIfTIs vs vessel-segmentation NPZs, depending on cohort layout)
+- Clinical DCE NIfTI phases used for alignment QA and graph-pipeline kinematic checks. Deep Sets dynamic features use vessel-segmentation NPZ phases from `data_paths.vessel_segmentation_root`, not the clinical DCE NIfTIs.
 
 The builder **does** load the tumor mask and forces **shape agreement** with the skeleton using the same axis-permutation strategy as [`load_tumor_mask_zyx`](../../features/tumor_size.py).
 
@@ -102,6 +104,13 @@ Current regimes:
 - `baseline`: `curvature_rad`.
 - `geometry_topology`: signed distance, absolute distance, in-tumor flag, shell one-hot bins, node degree flags, xyz centroid offsets, support EDT radius, support-availability flag.
 - `geometry_topology_dynamic`: all geometry/topology features plus arrival/peak timing, enhancement amplitudes, wash-in/out slopes, positive AUC, reference-relative peak/AUC, and validity flags.
+
+Candidate feature sources that are already close to this path:
+
+- Skeleton + tumor mask: additional local topology, shell, and tumor-relative geometry at each centerline voxel.
+- Support mask: support-derived local radius or vessel-region context, limited to features that can be sampled per point without importing graph summaries wholesale.
+- Vessel-segmentation NPZ time series: voxelwise dynamic features on the same tc4d input grid as the saved skeleton.
+- Morphometry and tumor graph JSONs: candidate case-level or segment-level sources, but not part of the current point payload.
 
 **Dynamic features:** clinical DCE and vessel NPZs answer **different** questions—clinical overlays show anatomy; NPZ phases are **grid-identical** to tc4d inputs. Any new feature should state which grid it uses.
 
