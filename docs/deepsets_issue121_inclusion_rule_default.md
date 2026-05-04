@@ -34,6 +34,9 @@ Rationale:
 From `configs/deepsets_issue121_fixture.yaml` written to
 `experiments/issue121_fixture_build/inclusion_rule_summary.csv`:
 
+These are fixture-level stats from a four-case synthetic sample, not cohort-level
+ISPY2 statistics.
+
 | inclusion_rule | cases_written | cases_skipped | fallback_fraction | num_points_median | num_points_range |
 |---|---:|---:|---:|---:|---|
 | `local_radius_with_fallback` | 4 | 0 | 0.5 | 1.5 | `1-3` |
@@ -58,7 +61,18 @@ Then inspect:
 
 - `OUT_ROOT/inclusion_rule_summary.csv`
 
-Example:
+Fixture example:
+
+```bash
+PYTHONPATH=. python build_deepsets_dataset.py \
+  --config configs/deepsets_issue121_fixture.yaml \
+  --output-dir experiments/issue121_fixture_build \
+  --num-shards 1 \
+  --shard-index 0
+```
+
+Full-cohort example (submit through Slurm; do not run this build directly on a
+login/head node):
 
 ```bash
 MODE=build \
