@@ -1,9 +1,11 @@
+# Deep Sets ISPY2 — point features: curvature only (issue #120 baseline arm).
+# Build output: set OUT_ROOT e.g. experiments/deepsets_ispy2_pointfeat_baseline
 feature_toggles:
   dataset_include: ["ISPY2"]
   tumor_mask_file_pattern: "{case_id}.nii.gz"
 
 experiment_setup:
-  name: "deepsets_ispy2"
+  name: "deepsets_ispy2_pointfeat_baseline"
   base_outdir: "./experiments"
 
 model_params:
