@@ -7,7 +7,7 @@ Summary of outputs for **Issues #116, #117, and #118**. All three are driven by 
 - **Top tabular setup:** `clinical + tumor_size + vessel_all` (morph + graph + kinematic), evaluated with **5-fold CV** on **n = 808 ISPY2 unilateral cases**.
   - **XGBoost:** AUC **0.606 ± 0.028**, AP **0.415 ± 0.020**
   - **Logistic regression (nested-tuned):** AUC **0.595 ± 0.033**, AP **0.396 ± 0.034**
-- **Vs. tumor-size-only baseline** (LR AUC 0.571 ± 0.046): full vessel stack adds **+0.024 (LR)** / **+0.035 (XGB)** AUC; only the full stack moves both families consistently above baseline.
+- **Vs. tumor-size-only baseline** (LR AUC 0.571 ± 0.046): full vessel stack adds **+0.024 (LR)** / **+0.035 (XGB)** AUC. `+ morph` and `+ vessel_all` are the two arms where both families beat the LR baseline; `+ vessel_all` has the largest improvement on both families and the only LR improvement that is paired-test significant (p = 0.025).
 - **Vs. radiomics baseline** (Bella, last quarter — AUC 0.594 on a 447-case held-out test split): tabular `+ vessel_all` matches it on a larger, consistent CV cohort.
 - **Robustness (site-exclusive CV):** XGB stays flat (0.606 → 0.608 AUC). LR collapses (0.595 → 0.523).
 
@@ -17,7 +17,7 @@ Summary of outputs for **Issues #116, #117, and #118**. All three are driven by 
 |---|---|---|---|
 | **#116** | Model-family ablation across feature arms | Pick families to carry forward | `results/model_family_matrix_ispy2_summary.csv` |
 | **#117** | Robustness for top families (standard CV vs. site-exclusive group CV) | Robustness claim | `results/model_family_robustness_ispy2_summary.csv`, `..._subtype_summary.csv` |
-| **#118** | Frozen-setup vessel-arm comparison vs. radiomics baseline | Best vessel-feature recipe + radiomics comparison | `experiments/issue118_baseline_arms/ablation_summary.csv` |
+| **#118** | Frozen-setup vessel-arm comparison vs. radiomics baseline | Best vessel-feature recipe + radiomics comparison | `results/issue118_baseline_arms_summary.csv`, `results/issue118_baseline_arms_fold_auc.csv` |
 
 ---
 
@@ -79,7 +79,8 @@ Summary of outputs for **Issues #116, #117, and #118**. All three are driven by 
 - Families: `lr` (nested-tuned), `xgb`
 - Split: 5-fold CV (`use_group_split: false`)
 - Cohort: **n = 808** ISPY2 unilateral (`dataset_include: [ISPY2]`, `bilateral_filter: False`) — see "Cohort note" below
-- Radiomics reference: `radiomics/outputs/peri5_multiphase_logreg/training/metrics.json` → AUC **0.594** (447-case test split; not paired, used as a reference line only)
+- Radiomics reference: `results/issue118_radiomics_baseline_metrics.json` (committed snapshot from `radiomics/outputs/peri5_multiphase_logreg/training/metrics.json`) → AUC **0.594** (447-case test split; not paired, used as a reference line only)
+- Run snapshots: `results/issue118_baseline_arms_summary.csv`, `results/issue118_baseline_arms_fold_auc.csv`
 - Doc: `docs/issue118_baseline_comparison.md`
 
 **Key metrics (CV AUC mean ± std, AP mean ± std, ΔAUC vs. `clinical_plus_tumor_size__lr__cv`)**
@@ -97,11 +98,23 @@ Summary of outputs for **Issues #116, #117, and #118**. All three are driven by 
 | `+ vessel_all` (morph + graph + kinematic) | **lr** | **0.595 ± 0.033** | **0.396 ± 0.034** | **+0.024** |
 | `+ vessel_all` | **xgb** | **0.606 ± 0.028** | **0.415 ± 0.020** | **+0.035** |
 
-**Cohort note (n = 808):** This is not a sample-loss bug. The pipeline parses 1506 centerline studies, applies the ISPY2 + unilateral prefilters, then keeps only cases with all of (centerline `.npy`, tumor mask, tumor-graph JSON) — every one of the 808 ISPY2 unilateral cases passes all three. End-to-end trace is in `docs/issue118_baseline_comparison.md` ("Cohort-size investigation").
+**Cohort note (n = 808):** This is not a sample-loss bug. End-to-end trace from the run logs:
+
+```
+Parsed 1506 centerline studies          (all datasets currently processed)
+Centerline build applied dataset prefilter: ['ISPY2']
+Centerline build applied bilateral prefilter: False
+Centerline file coverage:    808 / 808   (every ISPY2 unilateral case has a centerline .npy)
+Tumor mask coverage:         808 / 808
+Tumor-graph JSON coverage:   808 / 808
+Merged feature table shape:  (808, 1201)
+```
+
+So the cohort is exactly the **ISPY2 unilateral cases that have all three required artifacts** (centerline, tumor mask, tumor-graph JSON), with nothing dropped at the merge step. Expanding `n` would require dropping the bilateral filter, expanding `dataset_include` beyond ISPY2 (this is what #150 audits), or extracting upstream artifacts for studies that haven't been processed yet.
 
 **Bottom line:**
 - Best overall tabular setup is `+ vessel_all` with **XGBoost** on AUC and AP.
-- Single vessel blocks alone give only marginal gains; the full vessel stack is the only configuration where both families clear the tumor-size-only baseline.
+- Two arms (`+ morph` and `+ vessel_all`) have **both** families above the LR baseline; `+ graph` and `+ kinematic` clear the LR baseline for LR only. `+ vessel_all` has the largest paired ΔAUC on both families and is the only arm where the LR improvement is statistically distinguishable from baseline (paired p = 0.025).
 - Tabular `+ vessel_all` matches the radiomics reference AUC on a larger CV cohort.
 
 ---
@@ -113,8 +126,9 @@ Summary of outputs for **Issues #116, #117, and #118**. All three are driven by 
 | `results/model_family_matrix_ispy2_summary.csv` | #116 | Per-arm × per-family AUC mean / std |
 | `results/model_family_robustness_ispy2_summary.csv` | #117 | Standard CV vs. site-exclusive CV |
 | `results/model_family_robustness_ispy2_subtype_summary.csv` | #117 | Per-tumor-subtype AUC rows |
-| `experiments/issue118_baseline_arms/ablation_summary.csv` | #118 | Five arms × two families, AUC / AP / Δ |
-| `experiments/issue118_baseline_arms/ablation_fold_auc.csv` | #118 | Per-fold AUC for paired comparisons |
+| `results/issue118_baseline_arms_summary.csv` | #118 | Five arms × two families, AUC / AP / Δ |
+| `results/issue118_baseline_arms_fold_auc.csv` | #118 | Per-fold AUC for paired comparisons |
+| `results/issue118_radiomics_baseline_metrics.json` | #118 | Committed snapshot of the radiomics baseline run (AUC 0.594) |
 | `docs/model_family_ablation_orientation.md` | #116 | Background + reproduction |
 | `docs/model_family_robustness_117.md` | #117 | Background + reproduction |
-| `docs/issue118_baseline_comparison.md` | #118 | Background + reproduction + cohort trace |
+| `docs/issue118_baseline_comparison.md` | #118 | Background + reproduction |
