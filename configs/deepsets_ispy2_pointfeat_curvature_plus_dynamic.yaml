@@ -1,0 +1,36 @@
+# Deep Sets ISPY2 — curvature + kinetic dynamic point features (issue #120 new arm).
+feature_toggles:
+  dataset_include: ["ISPY2"]
+  tumor_mask_file_pattern: "{case_id}.nii.gz"
+
+experiment_setup:
+  name: "deepsets_ispy2_pointfeat_curvature_plus_dynamic"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  batch_size: 8
+  epochs: 40
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  pooling: "mean_max_logcount"
+  deepsets_local_radius_floor_mm: 50.0
+  deepsets_local_radius_scale: 2.0
+  deepsets_local_radius_cap_mm: 60.0
+  deepsets_point_feature_set: "curvature_plus_dynamic"
+
+data_paths:
+  centerline_root: "/net/projects2/vanguard/centerlines_tc4d/studies"
+  tumor_mask_root: "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
+  patient_info_dir: "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files"
+  clinical_excel: "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
+  labels_csv: "/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv"
+  label_column: "pcr"
+  id_column: "case_id"
+  deepsets_manifest_csv: ""
+  deepsets_label_column: "label"
+  vessel_segmentation_root: "/net/projects2/vanguard/vessel_segmentations/ISPY2"
