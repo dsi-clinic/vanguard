@@ -1,4 +1,0 @@
-label,path,auc_mean,auc_std,ap_mean,n_features,n_samples
-Baseline (curvature),/home/lunad/vanguard/experiments/deepsets_ispy2_pointfeat_baseline/train/deepsets_ispy2_pointfeat_baseline_20260421_125620/deepsets_ispy2_pointfeat_baseline/metrics.json,0.5323444060638609,0.02938981711691402,0.3565931102612664,1,980
-Geometry + topology,/home/lunad/vanguard/experiments/deepsets_ispy2_pointfeat_geom_topo/train/deepsets_ispy2_pointfeat_geom_topo_20260421_130516/deepsets_ispy2_pointfeat_geom_topo/metrics.json,0.513844413862036,0.00955380723763535,0.3473854312844116,16,980
-Geometry + topology + dynamic,experiments/deepsets_ispy2_pointfeat_geom_topo_dynamic_existing_manifest_train/deepsets_ispy2_pointfeat_geom_topo_dynamic_20260504_184523/deepsets_ispy2_pointfeat_geom_topo_dynamic/metrics.json,0.5276623986915341,0.024790118609378017,0.3598989502813361,27,980

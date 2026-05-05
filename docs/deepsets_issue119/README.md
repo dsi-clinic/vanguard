@@ -10,6 +10,10 @@ Related code:
 - [`graph_extraction/README.md`](../../graph_extraction/README.md) — upstream centerline / graph outputs
 - [`slurm/submit_deepsets_pipeline.sh`](../../slurm/submit_deepsets_pipeline.sh) and [`slurm/README.md`](../../slurm/README.md) — Slurm-backed dataset build and train
 
+Related benchmark artifact:
+
+- [`analysis/deepsets_issue120_notebook.ipynb`](../../analysis/deepsets_issue120_notebook.ipynb) — Issue #120 feature-regime benchmark and deferred new-arm launch commands
+
 ---
 
 ## 1. Audit: current builder and training contract
