@@ -53,7 +53,7 @@ For each study, the pipeline can write:
 - optional debug images
   - vessel coverage MIPs and other inspection outputs
 
-The Deep Sets dataset builder always consumes the **skeleton** mask and can also consume the **support** mask for `support_radius_mm` / `support_radius_available` in geometry feature regimes. **Morphometry** and **tumor_graph_features** JSONs remain documented for other models rather than the current Deep Sets point payload. See [`docs/deepsets_issue119/README.md`](../docs/deepsets_issue119/README.md) for a short audit, candidate point features, and DCE–skeleton alignment QA.
+The Deep Sets dataset builder always consumes the **skeleton** mask and can also consume the **support** mask for `support_radius_mm` / `support_radius_available` in geometry feature regimes. **Morphometry** and **tumor_graph_features** JSONs remain documented for other models rather than the current Deep Sets point payload. See [`analysis/deepsets_issue119_notebook.ipynb`](../analysis/deepsets_issue119_notebook.ipynb) for the issue #119 audit, candidate point features, and DCE-skeleton alignment QA workflow.
 
 ## Environment and Compute
 
