@@ -8,7 +8,13 @@ Three-stage pipeline with nested cross-validation to prevent data leakage:
 
 All supervised steps run inside each outer CV fold to produce unbiased
 performance estimates.  A final model is then fit on all data to produce
-the definitive feature list.
+a candidate marginal/linear feature list.
+
+**Scientific limitation:** Stage 2 (Mann-Whitney + BH/FDR) is a marginal
+screen — it evaluates each feature independently and can miss features that
+only matter jointly or nonlinearly.  This pipeline therefore serves as the
+linear/marginal baseline; a nonlinear comparator (e.g. random forest, see
+issue #149) should follow.
 
 Usage::
 
@@ -29,6 +35,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
+from scipy.sparse.csgraph import connected_components
 from scipy.stats import false_discovery_control
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import SGDClassifier
@@ -112,8 +119,14 @@ def stage1_prefilter(
         if cols:
             logging.info("Stage 1 — dropped %d features (%s)", len(cols), reason)
 
-    # Pass 2: remove one from each highly correlated pair (unsupervised)
+    # Pass 2: remove correlated features by finding connected components
+    # in the thresholded correlation graph and keeping one representative
+    # per component (the one with the best unsupervised score).
     corr_matrix = features[kept].corr().abs()
+    adjacency = (corr_matrix.to_numpy() > _CORRELATION_THRESHOLD).astype(int)
+    np.fill_diagonal(adjacency, 0)
+    n_components, labels = connected_components(adjacency, directed=False)
+
     to_drop: set[str] = set()
 
     def _unsupervised_score(col: str) -> tuple[float, float, str]:
@@ -123,17 +136,13 @@ def stage1_prefilter(
         mad = (s - s.median()).abs().median()
         return (coverage, mad, col)
 
-    for i in range(len(kept)):
-        if kept[i] in to_drop:
+    for comp in range(n_components):
+        members = [kept[idx] for idx in range(len(kept)) if labels[idx] == comp]
+        if len(members) <= 1:
             continue
-        for j in range(i + 1, len(kept)):
-            if kept[j] in to_drop:
-                continue
-            if corr_matrix.iloc[i, j] > _CORRELATION_THRESHOLD:
-                score_i = _unsupervised_score(kept[i])
-                score_j = _unsupervised_score(kept[j])
-                drop_col = kept[j] if score_i >= score_j else kept[i]
-                to_drop.add(drop_col)
+        # Keep the member with the highest unsupervised score
+        best = max(members, key=_unsupervised_score)
+        to_drop.update(m for m in members if m != best)
 
     dropped_reasons["high_correlation"] = list(to_drop)
     kept = [c for c in kept if c not in to_drop]
@@ -153,12 +162,22 @@ def stage2_univariate(
     label_col: str,
     *,
     fallback_top_k: int = _FALLBACK_TOP_K,
-) -> tuple[list[str], pd.DataFrame]:
+) -> tuple[list[str], pd.DataFrame, bool]:
     """Univariate Mann-Whitney U screening with BH FDR correction.
 
     Keeps features whose BH-adjusted p-value is below the threshold.
     If no features survive correction, falls back to the top-k by raw p-value
     to ensure the pipeline can proceed.
+
+    Returns:
+    -------
+    kept : list[str]
+        Feature names that passed screening.
+    results_df : pd.DataFrame
+        Per-feature test statistics and p-values.
+    used_fallback : bool
+        True if no features passed BH correction and the raw-p fallback was
+        used.  When True, the selected features are NOT FDR-controlled.
     """
     grp0 = features[features[label_col] == 0]
     grp1 = features[features[label_col] == 1]
@@ -179,7 +198,7 @@ def stage2_univariate(
 
     if results_df.empty:
         logging.warning("Stage 2 — no testable features; returning empty list")
-        return [], results_df
+        return [], results_df, False
 
     # Benjamini-Hochberg FDR correction
     raw_pvals = results_df["p_value"].to_numpy()
@@ -187,10 +206,12 @@ def stage2_univariate(
     results_df["p_adjusted"] = adjusted_pvals
 
     kept_df = results_df[results_df["p_adjusted"] < _UNIVARIATE_P_THRESHOLD]
-    if kept_df.empty:
+    used_fallback = kept_df.empty
+    if used_fallback:
         logging.warning(
-            "Stage 2 — no features passed BH correction at α=%.2f; "
-            "falling back to top %d by raw p-value",
+            "Stage 2 — WARNING: no features passed BH/FDR correction at "
+            "α=%.2f; falling back to top %d by RAW p-value. "
+            "Selected features are NOT FDR-controlled.",
             _UNIVARIATE_P_THRESHOLD,
             fallback_top_k,
         )
@@ -198,15 +219,19 @@ def stage2_univariate(
 
     kept = list(kept_df["feature"])
 
+    selection_mode = (
+        "raw p-value fallback (NOT FDR-controlled)"
+        if used_fallback
+        else (f"BH-adjusted p < {_UNIVARIATE_P_THRESHOLD}")
+    )
     logging.info(
-        "Stage 2 — univariate screening: %d → %d features "
-        "(BH-adjusted p < %s, %d tested)",
+        "Stage 2 — univariate screening: %d → %d features " "(%s, %d tested)",
         len(feature_cols),
         len(kept),
-        _UNIVARIATE_P_THRESHOLD,
+        selection_mode,
         len(results_df),
     )
-    return kept, results_df
+    return kept, results_df, used_fallback
 
 
 def _fit_elastic_net(
@@ -331,7 +356,14 @@ def run_nested_cv(
         s1_cols = stage1_prefilter(train_df, feature_cols)
 
         # Stage 2 on train only (with BH correction)
-        s2_cols, _ = stage2_univariate(train_df, s1_cols, label_col)
+        s2_cols, _, fold_fallback = stage2_univariate(train_df, s1_cols, label_col)
+        if fold_fallback:
+            logging.warning(
+                "Fold %d/%d: Stage 2 used raw-p fallback — "
+                "features are NOT FDR-controlled in this fold",
+                fold_idx + 1,
+                total_folds,
+            )
         if not s2_cols:
             logging.warning(
                 "Fold %d/%d: no features after stage 2 — skipping",
@@ -493,7 +525,9 @@ def plot_feature_stability(
     logging.info("Saved: %s", outdir / "feature_stability.png")
 
 
-def plot_pvalue_comparison(univariate_df: pd.DataFrame, outdir: Path) -> None:
+def plot_pvalue_comparison(
+    univariate_df: pd.DataFrame, outdir: Path, *, used_fallback: bool = False
+) -> None:
     """Scatter plot comparing raw vs BH-adjusted p-values."""
     if "p_adjusted" not in univariate_df.columns or univariate_df.empty:
         return
@@ -532,11 +566,19 @@ def plot_pvalue_comparison(univariate_df: pd.DataFrame, outdir: Path) -> None:
     )
     ax.set_xlabel("Raw p-value")
     ax.set_ylabel("BH-adjusted p-value")
-    ax.set_title(
-        "Effect of Benjamini-Hochberg FDR Correction\n"
-        f"{int(passed.sum())} / {len(raw)} features survive correction",
-        fontsize=11,
-    )
+
+    if used_fallback:
+        title = (
+            "Effect of Benjamini-Hochberg FDR Correction\n"
+            f"0 / {len(raw)} features survive correction — "
+            "FALLBACK to raw p-value top-k used (NOT FDR-controlled)"
+        )
+    else:
+        title = (
+            "Effect of Benjamini-Hochberg FDR Correction\n"
+            f"{int(passed.sum())} / {len(raw)} features survive correction"
+        )
+    ax.set_title(title, fontsize=11)
     ax.legend(fontsize=8)
     fig.savefig(outdir / "pvalue_raw_vs_adjusted.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -636,16 +678,16 @@ def main() -> None:
         cv_results["feature_counter"], cv_results["total_folds"], outdir
     )
 
-    # ── Step 3: Final model on all data (for definitive feature list) ──
+    # ── Step 3: Final model on all data (for candidate feature list) ──
     logging.info("=== Fitting final model on all data ===")
     stage1_cols = stage1_prefilter(features, feature_cols)
-    stage2_cols, univariate_df = stage2_univariate(
+    stage2_cols, univariate_df, final_used_fallback = stage2_univariate(
         features, stage1_cols, args.label_col
     )
     univariate_df.to_csv(outdir / "univariate_pvalues.csv", index=False)
 
     # Visualize p-value correction
-    plot_pvalue_comparison(univariate_df, outdir)
+    plot_pvalue_comparison(univariate_df, outdir, used_fallback=final_used_fallback)
 
     if not stage2_cols:
         logging.error("No features survived — cannot fit final model")
@@ -673,12 +715,25 @@ def main() -> None:
     logging.info("=== Feature Selection Summary ===")
     logging.info("  Input features: %d", len(feature_cols))
     logging.info("  After pre-filter (stage 1): %d", len(stage1_cols))
-    logging.info("  After univariate screen (stage 2): %d", len(stage2_cols))
-    logging.info("  After L1 logistic regression (stage 3): %d", len(selected_features))
+    if final_used_fallback:
+        logging.info(
+            "  After univariate screen (stage 2): %d "
+            "[WARNING: raw-p fallback — NOT FDR-controlled]",
+            len(stage2_cols),
+        )
+    else:
+        logging.info("  After univariate screen (stage 2): %d", len(stage2_cols))
+    logging.info("  After elastic-net regression (stage 3): %d", len(selected_features))
     logging.info(
         "  Nested CV AUC: %.3f ± %.3f (unbiased estimate)",
         cv_results["cv_mean"],
         cv_results["cv_std"],
+    )
+    logging.info(
+        "  NOTE: This is a candidate marginal/linear feature list. "
+        "Stage 2 is a marginal screen and may miss jointly informative "
+        "or nonlinear features. Follow with a nonlinear comparator "
+        "(see issue #149)."
     )
     logging.info("Selected features saved to: %s", outdir / "selected_features.csv")
     logging.info(
