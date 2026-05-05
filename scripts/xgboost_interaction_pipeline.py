@@ -37,12 +37,13 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.sparse.csgraph import connected_components
-from scipy.stats import false_discovery_control, spearmanr
+from scipy.stats import false_discovery_control
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import PartialDependenceDisplay, permutation_importance
 from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 from sklearn.model_selection import (
+    GridSearchCV,
     RandomizedSearchCV,
     RepeatedStratifiedKFold,
     StratifiedKFold,
@@ -293,12 +294,9 @@ def prune_near_duplicates(
 
         block_data = features[block_cols]
 
-        # Compute Spearman correlation
-        spearman_corr, _ = spearmanr(block_data.to_numpy(), nan_policy="omit")
-        if np.ndim(spearman_corr) == 0:
-            # Only one feature pair
-            spearman_corr = np.array([[1.0, spearman_corr], [spearman_corr, 1.0]])
-        spearman_corr = np.abs(spearman_corr)
+        # Compute Spearman correlation via pandas rank correlation (much faster
+        # than scipy.stats.spearmanr with nan_policy="omit" for large matrices)
+        spearman_corr = block_data.rank().corr().abs().to_numpy()
 
         # Compute Pearson correlation
         pearson_corr = block_data.corr().abs().to_numpy()
@@ -365,16 +363,38 @@ def prune_near_duplicates(
 # ── XGBoost fitting ─────────────────────────────────────────────────────
 
 
+def _detect_gpu() -> str | None:
+    """Return 'cuda' if a CUDA GPU is available for XGBoost, else None."""
+    try:
+        import subprocess
+
+        result = subprocess.run(  # noqa: S603
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return "cuda"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
 def _fit_xgboost(
     x_train: np.ndarray,
     y_train: np.ndarray,
     feature_cols: list[str],
 ) -> tuple[XGBClassifier, dict]:
     """Fit XGBoost with randomized hyperparameter search."""
+    device = _detect_gpu() or "cpu"
+    if device == "cuda":
+        logging.info("  XGBoost: using GPU (CUDA)")
     base_model = XGBClassifier(
         objective="binary:logistic",
         eval_metric="logloss",
-        use_label_encoder=False,
+        tree_method="hist",
+        device=device,
         random_state=_RANDOM_STATE,
         n_jobs=-1,
     )
@@ -410,7 +430,6 @@ def _fit_elastic_net(
 ) -> tuple[SGDClassifier, list[str], pd.DataFrame]:
     """Fit elastic-net logistic regression via SGDClassifier with CV-tuned alpha."""
     cv = StratifiedKFold(n_splits=_CV_FOLDS, shuffle=True, random_state=_RANDOM_STATE)
-    from sklearn.model_selection import GridSearchCV
 
     base_model = SGDClassifier(
         loss="log_loss",
