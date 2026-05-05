@@ -8,7 +8,7 @@
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 
-set -euo pipefail
+set -eo pipefail
 
 REPO_ROOT="${SLURM_SUBMIT_DIR:-${REPO_ROOT:-$PWD}}"
 INPUT_CSV="${INPUT_CSV:-vanguard/experiments/second_order_features/features_engineered_labeled.csv}"
