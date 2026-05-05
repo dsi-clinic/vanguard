@@ -18,8 +18,10 @@ These scripts submit pCR modeling experiments from the top-level training and ab
   - per-task worker for one arm/fold pair
 - `submit_deepsets_pipeline.sh`
   - user-facing wrapper that submits the full Deep Sets workflow
+- `submit_deepsets_build_merge.sh`
+  - dataset build **only**: serial build (`BUILD_SHARDS=1`) **or** sharded build array plus manifest merge (**no training**); defaults `OUT_ROOT` to `results/deepsets` so it matches notebooks that expect `results/deepsets/deepsets_manifest.csv`
 - `deepsets_job.slurm`
-  - one parameterized job script used for Deep Sets build, merge, and train stages
+  - one parameterized job script used for Deep Sets build (`build`), single-process build (`build-single`), merge, and train stages
 
 ## Slurm usage (robust paths)
 
@@ -122,6 +124,39 @@ cd slurm
 CONFIG=../configs/deepsets_ispy2.yaml \
 OUT_ROOT=../experiments/deepsets_ispy2_test1 \
 ./submit_deepsets_pipeline.sh
+```
+
+### Dataset build only (no training; SLURM)
+
+Use when you only need `deepsets_manifest.csv` and `.pt` case sets—for example notebooks that expect `results/deepsets/deepsets_manifest.csv`.
+
+Submit from **repository root** (so paths and `logs/` behave like other wrappers):
+
+```bash
+cd ~/vanguard
+./slurm/submit_deepsets_build_merge.sh
+```
+
+Defaults:
+
+- `CONFIG=${REPO_ROOT}/configs/deepsets_ispy2.yaml`
+- `OUT_ROOT=${REPO_ROOT}/results/deepsets` (absolute path after normalization)
+- `BUILD_SHARDS=8` → Slurm job array shards + dependent merge step
+- **`BUILD_SHARDS=1`** → one long `MODE=build-single` job (`build_deepsets_dataset.py` with default `--num-shards 1`, manifest written straight to `--output-dir`)
+
+Override examples:
+
+```bash
+cd ~/my-clone-of-vanguard
+PARTITION=general BUILD_TIME=48:00:00 BUILD_CPUS=8 BUILD_MEM=64G \
+OUT_ROOT=/abs/path/results/deepsets \
+./slurm/submit_deepsets_build_merge.sh
+```
+
+Low–medium parallelism instead of eight shards:
+
+```bash
+BUILD_SHARDS=4 ./slurm/submit_deepsets_build_merge.sh
 ```
 
 Check or override these before running:
