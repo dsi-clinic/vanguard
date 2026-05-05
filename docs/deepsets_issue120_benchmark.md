@@ -71,4 +71,7 @@ but it still did not beat the curvature-only baseline in this run.
   `experiments/deepsets_ispy2_pointfeat_geom_topo_dynamic_issue120_rerun_20260504`.
   Initial Slurm build array `839719` completed six shards but shards 0 and 1 hit
   the 2-hour build limit; retry array `839943` resubmitted only those two shards
-  with a 4-hour limit, followed by merge `839944` and train `839945`.
+  with a 4-hour limit. After train-only job `840037` recovered the required
+  metric, the superseded retry chain was stopped: retry shard 1 completed,
+  retry shard 0 was canceled while still running, and dependent merge `839944`
+  and train `839945` were canceled before starting.
