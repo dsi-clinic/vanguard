@@ -25,6 +25,64 @@ then inject `data_paths.deepsets_manifest_csv` into a runtime YAML the same way
 Optional: `scripts/benchmark_deepsets_feature_sets.sh` submits or documents the
 three `(CONFIG, OUT_ROOT)` pairs in one loop.
 
+## Point features per config
+
+Column order is defined by `deepsets_point_feature_names()` in
+[`build_deepsets_dataset.py`](../build_deepsets_dataset.py) and is serialized into
+each case `.pt` as `feature_names` (same order as columns of `x`).
+
+### `configs/deepsets_ispy2_pointfeat_baseline.yaml`
+
+`model_params.deepsets_point_feature_set: baseline` — **1** feature:
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | `curvature_rad` | Local skeleton curvature (radians). |
+
+### `configs/deepsets_ispy2_pointfeat_geom_topo.yaml`
+
+`model_params.deepsets_point_feature_set: geometry_topology` — **16** features:
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | `signed_distance_mm` | Signed distance to tumor boundary (mm); negative inside tumor. |
+| 2 | `abs_signed_distance_mm` | Absolute distance to tumor boundary (mm). |
+| 3 | `inside_tumor` | Binary: point inside tumor mask. |
+| 4 | `shell_0_2mm` | One-hot: outside tumor, 0–2 mm shell. |
+| 5 | `shell_2_5mm` | One-hot: 2–5 mm shell. |
+| 6 | `shell_5_10mm` | One-hot: 5–10 mm shell. |
+| 7 | `shell_ge_10mm` | One-hot: ≥10 mm outside (coarse outer bin). |
+| 8 | `degree` | Graph degree on the skeleton adjacency used in the builder. |
+| 9 | `is_endpoint` | Binary: degree 1. |
+| 10 | `is_chain` | Binary: degree 2. |
+| 11 | `is_bifurcation` | Binary: degree ≥ bifurcation threshold. |
+| 12 | `offset_x_mm` | Offset from tumor centroid along x (mm). |
+| 13 | `offset_y_mm` | Offset from tumor centroid along y (mm). |
+| 14 | `offset_z_mm` | Offset from tumor centroid along z (mm). |
+| 15 | `support_radius_mm` | Local vessel “support” radius from EDT on support mask (mm), or zero if unavailable. |
+| 16 | `support_radius_available` | Binary: support mask present and shape-matched for EDT. |
+
+### `configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml`
+
+`model_params.deepsets_point_feature_set: geometry_topology_dynamic` — **27**
+features: the **16** geometry/topology features above, then **11** dynamic
+(kinetic) features sampled from the aligned vessel 4D time series at each
+skeleton voxel:
+
+| # | Name | Description |
+|---|------|-------------|
+| 17 | `arrival_index_norm` | Normalized index of first enhancement above baseline (0 if none). |
+| 18 | `has_arrival` | Binary: a clear arrival time was detected. |
+| 19 | `peak_index_norm` | Normalized time index of peak enhancement. |
+| 20 | `peak_enhancement` | Peak signal change vs pre-contrast at the voxel. |
+| 21 | `washin_slope` | Simple wash-in slope from arrival to peak. |
+| 22 | `washout_slope` | Simple wash-out slope from peak to last timepoint. |
+| 23 | `positive_enhancement_auc` | Area under positive enhancement vs time (trapezoid). |
+| 24 | `peak_rel_reference` | Peak enhancement relative to a reference tissue curve. |
+| 25 | `auc_rel_reference` | Positive AUC relative to reference. |
+| 26 | `kinetic_signal_ok` | Binary: enough finite timepoints and valid 4D for dynamics. |
+| 27 | `reference_ok` | Binary: reference curve for ratios was usable. |
+
 ## Results
 
 | Config path | Mean validation AUC (or primary metric) | Notes |
