@@ -145,7 +145,7 @@ Build-stage outputs include `OUT_ROOT/inclusion_rule_summary.csv` with:
 - `num_points_median`
 - `num_points_range`
 
-Default-selection note: `docs/deepsets_issue121_inclusion_rule_default.md`
+Default-selection notebook: `analysis/deepsets_issue121_notebook.ipynb`
 
 What the wrapper does:
 
