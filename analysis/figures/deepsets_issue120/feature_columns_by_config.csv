@@ -1,86 +1,104 @@
 config,arm,regime,feature_index,feature_name
-configs/deepsets_ispy2_pointfeat_baseline.yaml,Baseline (curvature only),baseline,1,curvature_rad
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,1,signed_distance_mm
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,2,abs_signed_distance_mm
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,3,inside_tumor
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,4,shell_0_2mm
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,5,shell_2_5mm
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,6,shell_5_10mm
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,7,shell_ge_10mm
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,8,degree
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,9,is_endpoint
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,10,is_chain
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,11,is_bifurcation
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,12,offset_x_mm
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,13,offset_y_mm
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,14,offset_z_mm
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,15,support_radius_mm
-configs/deepsets_ispy2_pointfeat_geom_topo.yaml,Geometry + topology,geometry_topology,16,support_radius_available
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,1,signed_distance_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,2,abs_signed_distance_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,3,inside_tumor
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,4,shell_0_2mm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,5,shell_2_5mm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,6,shell_5_10mm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,7,shell_ge_10mm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,8,degree
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,9,is_endpoint
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,10,is_chain
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,11,is_bifurcation
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,12,offset_x_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,13,offset_y_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,14,offset_z_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,15,support_radius_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,16,support_radius_available
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,17,arrival_index_norm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,18,has_arrival
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,19,peak_index_norm
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,20,peak_enhancement
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,21,washin_slope
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,22,washout_slope
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,23,positive_enhancement_auc
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,24,peak_rel_reference
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,25,auc_rel_reference
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,26,kinetic_signal_ok
-configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,Geometry + topology + dynamic,geometry_topology_dynamic,27,reference_ok
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,1,signed_distance_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,2,abs_signed_distance_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,3,inside_tumor
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,4,shell_0_2mm
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,5,shell_2_5mm
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,6,shell_5_10mm
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,7,shell_ge_10mm
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,8,degree
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,9,is_endpoint
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,10,is_chain
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,11,is_bifurcation
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,12,offset_x_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,13,offset_y_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,14,offset_z_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,15,support_radius_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,16,support_radius_available
-configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,Geometry + topology + curvature,geometry_topology_plus_curvature,17,curvature_rad
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,1,signed_distance_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,2,abs_signed_distance_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,3,inside_tumor
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,4,degree
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,5,is_endpoint
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,6,is_chain
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,7,is_bifurcation
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,8,offset_x_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,9,offset_y_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,10,offset_z_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,11,support_radius_mm
-configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,Geometry + topology (no shells),geometry_topology_no_shells,12,support_radius_available
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,1,curvature_rad
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,2,arrival_index_norm
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,3,has_arrival
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,4,peak_index_norm
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,5,peak_enhancement
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,6,washin_slope
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,7,washout_slope
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,8,positive_enhancement_auc
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,9,peak_rel_reference
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,10,auc_rel_reference
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,11,kinetic_signal_ok
-configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,Curvature + dynamic,curvature_plus_dynamic,12,reference_ok
+configs/deepsets_ispy2_pointfeat_baseline.yaml,ISPY2 baseline (curvature only),baseline,1,curvature_rad
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,1,signed_distance_mm
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,2,abs_signed_distance_mm
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,3,inside_tumor
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,4,shell_0_2mm
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,5,shell_2_5mm
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,6,shell_5_10mm
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,7,shell_ge_10mm
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,8,degree
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,9,is_endpoint
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,10,is_chain
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,11,is_bifurcation
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,12,offset_x_mm
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,13,offset_y_mm
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,14,offset_z_mm
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,15,support_radius_mm
+configs/deepsets_ispy2_pointfeat_geom_topo.yaml,ISPY2 geometry + topology,geometry_topology,16,support_radius_available
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,1,signed_distance_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,2,abs_signed_distance_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,3,inside_tumor
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,4,shell_0_2mm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,5,shell_2_5mm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,6,shell_5_10mm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,7,shell_ge_10mm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,8,degree
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,9,is_endpoint
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,10,is_chain
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,11,is_bifurcation
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,12,offset_x_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,13,offset_y_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,14,offset_z_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,15,support_radius_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,16,support_radius_available
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,17,arrival_index_norm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,18,has_arrival
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,19,peak_index_norm
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,20,peak_enhancement
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,21,washin_slope
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,22,washout_slope
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,23,positive_enhancement_auc
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,24,peak_rel_reference
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,25,auc_rel_reference
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,26,kinetic_signal_ok
+configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,ISPY2 geometry + topology + dynamic,geometry_topology_dynamic,27,reference_ok
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,1,signed_distance_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,2,abs_signed_distance_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,3,inside_tumor
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,4,shell_0_2mm
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,5,shell_2_5mm
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,6,shell_5_10mm
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,7,shell_ge_10mm
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,8,degree
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,9,is_endpoint
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,10,is_chain
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,11,is_bifurcation
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,12,offset_x_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,13,offset_y_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,14,offset_z_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,15,support_radius_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,16,support_radius_available
+configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml,ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,17,curvature_rad
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,1,signed_distance_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,2,abs_signed_distance_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,3,inside_tumor
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,4,degree
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,5,is_endpoint
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,6,is_chain
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,7,is_bifurcation
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,8,offset_x_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,9,offset_y_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,10,offset_z_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,11,support_radius_mm
+configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml,ISPY2 geometry + topology (no shells),geometry_topology_no_shells,12,support_radius_available
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,1,curvature_rad
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,2,arrival_index_norm
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,3,has_arrival
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,4,peak_index_norm
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,5,peak_enhancement
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,6,washin_slope
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,7,washout_slope
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,8,positive_enhancement_auc
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,9,peak_rel_reference
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,10,auc_rel_reference
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,11,kinetic_signal_ok
+configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml,ISPY2 curvature + dynamic,curvature_plus_dynamic,12,reference_ok
+configs/deepsets_mamamia_pointfeat_baseline.yaml,All cohorts baseline (curvature only),baseline,1,curvature_rad
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,1,signed_distance_mm
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,2,abs_signed_distance_mm
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,3,inside_tumor
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,4,shell_0_2mm
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,5,shell_2_5mm
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,6,shell_5_10mm
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,7,shell_ge_10mm
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,8,degree
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,9,is_endpoint
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,10,is_chain
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,11,is_bifurcation
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,12,offset_x_mm
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,13,offset_y_mm
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,14,offset_z_mm
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,15,support_radius_mm
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,16,support_radius_available
+configs/deepsets_mamamia_pointfeat_geom_topo_plus_curvature.yaml,All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,17,curvature_rad
