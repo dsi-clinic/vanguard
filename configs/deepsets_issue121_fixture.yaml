@@ -1,0 +1,27 @@
+feature_toggles:
+  dataset_include: ["ISPY2"]
+  tumor_mask_file_pattern: "{case_id}.npy"
+
+experiment_setup:
+  name: "deepsets_issue121_fixture"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  deepsets_local_radius_floor_mm: 0.5
+  deepsets_local_radius_scale: 0.0
+  deepsets_local_radius_cap_mm: 0.5
+  deepsets_inclusion_rule: "local_radius_with_fallback"
+  deepsets_compare_inclusion_rules:
+    - "local_radius_with_fallback"
+    - "local_radius_only"
+    - "nearest_64_only"
+  deepsets_point_feature_set: "baseline"
+
+data_paths:
+  centerline_root: "tmp/issue121_fixture/centerlines"
+  tumor_mask_root: "tmp/issue121_fixture/tumor_masks"
+  patient_info_dir: "tmp/issue121_fixture/patient_info"
+  labels_csv: "tmp/issue121_fixture/labels.csv"
+  label_column: "pcr"
+  id_column: "case_id"

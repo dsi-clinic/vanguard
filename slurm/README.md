@@ -167,6 +167,21 @@ Check or override these before running:
 - `BUILD_CPUS`, `BUILD_MEM`, `BUILD_TIME`
 - `TRAIN_CPUS`, `TRAIN_MEM`, `TRAIN_TIME`
 
+Deep Sets inclusion-rule controls (in `model_params`) now include:
+
+- `deepsets_inclusion_rule` (default `local_radius_with_fallback`)
+- `deepsets_compare_inclusion_rules` (compact comparison set written to build stats)
+
+Build-stage outputs include `OUT_ROOT/inclusion_rule_summary.csv` with:
+
+- `cases_written`
+- `cases_skipped`
+- `fallback_fraction`
+- `num_points_median`
+- `num_points_range`
+
+Default-selection notebook: `analysis/deepsets_issue121_notebook.ipynb`
+
 What the wrapper does:
 
 1. copies the base YAML to `OUT_ROOT/deepsets_runtime_config.yaml`
