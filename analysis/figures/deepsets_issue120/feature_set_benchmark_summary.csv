@@ -1,0 +1,2 @@
+arm,config,regime,n_features,auc_mean,auc_std,metrics_path
+Geometry + topology + dynamic,configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml,geometry_topology_dynamic,27,0.5276623986915341,0.024790118609378017,/home/lunad/vanguard-issue120-benchmark/experiments/deepsets_ispy2_pointfeat_geom_topo_dynamic_existing_manifest_train/deepsets_ispy2_pointfeat_geom_topo_dynamic_20260504_184523/deepsets_ispy2_pointfeat_geom_topo_dynamic/metrics.json

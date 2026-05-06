@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Issue #120: three Deep Sets builds with pinned configs.
+# Issue #120: all six Deep Sets point-feature configs (build → merge → train).
 # With Slurm: runs submit_deepsets_pipeline.sh per arm (cluster).
 # Without Slurm: build, merge, write runtime YAML, train locally.
+#
+# For a single Slurm array that launches all six pipelines, prefer:
+#   sbatch slurm/submit_issue120_deepsets_feature_arms.slurm
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,3 +55,6 @@ PY
 run_arm "configs/deepsets_ispy2_pointfeat_baseline.yaml" "${REPO_ROOT}/experiments/deepsets_ispy2_pointfeat_baseline"
 run_arm "configs/deepsets_ispy2_pointfeat_geom_topo.yaml" "${REPO_ROOT}/experiments/deepsets_ispy2_pointfeat_geom_topo"
 run_arm "configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml" "${REPO_ROOT}/experiments/deepsets_ispy2_pointfeat_geom_topo_dynamic"
+run_arm "configs/deepsets_ispy2_pointfeat_geom_topo_plus_curvature.yaml" "${REPO_ROOT}/experiments/deepsets_ispy2_pointfeat_geom_topo_plus_curvature"
+run_arm "configs/deepsets_ispy2_pointfeat_geom_topo_no_shells.yaml" "${REPO_ROOT}/experiments/deepsets_ispy2_pointfeat_geom_topo_no_shells"
+run_arm "configs/deepsets_ispy2_pointfeat_curvature_plus_dynamic.yaml" "${REPO_ROOT}/experiments/deepsets_ispy2_pointfeat_curvature_plus_dynamic"

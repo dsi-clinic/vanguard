@@ -7,6 +7,8 @@ the main workflows have run.
 
 Current notebooks:
 
+- `deepsets_issue120_notebook.ipynb`
+  - primary Issue #120 benchmark artifact with feature-regime tables, deferred launch commands, and generated figures
 - `graph_weak_signal_diagnostic.ipynb`
   - diagnostic notebook for the older weak-signal feature-analysis workflow
 - `graph_laterality_feature_analysis.ipynb`

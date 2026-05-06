@@ -8,8 +8,11 @@ import numpy as np
 
 from build_deepsets_dataset import (
     DEEPSETS_FEATURE_BASELINE,
+    DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+    DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS,
+    DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE,
     _build_case_set,
     deepsets_point_feature_names,
 )
@@ -34,6 +37,26 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
                 deepsets_point_feature_names(DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC)
             ),
             27,
+        )
+        self.assertEqual(
+            len(
+                deepsets_point_feature_names(
+                    DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE
+                )
+            ),
+            17,
+        )
+        self.assertEqual(
+            len(
+                deepsets_point_feature_names(
+                    DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS
+                )
+            ),
+            12,
+        )
+        self.assertEqual(
+            len(deepsets_point_feature_names(DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC)),
+            12,
         )
 
     def test_deepsets_point_feature_names_unknown_raises(self) -> None:
@@ -128,6 +151,105 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
         self.assertAlmostEqual(float(row[idx["kinetic_signal_ok"]]), 1.0)
         self.assertAlmostEqual(float(row[idx["peak_enhancement"]]), 0.25, places=5)
         self.assertGreater(float(row[idx["positive_enhancement_auc"]]), 0.0)
+
+    def test_build_case_set_geometry_topology_plus_curvature(self) -> None:
+        shape = (5, 5, 5)
+        skel = _empty_volume(shape)
+        skel[2, 2, 1] = True
+        skel[2, 2, 2] = True
+        skel[2, 2, 3] = True
+        tumor = _empty_volume(shape)
+        tumor[2, 2, 2] = True
+        spacing = (1.0, 1.0, 1.0)
+        out = _build_case_set(
+            case_id="toy",
+            label=0,
+            skeleton_mask_zyx=skel,
+            tumor_mask_zyx=tumor,
+            spacing_mm_zyx=spacing,
+            local_radius_mm=100.0,
+            tumor_equiv_radius_mm=1.0,
+            point_feature_set=DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE,
+            support_edt_mm_zyx=None,
+            support_radius_available_scalar=0.0,
+            signal_4d=None,
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        names = deepsets_point_feature_names(
+            DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE
+        )
+        row = out["x"][1].numpy()
+        idx = {n: i for i, n in enumerate(names)}
+        self.assertEqual(tuple(out["x"].shape), (3, len(names)))
+        self.assertAlmostEqual(float(row[idx["is_chain"]]), 1.0)
+        self.assertGreater(float(row[idx["curvature_rad"]]), 3.0)
+
+    def test_build_case_set_geometry_topology_no_shells_omits_shell_columns(
+        self,
+    ) -> None:
+        shape = (5, 5, 5)
+        skel = _empty_volume(shape)
+        skel[2, 2, 2] = True
+        tumor = _empty_volume(shape)
+        tumor[2, 2, 2] = True
+        spacing = (1.0, 1.0, 1.0)
+        out = _build_case_set(
+            case_id="toy",
+            label=0,
+            skeleton_mask_zyx=skel,
+            tumor_mask_zyx=tumor,
+            spacing_mm_zyx=spacing,
+            local_radius_mm=100.0,
+            tumor_equiv_radius_mm=1.0,
+            point_feature_set=DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS,
+            support_edt_mm_zyx=None,
+            support_radius_available_scalar=0.0,
+            signal_4d=None,
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        names = deepsets_point_feature_names(
+            DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS
+        )
+        self.assertEqual(tuple(out["x"].shape), (1, len(names)))
+        self.assertNotIn("shell_0_2mm", names)
+        self.assertIn("inside_tumor", names)
+
+    def test_build_case_set_curvature_plus_dynamic(self) -> None:
+        shape = (3, 3, 3)
+        skel = _empty_volume(shape)
+        skel[1, 1, 0] = True
+        skel[1, 1, 1] = True
+        skel[1, 1, 2] = True
+        tumor = _empty_volume(shape)
+        tumor[0, 0, 0] = True
+        spacing = (1.0, 1.0, 1.0)
+        signal_4d = np.zeros((4, 3, 3, 3), dtype=np.float32)
+        for ti in range(4):
+            signal_4d[ti, 1, 1, 1] = float([0.05, 0.12, 0.30, 0.22][ti])
+        out = _build_case_set(
+            case_id="toy",
+            label=1,
+            skeleton_mask_zyx=skel,
+            tumor_mask_zyx=tumor,
+            spacing_mm_zyx=spacing,
+            local_radius_mm=100.0,
+            tumor_equiv_radius_mm=1.0,
+            point_feature_set=DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
+            support_edt_mm_zyx=None,
+            support_radius_available_scalar=0.0,
+            signal_4d=signal_4d,
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        names = deepsets_point_feature_names(DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC)
+        row = out["x"][1].numpy()
+        idx = {n: i for i, n in enumerate(names)}
+        self.assertEqual(tuple(out["x"].shape), (3, len(names)))
+        self.assertAlmostEqual(float(row[idx["kinetic_signal_ok"]]), 1.0)
+        self.assertAlmostEqual(float(row[idx["peak_enhancement"]]), 0.25, places=5)
+        self.assertGreater(float(row[idx["curvature_rad"]]), 3.0)
 
 
 if __name__ == "__main__":

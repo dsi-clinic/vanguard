@@ -52,11 +52,17 @@ _REF_PEAK_EPS = 1e-10
 DEEPSETS_FEATURE_BASELINE = "baseline"
 DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY = "geometry_topology"
 DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC = "geometry_topology_dynamic"
+DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE = "geometry_topology_plus_curvature"
+DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS = "geometry_topology_no_shells"
+DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC = "curvature_plus_dynamic"
 VALID_DEEPSETS_POINT_FEATURE_SETS: frozenset[str] = frozenset(
     {
         DEEPSETS_FEATURE_BASELINE,
         DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY,
         DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE,
+        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS,
+        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
     }
 )
 
@@ -85,6 +91,23 @@ def deepsets_point_feature_names(regime: str) -> list[str]:
     ]
     if regime == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY:
         return list(geom_topo)
+    if regime == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE:
+        return list(geom_topo + ["curvature_rad"])
+    if regime == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS:
+        return [
+            "signed_distance_mm",
+            "abs_signed_distance_mm",
+            "inside_tumor",
+            "degree",
+            "is_endpoint",
+            "is_chain",
+            "is_bifurcation",
+            "offset_x_mm",
+            "offset_y_mm",
+            "offset_z_mm",
+            "support_radius_mm",
+            "support_radius_available",
+        ]
     if regime == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC:
         return list(
             geom_topo
@@ -102,6 +125,21 @@ def deepsets_point_feature_names(regime: str) -> list[str]:
                 "reference_ok",
             ]
         )
+    if regime == DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC:
+        return [
+            "curvature_rad",
+            "arrival_index_norm",
+            "has_arrival",
+            "peak_index_norm",
+            "peak_enhancement",
+            "washin_slope",
+            "washout_slope",
+            "positive_enhancement_auc",
+            "peak_rel_reference",
+            "auc_rel_reference",
+            "kinetic_signal_ok",
+            "reference_ok",
+        ]
     raise ValueError(
         f"Unknown deepsets_point_feature_set {regime!r}; expected one of "
         f"{sorted(VALID_DEEPSETS_POINT_FEATURE_SETS)}"
@@ -472,12 +510,12 @@ def _build_case_set(
         signed_distance_mm = _sample_signed_distance_mm(xyz_vox, signed_dist_mm)
         neighbors = neighbor_map[xyz_vox]
         deg = len(neighbors)
+        curvature_rad = _compute_curvature(
+            xyz_vox=xyz_vox,
+            neighbor_xyz=neighbors,
+            spacing_mm_zyx=spacing_mm_zyx,
+        )
         if point_feature_set == DEEPSETS_FEATURE_BASELINE:
-            curvature_rad = _compute_curvature(
-                xyz_vox=xyz_vox,
-                neighbor_xyz=neighbors,
-                spacing_mm_zyx=spacing_mm_zyx,
-            )
             return [float(curvature_rad)]
 
         pmm = _point_mm(xyz_vox, spacing_mm_zyx)
@@ -508,14 +546,34 @@ def _build_case_set(
             sup_r,
             support_radius_available_scalar,
         ]
+        row_no_shells = [
+            float(signed_distance_mm),
+            float(abs(signed_distance_mm)),
+            1.0 if signed_distance_mm < 0.0 else 0.0,
+            float(deg),
+            1.0 if deg == ENDPOINT_DEGREE else 0.0,
+            1.0 if deg == CHAIN_DEGREE else 0.0,
+            1.0 if deg >= BIFURCATION_MIN_DEGREE else 0.0,
+            float(off[0]),
+            float(off[1]),
+            float(off[2]),
+            sup_r,
+            support_radius_available_scalar,
+        ]
         if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY:
             return row
+        if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE:
+            return row + [float(curvature_rad)]
+        if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS:
+            return row_no_shells
         dyn = _dynamic_features_for_voxel(
             signal_4d=signal_4d,
             xyz_vox=xyz_vox,
             ref_peak_enh=ref_peak,
             ref_auc_pos=ref_auc,
         )
+        if point_feature_set == DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC:
+            return [float(curvature_rad)] + list(dyn)
         return row + list(dyn)
 
     candidate_rows: list[tuple[float, list[float]]] = []
@@ -754,7 +812,10 @@ def main() -> None:
                         sup_exc,
                     )
             signal_4d: np.ndarray | None = None
-            if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC:
+            if point_feature_set in {
+                DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+                DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
+            }:
                 signal_4d = _try_load_vessel_4d(
                     vessel_root=vessel_root_opt,
                     case_id=case_id,
