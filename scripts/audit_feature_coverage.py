@@ -34,9 +34,7 @@ DEFAULT_CENTERLINE_ROOT = Path("/net/projects2/vanguard/centerlines_tc4d/studies
 DEFAULT_TUMOR_MASK_ROOT = Path(
     "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
 )
-DEFAULT_LABELS_CSV = Path(
-    "/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv"
-)
+DEFAULT_LABELS_CSV = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv")
 DEFAULT_RADIOMICS_LABELS_CSV = Path("radiomics/labels.csv")
 
 
@@ -95,20 +93,20 @@ def _load_label_index(path: Path) -> dict[str, int]:
     if not path.exists():
         logging.warning("Labels CSV not found: %s", path)
         return {}
-    df = pd.read_csv(path)
+    labels_df = pd.read_csv(path)
     id_col = next(
-        (c for c in ("case_id", "patient_id", "study_id") if c in df.columns),
+        (c for c in ("case_id", "patient_id", "study_id") if c in labels_df.columns),
         None,
     )
-    if id_col is None or "pcr" not in df.columns:
+    if id_col is None or "pcr" not in labels_df.columns:
         logging.warning(
             "Labels CSV %s missing expected columns (need id col + 'pcr'). Got: %s",
             path,
-            list(df.columns),
+            list(labels_df.columns),
         )
         return {}
-    df = df.dropna(subset=[id_col, "pcr"])
-    return {str(r[id_col]): int(r["pcr"]) for _, r in df.iterrows()}
+    labels_df = labels_df.dropna(subset=[id_col, "pcr"])
+    return {str(r[id_col]): int(r["pcr"]) for _, r in labels_df.iterrows()}
 
 
 def _read_tumor_graph_status(path: Path) -> tuple[bool, str | None]:
@@ -214,13 +212,13 @@ def main() -> None:
                 )
             )
 
-    df = pd.DataFrame(rows)
+    audit_df = pd.DataFrame(rows)
     args.out_csv.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(args.out_csv, index=False)
-    logging.info("Wrote per-case audit: %s (rows=%d)", args.out_csv, len(df))
+    audit_df.to_csv(args.out_csv, index=False)
+    logging.info("Wrote per-case audit: %s (rows=%d)", args.out_csv, len(audit_df))
 
     summary_records: list[dict[str, Any]] = []
-    for dataset_name, sub in df.groupby("dataset", dropna=False):
+    for dataset_name, sub in audit_df.groupby("dataset", dropna=False):
         n = len(sub)
         summary_records.append(
             {
@@ -250,7 +248,7 @@ def main() -> None:
     totals_line = ", ".join(f"{k}={int(v)}" for k, v in totals.items())
     print(f"\n=== Totals across datasets ===\n{totals_line}")
 
-    missing = df[~df["has_all_artifacts"]]
+    missing = audit_df[~audit_df["has_all_artifacts"]]
     if not missing.empty:
         print(f"\n=== Cases missing one or more artifacts ({len(missing)} total) ===")
         print(missing.groupby("dataset").size().to_string())
