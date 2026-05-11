@@ -13,6 +13,9 @@ from build_deepsets_dataset import (
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE,
+    DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY,
+    DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
+    DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY,
     _build_case_set,
     deepsets_point_feature_names,
 )
@@ -83,6 +86,7 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
             support_edt_mm_zyx=None,
             support_radius_available_scalar=0.0,
             signal_4d=None,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
         )
         self.assertIsNotNone(out)
         assert out is not None
@@ -108,6 +112,7 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
             support_edt_mm_zyx=None,
             support_radius_available_scalar=0.0,
             signal_4d=None,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
         )
         self.assertIsNotNone(out)
         assert out is not None
@@ -142,6 +147,7 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
             support_edt_mm_zyx=None,
             support_radius_available_scalar=0.0,
             signal_4d=signal_4d,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
         )
         self.assertIsNotNone(out)
         assert out is not None
@@ -173,6 +179,7 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
             support_edt_mm_zyx=None,
             support_radius_available_scalar=0.0,
             signal_4d=None,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
         )
         self.assertIsNotNone(out)
         assert out is not None
@@ -206,6 +213,7 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
             support_edt_mm_zyx=None,
             support_radius_available_scalar=0.0,
             signal_4d=None,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
         )
         self.assertIsNotNone(out)
         assert out is not None
@@ -240,6 +248,7 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
             support_edt_mm_zyx=None,
             support_radius_available_scalar=0.0,
             signal_4d=signal_4d,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
         )
         self.assertIsNotNone(out)
         assert out is not None
@@ -250,6 +259,48 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
         self.assertAlmostEqual(float(row[idx["kinetic_signal_ok"]]), 1.0)
         self.assertAlmostEqual(float(row[idx["peak_enhancement"]]), 0.25, places=5)
         self.assertGreater(float(row[idx["curvature_rad"]]), 3.0)
+
+    def test_build_case_set_inclusion_rules_comparison_metrics(self) -> None:
+        shape = (7, 7, 7)
+        skel = _empty_volume(shape)
+        skel[3, 3, 3] = True
+        skel[3, 3, 4] = True
+        tumor = _empty_volume(shape)
+        tumor[0, 0, 0] = True
+        out = _build_case_set(
+            case_id="toy",
+            label=1,
+            skeleton_mask_zyx=skel,
+            tumor_mask_zyx=tumor,
+            spacing_mm_zyx=(1.0, 1.0, 1.0),
+            local_radius_mm=0.1,
+            tumor_equiv_radius_mm=1.0,
+            point_feature_set=DEEPSETS_FEATURE_BASELINE,
+            support_edt_mm_zyx=None,
+            support_radius_available_scalar=0.0,
+            signal_4d=None,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
+            compare_inclusion_rules=[
+                DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY,
+                DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY,
+            ],
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        metrics = out["inclusion_rule_metrics"]
+        self.assertEqual(
+            metrics[DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY]["num_points"], 0
+        )
+        self.assertEqual(
+            metrics[DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK][
+                "used_fallback_nearest_points"
+            ],
+            1,
+        )
+        self.assertEqual(
+            metrics[DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY]["wrote_case_set"],
+            1,
+        )
 
 
 if __name__ == "__main__":

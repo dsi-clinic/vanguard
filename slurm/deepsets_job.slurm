@@ -24,6 +24,15 @@ fi
 export PYTHONUNBUFFERED=1
 
 case "${MODE}" in
+  build-single)
+    # One process, --num-shards 1: writes manifest at OUT_ROOT/deepsets_manifest.csv
+    CONFIG="${CONFIG:?CONFIG is required for MODE=build-single}"
+    OUT_ROOT="${OUT_ROOT:?OUT_ROOT is required for MODE=build-single}"
+    mkdir -p "${OUT_ROOT}"
+    python -u build_deepsets_dataset.py \
+      --config "${CONFIG}" \
+      --output-dir "${OUT_ROOT}"
+    ;;
   build)
     CONFIG="${CONFIG:?CONFIG is required for MODE=build}"
     OUT_ROOT="${OUT_ROOT:?OUT_ROOT is required for MODE=build}"
