@@ -5,6 +5,9 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import os
+import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +17,13 @@ import torch
 from scipy import ndimage
 
 from clinical_features import get_clinical_features
+from deepsets_build_cache import (
+    cache_dir_for_case,
+    load_case_cache,
+    resolve_cache_root,
+    save_case_cache,
+)
+from deepsets_runtime import log_case_timing, stage_timer
 from deepsets_volume_align import align_zyx_4d_to_shape
 from features.tumor_size import load_tumor_mask_zyx, resolve_tumor_mask_path
 from graph_extraction.constants import (
@@ -281,6 +291,86 @@ def _dynamic_features_for_voxel(
     )
 
 
+def _dynamic_features_for_coords_batch(
+    *,
+    signal_4d: np.ndarray | None,
+    coords_xyz: list[tuple[int, int, int]],
+    ref_peak_enh: float,
+    ref_auc_pos: float,
+) -> np.ndarray:
+    """Vectorized dynamic features for many skeleton voxels."""
+    n_coords = len(coords_xyz)
+    if signal_4d is None or signal_4d.ndim != NDIM_4D or n_coords == 0:
+        return np.zeros((n_coords, 11), dtype=np.float64)
+    n_t = int(signal_4d.shape[0])
+    kinetic_ok = (
+        1.0 if n_t >= MIN_KINETIC_TIMEPOINTS and np.all(np.isfinite(signal_4d)) else 0.0
+    )
+    if kinetic_ok == 0.0:
+        return np.zeros((n_coords, 11), dtype=np.float64)
+
+    coords = np.asarray(coords_xyz, dtype=np.int64)
+    x = np.clip(coords[:, 0], 0, signal_4d.shape[3] - 1)
+    y = np.clip(coords[:, 1], 0, signal_4d.shape[2] - 1)
+    z = np.clip(coords[:, 2], 0, signal_4d.shape[1] - 1)
+    curves = np.asarray(signal_4d[:, z, y, x], dtype=np.float64).T
+    enh = curves - curves[:, [0]]
+    time_axis = np.arange(n_t, dtype=np.float64)
+    peak_idx = np.argmax(enh, axis=1)
+    peak_norm = peak_idx.astype(np.float64) / float(max(1, n_t - 1))
+    peak_enh = np.max(enh, axis=1)
+    auc = np.trapz(np.maximum(enh, 0.0), x=time_axis, axis=1)
+    peak_rel = np.asarray(
+        [_safe_ratio(max(float(v), 0.0), max(ref_peak_enh, 1e-12)) for v in peak_enh],
+        dtype=np.float64,
+    )
+    auc_rel = np.asarray(
+        [_safe_ratio(max(float(v), 0.0), max(ref_auc_pos, 1e-12)) for v in auc],
+        dtype=np.float64,
+    )
+    ref_ok = 1.0 if ref_peak_enh > _REF_PEAK_EPS else 0.0
+
+    arrival_norm = np.zeros(n_coords, dtype=np.float64)
+    has_arr = np.zeros(n_coords, dtype=np.float64)
+    washin_slope = np.zeros(n_coords, dtype=np.float64)
+    washout_slope = np.zeros(n_coords, dtype=np.float64)
+    for idx in range(n_coords):
+        tte_idx = _arrival_index_from_enhancement(enh[idx])
+        arrival_norm[idx] = (
+            float(tte_idx) / float(max(1, n_t - 1)) if tte_idx is not None else 0.0
+        )
+        has_arr[idx] = 1.0 if tte_idx is not None else 0.0
+        start_idx = 0 if tte_idx is None else int(tte_idx)
+        washin_den = float(time_axis[peak_idx[idx]] - time_axis[start_idx])
+        washin_slope[idx] = (
+            float((enh[idx, peak_idx[idx]] - enh[idx, start_idx]) / washin_den)
+            if washin_den > 0.0
+            else 0.0
+        )
+        washout_den = float(time_axis[-1] - time_axis[peak_idx[idx]])
+        washout_slope[idx] = (
+            float((enh[idx, -1] - enh[idx, peak_idx[idx]]) / washout_den)
+            if washout_den > 0.0
+            else 0.0
+        )
+
+    return np.column_stack(
+        (
+            arrival_norm,
+            has_arr,
+            peak_norm,
+            peak_enh,
+            washin_slope,
+            washout_slope,
+            auc,
+            peak_rel,
+            auc_rel,
+            np.full(n_coords, kinetic_ok, dtype=np.float64),
+            np.full(n_coords, ref_ok, dtype=np.float64),
+        )
+    )
+
+
 def _try_load_vessel_4d(
     *,
     vessel_root: Path | None,
@@ -317,6 +407,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=int(os.environ.get("DEEPSETS_BUILD_WORKERS", "1")),
+        help="Parallel case workers within one shard (default 1).",
+    )
+    parser.add_argument(
+        "--case-timing-threshold-sec",
+        type=float,
+        default=30.0,
+        help="Log per-case timing when a case exceeds this wall time.",
+    )
     return parser.parse_args()
 
 
@@ -505,8 +607,19 @@ def _build_case_set(
         )
 
     kinetic_tp = int(signal_4d.shape[0]) if signal_4d is not None else 0
+    dynamic_batch: np.ndarray | None = None
+    if point_feature_set in {
+        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
+    }:
+        dynamic_batch = _dynamic_features_for_coords_batch(
+            signal_4d=signal_4d,
+            coords_xyz=coords_xyz,
+            ref_peak_enh=ref_peak,
+            ref_auc_pos=ref_auc,
+        )
 
-    def _one_row(xyz_vox: tuple[int, int, int]) -> list[float]:
+    def _one_row(xyz_vox: tuple[int, int, int], coord_index: int) -> list[float]:
         signed_distance_mm = _sample_signed_distance_mm(xyz_vox, signed_dist_mm)
         neighbors = neighbor_map[xyz_vox]
         deg = len(neighbors)
@@ -566,21 +679,24 @@ def _build_case_set(
             return row + [float(curvature_rad)]
         if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS:
             return row_no_shells
-        dyn = _dynamic_features_for_voxel(
-            signal_4d=signal_4d,
-            xyz_vox=xyz_vox,
-            ref_peak_enh=ref_peak,
-            ref_auc_pos=ref_auc,
-        )
+        if dynamic_batch is None:
+            dyn = _dynamic_features_for_voxel(
+                signal_4d=signal_4d,
+                xyz_vox=xyz_vox,
+                ref_peak_enh=ref_peak,
+                ref_auc_pos=ref_auc,
+            )
+        else:
+            dyn = tuple(float(v) for v in dynamic_batch[coord_index])
         if point_feature_set == DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC:
             return [float(curvature_rad)] + list(dyn)
         return row + list(dyn)
 
     candidate_rows: list[tuple[float, list[float]]] = []
     feature_rows: list[list[float]] = []
-    for xyz_vox in coords_xyz:
+    for coord_index, xyz_vox in enumerate(coords_xyz):
         signed_distance_mm = _sample_signed_distance_mm(xyz_vox, signed_dist_mm)
-        row = _one_row(xyz_vox)
+        row = _one_row(xyz_vox, coord_index)
         if len(row) != len(feature_names):
             raise RuntimeError(
                 f"Feature count mismatch for {case_id}: row={len(row)} names={len(feature_names)}"
@@ -620,6 +736,11 @@ def _build_case_set(
         "point_feature_set": str(point_feature_set),
         "kinetic_timepoint_count": int(kinetic_tp),
     }
+
+
+def _build_case_set_task(case_kwargs: dict[str, Any]) -> dict[str, Any] | None:
+    """Worker entrypoint for parallel case-set construction."""
+    return _build_case_set(**case_kwargs)
 
 
 def main() -> None:
@@ -725,21 +846,89 @@ def main() -> None:
     vessel_root_opt = (
         Path(str(vessel_root_raw)) if str(vessel_root_raw).strip() else None
     )
+    cache_root = resolve_cache_root(output_dir=output_dir)
+    case_timing_threshold_sec = float(args.case_timing_threshold_sec)
+    build_workers = max(1, int(args.num_workers))
 
-    logging.info(
-        "Starting Deep Sets dataset build for %d cases into %s (point_feature_set=%s)",
-        total_cases,
-        output_dir,
-        point_feature_set,
-    )
+    with stage_timer(
+        "build",
+        shard_index=shard_index,
+        num_shards=num_shards,
+        point_feature_set=point_feature_set,
+        output_dir=output_dir,
+        total_cases=total_cases,
+        num_workers=build_workers,
+    ):
+        logging.info(
+            "Starting Deep Sets dataset build for %d cases into %s "
+            "(point_feature_set=%s shard=%d/%d cache_root=%s)",
+            total_cases,
+            output_dir,
+            point_feature_set,
+            shard_index,
+            num_shards,
+            cache_root,
+        )
 
-    for index, row in enumerate(manifest_source.itertuples(index=False), start=1):
-        case_id = str(row.case_id)
-        dataset_name = str(getattr(row, "dataset", ""))
-        study_dir = centerline_root / dataset_name / case_id
-        skeleton_path = study_dir / skeleton_pattern.format(case_id=case_id)
-        if not skeleton_path.exists():
-            skipped_missing_centerline += 1
+        pending_builds: list[dict[str, Any]] = []
+        executor: ProcessPoolExecutor | None = None
+        if build_workers > 1:
+            executor = ProcessPoolExecutor(max_workers=build_workers)
+
+        def _finalize_case(
+            *,
+            index: int,
+            row: Any,
+            dataset_name: str,
+            case_started: float,
+            case_set: dict[str, Any] | None,
+        ) -> None:
+            nonlocal skipped_empty_case_set, fallback_case_sets
+            if case_set is None:
+                skipped_empty_case_set += 1
+                if index % progress_every == 0 or index == total_cases:
+                    logging.info(
+                        "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
+                        "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
+                        index,
+                        total_cases,
+                        len(rows),
+                        skipped_missing_centerline,
+                        skipped_missing_tumor_mask,
+                        skipped_empty_case_set,
+                        failed_case_builds,
+                        fallback_case_sets,
+                    )
+                return
+            fallback_case_sets += int(case_set.get("used_fallback_nearest_points", 0.0))
+            case_id = str(row.case_id)
+            set_path = set_dir / f"{case_id}.pt"
+            torch.save(case_set, set_path)
+            manifest_row = {
+                "case_id": case_id,
+                "set_path": str(set_path),
+                "label": int(row.label),
+                "dataset": dataset_name,
+                "num_points": int(case_set["num_points"]),
+                "local_radius_mm": float(case_set["local_radius_mm"]),
+                "tumor_equiv_radius_mm": float(case_set["tumor_equiv_radius_mm"]),
+                "used_fallback_nearest_points": int(
+                    case_set["used_fallback_nearest_points"]
+                ),
+                "point_feature_set": str(case_set["point_feature_set"]),
+                "kinetic_timepoint_count": int(case_set["kinetic_timepoint_count"]),
+            }
+            for col in optional_metadata_cols:
+                manifest_row[col] = _str_or_empty(getattr(row, col, ""))
+            rows.append(manifest_row)
+            log_case_timing(
+                case_id=case_id,
+                elapsed_sec=time.perf_counter() - case_started,
+                shard_index=shard_index,
+                num_shards=num_shards,
+                point_feature_set=point_feature_set,
+                threshold_sec=case_timing_threshold_sec,
+            )
             if index % progress_every == 0 or index == total_cases:
                 logging.info(
                     "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
@@ -753,18 +942,44 @@ def main() -> None:
                     failed_case_builds,
                     fallback_case_sets,
                 )
-            continue
 
-        try:
-            skeleton_mask = np.load(skeleton_path).astype(bool, copy=False)
-            tumor_mask_path = resolve_tumor_mask_path(
-                case_id=case_id,
-                dataset_name=dataset_name,
-                tumor_mask_root=tumor_mask_root,
-                tumor_mask_pattern=tumor_mask_pattern,
-            )
-            if tumor_mask_path is None:
-                skipped_missing_tumor_mask += 1
+        def _flush_pending_builds() -> None:
+            if not pending_builds:
+                return
+            if executor is None:
+                for pending in pending_builds:
+                    case_set = _build_case_set(**pending["case_kwargs"])
+                    _finalize_case(
+                        index=pending["index"],
+                        row=pending["row"],
+                        dataset_name=pending["dataset_name"],
+                        case_started=pending["case_started"],
+                        case_set=case_set,
+                    )
+            else:
+                futures = [
+                    executor.submit(_build_case_set_task, pending["case_kwargs"])
+                    for pending in pending_builds
+                ]
+                for pending, future in zip(pending_builds, futures, strict=True):
+                    case_set = future.result()
+                    _finalize_case(
+                        index=pending["index"],
+                        row=pending["row"],
+                        dataset_name=pending["dataset_name"],
+                        case_started=pending["case_started"],
+                        case_set=case_set,
+                    )
+            pending_builds.clear()
+
+        for index, row in enumerate(manifest_source.itertuples(index=False), start=1):
+            case_started = time.perf_counter()
+            case_id = str(row.case_id)
+            dataset_name = str(getattr(row, "dataset", ""))
+            study_dir = centerline_root / dataset_name / case_id
+            skeleton_path = study_dir / skeleton_pattern.format(case_id=case_id)
+            if not skeleton_path.exists():
+                skipped_missing_centerline += 1
                 if index % progress_every == 0 or index == total_cases:
                     logging.info(
                         "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
@@ -779,142 +994,203 @@ def main() -> None:
                         fallback_case_sets,
                     )
                 continue
-            tumor_mask_zyx, spacing_mm_zyx = _load_mask_with_spacing(
-                tumor_mask_path,
-                expected_shape_zyx=tuple(int(v) for v in skeleton_mask.shape),
-                threshold=tumor_threshold,
-            )
-            tumor_equiv_radius_mm, local_radius_mm = _compute_local_radius_mm(
-                tumor_mask_zyx,
-                spacing_mm_zyx,
-                radius_floor_mm=radius_floor_mm,
-                radius_scale=radius_scale,
-                radius_cap_mm=radius_cap_mm,
-            )
-            sk_shape = tuple(int(v) for v in skeleton_mask.shape)
-            support_path = study_dir / support_pattern.format(case_id=case_id)
-            support_edt_mm_zyx: np.ndarray | None = None
-            support_radius_available_scalar = 0.0
-            if support_path.exists():
-                try:
-                    sup_mask = np.load(support_path).astype(bool, copy=False)
-                    if tuple(sup_mask.shape) == sk_shape:
-                        support_edt_mm_zyx = ndimage.distance_transform_edt(
-                            sup_mask,
-                            sampling=spacing_mm_zyx,
-                        ).astype(np.float32, copy=False)
-                        support_radius_available_scalar = 1.0
-                except (OSError, ValueError) as sup_exc:
-                    logging.warning(
-                        "Could not load support mask for %s (%s): %s",
-                        case_id,
-                        support_path,
-                        sup_exc,
-                    )
-            signal_4d: np.ndarray | None = None
-            if point_feature_set in {
-                DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
-                DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
-            }:
-                signal_4d = _try_load_vessel_4d(
-                    vessel_root=vessel_root_opt,
+
+            try:
+                tumor_mask_path = resolve_tumor_mask_path(
                     case_id=case_id,
-                    expected_shape_zyx=sk_shape,
+                    dataset_name=dataset_name,
+                    tumor_mask_root=tumor_mask_root,
+                    tumor_mask_pattern=tumor_mask_pattern,
                 )
-                if signal_4d is not None and tuple(signal_4d.shape[1:]) != sk_shape:
-                    logging.warning(
-                        "Vessel 4D shape mismatch for %s: %s vs skeleton %s; skipping dynamics",
-                        case_id,
-                        signal_4d.shape,
-                        sk_shape,
+                support_path = study_dir / support_pattern.format(case_id=case_id)
+                cache_dir = None
+                cached_case: dict[str, Any] | None = None
+                if cache_root is not None:
+                    source_paths = [skeleton_path]
+                    if tumor_mask_path is not None:
+                        source_paths.append(tumor_mask_path)
+                    if support_path.exists():
+                        source_paths.append(support_path)
+                    cache_dir = cache_dir_for_case(
+                        cache_root,
+                        case_id=case_id,
+                        dataset_name=dataset_name,
+                        source_paths=source_paths,
                     )
+                    cached_case = load_case_cache(cache_dir)
+                if cached_case is not None:
+                    skeleton_mask = np.asarray(cached_case["skeleton_mask"], dtype=bool)
+                    tumor_mask_zyx = np.asarray(
+                        cached_case["tumor_mask_zyx"], dtype=bool
+                    )
+                    spacing_mm_zyx = tuple(
+                        float(v)
+                        for v in np.asarray(cached_case["spacing_mm_zyx"]).tolist()
+                    )
+                    local_radius_mm = float(cached_case["local_radius_mm"])
+                    tumor_equiv_radius_mm = float(cached_case["tumor_equiv_radius_mm"])
+                    support_radius_available_scalar = float(
+                        cached_case["support_radius_available_scalar"]
+                    )
+                    support_edt_mm_zyx = (
+                        np.asarray(cached_case["support_edt_mm_zyx"], dtype=np.float32)
+                        if "support_edt_mm_zyx" in cached_case
+                        else None
+                    )
+                    signal_4d = (
+                        np.asarray(cached_case["signal_4d"], dtype=np.float32)
+                        if "signal_4d" in cached_case
+                        else None
+                    )
+                else:
+                    skeleton_mask = np.load(skeleton_path).astype(bool, copy=False)
+                    if tumor_mask_path is None:
+                        skipped_missing_tumor_mask += 1
+                        if index % progress_every == 0 or index == total_cases:
+                            logging.info(
+                                "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
+                                "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
+                                index,
+                                total_cases,
+                                len(rows),
+                                skipped_missing_centerline,
+                                skipped_missing_tumor_mask,
+                                skipped_empty_case_set,
+                                failed_case_builds,
+                                fallback_case_sets,
+                            )
+                        continue
+                    tumor_mask_zyx, spacing_mm_zyx = _load_mask_with_spacing(
+                        tumor_mask_path,
+                        expected_shape_zyx=tuple(int(v) for v in skeleton_mask.shape),
+                        threshold=tumor_threshold,
+                    )
+                    tumor_equiv_radius_mm, local_radius_mm = _compute_local_radius_mm(
+                        tumor_mask_zyx,
+                        spacing_mm_zyx,
+                        radius_floor_mm=radius_floor_mm,
+                        radius_scale=radius_scale,
+                        radius_cap_mm=radius_cap_mm,
+                    )
+                    sk_shape = tuple(int(v) for v in skeleton_mask.shape)
+                    support_edt_mm_zyx = None
+                    support_radius_available_scalar = 0.0
+                    if support_path.exists():
+                        try:
+                            sup_mask = np.load(support_path).astype(bool, copy=False)
+                            if tuple(sup_mask.shape) == sk_shape:
+                                support_edt_mm_zyx = ndimage.distance_transform_edt(
+                                    sup_mask,
+                                    sampling=spacing_mm_zyx,
+                                ).astype(np.float32, copy=False)
+                                support_radius_available_scalar = 1.0
+                        except (OSError, ValueError) as sup_exc:
+                            logging.warning(
+                                "Could not load support mask for %s (%s): %s",
+                                case_id,
+                                support_path,
+                                sup_exc,
+                            )
                     signal_4d = None
-            case_set = _build_case_set(
-                case_id=case_id,
-                label=int(row.label),
-                skeleton_mask_zyx=skeleton_mask,
-                tumor_mask_zyx=tumor_mask_zyx,
-                spacing_mm_zyx=spacing_mm_zyx,
-                local_radius_mm=local_radius_mm,
-                tumor_equiv_radius_mm=tumor_equiv_radius_mm,
-                point_feature_set=point_feature_set,
-                support_edt_mm_zyx=support_edt_mm_zyx,
-                support_radius_available_scalar=support_radius_available_scalar,
-                signal_4d=signal_4d,
-                toy_perfect_feature=toy_perfect_feature,
-                toy_only=toy_only,
-            )
-        except Exception as exc:  # noqa: BLE001
-            failed_case_builds += 1
-            logging.warning("Failed Deep Sets dataset build for %s: %s", case_id, exc)
-            if index % progress_every == 0 or index == total_cases:
-                logging.info(
-                    "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
-                    "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
-                    index,
-                    total_cases,
-                    len(rows),
-                    skipped_missing_centerline,
-                    skipped_missing_tumor_mask,
-                    skipped_empty_case_set,
-                    failed_case_builds,
-                    fallback_case_sets,
+                    if point_feature_set in {
+                        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+                        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
+                    }:
+                        signal_4d = _try_load_vessel_4d(
+                            vessel_root=vessel_root_opt,
+                            case_id=case_id,
+                            expected_shape_zyx=sk_shape,
+                        )
+                        if (
+                            signal_4d is not None
+                            and tuple(signal_4d.shape[1:]) != sk_shape
+                        ):
+                            logging.warning(
+                                "Vessel 4D shape mismatch for %s: %s vs skeleton %s; skipping dynamics",
+                                case_id,
+                                signal_4d.shape,
+                                sk_shape,
+                            )
+                            signal_4d = None
+                    if cache_dir is not None:
+                        cache_payload: dict[str, Any] = {
+                            "skeleton_mask": skeleton_mask.astype(np.uint8),
+                            "tumor_mask_zyx": tumor_mask_zyx.astype(np.uint8),
+                            "spacing_mm_zyx": np.asarray(
+                                spacing_mm_zyx, dtype=np.float32
+                            ),
+                            "local_radius_mm": float(local_radius_mm),
+                            "tumor_equiv_radius_mm": float(tumor_equiv_radius_mm),
+                            "support_radius_available_scalar": float(
+                                support_radius_available_scalar
+                            ),
+                        }
+                        if support_edt_mm_zyx is not None:
+                            cache_payload["support_edt_mm_zyx"] = support_edt_mm_zyx
+                        if signal_4d is not None:
+                            cache_payload["signal_4d"] = signal_4d.astype(np.float32)
+                        save_case_cache(cache_dir, cache_payload)
+                case_kwargs = {
+                    "case_id": case_id,
+                    "label": int(row.label),
+                    "skeleton_mask_zyx": skeleton_mask,
+                    "tumor_mask_zyx": tumor_mask_zyx,
+                    "spacing_mm_zyx": spacing_mm_zyx,
+                    "local_radius_mm": local_radius_mm,
+                    "tumor_equiv_radius_mm": tumor_equiv_radius_mm,
+                    "point_feature_set": point_feature_set,
+                    "support_edt_mm_zyx": support_edt_mm_zyx,
+                    "support_radius_available_scalar": support_radius_available_scalar,
+                    "signal_4d": signal_4d,
+                    "toy_perfect_feature": toy_perfect_feature,
+                    "toy_only": toy_only,
+                }
+                if build_workers > 1:
+                    pending_builds.append(
+                        {
+                            "index": index,
+                            "row": row,
+                            "dataset_name": dataset_name,
+                            "case_started": case_started,
+                            "case_kwargs": case_kwargs,
+                        }
+                    )
+                    if len(pending_builds) >= build_workers:
+                        _flush_pending_builds()
+                else:
+                    case_set = _build_case_set(**case_kwargs)
+                    _finalize_case(
+                        index=index,
+                        row=row,
+                        dataset_name=dataset_name,
+                        case_started=case_started,
+                        case_set=case_set,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                failed_case_builds += 1
+                logging.warning(
+                    "Failed Deep Sets dataset build for %s: %s", case_id, exc
                 )
-            continue
+                if index % progress_every == 0 or index == total_cases:
+                    logging.info(
+                        "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
+                        "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
+                        index,
+                        total_cases,
+                        len(rows),
+                        skipped_missing_centerline,
+                        skipped_missing_tumor_mask,
+                        skipped_empty_case_set,
+                        failed_case_builds,
+                        fallback_case_sets,
+                    )
+                continue
 
-        if case_set is None:
-            skipped_empty_case_set += 1
-            if index % progress_every == 0 or index == total_cases:
-                logging.info(
-                    "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
-                    "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
-                    index,
-                    total_cases,
-                    len(rows),
-                    skipped_missing_centerline,
-                    skipped_missing_tumor_mask,
-                    skipped_empty_case_set,
-                    failed_case_builds,
-                    fallback_case_sets,
-                )
-            continue
-        fallback_case_sets += int(case_set.get("used_fallback_nearest_points", 0.0))
+        _flush_pending_builds()
+        if executor is not None:
+            executor.shutdown(wait=True)
 
-        set_path = set_dir / f"{case_id}.pt"
-        torch.save(case_set, set_path)
-        manifest_row = {
-            "case_id": case_id,
-            "set_path": str(set_path),
-            "label": int(row.label),
-            "dataset": dataset_name,
-            "num_points": int(case_set["num_points"]),
-            "local_radius_mm": float(case_set["local_radius_mm"]),
-            "tumor_equiv_radius_mm": float(case_set["tumor_equiv_radius_mm"]),
-            "used_fallback_nearest_points": int(
-                case_set["used_fallback_nearest_points"]
-            ),
-            "point_feature_set": str(case_set["point_feature_set"]),
-            "kinetic_timepoint_count": int(case_set["kinetic_timepoint_count"]),
-        }
-        for col in optional_metadata_cols:
-            manifest_row[col] = _str_or_empty(getattr(row, col, ""))
-        rows.append(manifest_row)
-
-        if index % progress_every == 0 or index == total_cases:
-            logging.info(
-                "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
-                "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
-                index,
-                total_cases,
-                len(rows),
-                skipped_missing_centerline,
-                skipped_missing_tumor_mask,
-                skipped_empty_case_set,
-                failed_case_builds,
-                fallback_case_sets,
-            )
-
-    manifest_df = pd.DataFrame(rows).sort_values("case_id").reset_index(drop=True)
+        manifest_df = pd.DataFrame(rows).sort_values("case_id").reset_index(drop=True)
     if num_shards > 1:
         manifest_path = (
             manifest_parts_dir / f"deepsets_manifest_part_{shard_index:03d}.csv"

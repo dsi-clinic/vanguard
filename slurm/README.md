@@ -131,6 +131,15 @@ Check or override these before running:
 - `PARTITION`
 - `BUILD_CPUS`, `BUILD_MEM`, `BUILD_TIME`
 - `TRAIN_CPUS`, `TRAIN_MEM`, `TRAIN_TIME`
+- `FORCE_BUILD`, `FORCE_MERGE`, `FORCE_RETRAIN` (skip completed stages when unset)
+- `DEEPSETS_CACHE_ROOT` (shared per-case build cache across feature arms)
+- `DEEPSETS_BUILD_WORKERS` (parallel case workers inside each build shard)
+
+After submission, summarize Slurm elapsed time with:
+
+```bash
+bash scripts/deepsets_sacct_summary.sh <build_array_job_id>,<merge_job_id>,<train_job_id>
+```
 
 What the wrapper does:
 

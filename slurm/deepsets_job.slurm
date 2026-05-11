@@ -30,11 +30,16 @@ case "${MODE}" in
     NUM_SHARDS="${NUM_SHARDS:?NUM_SHARDS is required for MODE=build}"
     SHARD_INDEX="${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required for MODE=build}"
     mkdir -p "${OUT_ROOT}"
+    BUILD_WORKERS="${DEEPSETS_BUILD_WORKERS:-${SLURM_CPUS_PER_TASK:-1}}"
+    if [[ -n "${SLURM_TMPDIR:-}" ]]; then
+      export DEEPSETS_CACHE_ROOT="${DEEPSETS_CACHE_ROOT:-${SLURM_TMPDIR}/deepsets_build_cache}"
+    fi
     python -u build_deepsets_dataset.py \
       --config "${CONFIG}" \
       --output-dir "${OUT_ROOT}" \
       --num-shards "${NUM_SHARDS}" \
-      --shard-index "${SHARD_INDEX}"
+      --shard-index "${SHARD_INDEX}" \
+      --num-workers "${BUILD_WORKERS}"
     ;;
   merge)
     OUT_ROOT="${OUT_ROOT:?OUT_ROOT is required for MODE=merge}"
