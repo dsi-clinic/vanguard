@@ -148,6 +148,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_inclusion_rule": "local_radius_with_fallback",
         "deepsets_compare_inclusion_rules": [
             "local_radius_with_fallback",
+            "fixed_radius_30mm_with_fallback",
+            "fixed_radius_50mm_with_fallback",
+            "peritumoral_shells_with_fallback",
             "local_radius_only",
             "nearest_64_only",
         ],

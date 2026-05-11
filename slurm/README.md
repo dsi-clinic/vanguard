@@ -170,7 +170,7 @@ Check or override these before running:
 Deep Sets inclusion-rule controls (in `model_params`) now include:
 
 - `deepsets_inclusion_rule` (default `local_radius_with_fallback`)
-- `deepsets_compare_inclusion_rules` (compact comparison set written to build stats)
+- `deepsets_compare_inclusion_rules` (compact comparison set written to build stats; may include tumor-relative, fixed-radius, and peritumoral-shell variants)
 
 Build-stage outputs include `OUT_ROOT/inclusion_rule_summary.csv` with:
 
