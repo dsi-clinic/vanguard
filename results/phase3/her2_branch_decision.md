@@ -1,9 +1,9 @@
 # Phase 0 → Phase 2 branch decision (HER2 Deep Sets)
 
 **Date:** 2026-05-12 (Phase 0d initial)
-**Updated:** 2026-05-12 (Phase 0e results in)
+**Updated:** 2026-05-12 (Phase 0e results in, Phase 2a go-decision recorded)
 **Plan:** [HER2 Deep Sets next steps](../../.cursor/plans/her2_deep_sets_next_steps_cfdd86f6.plan.md)
-**Status:** Phase 0e returned. The clean binary in the original plan did not trip; the result sits between branches. Awaiting human-in-the-loop decision before committing to Phase 2a cluster time.
+**Status:** **Decision recorded — proceeding with Phase 2a.** The Phase 0e result split the two pre-registered branches; user chose the architecture-push reading (small XGB lift over log(N) is consistent with extractable per-feature signal that mean/max pooling may be averaging out). Phase 2a submitted as a 6-variant attention sweep on the full n=980 cohort.
 
 ## Finding
 
@@ -94,6 +94,135 @@ Arguments against:
 
 **This is a human-in-the-loop decision** — the agent does not auto-submit
 Phase 2a.
+
+### Decision (2026-05-12)
+
+**Go with Phase 2a.** Rationale: the XGB > log(N) gap on the same n=68
+intersection (+0.04 pooled, even with one fold collapsed) is the only
+evidence we have of extractable per-feature signal beyond tumor scale,
+and full-cohort attention pooling is the cheapest test of whether DS
+can recover it. Cost is six ~30-min jobs; a clean null is also useful
+(it would re-open the cohort-size pivot with a stronger argument).
+
+### Submission status (2026-05-12, 16:09 local)
+
+All 6 jobs submitted successfully:
+
+| variant         | job_id |
+|-----------------|--------|
+| attn_h16        | 852195 |
+| attn_h32        | 852196 |
+| attn_h64        | 852197 |
+| attn_logn_h16   | 852198 |
+| attn_logn_h32   | 852199 |
+| attn_logn_h64   | 852200 |
+
+Confirmed running from `logs/deepsets-sweep-*.err`:
+- `attn_h64` (852197): fold 0, epoch 1/80, loss=focal, class balance
+  253 pos / 531 neg per fold (consistent with 5-fold CV on n=980).
+- `attn_logn_h16` (852198): fold 0, epoch 2/80, ~4s/epoch.
+
+At ~5s/epoch × 80 epochs × 5 folds = ~33 min per variant under the
+worst case (no early stopping). With `restore_best_epoch: true` and
+`early_stopping_patience: 8` the sweep should complete in well under
+an hour since all 6 variants run in parallel.
+
+Per-variant outputs land in
+`experiments/deepsets_sweep_her2_attention_full/<vid>/train/` with
+`metrics.json` and `predictions.csv`. HER2-stratum metrics will be
+inside `metrics.json["validation_summary"]["by_group"]["her2_enriched"]`
+(per `evaluation/evaluator.py:472-489`).
+
+### Phase 2a results (seed=42, all 6 variants completed)
+
+Headline metrics on full n=980 cohort and HER2 n=68 intersection
+(canonical fold map not used here — these are DS-native 5-fold splits
+with seed=42; full-cohort fold assignments):
+
+| variant         | overall AUC | HER2 (n=86) | HER2 n=68 pooled | mean fold n=68 (std) |
+|-----------------|------------:|------------:|-----------------:|---------------------:|
+| attn_h16        |       0.562 |       0.601 |            0.580 |       0.580 (±0.266) |
+| attn_h32        |       0.558 |       0.623 |            0.595 |       0.580 (±0.218) |
+| attn_h64        |       0.568 |       0.633 |            0.636 |       0.617 (±0.228) |
+| **attn_logn_h16** |     **0.571** |       0.602 |        **0.663** |   **0.639 (±0.187)** |
+| attn_logn_h32   |       0.566 |       0.617 |            0.635 |       0.601 (±0.170) |
+| attn_logn_h64   |       0.559 |       0.546 |            0.599 |       0.588 (±0.189) |
+
+Per-stratum AUC vs the `h256_d02_lfocal` Phase 3 winner (mean of seeds
+7 and 123):
+
+| stratum   | P3 winner mean | attn_logn_h16 (Δ) | attn_h64 (Δ) |
+|-----------|---------------:|------------------:|-------------:|
+| overall   |          0.554 |   0.571 (+0.017)  | 0.568 (+0.014) |
+| her2      |          0.573 |   0.602 (+0.029)  | **0.633 (+0.060)** |
+| luminal_a |          0.540 |   0.567 (+0.027)  | 0.542 (+0.002) |
+| luminal_b |          0.580 |   0.574 (-0.007)  | 0.553 (-0.027) |
+| triple_neg|          0.521 |   0.544 (+0.023)  | **0.568 (+0.047)** |
+
+Headline reads (single seed, treat as a point estimate):
+
+- **`attn_logn_h16` is the strongest single result: HER2 n=68 pooled
+  AUC 0.663**, beating the prior best DS Phase 3 winner (0.604 mean
+  fold) by +0.06 pooled and the XGB-on-n=68 comparator (0.645 pooled)
+  by +0.018. The `attention_logcount` variant retains the `log(N)`
+  scalar concat (i.e. tumor scale is preserved) while the attention
+  pool re-weights the per-point embeddings — the two strongest variants
+  (`attn_logn_h16` and `attn_h64`) both deliver clear HER2 gains.
+- **No overall-cohort regression** — `attn_logn_h16` lifts overall AUC
+  by +0.017 vs the P3 mean. The HER2 lift is not coming at the cost
+  of generalisation, contrary to the worry I flagged in the live notes
+  before re-checking the P3 baseline numbers.
+- **Per-fold variance is enormous** at n=10-17 cases per fold. The
+  fold AUC range for `attn_logn_h16` on n=68 is 0.41-0.92. A single
+  seed cannot statistically establish the lift.
+
+### Result-collection actions taken (2026-05-12)
+
+1. `scripts/append_her2_attention_to_tracker.py` appended 6 rows to
+   `results/her2_deepsets_tracker.csv` (23 total rows). Each row:
+   variant × seed42 × HER2 n=68 intersection, with per-fold mean/std
+   and pooled AUC/AP.
+2. Cancelled-set leftover experiment directories (the second sbatch
+   wave with the 16:38 timestamp) were removed; only the original
+   16:10 timestamps remain. Re-running the aggregator stays stable.
+
+### Pending: Phase 2a repeated CV (next slurm wave, 4 jobs)
+
+Paired-fold testing requires matched fold assignments. The Phase 3
+winners (cos_T80 / h128_d02_lfocal / h256_d02_lfocal) live at seeds 7
+and 123. So the natural next step is to run the top 2 attention
+variants at seeds 7 and 123 (seed=42 already done):
+
+- `attn_logn_h16` × {7, 123}
+- `attn_h64` × {7, 123}
+
+4 jobs, same architecture and hyperparameters as Phase 2a, only
+`model_params.random_state` overridden. Submit with:
+
+```bash
+bash scripts/run_phase2a_repeated_cv.sh
+```
+
+That driver clones each variant's seed-42 `runtime_config.yaml`,
+overrides `random_state`, and submits via `slurm/deepsets_job.slurm`.
+Outputs land at
+`experiments/deepsets_phase2a_repeated_cv/<vid>/seed{7,123}/train/`.
+
+Once those return, the analysis is:
+
+1. Per-variant cross-seed mean and std (3 seeds: 42, 7, 123).
+2. Paired-fold Wilcoxon of `attn_logn_h16` vs `h256_d02_lfocal` on
+   HER2 n=68, seed-matched (10 fold pairs across seeds 7+123) — gate
+   at `p < 0.10`.
+3. Same paired test against `cos_T80` (the prior best HER2 single
+   number on n=68: 0.604 mean fold).
+4. If `attn_logn_h16` survives the paired test and the cross-seed
+   std is ≤ 0.05, the round closes with a real "attention pooling
+   recovers HER2 signal on full cohort" claim.
+5. If it fails, the +0.06 single-seed lift is dismissed as noise and
+   we either (a) try Phase 3 late fusion of the attention variant
+   with the XGB comparator (`evaluation/late_fusion.py` is ready) or
+   (b) pivot to the cohort-size story with the stronger evidence.
 
 ## Dependencies and ordering
 
