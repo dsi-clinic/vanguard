@@ -395,6 +395,8 @@ def fit_predict_one_fold(
     learning_rate = float(params.learning_rate)
     weight_decay = float(params.weight_decay)
     pooling = str(params.get("pooling", "mean_max_logcount"))
+    use_layer_norm = bool(params.get("use_layer_norm", False))
+    attention_hidden_dim = int(params.get("attention_hidden_dim", 32))
     max_grad_norm = float(params.get("max_grad_norm", 0.0))
     device = _resolve_device(config)
     random_state = int(params.random_state)
@@ -415,6 +417,8 @@ def fit_predict_one_fold(
         rho_layers=num_layers,
         dropout=dropout,
         pooling=pooling,
+        use_layer_norm=use_layer_norm,
+        attention_hidden_dim=attention_hidden_dim,
     ).to(device)
     optimizer = torch.optim.Adam(
         model.parameters(),
