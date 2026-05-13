@@ -43,6 +43,7 @@ from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.model_selection import (
     GridSearchCV,
     RepeatedStratifiedKFold,
+    StratifiedGroupKFold,
     StratifiedKFold,
 )
 from sklearn.preprocessing import StandardScaler
@@ -61,6 +62,16 @@ _NON_FEATURE_COLUMNS = frozenset(
         "pcr",
     }
 )
+
+# Clinical columns that should be one-hot encoded when present.
+_CATEGORICAL_CLINICAL_COLUMNS = [
+    "tumor_subtype",
+    "menopausal_status",
+    "breast_density",
+    "scanner_manufacturer",
+    "scanner_model",
+    "bmi_group",
+]
 
 _CORRELATION_THRESHOLD = 0.8
 _UNIVARIATE_P_THRESHOLD = 0.2
@@ -84,6 +95,39 @@ def _get_feature_columns(features: pd.DataFrame) -> list[str]:
         if c not in _NON_FEATURE_COLUMNS
         and features[c].dtype in ("float64", "float32", "int64", "int32")
     ]
+
+
+def encode_categorical_clinical(features_df: pd.DataFrame) -> pd.DataFrame:
+    """One-hot encode categorical clinical columns present in *features_df*.
+
+    Columns listed in ``_CATEGORICAL_CLINICAL_COLUMNS`` that appear in *features_df*
+    (and are not already numeric) are one-hot encoded with a ``clinical_``
+    prefix.  The originals are dropped so downstream code sees only numeric
+    features.  Columns in ``_NON_FEATURE_COLUMNS`` that overlap (e.g.
+    ``tumor_subtype``, ``menopausal_status``) are **not** dropped — they stay
+    as metadata while the encoded dummies become modeling features.
+    """
+    to_encode = [
+        c
+        for c in _CATEGORICAL_CLINICAL_COLUMNS
+        if c in features_df.columns
+        and not pd.api.types.is_numeric_dtype(features_df[c])
+    ]
+    if not to_encode:
+        return features_df
+
+    dummies = pd.get_dummies(features_df[to_encode], prefix="clinical", drop_first=True)
+    dummies = dummies.astype("int32")
+    # Drop the raw categorical columns only if they are NOT annotation/meta
+    cols_to_drop = [c for c in to_encode if c not in _NON_FEATURE_COLUMNS]
+    features_df = features_df.drop(columns=cols_to_drop, errors="ignore")
+    features_df = pd.concat([features_df, dummies], axis=1)
+    logging.info(
+        "Encoded %d categorical clinical columns → %d dummy features",
+        len(to_encode),
+        len(dummies.columns),
+    )
+    return features_df
 
 
 def stage1_prefilter(
@@ -305,10 +349,13 @@ def run_nested_cv(
     feature_cols: list[str],
     label_col: str,
     outdir: Path,
+    *,
+    group_col: str | None = None,
 ) -> dict:
     """Run the full pipeline inside nested CV for unbiased evaluation.
 
-    Outer loop: RepeatedStratifiedKFold for performance estimation.
+    Outer loop: RepeatedStratifiedKFold (or StratifiedGroupKFold when
+    *group_col* is set) for performance estimation.
     Inside each outer training fold:
         Stage 1 → Stage 2 (with BH) → impute → scale → elastic-net logistic regression
     Evaluate on the held-out outer test fold.
@@ -317,18 +364,43 @@ def run_nested_cv(
     aggregated ROC data for plotting.
     """
     y = features[label_col].to_numpy()
-    outer_cv = RepeatedStratifiedKFold(
-        n_splits=_CV_FOLDS,
-        n_repeats=_N_OUTER_REPEATS,
-        random_state=_RANDOM_STATE,
-    )
+
+    if group_col and group_col in features.columns:
+        groups = features[group_col].to_numpy()
+        outer_cv = StratifiedGroupKFold(n_splits=_CV_FOLDS)
+        total_folds = _CV_FOLDS * _N_OUTER_REPEATS
+        logging.info(
+            "Using site-grouped CV (group_col=%s, %d unique groups)",
+            group_col,
+            len(set(groups)),
+        )
+        # Repeat manually since StratifiedGroupKFold has no n_repeats
+        all_splits = []
+        for repeat in range(_N_OUTER_REPEATS):
+            cv_r = StratifiedGroupKFold(
+                n_splits=_CV_FOLDS, shuffle=True, random_state=_RANDOM_STATE + repeat
+            )
+            all_splits.extend(cv_r.split(features, y, groups))
+    else:
+        if group_col:
+            logging.warning(
+                "group_col=%s not found in data — falling back to standard CV",
+                group_col,
+            )
+        outer_cv = RepeatedStratifiedKFold(
+            n_splits=_CV_FOLDS,
+            n_repeats=_N_OUTER_REPEATS,
+            random_state=_RANDOM_STATE,
+        )
+        all_splits = list(outer_cv.split(features, y))
+        total_folds = _CV_FOLDS * _N_OUTER_REPEATS
 
     fold_aucs: list[float] = []
     feature_counter: Counter[str] = Counter()
     roc_curves: list[dict] = []
     total_folds = _CV_FOLDS * _N_OUTER_REPEATS
 
-    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(features, y)):
+    for fold_idx, (train_idx, test_idx) in enumerate(all_splits):
         train_df = features.iloc[train_idx]
         test_df = features.iloc[test_idx]
         y_train = y[train_idx]
@@ -641,12 +713,32 @@ def main() -> None:
         help="Output directory (default: experiments/feature_selection)",
     )
     ap.add_argument("--label-col", type=str, default="pcr", help="Label column name")
+    ap.add_argument(
+        "--encode-clinical",
+        action="store_true",
+        default=False,
+        help="One-hot encode categorical clinical columns before feature selection",
+    )
+    ap.add_argument(
+        "--site-group-cv",
+        action="store_true",
+        default=False,
+        help="Use site-grouped CV (StratifiedGroupKFold) instead of standard CV",
+    )
+    ap.add_argument(
+        "--group-col",
+        type=str,
+        default="site",
+        help="Column to use for group-aware CV splits (default: site)",
+    )
     args = ap.parse_args()
 
     outdir = args.outdir or Path("experiments/feature_selection")
     outdir.mkdir(parents=True, exist_ok=True)
 
     features = pd.read_csv(args.input_csv)
+    if args.encode_clinical:
+        features = encode_categorical_clinical(features)
     logging.info(
         "Loaded %s: %d rows x %d cols",
         args.input_csv,
@@ -662,7 +754,10 @@ def main() -> None:
     logging.info("Starting with %d candidate features", len(feature_cols))
 
     # ── Step 1: Nested CV for unbiased performance estimation ──
-    cv_results = run_nested_cv(features, feature_cols, args.label_col, outdir)
+    group_col = args.group_col if args.site_group_cv else None
+    cv_results = run_nested_cv(
+        features, feature_cols, args.label_col, outdir, group_col=group_col
+    )
 
     # ── Step 2: Visualize nested CV results ──
     if cv_results["roc_curves"]:
