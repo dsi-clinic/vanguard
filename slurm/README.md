@@ -180,7 +180,7 @@ Build-stage outputs include `OUT_ROOT/inclusion_rule_summary.csv` with:
 - `num_points_median`
 - `num_points_range`
 
-Default-selection notebook: `analysis/deepsets_issue121_notebook.ipynb`
+Default-selection notebook: `analysis/deepsets_issue121_notebook.ipynb` (PNG exports land in `analysis/issue121_figures/`, gitignored).
 
 What the wrapper does:
 
