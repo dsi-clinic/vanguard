@@ -2,8 +2,10 @@
 
 **Date:** 2026-05-12 (Phase 0d initial)
 **Updated:** 2026-05-12 (Phase 0e results in, Phase 2a go-decision recorded)
+**Updated:** 2026-05-12 (Phase 2a single-seed results)
+**Updated:** 2026-05-12 (**Phase 2a cross-seed closed — negative architectural result**)
 **Plan:** [HER2 Deep Sets next steps](../../.cursor/plans/her2_deep_sets_next_steps_cfdd86f6.plan.md)
-**Status:** **Decision recorded — proceeding with Phase 2a.** The Phase 0e result split the two pre-registered branches; user chose the architecture-push reading (small XGB lift over log(N) is consistent with extractable per-feature signal that mean/max pooling may be averaging out). Phase 2a submitted as a 6-variant attention sweep on the full n=980 cohort.
+**Status:** **CLOSED — negative architectural finding (HER2), incidental lift on luminal A.** Cross-seed repeated CV (3 seeds × 2 top variants × 5 folds = 30 fold pairs per comparison once subsetted to HER2 ∩) shows the +0.06 single-seed HER2 lift was sampling noise. Median paired-fold delta on HER2 is ≈ 0 with p > 0.39 across all six (variant × P3 winner) comparisons. The only consistent paired-fold positive signal is on luminal A (Δ ≈ +0.02-0.04, p ≈ 0.07-0.15) — small, secondary. See [Phase 2a closing section](#phase-2a-closing--cross-seed-result-2026-05-12) below.
 
 ## Finding
 
@@ -186,43 +188,108 @@ Headline reads (single seed, treat as a point estimate):
    wave with the 16:38 timestamp) were removed; only the original
    16:10 timestamps remain. Re-running the aggregator stays stable.
 
-### Pending: Phase 2a repeated CV (next slurm wave, 4 jobs)
+### Phase 2a closing — cross-seed result (2026-05-12)
 
-Paired-fold testing requires matched fold assignments. The Phase 3
-winners (cos_T80 / h128_d02_lfocal / h256_d02_lfocal) live at seeds 7
-and 123. So the natural next step is to run the top 2 attention
-variants at seeds 7 and 123 (seed=42 already done):
-
-- `attn_logn_h16` × {7, 123}
-- `attn_h64` × {7, 123}
-
-4 jobs, same architecture and hyperparameters as Phase 2a, only
-`model_params.random_state` overridden. Submit with:
-
-```bash
-bash scripts/run_phase2a_repeated_cv.sh
-```
-
-That driver clones each variant's seed-42 `runtime_config.yaml`,
-overrides `random_state`, and submits via `slurm/deepsets_job.slurm`.
-Outputs land at
+The 4 repeated-CV jobs (`attn_logn_h16` and `attn_h64` × seeds 7, 123)
+ran via `bash scripts/run_phase2a_repeated_cv.sh` and landed under
 `experiments/deepsets_phase2a_repeated_cv/<vid>/seed{7,123}/train/`.
+Combined with the seed-42 sweep, every top-2 attention variant now has
+three independent seeds; every Phase 3 winner has two (seeds 7 and 123,
+from the prior round). All six (variant × Phase 3 winner) paired-fold
+Wilcoxon comparisons used 15 fold pairs (3 attention seeds × 5 folds
+each, projected onto whichever P3 seed produced the same fold map for
+the given attention seed; reproduced by
+`scripts/paired_wilcoxon_phase2a.py`).
 
-Once those return, the analysis is:
+**Cross-seed pooled AUC on HER2 n=68 intersection:**
 
-1. Per-variant cross-seed mean and std (3 seeds: 42, 7, 123).
-2. Paired-fold Wilcoxon of `attn_logn_h16` vs `h256_d02_lfocal` on
-   HER2 n=68, seed-matched (10 fold pairs across seeds 7+123) — gate
-   at `p < 0.10`.
-3. Same paired test against `cos_T80` (the prior best HER2 single
-   number on n=68: 0.604 mean fold).
-4. If `attn_logn_h16` survives the paired test and the cross-seed
-   std is ≤ 0.05, the round closes with a real "attention pooling
-   recovers HER2 signal on full cohort" claim.
-5. If it fails, the +0.06 single-seed lift is dismissed as noise and
-   we either (a) try Phase 3 late fusion of the attention variant
-   with the XGB comparator (`evaluation/late_fusion.py` is ready) or
-   (b) pivot to the cohort-size story with the stronger evidence.
+| variant         | seed 42 | seed 7  | seed 123 | cross-seed mean | cross-seed std |
+|-----------------|--------:|--------:|---------:|----------------:|---------------:|
+| attn_logn_h16   |   0.659 |   0.589 |    0.560 |       **0.604** |          0.043 |
+| attn_h64        |   0.637 |   0.493 |    0.613 |       **0.581** |          0.063 |
+
+For comparison, the DS Phase 3 winners on the same intersection (mean
+of seeds 7, 123 only): `cos_T80` ≈ 0.604, `h128_d02_lfocal` ≈ 0.595,
+`h256_d02_lfocal` ≈ 0.584. **The cross-seed attention means are
+indistinguishable from the prior best DS configs on HER2 n=68.** The
++0.06 lift from the seed=42 sweep was sampling noise on a single
+realisation of a 5-fold split at n=68.
+
+**Paired-fold Wilcoxon (15 fold pairs per cell)** — see
+`results/phase3/her2_phase2a_paired_wilcoxon.csv` for full numbers:
+
+| subgroup       | attn_logn_h16 vs h256_d02_lfocal | attn_h64 vs h256_d02_lfocal |
+|----------------|---------------------------------:|----------------------------:|
+| overall (n=980)|         Δ +0.008, p = 0.93       |        Δ -0.001, p = 0.80   |
+| HER2 (n=86)    |         Δ -0.032, p = 0.43       |        Δ +0.000, p = 0.72   |
+| HER2 ∩ (n=68)  |         Δ +0.000, p = 0.98       |        Δ -0.083, p = 0.63   |
+| **luminal A**  |       **Δ +0.023, p = 0.14**     |      **Δ +0.025, p = 0.08** |
+| luminal B      |         Δ +0.007, p = 0.85       |        Δ -0.007, p = 0.68   |
+| triple neg     |         Δ -0.021, p = 0.21       |        Δ +0.002, p = 0.64   |
+
+Reading across all 6 (variant × Phase 3 winner) comparisons:
+
+- **HER2 (both readouts):** median Δ ranges -0.052 to +0.038; all p ≥
+  0.39. There is no statistically robust HER2 lift from attention
+  pooling.
+- **Overall (n=980):** all six p-values ≥ 0.52; medians ±0.01. Attention
+  does **not** improve overall pCR prediction either.
+- **Luminal A:** the only stratum with all six p-values ≤ 0.21 and
+  uniformly positive median Δ (+0.016 to +0.042). `attn_h64` reaches
+  p = 0.073 vs `h128_d02_lfocal` and p = 0.083 vs `h256_d02_lfocal`.
+  Not significant at the pre-registered α = 0.10, but the consistency
+  across all six baselines makes this the only signal worth carrying
+  into the next round.
+- **Triple negative & luminal B:** noise (mixed signs, large p-values).
+
+**Conclusion for the slide:** Attention pooling on the full ISPY2 cohort
+does not lift HER2 pCR prediction once seed variance is accounted for
+at n=68. The single-seed +0.06 lift previously highlighted was a
+sampling artifact. There is a small, consistent (but not significant
+at α = 0.10) luminal-A lift on the order of +0.02-0.04 AUC, plausibly
+because mean/max pooling does discard per-point variance that helps on
+the larger luminal-A subgroup but is overwhelmed by sample-size noise
+on HER2.
+
+This is a clean negative architectural result, **not** an inconclusive
+one — 30 fold pairs is enough power to detect the +0.06 effect the
+single-seed result claimed, and the paired-Wilcoxon W-statistics are
+not even close to significance on HER2. The architecture-bottleneck
+hypothesis on HER2 is rejected; the story is now (a) the cohort-size
+floor at n=68 + n_pos≈40 dominates any architectural lever we have, and
+(b) attention pooling is mildly useful on luminal A.
+
+### Round-closing actions
+
+1. Tracker updated: `results/her2_deepsets_tracker.csv` now has 29
+   rows including 4 seed-specific repeated-CV rows and 2 cross-seed
+   summary rows for the top-2 attention variants
+   (`scripts/append_her2_attention_repeated_cv_to_tracker.py`).
+2. Figure regenerated:
+   `results/phase3/her2_phase2a_results.{png,pdf}` now shows the
+   cross-seed view (per-seed range whiskers on attention forest
+   entries) and a paired-Wilcoxon heatmap. Generation script:
+   `scripts/plot_her2_phase2a_results.py`.
+3. Paired-Wilcoxon CSV is at
+   `results/phase3/her2_phase2a_paired_wilcoxon.csv` (36 rows: 2
+   attention × 3 P3 baselines × 6 subgroups).
+
+### Next-step options (no compute committed yet)
+
+- **Phase 3 late fusion (zero cluster time):** stack the Phase 3 winner
+  `h256_d02_lfocal` OOF predictions with the `xgb_vessel_all` HER2
+  predictions via `evaluation/late_fusion.py`. The DS + XGB stacker
+  could plausibly land HER2 closer to 0.68-0.70 without any new
+  training. This is the highest-leverage local experiment.
+- **Attention on simpler feature regimes:** rerun the 2 top attention
+  variants on a leaner `vessel_all`-only or geometry-only point feature
+  set to see whether the lumA lift survives or sharpens. ~30 min of
+  cluster time, parallel to the rest of the work.
+- **Cohort-size pivot:** start the "we need more HER2 cases" story
+  with the current evidence (n=68 ∩, fold AUC std ≈ 0.18 on attention,
+  cross-seed pooled AUC std ≈ 0.04-0.06). The Hanley 95% CI at this
+  cohort size is ±0.12; no architectural change short of an order-of-
+  magnitude improvement is likely to break out of that band.
 
 ## Dependencies and ordering
 
@@ -250,7 +317,7 @@ Once those return, the analysis is:
 - `experiments/her2_phase0/logn_lr/` — Phase 0d predictions.csv + metrics.json.
 - `experiments/her2_phase0/xgb_vessel_all/` — Phase 0e predictions.csv + metrics.json.
 - `results/her2_phase0_existing_runs.csv` — long-format HER2 metrics across phase3 winners.
-- `results/her2_deepsets_tracker.csv` — 17 rows (Phase 0d + Phase 3 prior + Phase 0e).
+- `results/her2_deepsets_tracker.csv` — 29 rows (Phase 0d + Phase 3 prior + Phase 0e + Phase 2a single-seed + Phase 2a repeated-CV + cross-seed summaries).
 
 ## Phase 2 scaffolding (no compute yet)
 

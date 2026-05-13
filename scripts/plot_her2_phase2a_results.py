@@ -1,26 +1,33 @@
-"""Phase 2a results figure for HER2 Deep Sets.
+"""Phase 2a closing figure for HER2 Deep Sets (cross-seed view).
 
-Two panels:
+Two panels, designed to close Phase 2a as a statistically robust
+*negative* architectural finding on HER2 with an incidental small lift
+on luminal A.
 
-(A) Forest plot of HER2 n=68 pooled AUC across baselines, prior
-    DS Phase 3 winners, the XGB comparator, and the 6 Phase 2a attention
-    variants. Error bars are Hanley-McNeil analytic 95% CIs on the
-    pooled AUC (irreducible noise floor at n=68). Multi-seed comparators
-    use the mean of per-seed pooled AUCs and an additional whisker for
-    the per-seed range.
+(A) Forest plot of HER2 n=68 pooled AUC across baselines and DS configs.
+    For multi-seed entries (DS Phase 3 winners across seeds 7, 123 and
+    DS Phase 2a attention top-2 across seeds 42, 7, 123) the marker is
+    the mean of per-seed pooled AUCs and the whisker is the per-seed
+    range. Single-seed entries (log(N) LR, XGB n=68) keep the analytic
+    Hanley-McNeil 95% CI on the pooled AUC for context.
 
-(B) Per-stratum (overall / her2 / lumA / lumB / TN) AUC bars for the
-    Phase 3 winner h256_d02_lfocal (mean of seeds 7 and 123) vs the top
-    two Phase 2a attention variants. Shows that the HER2 lift is not
-    purchased at the cost of an overall-cohort regression.
+(B) Heatmap of paired-fold (Wilcoxon) median delta for each top-2
+    attention variant vs each Phase 3 winner across 5 subgroups. Cell
+    color encodes the median delta; cell annotation gives `Δ / p`. Cells
+    with `p < 0.10` are outlined to call out the only consistent signal
+    (luminal A) against the noise floor.
 
 Inputs:
-- results/her2_deepsets_tracker.csv (for the tabular/baseline numbers).
-- experiments/deepsets_phase3_repeated_cv/h256_d02_lfocal/seed{7,123}/...
-  metrics.json (for per-stratum Phase 3 baseline).
-- experiments/deepsets_sweep_her2_attention_full/<vid>/.../metrics.json
-  and predictions.csv (for attention variant numbers).
-- data/her2_intersection_case_ids.csv + manifest (for intersection cohort).
+- results/her2_deepsets_tracker.csv (used implicitly via the helpers).
+- experiments/deepsets_phase3_repeated_cv/<cfg>/seed{7,123}/train/.../
+  predictions.csv (DS Phase 3 winners, used for per-seed pooled AUC).
+- experiments/deepsets_sweep_her2_attention_full/<vid>/.../
+  predictions.csv (DS Phase 2a, seed=42).
+- experiments/deepsets_phase2a_repeated_cv/<vid>/seed{7,123}/train/.../
+  predictions.csv (DS Phase 2a, seeds 7 and 123).
+- experiments/her2_phase0/{logn_lr,xgb_vessel_all}/predictions.csv.
+- results/phase3/her2_phase2a_paired_wilcoxon.csv (Panel B).
+- data/her2_intersection_case_ids.csv + manifest (for intersection).
 
 Output:
 - results/phase3/her2_phase2a_results.png
@@ -30,13 +37,13 @@ Output:
 from __future__ import annotations
 
 import glob
-import json
 from math import sqrt
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.patches import Rectangle
 from sklearn.metrics import roc_auc_score
 
 REPO = Path(__file__).resolve().parents[1]
@@ -46,15 +53,11 @@ MANIFEST = REPO / "experiments/deepsets_ispy2_pointfeat_geom_topo_dynamic/deepse
 INTERSECTION = REPO / "data/her2_intersection_case_ids.csv"
 SWEEP_ROOT = REPO / "experiments/deepsets_sweep_her2_attention_full"
 P3_ROOT = REPO / "experiments/deepsets_phase3_repeated_cv"
+REPCV_ROOT = REPO / "experiments/deepsets_phase2a_repeated_cv"
+WILCOXON_CSV = REPO / "results" / "phase3" / "her2_phase2a_paired_wilcoxon.csv"
 
-ATTN_VARIANTS = [
-    "attn_h16",
-    "attn_h32",
-    "attn_h64",
-    "attn_logn_h16",
-    "attn_logn_h32",
-    "attn_logn_h64",
-]
+ATTN_TOP = ["attn_logn_h16", "attn_h64"]
+ATTN_SEEDS = ["42", "7", "123"]
 P3_CONFIGS = ["cos_T80", "h128_d02_lfocal", "h256_d02_lfocal"]
 P3_SEEDS = ["7", "123"]
 
@@ -93,18 +96,8 @@ def _pooled_auc_on_intersection(predictions_csv: Path, her2_ids: set[str]) -> tu
     return float(roc_auc_score(sub["y_true"], sub[score_col])), n_pos, n_neg
 
 
-def _logn_lr_pooled() -> tuple[float, int, int]:
-    p = REPO / "experiments/her2_phase0/logn_lr/predictions.csv"
-    df = pd.read_csv(p)
-    score_col = "y_prob" if "y_prob" in df.columns else "y_pred"
-    n_pos = int(df["y_true"].sum())
-    n_neg = int(len(df) - n_pos)
-    return float(roc_auc_score(df["y_true"], df[score_col])), n_pos, n_neg
-
-
-def _xgb_pooled() -> tuple[float, int, int]:
-    p = REPO / "experiments/her2_phase0/xgb_vessel_all/predictions.csv"
-    df = pd.read_csv(p)
+def _single_seed_pooled(path: Path) -> tuple[float, int, int]:
+    df = pd.read_csv(path)
     score_col = "y_prob" if "y_prob" in df.columns else "y_pred"
     n_pos = int(df["y_true"].sum())
     n_neg = int(len(df) - n_pos)
@@ -112,7 +105,7 @@ def _xgb_pooled() -> tuple[float, int, int]:
 
 
 def _p3_winner_pooled_per_seed(config: str, her2_ids: set[str]) -> dict[str, tuple[float, int, int]]:
-    out = {}
+    out: dict[str, tuple[float, int, int]] = {}
     for seed in P3_SEEDS:
         matches = sorted(glob.glob(str(P3_ROOT / config / f"seed{seed}" / "train" / "*" / "*" / "predictions.csv")))
         if not matches:
@@ -121,33 +114,29 @@ def _p3_winner_pooled_per_seed(config: str, her2_ids: set[str]) -> dict[str, tup
     return out
 
 
-def _attn_pooled(variant: str, her2_ids: set[str]) -> tuple[float, int, int]:
-    matches = sorted(glob.glob(str(SWEEP_ROOT / variant / "train" / "*" / "*" / "predictions.csv")))
-    return _pooled_auc_on_intersection(Path(matches[0]), her2_ids)
-
-
-def _per_stratum_from_metrics(metrics_path: Path) -> dict[str, float]:
-    m = json.load(open(metrics_path))
-    val = m["validation_summary"]
-    by = val.get("by_group", {})
-    return {
-        "overall": val["overall"]["auc"],
-        "her2_enriched": by.get("her2_enriched", {}).get("auc"),
-        "luminal_a": by.get("luminal_a", {}).get("auc"),
-        "luminal_b": by.get("luminal_b", {}).get("auc"),
-        "triple_negative": by.get("triple_negative", {}).get("auc"),
-    }
+def _attn_pooled_per_seed(variant: str, her2_ids: set[str]) -> dict[str, tuple[float, int, int]]:
+    out: dict[str, tuple[float, int, int]] = {}
+    for seed in ATTN_SEEDS:
+        if seed == "42":
+            matches = sorted(glob.glob(str(SWEEP_ROOT / variant / "train" / "*" / "*" / "predictions.csv")))
+        else:
+            matches = sorted(glob.glob(str(REPCV_ROOT / variant / f"seed{seed}" / "train" / "*" / "*" / "predictions.csv")))
+        if not matches:
+            continue
+        out[seed] = _pooled_auc_on_intersection(Path(matches[0]), her2_ids)
+    return out
 
 
 def main() -> None:
     her2_ids = _her2_intersection_ids()
 
-    # -------- Panel A: forest plot data --------
+    # -------- Panel A: forest plot with cross-seed view --------
     rows: list[dict] = []
-    auc, npos, nneg = _logn_lr_pooled()
+
+    auc, npos, nneg = _single_seed_pooled(REPO / "experiments/her2_phase0/logn_lr/predictions.csv")
     lo, hi = hanley_ci(auc, npos, nneg)
     rows.append({"label": "log(N_points) LR\n(one-feature baseline)", "family": "baseline",
-                 "auc": auc, "ci_lo": lo, "ci_hi": hi, "seed_range": None})
+                 "auc": auc, "ci_lo": lo, "ci_hi": hi, "seed_range": None, "n_seeds": 1})
 
     for cfg in P3_CONFIGS:
         per_seed = _p3_winner_pooled_per_seed(cfg, her2_ids)
@@ -161,41 +150,48 @@ def main() -> None:
         rows.append({"label": f"DS Phase 3 — {cfg}\n(mean of seeds 7, 123)",
                      "family": "ds_prior",
                      "auc": mean_auc, "ci_lo": lo, "ci_hi": hi,
-                     "seed_range": (seed_lo, seed_hi)})
+                     "seed_range": (seed_lo, seed_hi), "n_seeds": len(aucs)})
 
-    auc, npos, nneg = _xgb_pooled()
+    auc, npos, nneg = _single_seed_pooled(REPO / "experiments/her2_phase0/xgb_vessel_all/predictions.csv")
     lo, hi = hanley_ci(auc, npos, nneg)
     rows.append({"label": "XGB vessel_all\n(HER2-only train, n=68)", "family": "xgb",
-                 "auc": auc, "ci_lo": lo, "ci_hi": hi, "seed_range": None})
+                 "auc": auc, "ci_lo": lo, "ci_hi": hi, "seed_range": None, "n_seeds": 1})
 
-    for v in ATTN_VARIANTS:
-        auc, npos, nneg = _attn_pooled(v, her2_ids)
-        lo, hi = hanley_ci(auc, npos, nneg)
-        rows.append({"label": f"DS Phase 2a — {v}\n(seed=42, single seed)",
+    for v in ATTN_TOP:
+        per_seed = _attn_pooled_per_seed(v, her2_ids)
+        aucs = [per_seed[s][0] for s in ATTN_SEEDS if s in per_seed]
+        mean_auc = float(np.mean(aucs))
+        seed_lo, seed_hi = float(min(aucs)), float(max(aucs))
+        n_pos, n_neg = next(iter(per_seed.values()))[1:]
+        lo, hi = hanley_ci(mean_auc, n_pos, n_neg)
+        rows.append({"label": f"DS Phase 2a — {v}\n(mean of seeds 42, 7, 123)",
                      "family": "ds_attention",
-                     "auc": auc, "ci_lo": lo, "ci_hi": hi, "seed_range": None})
+                     "auc": mean_auc, "ci_lo": lo, "ci_hi": hi,
+                     "seed_range": (seed_lo, seed_hi), "n_seeds": len(aucs)})
 
-    # Sort within families: ds_attention by AUC asc so best is at top
     family_order = {"baseline": 0, "ds_prior": 1, "xgb": 2, "ds_attention": 3}
     rows.sort(key=lambda r: (family_order[r["family"]], r["auc"]))
 
-    # -------- Panel B: per-stratum --------
-    p3_strata_per_seed = []
-    for seed in P3_SEEDS:
-        matches = sorted(glob.glob(str(P3_ROOT / "h256_d02_lfocal" / f"seed{seed}" / "train" / "*" / "*" / "metrics.json")))
-        if matches:
-            p3_strata_per_seed.append(_per_stratum_from_metrics(Path(matches[0])))
-    strata = ["overall", "her2_enriched", "luminal_a", "luminal_b", "triple_negative"]
-    p3_mean = {s: float(np.mean([r[s] for r in p3_strata_per_seed if r[s] is not None])) for s in strata}
-
-    attn_top_strata = {}
-    for v in ["attn_logn_h16", "attn_h64"]:
-        m_path = sorted(glob.glob(str(SWEEP_ROOT / v / "train" / "*" / "*" / "metrics.json")))[0]
-        attn_top_strata[v] = _per_stratum_from_metrics(Path(m_path))
+    # -------- Panel B: paired-Wilcoxon heatmap --------
+    wdf = pd.read_csv(WILCOXON_CSV)
+    subgroups = ["overall", "her2_enriched", "her2_intersection_n68", "luminal_a", "luminal_b", "triple_negative"]
+    sg_labels = ["overall\n(n=980)", "HER2\n(n=86)", "HER2 ∩\n(n=68)", "luminal A", "luminal B", "triple\nneg"]
+    pair_rows = []
+    for v in ATTN_TOP:
+        for p in P3_CONFIGS:
+            pair_rows.append((v, p))
+    delta_mat = np.full((len(pair_rows), len(subgroups)), np.nan)
+    p_mat = np.full((len(pair_rows), len(subgroups)), np.nan)
+    for i, (v, p) in enumerate(pair_rows):
+        for j, sg in enumerate(subgroups):
+            r = wdf[(wdf["attn"] == v) & (wdf["p3"] == p) & (wdf["subgroup"] == sg)]
+            if not r.empty:
+                delta_mat[i, j] = float(r["median_delta"].iloc[0])
+                p_mat[i, j] = float(r["wilcoxon_p"].iloc[0])
 
     # -------- Plot --------
-    fig = plt.figure(figsize=(15, 8.5))
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.4, 1.0], wspace=0.35)
+    fig = plt.figure(figsize=(16, 8.5))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.25, 1.30], wspace=0.45)
     axA = fig.add_subplot(gs[0])
     axB = fig.add_subplot(gs[1])
 
@@ -229,9 +225,11 @@ def main() -> None:
         )
         if r["seed_range"] is not None:
             lo, hi = r["seed_range"]
-            axA.plot([lo, hi], [i + 0.18, i + 0.18], color=color, linewidth=2.5, alpha=0.5)
-            axA.plot([lo, lo], [i + 0.10, i + 0.26], color=color, linewidth=1.0, alpha=0.5)
-            axA.plot([hi, hi], [i + 0.10, i + 0.26], color=color, linewidth=1.0, alpha=0.5)
+            axA.plot([lo, hi], [i + 0.20, i + 0.20], color=color, linewidth=2.5, alpha=0.55)
+            axA.plot([lo, lo], [i + 0.12, i + 0.28], color=color, linewidth=1.0, alpha=0.55)
+            axA.plot([hi, hi], [i + 0.12, i + 0.28], color=color, linewidth=1.0, alpha=0.55)
+            axA.text(hi + 0.005, i + 0.20, f"n={r['n_seeds']} seeds",
+                     fontsize=7, color=color, va="center", alpha=0.75)
         axA.text(r["auc"], i - 0.32, f"{r['auc']:.3f}", ha="center", va="top",
                  fontsize=8.5, color=color,
                  fontweight="bold" if is_best else "normal")
@@ -245,48 +243,50 @@ def main() -> None:
     axA.set_ylim(-1.5, len(rows) - 0.5)
     axA.invert_yaxis()
     axA.grid(axis="x", alpha=0.25)
-    axA.set_title("A. HER2 n=68 pooled AUC (Hanley 95% CI)\nThin whisker on DS Phase 3 rows = per-seed range",
-                  fontsize=11, loc="left", pad=12)
+    axA.set_title(
+        "A. HER2 n=68 pooled AUC — cross-seed view\n"
+        "Marker = mean of per-seed pooled AUCs; whisker = per-seed range (3 seeds for attention, 2 for P3)",
+        fontsize=10.5, loc="left", pad=12,
+    )
     handles = [plt.Line2D([], [], color=c, marker="o", linestyle="", label=family_label[k], markersize=8)
                for k, c in family_color.items()]
     axA.legend(handles=handles, loc="lower right", fontsize=8.5, framealpha=0.92)
 
-    # Panel B per-stratum
-    strata_labels = ["overall\n(n=980)", "HER2\n(n=86)", "lum A", "lum B", "triple\nneg"]
-    x = np.arange(len(strata))
-    width = 0.26
-    p3_vals = [p3_mean[s] for s in strata]
-    a_logn_vals = [attn_top_strata["attn_logn_h16"][s] for s in strata]
-    a_h64_vals = [attn_top_strata["attn_h64"][s] for s in strata]
+    # Panel B paired-Wilcoxon heatmap
+    vmax = float(np.nanmax(np.abs(delta_mat)))
+    im = axB.imshow(delta_mat, cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
+    for i in range(delta_mat.shape[0]):
+        for j in range(delta_mat.shape[1]):
+            d = delta_mat[i, j]
+            p = p_mat[i, j]
+            if np.isnan(d):
+                continue
+            txt = f"Δ={d:+.03f}\np={p:.2f}"
+            axB.text(j, i, txt, ha="center", va="center",
+                     fontsize=7.5, color="black" if abs(d) < vmax * 0.55 else "white")
+            if p < 0.10:
+                axB.add_patch(Rectangle((j - 0.48, i - 0.48), 0.96, 0.96,
+                                        fill=False, edgecolor="black", linewidth=2.0))
 
-    bars_p3 = axB.bar(x - width, p3_vals, width, color=family_color["ds_prior"],
-                      label="P3 h256_d02_lfocal\n(mean of 2 seeds)", alpha=0.85, edgecolor="black", linewidth=0.4)
-    bars_logn = axB.bar(x, a_logn_vals, width, color=family_color["ds_attention"],
-                        label="attn_logn_h16 (seed=42)", alpha=0.85, edgecolor="black", linewidth=0.4)
-    bars_h64 = axB.bar(x + width, a_h64_vals, width, color="#ff9896",
-                       label="attn_h64 (seed=42)", alpha=0.85, edgecolor="black", linewidth=0.4)
-
-    for bars, vals in [(bars_p3, p3_vals), (bars_logn, a_logn_vals), (bars_h64, a_h64_vals)]:
-        for b, v in zip(bars, vals):
-            axB.text(b.get_x() + b.get_width() / 2, v + 0.005, f"{v:.3f}",
-                     ha="center", va="bottom", fontsize=7.5)
-
-    axB.axhline(0.5, color="black", linewidth=0.8, linestyle=":", alpha=0.5)
-    axB.set_xticks(x)
-    axB.set_xticklabels(strata_labels, fontsize=9)
-    axB.set_ylabel("AUC", fontsize=11)
-    axB.set_ylim(0.40, 0.72)
-    axB.grid(axis="y", alpha=0.25)
-    axB.legend(loc="upper right", fontsize=8.5, framealpha=0.92)
-    axB.set_title("B. Per-stratum AUC: attention variants vs Phase 3 winner\nHER2 lift does not regress overall or other strata (except lumB on attn_h64)",
-                  fontsize=11, loc="left", pad=12)
+    axB.set_xticks(range(len(subgroups)))
+    axB.set_xticklabels(sg_labels, fontsize=9)
+    pair_labels = [f"{v}\n vs {p}" for v, p in pair_rows]
+    axB.set_yticks(range(len(pair_rows)))
+    axB.set_yticklabels(pair_labels, fontsize=8.5)
+    axB.set_title(
+        "B. Paired-fold Wilcoxon: attention variant vs Phase 3 winner\n"
+        "15 paired folds (seeds 42, 7, 123). Black outline = p < 0.10",
+        fontsize=10.5, loc="left", pad=12,
+    )
+    cbar = fig.colorbar(im, ax=axB, fraction=0.04, pad=0.02)
+    cbar.set_label("Median per-fold AUC delta (attn − P3)", fontsize=9)
 
     fig.suptitle(
-        "Phase 2a attention pooling on full ISPY2 cohort (n=980, 5-fold CV, seed=42)\n"
-        "Top attention variant attn_logn_h16: HER2 n=68 pooled AUC 0.663 — best DS-pure HER2 number to date",
-        fontsize=12.5, y=0.99,
+        "Phase 2a closes: attention pooling does NOT robustly lift HER2 across seeds (median Δ ≈ 0, p ≫ 0.10)\n"
+        "Single consistent positive signal is on luminal A (Δ ≈ +0.02-0.04, p ≈ 0.07-0.15) — small, secondary",
+        fontsize=12.5, y=0.995,
     )
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
 
     OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT_PNG, dpi=180, bbox_inches="tight")
