@@ -139,6 +139,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "lr_scheduler": "none",
         "lr_scheduler_factor": 0.5,
         "lr_scheduler_patience": 5,
+        "use_layer_norm": False,
+        "attention_hidden_dim": 32,
         "loss": "weighted_bce",
         "focal_alpha": 0.25,
         "focal_gamma": 2.0,

@@ -217,7 +217,7 @@ Before running on a new system, review these config fields in your YAML override
 
 ## Deep Sets Modeling
 
-Deep Sets is the current learned set-model baseline in this repo. It does not use graph message passing. Instead, it treats each case as a variable-length set of tumor-local vessel points, maps each point through a shared MLP, sums those embeddings, and then predicts pCR from the pooled case representation.
+Deep Sets is the current learned set-model baseline in this repo. It does not use graph message passing. Instead, it treats each case as a variable-length set of tumor-local vessel points, maps each point through a shared MLP, pools those embeddings into one case representation, and then predicts pCR.
 
 Reference:
 
@@ -239,6 +239,27 @@ The starter point-level feature is intentionally minimal:
 - a simple pointwise curvature proxy
 
 Students are expected to add richer point features after the scaffold is working.
+
+Pooling is configured through the normal YAML path under `model_params.pooling`.
+Available options are:
+
+- `mean`
+- `max`
+- `sum`
+- `mean_max`
+- `mean_max_logcount`
+- `attention`
+- `attention_logcount`
+
+Attention pooling uses a small scorer MLP over per-point embeddings and can be
+configured without changing code:
+
+```yaml
+model_params:
+  pooling: "attention_logcount"
+  attention_hidden_dim: 32
+  use_layer_norm: true
+```
 
 Before running on a new system, review:
 
