@@ -65,7 +65,14 @@ def describe_required_deepsets_config() -> dict[str, str]:
         "model_params.learning_rate": "Adam learning rate.",
         "model_params.hidden_dim": "Hidden width used by the phi and rho MLPs.",
         "model_params.num_layers": "Number of layers in the phi and rho MLPs.",
-        "model_params.pooling": "Pooling variant: mean, max, sum, mean_max, or mean_max_logcount.",
+        "model_params.pooling": (
+            "Pooling variant: mean, max, sum, mean_max, mean_max_logcount, "
+            "attention, or attention_logcount."
+        ),
+        "model_params.attention_hidden_dim": (
+            "Hidden width for attention-pooling scorer when using attention pooling."
+        ),
+        "model_params.use_layer_norm": "Whether to apply LayerNorm in phi/rho MLPs.",
         "model_params.loss": "Loss function: weighted_bce, unweighted_bce, or focal.",
     }
 
