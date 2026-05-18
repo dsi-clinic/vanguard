@@ -48,6 +48,16 @@ ENDPOINT_DEGREE = 1
 CHAIN_DEGREE = 2
 FALLBACK_NEAREST_POINT_COUNT = 64
 _REF_PEAK_EPS = 1e-10
+DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK = "local_radius_with_fallback"
+DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY = "local_radius_only"
+DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY = "nearest_64_only"
+VALID_DEEPSETS_INCLUSION_RULES: frozenset[str] = frozenset(
+    {
+        DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
+        DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY,
+        DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY,
+    }
+)
 
 DEEPSETS_FEATURE_BASELINE = "baseline"
 DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY = "geometry_topology"
@@ -429,6 +439,8 @@ def _build_case_set(
     support_edt_mm_zyx: np.ndarray | None,
     support_radius_available_scalar: float,
     signal_4d: np.ndarray | None,
+    inclusion_rule: str,
+    compare_inclusion_rules: list[str] | None = None,
     toy_perfect_feature: bool = False,
     toy_only: bool = False,
 ) -> dict[str, Any] | None:
@@ -535,11 +547,42 @@ def _build_case_set(
         if signed_distance_mm <= float(local_radius_mm):
             feature_rows.append(row)
 
-    used_fallback = False
-    if not feature_rows:
-        candidate_rows.sort(key=lambda pair: pair[0])
-        feature_rows = [row for _, row in candidate_rows[:FALLBACK_NEAREST_POINT_COUNT]]
-        used_fallback = bool(feature_rows)
+    selected_rows_by_rule: dict[str, list[list[float]]] = {}
+    fallback_by_rule: dict[str, bool] = {}
+    inclusion_rules = [str(inclusion_rule)]
+    if compare_inclusion_rules:
+        for rule_name in compare_inclusion_rules:
+            rule_text = str(rule_name)
+            if rule_text not in inclusion_rules:
+                inclusion_rules.append(rule_text)
+    for rule_name in inclusion_rules:
+        if rule_name not in VALID_DEEPSETS_INCLUSION_RULES:
+            raise ValueError(
+                f"Unknown deepsets inclusion rule {rule_name!r}; expected one of "
+                f"{sorted(VALID_DEEPSETS_INCLUSION_RULES)}"
+            )
+        selected_rows: list[list[float]]
+        used_fallback = False
+        if rule_name == DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK:
+            selected_rows = list(feature_rows)
+            if not selected_rows:
+                candidate_rows.sort(key=lambda pair: pair[0])
+                selected_rows = [
+                    row for _, row in candidate_rows[:FALLBACK_NEAREST_POINT_COUNT]
+                ]
+                used_fallback = bool(selected_rows)
+        elif rule_name == DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY:
+            selected_rows = list(feature_rows)
+        else:
+            candidate_rows.sort(key=lambda pair: pair[0])
+            selected_rows = [
+                row for _, row in candidate_rows[:FALLBACK_NEAREST_POINT_COUNT]
+            ]
+        selected_rows_by_rule[rule_name] = selected_rows
+        fallback_by_rule[rule_name] = bool(used_fallback)
+
+    feature_rows = selected_rows_by_rule[inclusion_rule]
+    used_fallback = fallback_by_rule[inclusion_rule]
     if not feature_rows:
         return None
 
@@ -560,7 +603,16 @@ def _build_case_set(
         "num_points": int(len(feature_rows)),
         "used_fallback_nearest_points": float(used_fallback),
         "point_feature_set": str(point_feature_set),
+        "inclusion_rule": str(inclusion_rule),
         "kinetic_timepoint_count": int(kinetic_tp),
+        "inclusion_rule_metrics": {
+            rule_name: {
+                "num_points": int(len(rows_for_rule)),
+                "wrote_case_set": int(len(rows_for_rule) > 0),
+                "used_fallback_nearest_points": int(fallback_by_rule[rule_name]),
+            }
+            for rule_name, rows_for_rule in selected_rows_by_rule.items()
+        },
     }
 
 
@@ -593,6 +645,36 @@ def main() -> None:
             f"Invalid model_params.deepsets_point_feature_set={point_feature_set!r}; "
             f"expected one of {sorted(VALID_DEEPSETS_POINT_FEATURE_SETS)}"
         )
+    inclusion_rule = str(
+        getattr(
+            params,
+            "deepsets_inclusion_rule",
+            DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
+        )
+    )
+    if inclusion_rule not in VALID_DEEPSETS_INCLUSION_RULES:
+        raise ValueError(
+            f"Invalid model_params.deepsets_inclusion_rule={inclusion_rule!r}; "
+            f"expected one of {sorted(VALID_DEEPSETS_INCLUSION_RULES)}"
+        )
+    compare_inclusion_rules_raw = getattr(
+        params,
+        "deepsets_compare_inclusion_rules",
+        [],
+    )
+    if isinstance(compare_inclusion_rules_raw, str):
+        compare_inclusion_rules = [compare_inclusion_rules_raw]
+    else:
+        compare_inclusion_rules = [str(v) for v in (compare_inclusion_rules_raw or [])]
+    compared_inclusion_rules: list[str] = []
+    for rule_name in [inclusion_rule] + compare_inclusion_rules:
+        if rule_name not in VALID_DEEPSETS_INCLUSION_RULES:
+            raise ValueError(
+                f"Invalid model_params.deepsets_compare_inclusion_rules entry "
+                f"{rule_name!r}; expected one of {sorted(VALID_DEEPSETS_INCLUSION_RULES)}"
+            )
+        if rule_name not in compared_inclusion_rules:
+            compared_inclusion_rules.append(rule_name)
     radius_floor_mm = float(params.deepsets_local_radius_floor_mm)
     radius_scale = float(params.deepsets_local_radius_scale)
     radius_cap_raw = params.deepsets_local_radius_cap_mm
@@ -662,6 +744,15 @@ def main() -> None:
     failed_case_builds = 0
     fallback_case_sets = 0
     rows: list[dict[str, Any]] = []
+    inclusion_rule_stats: dict[str, dict[str, Any]] = {
+        rule_name: {
+            "cases_written": 0,
+            "cases_skipped": 0,
+            "fallback_cases": 0,
+            "num_points": [],
+        }
+        for rule_name in compared_inclusion_rules
+    }
 
     vessel_root_raw = getattr(data_paths, "vessel_segmentation_root", "") or ""
     vessel_root_opt = (
@@ -780,6 +871,8 @@ def main() -> None:
                 support_edt_mm_zyx=support_edt_mm_zyx,
                 support_radius_available_scalar=support_radius_available_scalar,
                 signal_4d=signal_4d,
+                inclusion_rule=inclusion_rule,
+                compare_inclusion_rules=compared_inclusion_rules,
                 toy_perfect_feature=toy_perfect_feature,
                 toy_only=toy_only,
             )
@@ -817,6 +910,19 @@ def main() -> None:
                     fallback_case_sets,
                 )
             continue
+        metrics_by_rule = case_set.get("inclusion_rule_metrics", {})
+        if isinstance(metrics_by_rule, dict):
+            for rule_name in compared_inclusion_rules:
+                metric = metrics_by_rule.get(rule_name, {})
+                wrote_case_set = int(metric.get("wrote_case_set", 0))
+                num_points = int(metric.get("num_points", 0))
+                used_rule_fallback = int(metric.get("used_fallback_nearest_points", 0))
+                if wrote_case_set:
+                    inclusion_rule_stats[rule_name]["cases_written"] += 1
+                    inclusion_rule_stats[rule_name]["num_points"].append(num_points)
+                else:
+                    inclusion_rule_stats[rule_name]["cases_skipped"] += 1
+                inclusion_rule_stats[rule_name]["fallback_cases"] += used_rule_fallback
         fallback_case_sets += int(case_set.get("used_fallback_nearest_points", 0.0))
 
         set_path = set_dir / f"{case_id}.pt"
@@ -861,6 +967,39 @@ def main() -> None:
     else:
         manifest_path = output_dir / "deepsets_manifest.csv"
     manifest_df.to_csv(manifest_path, index=False)
+    inclusion_summary_rows: list[dict[str, Any]] = []
+    for rule_name in compared_inclusion_rules:
+        stats = inclusion_rule_stats[rule_name]
+        cases_written = int(stats["cases_written"])
+        cases_skipped = int(stats["cases_skipped"])
+        fallback_cases = int(stats["fallback_cases"])
+        num_points_values = [int(v) for v in stats["num_points"]]
+        fallback_fraction = (
+            float(fallback_cases) / float(cases_written) if cases_written > 0 else 0.0
+        )
+        if num_points_values:
+            num_points_min = int(min(num_points_values))
+            num_points_max = int(max(num_points_values))
+            num_points_median = float(
+                np.median(np.asarray(num_points_values, dtype=float))
+            )
+            num_points_range = f"{num_points_min}-{num_points_max}"
+        else:
+            num_points_median = 0.0
+            num_points_range = "0-0"
+        inclusion_summary_rows.append(
+            {
+                "inclusion_rule": rule_name,
+                "cases_written": cases_written,
+                "cases_skipped": cases_skipped,
+                "fallback_fraction": fallback_fraction,
+                "num_points_median": num_points_median,
+                "num_points_range": num_points_range,
+            }
+        )
+    inclusion_summary_df = pd.DataFrame(inclusion_summary_rows)
+    inclusion_summary_path = output_dir / "inclusion_rule_summary.csv"
+    inclusion_summary_df.to_csv(inclusion_summary_path, index=False)
     logging.info(
         "Finished Deep Sets dataset build: wrote=%d total=%d missing_centerline=%d "
         "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d manifest=%s",
@@ -873,6 +1012,7 @@ def main() -> None:
         fallback_case_sets,
         manifest_path,
     )
+    logging.info("Wrote inclusion rule summary to %s", inclusion_summary_path)
 
 
 if __name__ == "__main__":
