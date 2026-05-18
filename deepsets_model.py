@@ -110,9 +110,7 @@ class AttentionPool(nn.Module):
         """
         if scores.numel() == 0:
             return scores
-        per_case_max = torch.zeros(
-            batch_size, dtype=scores.dtype, device=scores.device
-        )
+        per_case_max = torch.zeros(batch_size, dtype=scores.dtype, device=scores.device)
         for i in range(batch_size):
             mask = batch_index == i
             if mask.any():
@@ -248,9 +246,7 @@ class DeepSetsClassifier(nn.Module):
 
         if needs_attention:
             assert self.attention_pool is not None
-            chunks.append(
-                self.attention_pool(encoded, batch_index, batch_size)
-            )
+            chunks.append(self.attention_pool(encoded, batch_index, batch_size))
 
         if needs_logcount:
             counts = torch.bincount(batch_index, minlength=batch_size).clamp_min(1)

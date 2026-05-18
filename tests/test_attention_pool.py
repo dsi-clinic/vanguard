@@ -27,9 +27,7 @@ def _make_batch(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Create a deterministic batch of variable-length point sets."""
     generator = torch.Generator().manual_seed(seed)
-    x_chunks = [
-        torch.randn(n, input_dim, generator=generator) for n in points_per_case
-    ]
+    x_chunks = [torch.randn(n, input_dim, generator=generator) for n in points_per_case]
     batch_index_chunks = [
         torch.full((n,), i, dtype=torch.long) for i, n in enumerate(points_per_case)
     ]
@@ -177,7 +175,9 @@ def test_attention_weights_sum_to_one_per_case() -> None:
 
 def test_attention_pool_rejects_dim_mismatch() -> None:
     """Passing the wrong latent_dim to AttentionPool must raise."""
-    pool = AttentionPool(latent_dim=LATENT_DIM, attention_hidden_dim=ATTENTION_HIDDEN_DIM)
+    pool = AttentionPool(
+        latent_dim=LATENT_DIM, attention_hidden_dim=ATTENTION_HIDDEN_DIM
+    )
     bad = torch.randn(sum(POINTS_PER_CASE), LATENT_DIM + 3)
     batch_index = torch.cat(
         [torch.full((n,), i, dtype=torch.long) for i, n in enumerate(POINTS_PER_CASE)]
