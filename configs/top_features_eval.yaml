@@ -1,0 +1,107 @@
+# Issue #151: top-K vessel features (global screening ranker) vs baseline.
+#
+# Example:
+#   micromamba run -n vanguard python run_top_features_eval.py \
+#     --config configs/top_features_eval.yaml --outdir experiments/issue151_run
+#
+# Default assumptions:
+# - Baseline = clinical + tumor_size (same spirit as Issue #118).
+# - Ranking pool = morph + graph + kinematic (vessel numeric features).
+# - Ranker = univariate AUC on all labeled rows (fast screening; see docs).
+# - Downstream models use feature_select_enabled=false and nested_tune_enabled=false
+#   for a lightweight, like-for-like column-count comparison.
+
+baseline_arm_name: clinical_plus_tumor_size
+baseline_run_name: null
+
+top_features_eval:
+  enabled: true
+  baseline_arm_name: clinical_plus_tumor_size
+  arm_name_prefix: topk
+  baseline_blocks:
+    - clinical
+    - tumor_size
+  ranking_pool_blocks:
+    - morph
+    - graph
+    - kinematic
+  k_values: [5, 10, 20, 40]
+  ranking_method: univariate_auc
+  ranker_kwargs: {}
+  baseline_model_params_override:
+    feature_select_enabled: false
+    nested_tune_enabled: false
+  topk_model_params_override:
+    feature_select_enabled: false
+    nested_tune_enabled: false
+  model_families:
+    - lr
+  split_mode_matrix:
+    - name: cv
+      use_group_split: false
+      model_params_override: {}
+
+feature_toggles:
+  use_vascular: true
+  use_morphometry: true
+  require_centerline_file: true
+  include_missing_centerline_rows: false
+  use_clinical: true
+  include_site_features: false
+  dataset_include: ["ISPY2"]
+  bilateral_filter: false
+  use_tumor_local_features: true
+  use_tumor_graph_features_json: true
+  tumor_mask_file_pattern: "{case_id}.nii.gz"
+  tumor_mask_threshold: 0.5
+  tumor_radius_voxels: [0, 2, 4, 8]
+  use_radiomics: false
+  merge_how: "inner"
+  selected_features: null
+
+experiment_setup:
+  name: "tc4d_issue151_topk"
+  base_outdir: "./experiments"
+
+model_params:
+  model: "lr"
+  penalty: "elasticnet"
+  solver: "saga"
+  l1_ratio: 0.5
+  C: 1.0
+  n_splits: 5
+  random_state: 42
+  max_iter: 5000
+  feature_select_enabled: false
+  feature_select_mode: "global_topk"
+  feature_select_k: 64
+  feature_select_k_kin: 16
+  feature_select_kin_method: "mrmr"
+  feature_select_kinematic_prefixes: ["kinematic_"]
+  feature_select_max_abs_corr: 0.95
+  feature_select_max_zero_rate: 0.95
+  feature_select_min_non_na_rate: 0.2
+  feature_select_min_n_unique: 2
+  nested_tune_enabled: false
+  nested_inner_splits: 3
+  nested_c_grid: [1.0]
+  nested_l1_ratio_grid: [0.5]
+  nested_feature_select_mode_grid: ["global_topk"]
+  nested_k_kin_grid: [0]
+  nested_kin_method_grid: ["topk_auc"]
+  nested_max_abs_corr_grid: [0.95]
+  nested_max_zero_rate_grid: [0.95]
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "tumor_subtype"
+
+data_paths:
+  centerline_root: "/net/projects2/vanguard/centerlines_tc4d/studies"
+  tumor_mask_root: "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
+  patient_info_dir: "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files"
+  clinical_excel: "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
+  labels_csv: "/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv"
+  label_column: "pcr"
+  id_column: "case_id"
+
+ablation_arms: []

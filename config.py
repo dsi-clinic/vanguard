@@ -175,7 +175,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model_family_overrides": {},
     "baseline_run_name": None,
     "export_subtype_summary": False,
+    # Issue #151 driver block (see run_top_features_eval.py, configs/top_features_eval.yaml).
+    "top_features_eval": None,
 }
+
 
 
 class ConfigNode(dict[str, Any]):

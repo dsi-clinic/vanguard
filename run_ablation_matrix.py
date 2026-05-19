@@ -65,6 +65,7 @@ def _normalize_ablation_arms(config: dict[str, Any]) -> list[dict[str, Any]]:
         arm = {
             "name": name,
             "selected_features": normalized_blocks,
+            "explicit_model_columns": None,
             "model_params_override": to_plain_data(
                 deepcopy(raw_arm.get("model_params_override", {}))
             ),
@@ -72,6 +73,14 @@ def _normalize_ablation_arms(config: dict[str, Any]) -> list[dict[str, Any]]:
                 deepcopy(raw_arm.get("feature_toggles_override", {}))
             ),
         }
+        explicit_cols = raw_arm.get("explicit_model_columns")
+        if explicit_cols is not None:
+            arm["explicit_model_columns"] = [str(c).strip() for c in explicit_cols if str(c).strip()]
+            if not arm["explicit_model_columns"]:
+                raise ValueError(
+                    f"Ablation arm {name} has explicit_model_columns "
+                    "that empty after parsing."
+                )
         arms.append(arm)
         logging.info(
             "Ablation arm %s uses blocks %s (%s)",
@@ -402,6 +411,7 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
             full_df,
             selected_blocks=blocks,
             label_col=label_col,
+            explicit_model_columns=arm.get("explicit_model_columns"),
         )
 
         for family in families:
