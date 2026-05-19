@@ -60,7 +60,7 @@ EXPECTED_TOTAL_ARMS = 3
 
 def test_modeling_columns_for_blocks() -> None:
     """Non-annotation columns are grouped by feature block."""
-    df = pd.DataFrame(
+    cohort_frame = pd.DataFrame(
         {
             "case_id": ["x"],
             "pcr": [1],
@@ -69,7 +69,7 @@ def test_modeling_columns_for_blocks() -> None:
         }
     )
     cols = modeling_columns_for_blocks(
-        df, blocks=["clinical", "morph"], label_col="pcr"
+        cohort_frame, blocks=["clinical", "morph"], label_col="pcr"
     )
     assert set(cols) == {"age", "morph_a"}
 
@@ -98,7 +98,7 @@ def test_build_topk_ablation_arms_names() -> None:
 
 def test_assemble_top_features_smoke() -> None:
     """End-to-end arm assembly returns baseline plus one arm per K."""
-    df = pd.DataFrame(
+    cohort_frame = pd.DataFrame(
         {
             "case_id": [f"c{i}" for i in range(20)],
             "pcr": [0, 1] * 10,
@@ -109,7 +109,7 @@ def test_assemble_top_features_smoke() -> None:
         }
     )
     arms, ranked = assemble_top_features_experiment_arms(
-        df,
+        cohort_frame,
         label_col="pcr",
         baseline_blocks=["clinical", "tumor_size"],
         ranking_pool_blocks=["morph"],

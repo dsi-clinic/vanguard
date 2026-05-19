@@ -180,7 +180,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
-
 class ConfigNode(dict[str, Any]):
     """Nested config mapping with both dict-style and attribute-style access."""
 

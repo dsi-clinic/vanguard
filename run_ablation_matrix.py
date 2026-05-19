@@ -75,7 +75,9 @@ def _normalize_ablation_arms(config: dict[str, Any]) -> list[dict[str, Any]]:
         }
         explicit_cols = raw_arm.get("explicit_model_columns")
         if explicit_cols is not None:
-            arm["explicit_model_columns"] = [str(c).strip() for c in explicit_cols if str(c).strip()]
+            arm["explicit_model_columns"] = [
+                str(c).strip() for c in explicit_cols if str(c).strip()
+            ]
             if not arm["explicit_model_columns"]:
                 raise ValueError(
                     f"Ablation arm {name} has explicit_model_columns "
