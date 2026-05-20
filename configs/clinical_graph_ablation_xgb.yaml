@@ -63,9 +63,6 @@ model_params:
   nested_kin_method_grid: ["topk_auc", "mrmr"]
   nested_max_abs_corr_grid: [0.95]
   nested_max_zero_rate_grid: [0.95]
-  n_estimators: 300
-  max_depth: null
-  min_samples_leaf: 1
   use_group_split: false
   group_col: "site"
   stratum_col: "tumor_subtype"
