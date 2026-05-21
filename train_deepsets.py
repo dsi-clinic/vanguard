@@ -66,7 +66,14 @@ def describe_required_deepsets_config() -> dict[str, str]:
         "model_params.learning_rate": "Adam learning rate.",
         "model_params.hidden_dim": "Hidden width used by the phi and rho MLPs.",
         "model_params.num_layers": "Number of layers in the phi and rho MLPs.",
-        "model_params.pooling": "Pooling variant: mean, max, sum, mean_max, or mean_max_logcount.",
+        "model_params.pooling": (
+            "Pooling variant: mean, max, sum, mean_max, mean_max_logcount, "
+            "attention, or attention_logcount."
+        ),
+        "model_params.attention_hidden_dim": (
+            "Hidden width for attention-pooling scorer when using attention pooling."
+        ),
+        "model_params.use_layer_norm": "Whether to apply LayerNorm in phi/rho MLPs.",
         "model_params.loss": "Loss function: weighted_bce, unweighted_bce, or focal.",
     }
 
@@ -396,6 +403,8 @@ def fit_predict_one_fold(
     learning_rate = float(params.learning_rate)
     weight_decay = float(params.weight_decay)
     pooling = str(params.get("pooling", "mean_max_logcount"))
+    use_layer_norm = bool(params.get("use_layer_norm", False))
+    attention_hidden_dim = int(params.get("attention_hidden_dim", 32))
     max_grad_norm = float(params.get("max_grad_norm", 0.0))
     device = _resolve_device(config)
     random_state = int(params.random_state)
@@ -416,6 +425,8 @@ def fit_predict_one_fold(
         rho_layers=num_layers,
         dropout=dropout,
         pooling=pooling,
+        use_layer_norm=use_layer_norm,
+        attention_hidden_dim=attention_hidden_dim,
     ).to(device)
     optimizer = torch.optim.Adam(
         model.parameters(),
