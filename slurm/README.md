@@ -170,9 +170,15 @@ Check or override these before running:
 Deep Sets inclusion-rule controls (in `model_params`) now include:
 
 - `deepsets_inclusion_rule` (default `local_radius_with_fallback`)
-- `deepsets_compare_inclusion_rules` (compact comparison set written to build stats; may include tumor-relative, fixed-radius, and peritumoral-shell variants)
+- `deepsets_compare_inclusion_rules` (optional; empty on routine ISPY2 builds)
 
-Build-stage outputs include `OUT_ROOT/inclusion_rule_summary.csv` with:
+For issue #121 rule comparisons, set a non-empty compare list in a dedicated YAML
+or runtime config and use a separate `OUT_ROOT` (see
+`docs/deepsets_issue121_inclusion_rules.md` and
+`configs/deepsets_issue121_fixture.yaml`).
+
+When `deepsets_compare_inclusion_rules` is non-empty, build-stage outputs include
+`OUT_ROOT/inclusion_rule_summary.csv` with:
 
 - `cases_written`
 - `cases_skipped`
