@@ -44,6 +44,17 @@ from graph_extraction.feature_stats import (
 from load_cohort import load_config
 from tabular_cohort import _as_optional_bool, load_labels
 
+
+def _numpy_trapz(
+    y: np.ndarray, *, x: np.ndarray | None = None, axis: int | None = None
+) -> np.ndarray | float:
+    """NumPy 2 removed ``trapz``; use ``trapezoid`` when available."""
+    trapz_fn = getattr(np, "trapezoid", None) or np.trapz
+    if axis is None:
+        return trapz_fn(y, x=x) if x is not None else trapz_fn(y)
+    return trapz_fn(y, x=x, axis=axis)
+
+
 OFFSETS_3D = np.array(
     [
         (dz, dy, dx)
@@ -224,7 +235,7 @@ def _reference_enhancement_baseline(
     )
     ref_enh = ref_curve - float(ref_curve[0])
     peak = float(np.max(np.maximum(ref_enh, 0.0)))
-    auc = float(np.trapz(np.maximum(ref_enh, 0.0), x=time_axis))
+    auc = float(_numpy_trapz(np.maximum(ref_enh, 0.0), x=time_axis))
     return peak, auc
 
 
@@ -282,7 +293,7 @@ def _dynamic_features_for_voxel(
     washout_slope = (
         float((enh[-1] - enh[peak_idx]) / washout_den) if washout_den > 0.0 else 0.0
     )
-    auc = float(np.trapz(np.maximum(enh, 0.0), x=time_axis))
+    auc = float(_numpy_trapz(np.maximum(enh, 0.0), x=time_axis))
     peak_rel = _safe_ratio(max(peak_enh, 0.0), max(ref_peak_enh, 1e-12))
     auc_rel = _safe_ratio(max(auc, 0.0), max(ref_auc_pos, 1e-12))
     ref_ok = 1.0 if ref_peak_enh > _REF_PEAK_EPS else 0.0
@@ -329,7 +340,7 @@ def _dynamic_features_for_coords_batch(
     peak_idx = np.argmax(enh, axis=1)
     peak_norm = peak_idx.astype(np.float64) / float(max(1, n_t - 1))
     peak_enh = np.max(enh, axis=1)
-    auc = np.trapz(np.maximum(enh, 0.0), x=time_axis, axis=1)
+    auc = _numpy_trapz(np.maximum(enh, 0.0), x=time_axis, axis=1)
     peak_rel = np.asarray(
         [_safe_ratio(max(float(v), 0.0), max(ref_peak_enh, 1e-12)) for v in peak_enh],
         dtype=np.float64,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -29,6 +30,22 @@ def main() -> None:
     part_paths = sorted(parts_dir.glob("deepsets_manifest_part_*.csv"))
     if not part_paths:
         raise FileNotFoundError(f"No manifest parts found in {parts_dir}")
+    expected_shards = os.environ.get("NUM_SHARDS")
+    if expected_shards is not None:
+        try:
+            expected_n = int(expected_shards)
+        except ValueError:
+            logging.warning(
+                "NUM_SHARDS=%r is not an integer; skipping shard check", expected_shards
+            )
+        else:
+            if len(part_paths) != expected_n:
+                logging.warning(
+                    "Manifest shard count %d != NUM_SHARDS=%d in %s",
+                    len(part_paths),
+                    expected_n,
+                    parts_dir,
+                )
     with stage_timer(
         "merge",
         output_dir=output_dir,
@@ -38,6 +55,14 @@ def main() -> None:
         manifest_df = pd.concat(frames, ignore_index=True)
         if "case_id" in manifest_df.columns:
             manifest_df["case_id"] = manifest_df["case_id"].astype(str)
+            dup_mask = manifest_df["case_id"].duplicated(keep=False)
+            if dup_mask.any():
+                dup_ids = manifest_df.loc[dup_mask, "case_id"].unique().tolist()
+                logging.warning(
+                    "Duplicate case_id values after merge (n=%d): %s",
+                    int(dup_mask.sum()),
+                    dup_ids[:20],
+                )
             manifest_df = manifest_df.sort_values("case_id").reset_index(drop=True)
         manifest_path = output_dir / "deepsets_manifest.csv"
         manifest_df.to_csv(manifest_path, index=False)
