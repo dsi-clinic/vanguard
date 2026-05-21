@@ -51,13 +51,60 @@ _REF_PEAK_EPS = 1e-10
 DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK = "local_radius_with_fallback"
 DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY = "local_radius_only"
 DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY = "nearest_64_only"
+DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK = (
+    "fixed_radius_30mm_with_fallback"
+)
+DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK = (
+    "fixed_radius_50mm_with_fallback"
+)
+DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK = (
+    "peritumoral_shells_with_fallback"
+)
+PERITUMORAL_SHELL_OUTER_DISTANCE_MM = 5.0
 VALID_DEEPSETS_INCLUSION_RULES: frozenset[str] = frozenset(
     {
         DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
         DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY,
         DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY,
+        DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
+        DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK,
+        DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
     }
 )
+
+
+def _inclusion_rule_policy(rule_name: str) -> str:
+    """Return selection policy for an inclusion rule."""
+    if rule_name == DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY:
+        return "nearest"
+    if rule_name == DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY:
+        return "strict"
+    return "fallback"
+
+
+def _inclusion_rule_cutoff_mm(rule_name: str, local_radius_mm: float) -> float:
+    """Return the signed-distance cutoff in mm for an inclusion rule."""
+    if rule_name == DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK:
+        return 30.0
+    if rule_name == DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK:
+        return 50.0
+    if rule_name == DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK:
+        return PERITUMORAL_SHELL_OUTER_DISTANCE_MM
+    return float(local_radius_mm)
+
+
+def _signed_distance_within_inclusion_cutoff(
+    signed_distance_mm: float,
+    *,
+    rule_name: str,
+    local_radius_mm: float,
+) -> bool:
+    """Return whether a point lies inside an inclusion rule's cutoff."""
+    cutoff_mm = _inclusion_rule_cutoff_mm(rule_name, local_radius_mm)
+    if rule_name == DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK:
+        return float(signed_distance_mm) < cutoff_mm
+    return float(signed_distance_mm) <= cutoff_mm
+
 
 DEEPSETS_FEATURE_BASELINE = "baseline"
 DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY = "geometry_topology"
@@ -544,8 +591,6 @@ def _build_case_set(
         elif toy_perfect_feature:
             row = list(row) + [float(label)]
         candidate_rows.append((float(signed_distance_mm), row))
-        if signed_distance_mm <= float(local_radius_mm):
-            feature_rows.append(row)
 
     selected_rows_by_rule: dict[str, list[list[float]]] = {}
     fallback_by_rule: dict[str, bool] = {}
@@ -563,21 +608,28 @@ def _build_case_set(
             )
         selected_rows: list[list[float]]
         used_fallback = False
-        if rule_name == DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK:
-            selected_rows = list(feature_rows)
-            if not selected_rows:
+        policy = _inclusion_rule_policy(rule_name)
+        if policy == "nearest":
+            candidate_rows.sort(key=lambda pair: pair[0])
+            selected_rows = [
+                row for _, row in candidate_rows[:FALLBACK_NEAREST_POINT_COUNT]
+            ]
+        else:
+            selected_rows = [
+                row
+                for signed_distance_mm, row in candidate_rows
+                if _signed_distance_within_inclusion_cutoff(
+                    signed_distance_mm,
+                    rule_name=rule_name,
+                    local_radius_mm=local_radius_mm,
+                )
+            ]
+            if policy == "fallback" and not selected_rows:
                 candidate_rows.sort(key=lambda pair: pair[0])
                 selected_rows = [
                     row for _, row in candidate_rows[:FALLBACK_NEAREST_POINT_COUNT]
                 ]
                 used_fallback = bool(selected_rows)
-        elif rule_name == DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY:
-            selected_rows = list(feature_rows)
-        else:
-            candidate_rows.sort(key=lambda pair: pair[0])
-            selected_rows = [
-                row for _, row in candidate_rows[:FALLBACK_NEAREST_POINT_COUNT]
-            ]
         selected_rows_by_rule[rule_name] = selected_rows
         fallback_by_rule[rule_name] = bool(used_fallback)
 

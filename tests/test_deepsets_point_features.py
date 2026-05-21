@@ -10,10 +10,14 @@ from build_deepsets_dataset import (
     DEEPSETS_FEATURE_BASELINE,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+    DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
+    DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK,
     DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY,
     DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
     DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY,
+    DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
     _build_case_set,
+    _signed_distance_within_inclusion_cutoff,
     deepsets_point_feature_names,
 )
 
@@ -175,6 +179,97 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
         self.assertEqual(
             metrics[DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY]["wrote_case_set"],
             1,
+        )
+
+    def test_signed_distance_within_inclusion_cutoff_variants(self) -> None:
+        self.assertTrue(
+            _signed_distance_within_inclusion_cutoff(
+                -1.0,
+                rule_name=DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+        self.assertTrue(
+            _signed_distance_within_inclusion_cutoff(
+                4.9,
+                rule_name=DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+        self.assertFalse(
+            _signed_distance_within_inclusion_cutoff(
+                5.0,
+                rule_name=DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+        self.assertTrue(
+            _signed_distance_within_inclusion_cutoff(
+                30.0,
+                rule_name=DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+        self.assertFalse(
+            _signed_distance_within_inclusion_cutoff(
+                30.1,
+                rule_name=DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+        self.assertTrue(
+            _signed_distance_within_inclusion_cutoff(
+                50.0,
+                rule_name=DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+
+    def test_build_case_set_fixed_radius_and_shell_comparison_metrics(self) -> None:
+        shape = (11, 11, 11)
+        skel = _empty_volume(shape)
+        skel[5, 5, 5] = True
+        skel[5, 5, 8] = True
+        skel[5, 5, 9] = True
+        tumor = _empty_volume(shape)
+        tumor[5, 5, 5] = True
+        out = _build_case_set(
+            case_id="toy",
+            label=1,
+            skeleton_mask_zyx=skel,
+            tumor_mask_zyx=tumor,
+            spacing_mm_zyx=(1.0, 1.0, 1.0),
+            local_radius_mm=0.5,
+            tumor_equiv_radius_mm=1.0,
+            point_feature_set=DEEPSETS_FEATURE_BASELINE,
+            support_edt_mm_zyx=None,
+            support_radius_available_scalar=0.0,
+            signal_4d=None,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
+            compare_inclusion_rules=[
+                DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
+                DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK,
+                DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
+            ],
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        metrics = out["inclusion_rule_metrics"]
+        self.assertEqual(
+            metrics[DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK]["num_points"],
+            1,
+        )
+        self.assertEqual(
+            metrics[DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK][
+                "num_points"
+            ],
+            3,
+        )
+        self.assertEqual(
+            metrics[DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK][
+                "num_points"
+            ],
+            3,
         )
 
 
