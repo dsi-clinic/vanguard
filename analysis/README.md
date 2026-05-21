@@ -9,6 +9,8 @@ Current notebooks:
 
 - `deepsets_issue120_notebook.ipynb`
   - primary Issue #120 benchmark artifact with feature-regime tables, deferred launch commands, and generated figures
+- `figures/deepsets_issue120/BENCHMARK_NOTE.md`
+  - short written benchmark conclusions (interim + final) and 4D alignment notes for Issue #120
 - `graph_weak_signal_diagnostic.ipynb`
   - diagnostic notebook for the older weak-signal feature-analysis workflow
 - `graph_laterality_feature_analysis.ipynb`
