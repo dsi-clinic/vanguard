@@ -179,9 +179,15 @@ bash scripts/deepsets_sacct_summary.sh <build_array_job_id>,<merge_job_id>,<trai
 Deep Sets inclusion-rule controls (in `model_params`) now include:
 
 - `deepsets_inclusion_rule` (default `local_radius_with_fallback`)
-- `deepsets_compare_inclusion_rules` (compact comparison set written to build stats)
+- `deepsets_compare_inclusion_rules` (optional; empty on routine ISPY2 builds)
 
-Build-stage outputs include `OUT_ROOT/inclusion_rule_summary.csv` with:
+For issue #121 rule comparisons, set a non-empty compare list in a dedicated YAML
+or runtime config and use a separate `OUT_ROOT` (see
+`docs/deepsets_issue121_inclusion_rules.md` and
+`configs/deepsets_issue121_fixture.yaml`).
+
+When `deepsets_compare_inclusion_rules` is non-empty, build-stage outputs include
+`OUT_ROOT/inclusion_rule_summary.csv` with:
 
 - `cases_written`
 - `cases_skipped`
@@ -189,7 +195,7 @@ Build-stage outputs include `OUT_ROOT/inclusion_rule_summary.csv` with:
 - `num_points_median`
 - `num_points_range`
 
-Default-selection notebook: `analysis/deepsets_issue121_notebook.ipynb`
+Default-selection notebook: `analysis/deepsets_issue121_notebook.ipynb` (PNG exports land in `analysis/issue121_figures/`, gitignored).
 
 What the wrapper does:
 
