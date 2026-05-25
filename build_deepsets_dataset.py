@@ -5,6 +5,9 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import os
+import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +17,13 @@ import torch
 from scipy import ndimage
 
 from clinical_features import get_clinical_features
+from deepsets_build_cache import (
+    cache_dir_for_case,
+    load_case_cache,
+    resolve_cache_root,
+    save_case_cache,
+)
+from deepsets_runtime import log_case_timing, stage_timer
 from deepsets_volume_align import align_zyx_4d_to_shape
 from features.tumor_size import load_tumor_mask_zyx, resolve_tumor_mask_path
 from graph_extraction.constants import (
@@ -34,6 +44,17 @@ from graph_extraction.feature_stats import (
 from load_cohort import load_config
 from tabular_cohort import _as_optional_bool, load_labels
 
+
+def _numpy_trapz(
+    y: np.ndarray, *, x: np.ndarray | None = None, axis: int | None = None
+) -> np.ndarray | float:
+    """NumPy 2 removed ``trapz``; use ``trapezoid`` when available."""
+    trapz_fn = getattr(np, "trapezoid", None) or np.trapz
+    if axis is None:
+        return trapz_fn(y, x=x) if x is not None else trapz_fn(y)
+    return trapz_fn(y, x=x, axis=axis)
+
+
 OFFSETS_3D = np.array(
     [
         (dz, dy, dx)
@@ -51,22 +72,75 @@ _REF_PEAK_EPS = 1e-10
 DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK = "local_radius_with_fallback"
 DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY = "local_radius_only"
 DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY = "nearest_64_only"
+DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK = (
+    "fixed_radius_30mm_with_fallback"
+)
+DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK = (
+    "fixed_radius_50mm_with_fallback"
+)
+DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK = (
+    "peritumoral_shells_with_fallback"
+)
+PERITUMORAL_SHELL_OUTER_DISTANCE_MM = 5.0
 VALID_DEEPSETS_INCLUSION_RULES: frozenset[str] = frozenset(
     {
         DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
         DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY,
         DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY,
+        DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
+        DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK,
+        DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
     }
 )
+
+
+def _inclusion_rule_policy(rule_name: str) -> str:
+    """Return selection policy for an inclusion rule."""
+    if rule_name == DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY:
+        return "nearest"
+    if rule_name == DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY:
+        return "strict"
+    return "fallback"
+
+
+def _inclusion_rule_cutoff_mm(rule_name: str, local_radius_mm: float) -> float:
+    """Return the signed-distance cutoff in mm for an inclusion rule."""
+    if rule_name == DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK:
+        return 30.0
+    if rule_name == DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK:
+        return 50.0
+    if rule_name == DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK:
+        return PERITUMORAL_SHELL_OUTER_DISTANCE_MM
+    return float(local_radius_mm)
+
+
+def _signed_distance_within_inclusion_cutoff(
+    signed_distance_mm: float,
+    *,
+    rule_name: str,
+    local_radius_mm: float,
+) -> bool:
+    """Return whether a point lies inside an inclusion rule's cutoff."""
+    cutoff_mm = _inclusion_rule_cutoff_mm(rule_name, local_radius_mm)
+    if rule_name == DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK:
+        return float(signed_distance_mm) < cutoff_mm
+    return float(signed_distance_mm) <= cutoff_mm
+
 
 DEEPSETS_FEATURE_BASELINE = "baseline"
 DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY = "geometry_topology"
 DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC = "geometry_topology_dynamic"
+DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE = "geometry_topology_plus_curvature"
+DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS = "geometry_topology_no_shells"
+DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC = "curvature_plus_dynamic"
 VALID_DEEPSETS_POINT_FEATURE_SETS: frozenset[str] = frozenset(
     {
         DEEPSETS_FEATURE_BASELINE,
         DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY,
         DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE,
+        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS,
+        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
     }
 )
 
@@ -95,6 +169,23 @@ def deepsets_point_feature_names(regime: str) -> list[str]:
     ]
     if regime == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY:
         return list(geom_topo)
+    if regime == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE:
+        return list(geom_topo + ["curvature_rad"])
+    if regime == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS:
+        return [
+            "signed_distance_mm",
+            "abs_signed_distance_mm",
+            "inside_tumor",
+            "degree",
+            "is_endpoint",
+            "is_chain",
+            "is_bifurcation",
+            "offset_x_mm",
+            "offset_y_mm",
+            "offset_z_mm",
+            "support_radius_mm",
+            "support_radius_available",
+        ]
     if regime == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC:
         return list(
             geom_topo
@@ -112,6 +203,21 @@ def deepsets_point_feature_names(regime: str) -> list[str]:
                 "reference_ok",
             ]
         )
+    if regime == DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC:
+        return [
+            "curvature_rad",
+            "arrival_index_norm",
+            "has_arrival",
+            "peak_index_norm",
+            "peak_enhancement",
+            "washin_slope",
+            "washout_slope",
+            "positive_enhancement_auc",
+            "peak_rel_reference",
+            "auc_rel_reference",
+            "kinetic_signal_ok",
+            "reference_ok",
+        ]
     raise ValueError(
         f"Unknown deepsets_point_feature_set {regime!r}; expected one of "
         f"{sorted(VALID_DEEPSETS_POINT_FEATURE_SETS)}"
@@ -176,7 +282,7 @@ def _reference_enhancement_baseline(
     )
     ref_enh = ref_curve - float(ref_curve[0])
     peak = float(np.max(np.maximum(ref_enh, 0.0)))
-    auc = float(np.trapz(np.maximum(ref_enh, 0.0), x=time_axis))
+    auc = float(_numpy_trapz(np.maximum(ref_enh, 0.0), x=time_axis))
     return peak, auc
 
 
@@ -234,7 +340,7 @@ def _dynamic_features_for_voxel(
     washout_slope = (
         float((enh[-1] - enh[peak_idx]) / washout_den) if washout_den > 0.0 else 0.0
     )
-    auc = float(np.trapz(np.maximum(enh, 0.0), x=time_axis))
+    auc = float(_numpy_trapz(np.maximum(enh, 0.0), x=time_axis))
     peak_rel = _safe_ratio(max(peak_enh, 0.0), max(ref_peak_enh, 1e-12))
     auc_rel = _safe_ratio(max(auc, 0.0), max(ref_auc_pos, 1e-12))
     ref_ok = 1.0 if ref_peak_enh > _REF_PEAK_EPS else 0.0
@@ -250,6 +356,86 @@ def _dynamic_features_for_voxel(
         auc_rel,
         kinetic_ok,
         ref_ok,
+    )
+
+
+def _dynamic_features_for_coords_batch(
+    *,
+    signal_4d: np.ndarray | None,
+    coords_xyz: list[tuple[int, int, int]],
+    ref_peak_enh: float,
+    ref_auc_pos: float,
+) -> np.ndarray:
+    """Vectorized dynamic features for many skeleton voxels."""
+    n_coords = len(coords_xyz)
+    if signal_4d is None or signal_4d.ndim != NDIM_4D or n_coords == 0:
+        return np.zeros((n_coords, 11), dtype=np.float64)
+    n_t = int(signal_4d.shape[0])
+    kinetic_ok = (
+        1.0 if n_t >= MIN_KINETIC_TIMEPOINTS and np.all(np.isfinite(signal_4d)) else 0.0
+    )
+    if kinetic_ok == 0.0:
+        return np.zeros((n_coords, 11), dtype=np.float64)
+
+    coords = np.asarray(coords_xyz, dtype=np.int64)
+    x = np.clip(coords[:, 0], 0, signal_4d.shape[3] - 1)
+    y = np.clip(coords[:, 1], 0, signal_4d.shape[2] - 1)
+    z = np.clip(coords[:, 2], 0, signal_4d.shape[1] - 1)
+    curves = np.asarray(signal_4d[:, z, y, x], dtype=np.float64).T
+    enh = curves - curves[:, [0]]
+    time_axis = np.arange(n_t, dtype=np.float64)
+    peak_idx = np.argmax(enh, axis=1)
+    peak_norm = peak_idx.astype(np.float64) / float(max(1, n_t - 1))
+    peak_enh = np.max(enh, axis=1)
+    auc = _numpy_trapz(np.maximum(enh, 0.0), x=time_axis, axis=1)
+    peak_rel = np.asarray(
+        [_safe_ratio(max(float(v), 0.0), max(ref_peak_enh, 1e-12)) for v in peak_enh],
+        dtype=np.float64,
+    )
+    auc_rel = np.asarray(
+        [_safe_ratio(max(float(v), 0.0), max(ref_auc_pos, 1e-12)) for v in auc],
+        dtype=np.float64,
+    )
+    ref_ok = 1.0 if ref_peak_enh > _REF_PEAK_EPS else 0.0
+
+    arrival_norm = np.zeros(n_coords, dtype=np.float64)
+    has_arr = np.zeros(n_coords, dtype=np.float64)
+    washin_slope = np.zeros(n_coords, dtype=np.float64)
+    washout_slope = np.zeros(n_coords, dtype=np.float64)
+    for idx in range(n_coords):
+        tte_idx = _arrival_index_from_enhancement(enh[idx])
+        arrival_norm[idx] = (
+            float(tte_idx) / float(max(1, n_t - 1)) if tte_idx is not None else 0.0
+        )
+        has_arr[idx] = 1.0 if tte_idx is not None else 0.0
+        start_idx = 0 if tte_idx is None else int(tte_idx)
+        washin_den = float(time_axis[peak_idx[idx]] - time_axis[start_idx])
+        washin_slope[idx] = (
+            float((enh[idx, peak_idx[idx]] - enh[idx, start_idx]) / washin_den)
+            if washin_den > 0.0
+            else 0.0
+        )
+        washout_den = float(time_axis[-1] - time_axis[peak_idx[idx]])
+        washout_slope[idx] = (
+            float((enh[idx, -1] - enh[idx, peak_idx[idx]]) / washout_den)
+            if washout_den > 0.0
+            else 0.0
+        )
+
+    return np.column_stack(
+        (
+            arrival_norm,
+            has_arr,
+            peak_norm,
+            peak_enh,
+            washin_slope,
+            washout_slope,
+            auc,
+            peak_rel,
+            auc_rel,
+            np.full(n_coords, kinetic_ok, dtype=np.float64),
+            np.full(n_coords, ref_ok, dtype=np.float64),
+        )
     )
 
 
@@ -289,6 +475,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=int(os.environ.get("DEEPSETS_BUILD_WORKERS", "1")),
+        help="Parallel case workers within one shard (default 1).",
+    )
+    parser.add_argument(
+        "--case-timing-threshold-sec",
+        type=float,
+        default=30.0,
+        help="Log per-case timing when a case exceeds this wall time.",
+    )
     return parser.parse_args()
 
 
@@ -479,17 +677,28 @@ def _build_case_set(
         )
 
     kinetic_tp = int(signal_4d.shape[0]) if signal_4d is not None else 0
+    dynamic_batch: np.ndarray | None = None
+    if point_feature_set in {
+        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
+    }:
+        dynamic_batch = _dynamic_features_for_coords_batch(
+            signal_4d=signal_4d,
+            coords_xyz=coords_xyz,
+            ref_peak_enh=ref_peak,
+            ref_auc_pos=ref_auc,
+        )
 
-    def _one_row(xyz_vox: tuple[int, int, int]) -> list[float]:
+    def _one_row(xyz_vox: tuple[int, int, int], coord_index: int) -> list[float]:
         signed_distance_mm = _sample_signed_distance_mm(xyz_vox, signed_dist_mm)
         neighbors = neighbor_map[xyz_vox]
         deg = len(neighbors)
+        curvature_rad = _compute_curvature(
+            xyz_vox=xyz_vox,
+            neighbor_xyz=neighbors,
+            spacing_mm_zyx=spacing_mm_zyx,
+        )
         if point_feature_set == DEEPSETS_FEATURE_BASELINE:
-            curvature_rad = _compute_curvature(
-                xyz_vox=xyz_vox,
-                neighbor_xyz=neighbors,
-                spacing_mm_zyx=spacing_mm_zyx,
-            )
             return [float(curvature_rad)]
 
         pmm = _point_mm(xyz_vox, spacing_mm_zyx)
@@ -520,21 +729,44 @@ def _build_case_set(
             sup_r,
             support_radius_available_scalar,
         ]
+        row_no_shells = [
+            float(signed_distance_mm),
+            float(abs(signed_distance_mm)),
+            1.0 if signed_distance_mm < 0.0 else 0.0,
+            float(deg),
+            1.0 if deg == ENDPOINT_DEGREE else 0.0,
+            1.0 if deg == CHAIN_DEGREE else 0.0,
+            1.0 if deg >= BIFURCATION_MIN_DEGREE else 0.0,
+            float(off[0]),
+            float(off[1]),
+            float(off[2]),
+            sup_r,
+            support_radius_available_scalar,
+        ]
         if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY:
             return row
-        dyn = _dynamic_features_for_voxel(
-            signal_4d=signal_4d,
-            xyz_vox=xyz_vox,
-            ref_peak_enh=ref_peak,
-            ref_auc_pos=ref_auc,
-        )
+        if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE:
+            return row + [float(curvature_rad)]
+        if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS:
+            return row_no_shells
+        if dynamic_batch is None:
+            dyn = _dynamic_features_for_voxel(
+                signal_4d=signal_4d,
+                xyz_vox=xyz_vox,
+                ref_peak_enh=ref_peak,
+                ref_auc_pos=ref_auc,
+            )
+        else:
+            dyn = tuple(float(v) for v in dynamic_batch[coord_index])
+        if point_feature_set == DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC:
+            return [float(curvature_rad)] + list(dyn)
         return row + list(dyn)
 
     candidate_rows: list[tuple[float, list[float]]] = []
     feature_rows: list[list[float]] = []
-    for xyz_vox in coords_xyz:
+    for coord_index, xyz_vox in enumerate(coords_xyz):
         signed_distance_mm = _sample_signed_distance_mm(xyz_vox, signed_dist_mm)
-        row = _one_row(xyz_vox)
+        row = _one_row(xyz_vox, coord_index)
         if len(row) != len(feature_names):
             raise RuntimeError(
                 f"Feature count mismatch for {case_id}: row={len(row)} names={len(feature_names)}"
@@ -544,8 +776,6 @@ def _build_case_set(
         elif toy_perfect_feature:
             row = list(row) + [float(label)]
         candidate_rows.append((float(signed_distance_mm), row))
-        if signed_distance_mm <= float(local_radius_mm):
-            feature_rows.append(row)
 
     selected_rows_by_rule: dict[str, list[list[float]]] = {}
     fallback_by_rule: dict[str, bool] = {}
@@ -563,21 +793,28 @@ def _build_case_set(
             )
         selected_rows: list[list[float]]
         used_fallback = False
-        if rule_name == DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK:
-            selected_rows = list(feature_rows)
-            if not selected_rows:
+        policy = _inclusion_rule_policy(rule_name)
+        if policy == "nearest":
+            candidate_rows.sort(key=lambda pair: pair[0])
+            selected_rows = [
+                row for _, row in candidate_rows[:FALLBACK_NEAREST_POINT_COUNT]
+            ]
+        else:
+            selected_rows = [
+                row
+                for signed_distance_mm, row in candidate_rows
+                if _signed_distance_within_inclusion_cutoff(
+                    signed_distance_mm,
+                    rule_name=rule_name,
+                    local_radius_mm=local_radius_mm,
+                )
+            ]
+            if policy == "fallback" and not selected_rows:
                 candidate_rows.sort(key=lambda pair: pair[0])
                 selected_rows = [
                     row for _, row in candidate_rows[:FALLBACK_NEAREST_POINT_COUNT]
                 ]
                 used_fallback = bool(selected_rows)
-        elif rule_name == DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY:
-            selected_rows = list(feature_rows)
-        else:
-            candidate_rows.sort(key=lambda pair: pair[0])
-            selected_rows = [
-                row for _, row in candidate_rows[:FALLBACK_NEAREST_POINT_COUNT]
-            ]
         selected_rows_by_rule[rule_name] = selected_rows
         fallback_by_rule[rule_name] = bool(used_fallback)
 
@@ -614,6 +851,11 @@ def _build_case_set(
             for rule_name, rows_for_rule in selected_rows_by_rule.items()
         },
     }
+
+
+def _build_case_set_task(case_kwargs: dict[str, Any]) -> dict[str, Any] | None:
+    """Worker entrypoint for parallel case-set construction."""
+    return _build_case_set(**case_kwargs)
 
 
 def main() -> None:
@@ -758,21 +1000,106 @@ def main() -> None:
     vessel_root_opt = (
         Path(str(vessel_root_raw)) if str(vessel_root_raw).strip() else None
     )
+    cache_root = resolve_cache_root(output_dir=output_dir)
+    case_timing_threshold_sec = float(args.case_timing_threshold_sec)
+    build_workers = max(1, int(args.num_workers))
 
-    logging.info(
-        "Starting Deep Sets dataset build for %d cases into %s (point_feature_set=%s)",
-        total_cases,
-        output_dir,
-        point_feature_set,
-    )
+    with stage_timer(
+        "build",
+        shard_index=shard_index,
+        num_shards=num_shards,
+        point_feature_set=point_feature_set,
+        output_dir=output_dir,
+        total_cases=total_cases,
+        num_workers=build_workers,
+    ):
+        logging.info(
+            "Starting Deep Sets dataset build for %d cases into %s "
+            "(point_feature_set=%s shard=%d/%d cache_root=%s)",
+            total_cases,
+            output_dir,
+            point_feature_set,
+            shard_index,
+            num_shards,
+            cache_root,
+        )
 
-    for index, row in enumerate(manifest_source.itertuples(index=False), start=1):
-        case_id = str(row.case_id)
-        dataset_name = str(getattr(row, "dataset", ""))
-        study_dir = centerline_root / dataset_name / case_id
-        skeleton_path = study_dir / skeleton_pattern.format(case_id=case_id)
-        if not skeleton_path.exists():
-            skipped_missing_centerline += 1
+        pending_builds: list[dict[str, Any]] = []
+        executor: ProcessPoolExecutor | None = None
+        if build_workers > 1:
+            executor = ProcessPoolExecutor(max_workers=build_workers)
+
+        def _finalize_case(
+            *,
+            index: int,
+            row: Any,
+            dataset_name: str,
+            case_started: float,
+            case_set: dict[str, Any] | None,
+        ) -> None:
+            nonlocal skipped_empty_case_set, fallback_case_sets, inclusion_rule_stats
+            if case_set is None:
+                skipped_empty_case_set += 1
+                if index % progress_every == 0 or index == total_cases:
+                    logging.info(
+                        "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
+                        "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
+                        index,
+                        total_cases,
+                        len(rows),
+                        skipped_missing_centerline,
+                        skipped_missing_tumor_mask,
+                        skipped_empty_case_set,
+                        failed_case_builds,
+                        fallback_case_sets,
+                    )
+                return
+            metrics_by_rule = case_set.get("inclusion_rule_metrics", {})
+            if isinstance(metrics_by_rule, dict):
+                for rule_name in compared_inclusion_rules:
+                    metric = metrics_by_rule.get(rule_name, {})
+                    wrote_case_set = int(metric.get("wrote_case_set", 0))
+                    num_points = int(metric.get("num_points", 0))
+                    used_rule_fallback = int(
+                        metric.get("used_fallback_nearest_points", 0)
+                    )
+                    if wrote_case_set:
+                        inclusion_rule_stats[rule_name]["cases_written"] += 1
+                        inclusion_rule_stats[rule_name]["num_points"].append(num_points)
+                    else:
+                        inclusion_rule_stats[rule_name]["cases_skipped"] += 1
+                    inclusion_rule_stats[rule_name]["fallback_cases"] += (
+                        used_rule_fallback
+                    )
+            fallback_case_sets += int(case_set.get("used_fallback_nearest_points", 0.0))
+            case_id = str(row.case_id)
+            set_path = set_dir / f"{case_id}.pt"
+            torch.save(case_set, set_path)
+            manifest_row = {
+                "case_id": case_id,
+                "set_path": str(set_path),
+                "label": int(row.label),
+                "dataset": dataset_name,
+                "num_points": int(case_set["num_points"]),
+                "local_radius_mm": float(case_set["local_radius_mm"]),
+                "tumor_equiv_radius_mm": float(case_set["tumor_equiv_radius_mm"]),
+                "used_fallback_nearest_points": int(
+                    case_set["used_fallback_nearest_points"]
+                ),
+                "point_feature_set": str(case_set["point_feature_set"]),
+                "kinetic_timepoint_count": int(case_set["kinetic_timepoint_count"]),
+            }
+            for col in optional_metadata_cols:
+                manifest_row[col] = _str_or_empty(getattr(row, col, ""))
+            rows.append(manifest_row)
+            log_case_timing(
+                case_id=case_id,
+                elapsed_sec=time.perf_counter() - case_started,
+                shard_index=shard_index,
+                num_shards=num_shards,
+                point_feature_set=point_feature_set,
+                threshold_sec=case_timing_threshold_sec,
+            )
             if index % progress_every == 0 or index == total_cases:
                 logging.info(
                     "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
@@ -786,18 +1113,44 @@ def main() -> None:
                     failed_case_builds,
                     fallback_case_sets,
                 )
-            continue
 
-        try:
-            skeleton_mask = np.load(skeleton_path).astype(bool, copy=False)
-            tumor_mask_path = resolve_tumor_mask_path(
-                case_id=case_id,
-                dataset_name=dataset_name,
-                tumor_mask_root=tumor_mask_root,
-                tumor_mask_pattern=tumor_mask_pattern,
-            )
-            if tumor_mask_path is None:
-                skipped_missing_tumor_mask += 1
+        def _flush_pending_builds() -> None:
+            if not pending_builds:
+                return
+            if executor is None:
+                for pending in pending_builds:
+                    case_set = _build_case_set(**pending["case_kwargs"])
+                    _finalize_case(
+                        index=pending["index"],
+                        row=pending["row"],
+                        dataset_name=pending["dataset_name"],
+                        case_started=pending["case_started"],
+                        case_set=case_set,
+                    )
+            else:
+                futures = [
+                    executor.submit(_build_case_set_task, pending["case_kwargs"])
+                    for pending in pending_builds
+                ]
+                for pending, future in zip(pending_builds, futures, strict=True):
+                    case_set = future.result()
+                    _finalize_case(
+                        index=pending["index"],
+                        row=pending["row"],
+                        dataset_name=pending["dataset_name"],
+                        case_started=pending["case_started"],
+                        case_set=case_set,
+                    )
+            pending_builds.clear()
+
+        for index, row in enumerate(manifest_source.itertuples(index=False), start=1):
+            case_started = time.perf_counter()
+            case_id = str(row.case_id)
+            dataset_name = str(getattr(row, "dataset", ""))
+            study_dir = centerline_root / dataset_name / case_id
+            skeleton_path = study_dir / skeleton_pattern.format(case_id=case_id)
+            if not skeleton_path.exists():
+                skipped_missing_centerline += 1
                 if index % progress_every == 0 or index == total_cases:
                     logging.info(
                         "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
@@ -812,207 +1165,275 @@ def main() -> None:
                         fallback_case_sets,
                     )
                 continue
-            tumor_mask_zyx, spacing_mm_zyx = _load_mask_with_spacing(
-                tumor_mask_path,
-                expected_shape_zyx=tuple(int(v) for v in skeleton_mask.shape),
-                threshold=tumor_threshold,
-            )
-            tumor_equiv_radius_mm, local_radius_mm = _compute_local_radius_mm(
-                tumor_mask_zyx,
-                spacing_mm_zyx,
-                radius_floor_mm=radius_floor_mm,
-                radius_scale=radius_scale,
-                radius_cap_mm=radius_cap_mm,
-            )
-            sk_shape = tuple(int(v) for v in skeleton_mask.shape)
-            support_path = study_dir / support_pattern.format(case_id=case_id)
-            support_edt_mm_zyx: np.ndarray | None = None
-            support_radius_available_scalar = 0.0
-            if support_path.exists():
-                try:
-                    sup_mask = np.load(support_path).astype(bool, copy=False)
-                    if tuple(sup_mask.shape) == sk_shape:
-                        support_edt_mm_zyx = ndimage.distance_transform_edt(
-                            sup_mask,
-                            sampling=spacing_mm_zyx,
-                        ).astype(np.float32, copy=False)
-                        support_radius_available_scalar = 1.0
-                except (OSError, ValueError) as sup_exc:
-                    logging.warning(
-                        "Could not load support mask for %s (%s): %s",
-                        case_id,
-                        support_path,
-                        sup_exc,
-                    )
-            signal_4d: np.ndarray | None = None
-            if point_feature_set == DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC:
-                signal_4d = _try_load_vessel_4d(
-                    vessel_root=vessel_root_opt,
+
+            try:
+                tumor_mask_path = resolve_tumor_mask_path(
                     case_id=case_id,
-                    expected_shape_zyx=sk_shape,
+                    dataset_name=dataset_name,
+                    tumor_mask_root=tumor_mask_root,
+                    tumor_mask_pattern=tumor_mask_pattern,
                 )
-                if signal_4d is not None and tuple(signal_4d.shape[1:]) != sk_shape:
-                    logging.warning(
-                        "Vessel 4D shape mismatch for %s: %s vs skeleton %s; skipping dynamics",
-                        case_id,
-                        signal_4d.shape,
-                        sk_shape,
+                support_path = study_dir / support_pattern.format(case_id=case_id)
+                cache_dir = None
+                cached_case: dict[str, Any] | None = None
+                if cache_root is not None:
+                    source_paths = [skeleton_path]
+                    if tumor_mask_path is not None:
+                        source_paths.append(tumor_mask_path)
+                    if support_path.exists():
+                        source_paths.append(support_path)
+                    cache_dir = cache_dir_for_case(
+                        cache_root,
+                        case_id=case_id,
+                        dataset_name=dataset_name,
+                        source_paths=source_paths,
                     )
-                    signal_4d = None
-            case_set = _build_case_set(
-                case_id=case_id,
-                label=int(row.label),
-                skeleton_mask_zyx=skeleton_mask,
-                tumor_mask_zyx=tumor_mask_zyx,
-                spacing_mm_zyx=spacing_mm_zyx,
-                local_radius_mm=local_radius_mm,
-                tumor_equiv_radius_mm=tumor_equiv_radius_mm,
-                point_feature_set=point_feature_set,
-                support_edt_mm_zyx=support_edt_mm_zyx,
-                support_radius_available_scalar=support_radius_available_scalar,
-                signal_4d=signal_4d,
-                inclusion_rule=inclusion_rule,
-                compare_inclusion_rules=compared_inclusion_rules,
-                toy_perfect_feature=toy_perfect_feature,
-                toy_only=toy_only,
-            )
-        except Exception as exc:  # noqa: BLE001
-            failed_case_builds += 1
-            logging.warning("Failed Deep Sets dataset build for %s: %s", case_id, exc)
-            if index % progress_every == 0 or index == total_cases:
-                logging.info(
-                    "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
-                    "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
-                    index,
-                    total_cases,
-                    len(rows),
-                    skipped_missing_centerline,
-                    skipped_missing_tumor_mask,
-                    skipped_empty_case_set,
-                    failed_case_builds,
-                    fallback_case_sets,
-                )
-            continue
-
-        if case_set is None:
-            skipped_empty_case_set += 1
-            if index % progress_every == 0 or index == total_cases:
-                logging.info(
-                    "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
-                    "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
-                    index,
-                    total_cases,
-                    len(rows),
-                    skipped_missing_centerline,
-                    skipped_missing_tumor_mask,
-                    skipped_empty_case_set,
-                    failed_case_builds,
-                    fallback_case_sets,
-                )
-            continue
-        metrics_by_rule = case_set.get("inclusion_rule_metrics", {})
-        if isinstance(metrics_by_rule, dict):
-            for rule_name in compared_inclusion_rules:
-                metric = metrics_by_rule.get(rule_name, {})
-                wrote_case_set = int(metric.get("wrote_case_set", 0))
-                num_points = int(metric.get("num_points", 0))
-                used_rule_fallback = int(metric.get("used_fallback_nearest_points", 0))
-                if wrote_case_set:
-                    inclusion_rule_stats[rule_name]["cases_written"] += 1
-                    inclusion_rule_stats[rule_name]["num_points"].append(num_points)
+                    cached_case = load_case_cache(cache_dir)
+                if cached_case is not None:
+                    skeleton_mask = np.asarray(cached_case["skeleton_mask"], dtype=bool)
+                    tumor_mask_zyx = np.asarray(
+                        cached_case["tumor_mask_zyx"], dtype=bool
+                    )
+                    spacing_mm_zyx = tuple(
+                        float(v)
+                        for v in np.asarray(cached_case["spacing_mm_zyx"]).tolist()
+                    )
+                    local_radius_mm = float(cached_case["local_radius_mm"])
+                    tumor_equiv_radius_mm = float(cached_case["tumor_equiv_radius_mm"])
+                    support_radius_available_scalar = float(
+                        cached_case["support_radius_available_scalar"]
+                    )
+                    support_edt_mm_zyx = (
+                        np.asarray(cached_case["support_edt_mm_zyx"], dtype=np.float32)
+                        if "support_edt_mm_zyx" in cached_case
+                        else None
+                    )
+                    signal_4d = (
+                        np.asarray(cached_case["signal_4d"], dtype=np.float32)
+                        if "signal_4d" in cached_case
+                        else None
+                    )
                 else:
-                    inclusion_rule_stats[rule_name]["cases_skipped"] += 1
-                inclusion_rule_stats[rule_name]["fallback_cases"] += used_rule_fallback
-        fallback_case_sets += int(case_set.get("used_fallback_nearest_points", 0.0))
+                    skeleton_mask = np.load(skeleton_path).astype(bool, copy=False)
+                    if tumor_mask_path is None:
+                        skipped_missing_tumor_mask += 1
+                        if index % progress_every == 0 or index == total_cases:
+                            logging.info(
+                                "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
+                                "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
+                                index,
+                                total_cases,
+                                len(rows),
+                                skipped_missing_centerline,
+                                skipped_missing_tumor_mask,
+                                skipped_empty_case_set,
+                                failed_case_builds,
+                                fallback_case_sets,
+                            )
+                        continue
+                    tumor_mask_zyx, spacing_mm_zyx = _load_mask_with_spacing(
+                        tumor_mask_path,
+                        expected_shape_zyx=tuple(int(v) for v in skeleton_mask.shape),
+                        threshold=tumor_threshold,
+                    )
+                    tumor_equiv_radius_mm, local_radius_mm = _compute_local_radius_mm(
+                        tumor_mask_zyx,
+                        spacing_mm_zyx,
+                        radius_floor_mm=radius_floor_mm,
+                        radius_scale=radius_scale,
+                        radius_cap_mm=radius_cap_mm,
+                    )
+                    sk_shape = tuple(int(v) for v in skeleton_mask.shape)
+                    support_edt_mm_zyx = None
+                    support_radius_available_scalar = 0.0
+                    if support_path.exists():
+                        try:
+                            sup_mask = np.load(support_path).astype(bool, copy=False)
+                            if tuple(sup_mask.shape) == sk_shape:
+                                support_edt_mm_zyx = ndimage.distance_transform_edt(
+                                    sup_mask,
+                                    sampling=spacing_mm_zyx,
+                                ).astype(np.float32, copy=False)
+                                support_radius_available_scalar = 1.0
+                        except (OSError, ValueError) as sup_exc:
+                            logging.warning(
+                                "Could not load support mask for %s (%s): %s",
+                                case_id,
+                                support_path,
+                                sup_exc,
+                            )
+                    signal_4d = None
+                    if point_feature_set in {
+                        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+                        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
+                    }:
+                        signal_4d = _try_load_vessel_4d(
+                            vessel_root=vessel_root_opt,
+                            case_id=case_id,
+                            expected_shape_zyx=sk_shape,
+                        )
+                        if (
+                            signal_4d is not None
+                            and tuple(signal_4d.shape[1:]) != sk_shape
+                        ):
+                            logging.warning(
+                                "Vessel 4D shape mismatch for %s: %s vs skeleton %s; skipping dynamics",
+                                case_id,
+                                signal_4d.shape,
+                                sk_shape,
+                            )
+                            signal_4d = None
+                    if cache_dir is not None:
+                        cache_payload: dict[str, Any] = {
+                            "skeleton_mask": skeleton_mask.astype(np.uint8),
+                            "tumor_mask_zyx": tumor_mask_zyx.astype(np.uint8),
+                            "spacing_mm_zyx": np.asarray(
+                                spacing_mm_zyx, dtype=np.float32
+                            ),
+                            "local_radius_mm": float(local_radius_mm),
+                            "tumor_equiv_radius_mm": float(tumor_equiv_radius_mm),
+                            "support_radius_available_scalar": float(
+                                support_radius_available_scalar
+                            ),
+                        }
+                        if support_edt_mm_zyx is not None:
+                            cache_payload["support_edt_mm_zyx"] = support_edt_mm_zyx
+                        if signal_4d is not None:
+                            cache_payload["signal_4d"] = signal_4d.astype(np.float32)
+                        save_case_cache(cache_dir, cache_payload)
+                if (
+                    cached_case is not None
+                    and signal_4d is None
+                    and point_feature_set
+                    in {
+                        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+                        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
+                    }
+                ):
+                    sk_shape = tuple(int(v) for v in skeleton_mask.shape)
+                    signal_4d = _try_load_vessel_4d(
+                        vessel_root=vessel_root_opt,
+                        case_id=case_id,
+                        expected_shape_zyx=sk_shape,
+                    )
+                case_kwargs = {
+                    "case_id": case_id,
+                    "label": int(row.label),
+                    "skeleton_mask_zyx": skeleton_mask,
+                    "tumor_mask_zyx": tumor_mask_zyx,
+                    "spacing_mm_zyx": spacing_mm_zyx,
+                    "local_radius_mm": local_radius_mm,
+                    "tumor_equiv_radius_mm": tumor_equiv_radius_mm,
+                    "point_feature_set": point_feature_set,
+                    "support_edt_mm_zyx": support_edt_mm_zyx,
+                    "support_radius_available_scalar": support_radius_available_scalar,
+                    "signal_4d": signal_4d,
+                    "inclusion_rule": inclusion_rule,
+                    "compare_inclusion_rules": compared_inclusion_rules,
+                    "toy_perfect_feature": toy_perfect_feature,
+                    "toy_only": toy_only,
+                }
+                if build_workers > 1:
+                    pending_builds.append(
+                        {
+                            "index": index,
+                            "row": row,
+                            "dataset_name": dataset_name,
+                            "case_started": case_started,
+                            "case_kwargs": case_kwargs,
+                        }
+                    )
+                    if len(pending_builds) >= build_workers:
+                        _flush_pending_builds()
+                else:
+                    case_set = _build_case_set(**case_kwargs)
+                    _finalize_case(
+                        index=index,
+                        row=row,
+                        dataset_name=dataset_name,
+                        case_started=case_started,
+                        case_set=case_set,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                failed_case_builds += 1
+                logging.warning(
+                    "Failed Deep Sets dataset build for %s: %s", case_id, exc
+                )
+                if index % progress_every == 0 or index == total_cases:
+                    logging.info(
+                        "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
+                        "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
+                        index,
+                        total_cases,
+                        len(rows),
+                        skipped_missing_centerline,
+                        skipped_missing_tumor_mask,
+                        skipped_empty_case_set,
+                        failed_case_builds,
+                        fallback_case_sets,
+                    )
+                continue
 
-        set_path = set_dir / f"{case_id}.pt"
-        torch.save(case_set, set_path)
-        manifest_row = {
-            "case_id": case_id,
-            "set_path": str(set_path),
-            "label": int(row.label),
-            "dataset": dataset_name,
-            "num_points": int(case_set["num_points"]),
-            "local_radius_mm": float(case_set["local_radius_mm"]),
-            "tumor_equiv_radius_mm": float(case_set["tumor_equiv_radius_mm"]),
-            "used_fallback_nearest_points": int(
-                case_set["used_fallback_nearest_points"]
-            ),
-            "point_feature_set": str(case_set["point_feature_set"]),
-            "kinetic_timepoint_count": int(case_set["kinetic_timepoint_count"]),
-        }
-        for col in optional_metadata_cols:
-            manifest_row[col] = _str_or_empty(getattr(row, col, ""))
-        rows.append(manifest_row)
+        _flush_pending_builds()
+        if executor is not None:
+            executor.shutdown(wait=True)
 
-        if index % progress_every == 0 or index == total_cases:
-            logging.info(
-                "Deep Sets build progress %d/%d: wrote=%d missing_centerline=%d "
-                "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d",
-                index,
-                total_cases,
-                len(rows),
-                skipped_missing_centerline,
-                skipped_missing_tumor_mask,
-                skipped_empty_case_set,
-                failed_case_builds,
-                fallback_case_sets,
+        manifest_df = pd.DataFrame(rows).sort_values("case_id").reset_index(drop=True)
+        if num_shards > 1:
+            manifest_path = (
+                manifest_parts_dir / f"deepsets_manifest_part_{shard_index:03d}.csv"
             )
-
-    manifest_df = pd.DataFrame(rows).sort_values("case_id").reset_index(drop=True)
-    if num_shards > 1:
-        manifest_path = (
-            manifest_parts_dir / f"deepsets_manifest_part_{shard_index:03d}.csv"
-        )
-    else:
-        manifest_path = output_dir / "deepsets_manifest.csv"
-    manifest_df.to_csv(manifest_path, index=False)
-    inclusion_summary_rows: list[dict[str, Any]] = []
-    for rule_name in compared_inclusion_rules:
-        stats = inclusion_rule_stats[rule_name]
-        cases_written = int(stats["cases_written"])
-        cases_skipped = int(stats["cases_skipped"])
-        fallback_cases = int(stats["fallback_cases"])
-        num_points_values = [int(v) for v in stats["num_points"]]
-        fallback_fraction = (
-            float(fallback_cases) / float(cases_written) if cases_written > 0 else 0.0
-        )
-        if num_points_values:
-            num_points_min = int(min(num_points_values))
-            num_points_max = int(max(num_points_values))
-            num_points_median = float(
-                np.median(np.asarray(num_points_values, dtype=float))
-            )
-            num_points_range = f"{num_points_min}-{num_points_max}"
         else:
-            num_points_median = 0.0
-            num_points_range = "0-0"
-        inclusion_summary_rows.append(
-            {
-                "inclusion_rule": rule_name,
-                "cases_written": cases_written,
-                "cases_skipped": cases_skipped,
-                "fallback_fraction": fallback_fraction,
-                "num_points_median": num_points_median,
-                "num_points_range": num_points_range,
-            }
+            manifest_path = output_dir / "deepsets_manifest.csv"
+        manifest_df.to_csv(manifest_path, index=False)
+        inclusion_summary_rows: list[dict[str, Any]] = []
+        for rule_name in compared_inclusion_rules:
+            stats = inclusion_rule_stats[rule_name]
+            cases_written = int(stats["cases_written"])
+            cases_skipped = int(stats["cases_skipped"])
+            fallback_cases = int(stats["fallback_cases"])
+            num_points_values = [int(v) for v in stats["num_points"]]
+            fallback_fraction = (
+                float(fallback_cases) / float(cases_written)
+                if cases_written > 0
+                else 0.0
+            )
+            if num_points_values:
+                num_points_min = int(min(num_points_values))
+                num_points_max = int(max(num_points_values))
+                num_points_median = float(
+                    np.median(np.asarray(num_points_values, dtype=float))
+                )
+                num_points_range = f"{num_points_min}-{num_points_max}"
+            else:
+                num_points_median = 0.0
+                num_points_range = "0-0"
+            inclusion_summary_rows.append(
+                {
+                    "inclusion_rule": rule_name,
+                    "cases_written": cases_written,
+                    "cases_skipped": cases_skipped,
+                    "fallback_fraction": fallback_fraction,
+                    "num_points_median": num_points_median,
+                    "num_points_range": num_points_range,
+                }
+            )
+        inclusion_summary_df = pd.DataFrame(inclusion_summary_rows)
+        inclusion_summary_path = output_dir / "inclusion_rule_summary.csv"
+        inclusion_summary_df.to_csv(inclusion_summary_path, index=False)
+        logging.info(
+            "Finished Deep Sets dataset build: wrote=%d total=%d missing_centerline=%d "
+            "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d manifest=%s",
+            len(manifest_df),
+            total_cases,
+            skipped_missing_centerline,
+            skipped_missing_tumor_mask,
+            skipped_empty_case_set,
+            failed_case_builds,
+            fallback_case_sets,
+            manifest_path,
         )
-    inclusion_summary_df = pd.DataFrame(inclusion_summary_rows)
-    inclusion_summary_path = output_dir / "inclusion_rule_summary.csv"
-    inclusion_summary_df.to_csv(inclusion_summary_path, index=False)
-    logging.info(
-        "Finished Deep Sets dataset build: wrote=%d total=%d missing_centerline=%d "
-        "missing_tumor_mask=%d empty_case_set=%d failed=%d fallback=%d manifest=%s",
-        len(manifest_df),
-        total_cases,
-        skipped_missing_centerline,
-        skipped_missing_tumor_mask,
-        skipped_empty_case_set,
-        failed_case_builds,
-        fallback_case_sets,
-        manifest_path,
-    )
-    logging.info("Wrote inclusion rule summary to %s", inclusion_summary_path)
+        logging.info("Wrote inclusion rule summary to %s", inclusion_summary_path)
 
 
 if __name__ == "__main__":

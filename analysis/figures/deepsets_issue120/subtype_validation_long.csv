@@ -1,0 +1,31 @@
+arm,regime,out_root,subtype,auc,ap
+ISPY2 baseline (curvature only),baseline,experiments/deepsets_ispy2_pointfeat_baseline,her2_enriched,0.6284722222222221,0.7234305670172104
+ISPY2 baseline (curvature only),baseline,experiments/deepsets_ispy2_pointfeat_baseline,luminal_a,0.5124211356466877,0.17857954684247568
+ISPY2 baseline (curvature only),baseline,experiments/deepsets_ispy2_pointfeat_baseline,luminal_b,0.5322234156820623,0.40595778586628317
+ISPY2 baseline (curvature only),baseline,experiments/deepsets_ispy2_pointfeat_baseline,triple_negative,0.4815177958623394,0.38549248795569657
+ISPY2 geometry + topology,geometry_topology,experiments/deepsets_ispy2_pointfeat_geom_topo,her2_enriched,0.5208333333333333,0.6473938935300778
+ISPY2 geometry + topology,geometry_topology,experiments/deepsets_ispy2_pointfeat_geom_topo,luminal_a,0.504929022082019,0.17774832213910738
+ISPY2 geometry + topology,geometry_topology,experiments/deepsets_ispy2_pointfeat_geom_topo,luminal_b,0.5746509129967776,0.42665739668533564
+ISPY2 geometry + topology,geometry_topology,experiments/deepsets_ispy2_pointfeat_geom_topo,triple_negative,0.4793934045821486,0.4003909084084204
+ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_ispy2_pointfeat_geom_topo_plus_curvature,her2_enriched,0.6116898148148149,0.7392788133214855
+ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_ispy2_pointfeat_geom_topo_plus_curvature,luminal_a,0.5142941640378549,0.183897719897601
+ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_ispy2_pointfeat_geom_topo_plus_curvature,luminal_b,0.556390977443609,0.48216344919099374
+ISPY2 geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_ispy2_pointfeat_geom_topo_plus_curvature,triple_negative,0.5167500081707357,0.4159812071365857
+ISPY2 geometry + topology (no shells),geometry_topology_no_shells,experiments/deepsets_ispy2_pointfeat_geom_topo_no_shells,her2_enriched,0.6637731481481483,0.7257732044323537
+ISPY2 geometry + topology (no shells),geometry_topology_no_shells,experiments/deepsets_ispy2_pointfeat_geom_topo_no_shells,luminal_a,0.5191738958990536,0.18670271508500633
+ISPY2 geometry + topology (no shells),geometry_topology_no_shells,experiments/deepsets_ispy2_pointfeat_geom_topo_no_shells,luminal_b,0.5293591120658789,0.41340201505292384
+ISPY2 geometry + topology (no shells),geometry_topology_no_shells,experiments/deepsets_ispy2_pointfeat_geom_topo_no_shells,triple_negative,0.5125992744386705,0.42575479921517306
+All cohorts baseline (curvature only),baseline,experiments/deepsets_mamamia_pointfeat_baseline,her2_enriched,0.511454837297534,0.46227344872944043
+All cohorts baseline (curvature only),baseline,experiments/deepsets_mamamia_pointfeat_baseline,her2_pure,0.5110887096774194,0.4789039802609472
+All cohorts baseline (curvature only),baseline,experiments/deepsets_mamamia_pointfeat_baseline,luminal,0.5430402930402931,0.17567726087244734
+All cohorts baseline (curvature only),baseline,experiments/deepsets_mamamia_pointfeat_baseline,luminal_a,0.5219341482649842,0.18228687814395367
+All cohorts baseline (curvature only),baseline,experiments/deepsets_mamamia_pointfeat_baseline,luminal_b,0.5401002506265664,0.40217553219388086
+All cohorts baseline (curvature only),baseline,experiments/deepsets_mamamia_pointfeat_baseline,nan,0.37142857142857144,0.2081800445930881
+All cohorts baseline (curvature only),baseline,experiments/deepsets_mamamia_pointfeat_baseline,triple_negative,0.47354888701042547,0.3551479912802642
+All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_mamamia_pointfeat_geom_topo_plus_curvature,her2_enriched,0.5209397344228804,0.5042914993293943
+All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_mamamia_pointfeat_geom_topo_plus_curvature,her2_pure,0.5201612903225806,0.6092879176040874
+All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_mamamia_pointfeat_geom_topo_plus_curvature,luminal,0.4775641025641026,0.11227220754518477
+All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_mamamia_pointfeat_geom_topo_plus_curvature,luminal_a,0.4894518927444795,0.18321739809514007
+All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_mamamia_pointfeat_geom_topo_plus_curvature,luminal_b,0.516469745793054,0.37455988649180916
+All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_mamamia_pointfeat_geom_topo_plus_curvature,nan,0.5238095238095238,0.3032234432234432
+All cohorts geometry + topology + curvature,geometry_topology_plus_curvature,experiments/deepsets_mamamia_pointfeat_geom_topo_plus_curvature,triple_negative,0.5212031558185405,0.4387902333730147
