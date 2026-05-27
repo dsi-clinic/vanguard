@@ -24,17 +24,31 @@ fi
 export PYTHONUNBUFFERED=1
 
 case "${MODE}" in
+  build-single)
+    # One process, --num-shards 1: writes manifest at OUT_ROOT/deepsets_manifest.csv
+    CONFIG="${CONFIG:?CONFIG is required for MODE=build-single}"
+    OUT_ROOT="${OUT_ROOT:?OUT_ROOT is required for MODE=build-single}"
+    mkdir -p "${OUT_ROOT}"
+    python -u build_deepsets_dataset.py \
+      --config "${CONFIG}" \
+      --output-dir "${OUT_ROOT}"
+    ;;
   build)
     CONFIG="${CONFIG:?CONFIG is required for MODE=build}"
     OUT_ROOT="${OUT_ROOT:?OUT_ROOT is required for MODE=build}"
     NUM_SHARDS="${NUM_SHARDS:?NUM_SHARDS is required for MODE=build}"
     SHARD_INDEX="${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required for MODE=build}"
     mkdir -p "${OUT_ROOT}"
+    BUILD_WORKERS="${DEEPSETS_BUILD_WORKERS:-${SLURM_CPUS_PER_TASK:-1}}"
+    if [[ -n "${SLURM_TMPDIR:-}" ]]; then
+      export DEEPSETS_CACHE_ROOT="${DEEPSETS_CACHE_ROOT:-${SLURM_TMPDIR}/deepsets_build_cache}"
+    fi
     python -u build_deepsets_dataset.py \
       --config "${CONFIG}" \
       --output-dir "${OUT_ROOT}" \
       --num-shards "${NUM_SHARDS}" \
-      --shard-index "${SHARD_INDEX}"
+      --shard-index "${SHARD_INDEX}" \
+      --num-workers "${BUILD_WORKERS}"
     ;;
   merge)
     OUT_ROOT="${OUT_ROOT:?OUT_ROOT is required for MODE=merge}"

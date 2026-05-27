@@ -23,6 +23,7 @@ from deepsets_data import (
     fit_feature_standardizer,
 )
 from deepsets_model import DeepSetsClassifier
+from deepsets_runtime import stage_timer
 from evaluation import FoldResults
 from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.kfold import FoldSplit
@@ -65,7 +66,14 @@ def describe_required_deepsets_config() -> dict[str, str]:
         "model_params.learning_rate": "Adam learning rate.",
         "model_params.hidden_dim": "Hidden width used by the phi and rho MLPs.",
         "model_params.num_layers": "Number of layers in the phi and rho MLPs.",
-        "model_params.pooling": "Pooling variant: mean, max, sum, mean_max, or mean_max_logcount.",
+        "model_params.pooling": (
+            "Pooling variant: mean, max, sum, mean_max, mean_max_logcount, "
+            "attention, or attention_logcount."
+        ),
+        "model_params.attention_hidden_dim": (
+            "Hidden width for attention-pooling scorer when using attention pooling."
+        ),
+        "model_params.use_layer_norm": "Whether to apply LayerNorm in phi/rho MLPs.",
         "model_params.loss": "Loss function: weighted_bce, unweighted_bce, or focal.",
     }
 
@@ -395,6 +403,8 @@ def fit_predict_one_fold(
     learning_rate = float(params.learning_rate)
     weight_decay = float(params.weight_decay)
     pooling = str(params.get("pooling", "mean_max_logcount"))
+    use_layer_norm = bool(params.get("use_layer_norm", False))
+    attention_hidden_dim = int(params.get("attention_hidden_dim", 32))
     max_grad_norm = float(params.get("max_grad_norm", 0.0))
     device = _resolve_device(config)
     random_state = int(params.random_state)
@@ -415,6 +425,8 @@ def fit_predict_one_fold(
         rho_layers=num_layers,
         dropout=dropout,
         pooling=pooling,
+        use_layer_norm=use_layer_norm,
+        attention_hidden_dim=attention_hidden_dim,
     ).to(device)
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -584,118 +596,126 @@ def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
             to decay the learning rate during training ("none" = disabled).
     """
     manifest_df = load_deepsets_manifest(config)
-    validate_deepsets_manifest(manifest_df, config)
-    label_col = config.data_paths.deepsets_label_column
-    manifest_df[label_col] = manifest_df[label_col].astype(int)
+    with stage_timer(
+        "train",
+        outdir=outdir,
+        experiment_name=config.experiment_setup.name,
+        n_cases=len(manifest_df),
+    ):
+        validate_deepsets_manifest(manifest_df, config)
+        label_col = config.data_paths.deepsets_label_column
+        manifest_df[label_col] = manifest_df[label_col].astype(int)
 
-    dataset = build_deepsets_dataset(manifest_df, config)
-    y = manifest_df[label_col].astype(int)
-    case_ids = manifest_df["case_id"].astype(str)
-    split_frame = manifest_df.copy()
-    feature_names = infer_deepsets_feature_names(dataset, case_ids.iloc[0])
-    split_X = pd.DataFrame(
-        np.zeros((len(split_frame), len(feature_names)), dtype=np.float32),
-        columns=feature_names,
-        index=split_frame.index,
-    )
+        dataset = build_deepsets_dataset(manifest_df, config)
+        y = manifest_df[label_col].astype(int)
+        case_ids = manifest_df["case_id"].astype(str)
+        split_frame = manifest_df.copy()
+        feature_names = infer_deepsets_feature_names(dataset, case_ids.iloc[0])
+        split_X = pd.DataFrame(
+            np.zeros((len(split_frame), len(feature_names)), dtype=np.float32),
+            columns=feature_names,
+            index=split_frame.index,
+        )
 
-    evaluator, splits, stratum_col = create_splits_for_dataframe(
-        X=split_X,
-        y=y,
-        case_ids=case_ids,
-        cohort_df=split_frame,
-        config=config,
-        model_name=config.experiment_setup.name,
-    )
+        evaluator, splits, stratum_col = create_splits_for_dataframe(
+            X=split_X,
+            y=y,
+            case_ids=case_ids,
+            cohort_df=split_frame,
+            config=config,
+            model_name=config.experiment_setup.name,
+        )
 
-    fold_results: list[FoldResults] = []
-    all_loss_rows: list[dict[str, float]] = []
-    fold_diagnostics: list[dict[str, object]] = []
-    for split in splits:
-        fold_case_ids, y_true, y_pred, y_prob, loss_history, best_epoch = (
-            fit_predict_one_fold(
-                dataset=dataset,
+        fold_results: list[FoldResults] = []
+        all_loss_rows: list[dict[str, float]] = []
+        fold_diagnostics: list[dict[str, object]] = []
+        for split in splits:
+            fold_case_ids, y_true, y_pred, y_prob, loss_history, best_epoch = (
+                fit_predict_one_fold(
+                    dataset=dataset,
+                    manifest_df=manifest_df,
+                    split=split,
+                    config=config,
+                )
+            )
+            all_loss_rows.extend(loss_history)
+            pred_df = build_fold_prediction_table(
+                fold_case_ids=fold_case_ids,
+                y_true=y_true,
+                y_pred=y_pred,
+                y_prob=y_prob,
+                fold_idx=split.fold_idx,
                 manifest_df=manifest_df,
-                split=split,
-                config=config,
+                stratum_col=stratum_col,
             )
-        )
-        all_loss_rows.extend(loss_history)
-        pred_df = build_fold_prediction_table(
-            fold_case_ids=fold_case_ids,
-            y_true=y_true,
-            y_pred=y_pred,
-            y_prob=y_prob,
-            fold_idx=split.fold_idx,
-            manifest_df=manifest_df,
-            stratum_col=stratum_col,
-        )
-        fold_results.append(FoldResults(fold_idx=split.fold_idx, predictions=pred_df))
-
-        fold_val_df = manifest_df.iloc[split.val_indices]
-        num_points = fold_val_df["num_points"]
-        fallback_count = int(fold_val_df["used_fallback_nearest_points"].sum())
-        prob_std = float(np.std(y_prob))
-        collapsed_threshold = 0.01
-        collapsed = bool(prob_std < collapsed_threshold)
-        if loss_history:
-            best_val_loss_val = float(min(h["val_loss"] for h in loss_history))
-            final_val_loss_val = float(loss_history[-1]["val_loss"])
-        else:
-            best_val_loss_val = float("nan")
-            final_val_loss_val = float("nan")
-        fold_diagnostics.append(
-            {
-                "fold": int(split.fold_idx),
-                "best_epoch": best_epoch,
-                "total_epochs": len(loss_history),
-                "best_val_loss": best_val_loss_val,
-                "final_val_loss": final_val_loss_val,
-                "val_cases": len(y_true),
-                "num_points_mean": float(num_points.mean()),
-                "num_points_min": int(num_points.min()),
-                "num_points_max": int(num_points.max()),
-                "fallback_cases": fallback_count,
-                "prob_std": prob_std,
-                "collapsed_probabilities": collapsed,
-            }
-        )
-        if collapsed:
-            logging.warning(
-                "fold %d: collapsed probability distribution (std=%.4f)",
-                split.fold_idx,
-                prob_std,
+            fold_results.append(
+                FoldResults(fold_idx=split.fold_idx, predictions=pred_df)
             )
 
-    kfold_results = evaluator.aggregate_kfold_results(fold_results)
-    evaluator.save_results(kfold_results, outdir)
-    model_dir = outdir / config.experiment_setup.name
-    model_dir.mkdir(parents=True, exist_ok=True)
-    loss_history_df = pd.DataFrame(all_loss_rows)
-    if not loss_history_df.empty:
-        loss_history_df.to_csv(model_dir / "loss_history.csv", index=False)
-        _plot_loss_history(loss_history_df, model_dir / "loss_by_epoch.png")
-    diag_df = pd.DataFrame(fold_diagnostics)
-    if not diag_df.empty:
-        diag_df.to_csv(model_dir / "fold_diagnostics.csv", index=False)
-    _plot_probability_distribution(
-        kfold_results.predictions,
-        model_dir / "probability_distribution.png",
-    )
-    probability_summary = {
-        "mean": float(kfold_results.predictions["y_prob"].mean()),
-        "std": float(kfold_results.predictions["y_prob"].std()),
-        "min": float(kfold_results.predictions["y_prob"].min()),
-        "median": float(kfold_results.predictions["y_prob"].median()),
-        "max": float(kfold_results.predictions["y_prob"].max()),
-        "positive_rate_at_0_5": float(
-            (kfold_results.predictions["y_pred"] == 1).mean()
-        ),
-    }
-    (model_dir / "probability_summary.json").write_text(
-        json.dumps(probability_summary, indent=2),
-        encoding="utf-8",
-    )
+            fold_val_df = manifest_df.iloc[split.val_indices]
+            num_points = fold_val_df["num_points"]
+            fallback_count = int(fold_val_df["used_fallback_nearest_points"].sum())
+            prob_std = float(np.std(y_prob))
+            collapsed_threshold = 0.01
+            collapsed = bool(prob_std < collapsed_threshold)
+            if loss_history:
+                best_val_loss_val = float(min(h["val_loss"] for h in loss_history))
+                final_val_loss_val = float(loss_history[-1]["val_loss"])
+            else:
+                best_val_loss_val = float("nan")
+                final_val_loss_val = float("nan")
+            fold_diagnostics.append(
+                {
+                    "fold": int(split.fold_idx),
+                    "best_epoch": best_epoch,
+                    "total_epochs": len(loss_history),
+                    "best_val_loss": best_val_loss_val,
+                    "final_val_loss": final_val_loss_val,
+                    "val_cases": len(y_true),
+                    "num_points_mean": float(num_points.mean()),
+                    "num_points_min": int(num_points.min()),
+                    "num_points_max": int(num_points.max()),
+                    "fallback_cases": fallback_count,
+                    "prob_std": prob_std,
+                    "collapsed_probabilities": collapsed,
+                }
+            )
+            if collapsed:
+                logging.warning(
+                    "fold %d: collapsed probability distribution (std=%.4f)",
+                    split.fold_idx,
+                    prob_std,
+                )
+
+        kfold_results = evaluator.aggregate_kfold_results(fold_results)
+        evaluator.save_results(kfold_results, outdir)
+        model_dir = outdir / config.experiment_setup.name
+        model_dir.mkdir(parents=True, exist_ok=True)
+        loss_history_df = pd.DataFrame(all_loss_rows)
+        if not loss_history_df.empty:
+            loss_history_df.to_csv(model_dir / "loss_history.csv", index=False)
+            _plot_loss_history(loss_history_df, model_dir / "loss_by_epoch.png")
+        diag_df = pd.DataFrame(fold_diagnostics)
+        if not diag_df.empty:
+            diag_df.to_csv(model_dir / "fold_diagnostics.csv", index=False)
+        _plot_probability_distribution(
+            kfold_results.predictions,
+            model_dir / "probability_distribution.png",
+        )
+        probability_summary = {
+            "mean": float(kfold_results.predictions["y_prob"].mean()),
+            "std": float(kfold_results.predictions["y_prob"].std()),
+            "min": float(kfold_results.predictions["y_prob"].min()),
+            "median": float(kfold_results.predictions["y_prob"].median()),
+            "max": float(kfold_results.predictions["y_prob"].max()),
+            "positive_rate_at_0_5": float(
+                (kfold_results.predictions["y_pred"] == 1).mean()
+            ),
+        }
+        (model_dir / "probability_summary.json").write_text(
+            json.dumps(probability_summary, indent=2),
+            encoding="utf-8",
+        )
 
 
 def main() -> None:
