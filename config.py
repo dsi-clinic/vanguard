@@ -139,6 +139,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "lr_scheduler": "none",
         "lr_scheduler_factor": 0.5,
         "lr_scheduler_patience": 5,
+        "use_layer_norm": False,
+        "attention_hidden_dim": 32,
         "loss": "weighted_bce",
         "focal_alpha": 0.25,
         "focal_gamma": 2.0,
@@ -146,11 +148,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_local_radius_scale": 2.0,
         "deepsets_local_radius_cap_mm": 60.0,
         "deepsets_inclusion_rule": "local_radius_with_fallback",
-        "deepsets_compare_inclusion_rules": [
-            "local_radius_with_fallback",
-            "local_radius_only",
-            "nearest_64_only",
-        ],
+        "deepsets_compare_inclusion_rules": [],
         "deepsets_point_feature_set": "baseline",
     },
     "data_paths": {

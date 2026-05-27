@@ -8,12 +8,19 @@ import numpy as np
 
 from build_deepsets_dataset import (
     DEEPSETS_FEATURE_BASELINE,
+    DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+    DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS,
+    DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE,
+    DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
+    DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK,
     DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY,
     DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
     DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY,
+    DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
     _build_case_set,
+    _signed_distance_within_inclusion_cutoff,
     deepsets_point_feature_names,
 )
 
@@ -37,6 +44,26 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
                 deepsets_point_feature_names(DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC)
             ),
             27,
+        )
+        self.assertEqual(
+            len(
+                deepsets_point_feature_names(
+                    DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE
+                )
+            ),
+            17,
+        )
+        self.assertEqual(
+            len(
+                deepsets_point_feature_names(
+                    DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS
+                )
+            ),
+            12,
+        )
+        self.assertEqual(
+            len(deepsets_point_feature_names(DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC)),
+            12,
         )
 
     def test_deepsets_point_feature_names_unknown_raises(self) -> None:
@@ -135,6 +162,108 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
         self.assertAlmostEqual(float(row[idx["peak_enhancement"]]), 0.25, places=5)
         self.assertGreater(float(row[idx["positive_enhancement_auc"]]), 0.0)
 
+    def test_build_case_set_geometry_topology_plus_curvature(self) -> None:
+        shape = (5, 5, 5)
+        skel = _empty_volume(shape)
+        skel[2, 2, 1] = True
+        skel[2, 2, 2] = True
+        skel[2, 2, 3] = True
+        tumor = _empty_volume(shape)
+        tumor[2, 2, 2] = True
+        spacing = (1.0, 1.0, 1.0)
+        out = _build_case_set(
+            case_id="toy",
+            label=0,
+            skeleton_mask_zyx=skel,
+            tumor_mask_zyx=tumor,
+            spacing_mm_zyx=spacing,
+            local_radius_mm=100.0,
+            tumor_equiv_radius_mm=1.0,
+            point_feature_set=DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE,
+            support_edt_mm_zyx=None,
+            support_radius_available_scalar=0.0,
+            signal_4d=None,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        names = deepsets_point_feature_names(
+            DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE
+        )
+        row = out["x"][1].numpy()
+        idx = {n: i for i, n in enumerate(names)}
+        self.assertEqual(tuple(out["x"].shape), (3, len(names)))
+        self.assertAlmostEqual(float(row[idx["is_chain"]]), 1.0)
+        self.assertGreater(float(row[idx["curvature_rad"]]), 3.0)
+
+    def test_build_case_set_geometry_topology_no_shells_omits_shell_columns(
+        self,
+    ) -> None:
+        shape = (5, 5, 5)
+        skel = _empty_volume(shape)
+        skel[2, 2, 2] = True
+        tumor = _empty_volume(shape)
+        tumor[2, 2, 2] = True
+        spacing = (1.0, 1.0, 1.0)
+        out = _build_case_set(
+            case_id="toy",
+            label=0,
+            skeleton_mask_zyx=skel,
+            tumor_mask_zyx=tumor,
+            spacing_mm_zyx=spacing,
+            local_radius_mm=100.0,
+            tumor_equiv_radius_mm=1.0,
+            point_feature_set=DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS,
+            support_edt_mm_zyx=None,
+            support_radius_available_scalar=0.0,
+            signal_4d=None,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        names = deepsets_point_feature_names(
+            DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS
+        )
+        self.assertEqual(tuple(out["x"].shape), (1, len(names)))
+        self.assertNotIn("shell_0_2mm", names)
+        self.assertIn("inside_tumor", names)
+
+    def test_build_case_set_curvature_plus_dynamic(self) -> None:
+        shape = (3, 3, 3)
+        skel = _empty_volume(shape)
+        skel[1, 1, 0] = True
+        skel[1, 1, 1] = True
+        skel[1, 1, 2] = True
+        tumor = _empty_volume(shape)
+        tumor[0, 0, 0] = True
+        spacing = (1.0, 1.0, 1.0)
+        signal_4d = np.zeros((4, 3, 3, 3), dtype=np.float32)
+        for ti in range(4):
+            signal_4d[ti, 1, 1, 1] = float([0.05, 0.12, 0.30, 0.22][ti])
+        out = _build_case_set(
+            case_id="toy",
+            label=1,
+            skeleton_mask_zyx=skel,
+            tumor_mask_zyx=tumor,
+            spacing_mm_zyx=spacing,
+            local_radius_mm=100.0,
+            tumor_equiv_radius_mm=1.0,
+            point_feature_set=DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
+            support_edt_mm_zyx=None,
+            support_radius_available_scalar=0.0,
+            signal_4d=signal_4d,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        names = deepsets_point_feature_names(DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC)
+        row = out["x"][1].numpy()
+        idx = {n: i for i, n in enumerate(names)}
+        self.assertEqual(tuple(out["x"].shape), (3, len(names)))
+        self.assertAlmostEqual(float(row[idx["kinetic_signal_ok"]]), 1.0)
+        self.assertAlmostEqual(float(row[idx["peak_enhancement"]]), 0.25, places=5)
+        self.assertGreater(float(row[idx["curvature_rad"]]), 3.0)
+
     def test_build_case_set_inclusion_rules_comparison_metrics(self) -> None:
         shape = (7, 7, 7)
         skel = _empty_volume(shape)
@@ -175,6 +304,97 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
         self.assertEqual(
             metrics[DEEPSETS_INCLUSION_RULE_NEAREST_64_ONLY]["wrote_case_set"],
             1,
+        )
+
+    def test_signed_distance_within_inclusion_cutoff_variants(self) -> None:
+        self.assertTrue(
+            _signed_distance_within_inclusion_cutoff(
+                -1.0,
+                rule_name=DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+        self.assertTrue(
+            _signed_distance_within_inclusion_cutoff(
+                4.9,
+                rule_name=DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+        self.assertFalse(
+            _signed_distance_within_inclusion_cutoff(
+                5.0,
+                rule_name=DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+        self.assertTrue(
+            _signed_distance_within_inclusion_cutoff(
+                30.0,
+                rule_name=DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+        self.assertFalse(
+            _signed_distance_within_inclusion_cutoff(
+                30.1,
+                rule_name=DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+        self.assertTrue(
+            _signed_distance_within_inclusion_cutoff(
+                50.0,
+                rule_name=DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK,
+                local_radius_mm=0.5,
+            )
+        )
+
+    def test_build_case_set_fixed_radius_and_shell_comparison_metrics(self) -> None:
+        shape = (11, 11, 11)
+        skel = _empty_volume(shape)
+        skel[5, 5, 5] = True
+        skel[5, 5, 8] = True
+        skel[5, 5, 9] = True
+        tumor = _empty_volume(shape)
+        tumor[5, 5, 5] = True
+        out = _build_case_set(
+            case_id="toy",
+            label=1,
+            skeleton_mask_zyx=skel,
+            tumor_mask_zyx=tumor,
+            spacing_mm_zyx=(1.0, 1.0, 1.0),
+            local_radius_mm=0.5,
+            tumor_equiv_radius_mm=1.0,
+            point_feature_set=DEEPSETS_FEATURE_BASELINE,
+            support_edt_mm_zyx=None,
+            support_radius_available_scalar=0.0,
+            signal_4d=None,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
+            compare_inclusion_rules=[
+                DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
+                DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK,
+                DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK,
+            ],
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        metrics = out["inclusion_rule_metrics"]
+        self.assertEqual(
+            metrics[DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK]["num_points"],
+            1,
+        )
+        self.assertEqual(
+            metrics[DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK][
+                "num_points"
+            ],
+            3,
+        )
+        self.assertEqual(
+            metrics[DEEPSETS_INCLUSION_RULE_PERITUMORAL_SHELLS_WITH_FALLBACK][
+                "num_points"
+            ],
+            3,
         )
 
 
