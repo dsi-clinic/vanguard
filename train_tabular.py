@@ -60,10 +60,15 @@ def run_evaluation_pipeline(
         nested_df = pd.DataFrame(nested_rows)
         nested_df.to_csv(run_subdir / "nested_tuning_summary.csv", index=False)
         if not nested_df.empty and "inner_auc_mean" in nested_df.columns:
+            sort_cols = ["outer_fold", "inner_auc_mean"]
+            ascending = [True, False]
+            if "feature_select_k_kin" in nested_df.columns:
+                sort_cols.append("feature_select_k_kin")
+                ascending.append(True)
             best_per_fold = (
                 nested_df.sort_values(
-                    ["outer_fold", "inner_auc_mean", "feature_select_k_kin"],
-                    ascending=[True, False, True],
+                    sort_cols,
+                    ascending=ascending,
                 )
                 .groupby("outer_fold", as_index=False)
                 .head(1)

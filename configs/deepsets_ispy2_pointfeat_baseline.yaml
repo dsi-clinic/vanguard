@@ -1,9 +1,11 @@
+# Deep Sets ISPY2 — point features: curvature only (issue #120 baseline arm).
+# Build output: set OUT_ROOT e.g. experiments/deepsets_ispy2_pointfeat_baseline
 feature_toggles:
   dataset_include: ["ISPY2"]
   tumor_mask_file_pattern: "{case_id}.nii.gz"
 
 experiment_setup:
-  name: "deepsets_ispy2"
+  name: "deepsets_ispy2_pointfeat_baseline"
   base_outdir: "./experiments"
 
 model_params:
@@ -20,8 +22,6 @@ model_params:
   deepsets_local_radius_floor_mm: 50.0
   deepsets_local_radius_scale: 2.0
   deepsets_local_radius_cap_mm: 60.0
-  deepsets_inclusion_rule: "local_radius_with_fallback"
-  deepsets_compare_inclusion_rules: []
   deepsets_point_feature_set: "baseline"
 
 data_paths:

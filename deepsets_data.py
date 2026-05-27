@@ -69,11 +69,24 @@ def collate_case_sets(items: list[dict[str, Any]]) -> dict[str, Any]:
     y_chunks: list[torch.Tensor] = []
     num_points_chunks: list[torch.Tensor] = []
     case_ids: list[str] = []
+    ref_dim: int | None = None
+    ref_names: list[str] | None = None
     for batch_idx, item in enumerate(items):
         x = item["x"]
         if x.ndim != FEATURE_MATRIX_NDIM:
             raise ValueError(
                 "Each case tensor must have shape [num_points, num_features]"
+            )
+        n_feat = int(x.shape[1])
+        names = [str(n) for n in item.get("feature_names", [])]
+        if ref_dim is None:
+            ref_dim = n_feat
+            ref_names = names
+        elif n_feat != ref_dim or names != ref_names:
+            raise ValueError(
+                "Mixed Deep Sets feature layouts in one batch: "
+                f"case {item.get('case_id')!r} has dim={n_feat} names={names!r}, "
+                f"expected dim={ref_dim} names={ref_names!r}"
             )
         n_points = int(x.shape[0])
         x_chunks.append(x)
