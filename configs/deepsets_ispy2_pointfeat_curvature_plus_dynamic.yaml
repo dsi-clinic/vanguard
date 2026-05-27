@@ -1,9 +1,10 @@
+# Deep Sets ISPY2 — curvature + kinetic dynamic point features (issue #120 new arm).
 feature_toggles:
   dataset_include: ["ISPY2"]
   tumor_mask_file_pattern: "{case_id}.nii.gz"
 
 experiment_setup:
-  name: "deepsets_ispy2"
+  name: "deepsets_ispy2_pointfeat_curvature_plus_dynamic"
   base_outdir: "./experiments"
 
 model_params:
@@ -20,9 +21,7 @@ model_params:
   deepsets_local_radius_floor_mm: 50.0
   deepsets_local_radius_scale: 2.0
   deepsets_local_radius_cap_mm: 60.0
-  deepsets_inclusion_rule: "local_radius_with_fallback"
-  deepsets_compare_inclusion_rules: []
-  deepsets_point_feature_set: "baseline"
+  deepsets_point_feature_set: "curvature_plus_dynamic"
 
 data_paths:
   centerline_root: "/net/projects2/vanguard/centerlines_tc4d/studies"
@@ -34,4 +33,4 @@ data_paths:
   id_column: "case_id"
   deepsets_manifest_csv: ""
   deepsets_label_column: "label"
-  vessel_segmentation_root: ""
+  vessel_segmentation_root: "/net/projects2/vanguard/vessel_segmentations/ISPY2"

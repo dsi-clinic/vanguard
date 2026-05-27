@@ -356,7 +356,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("docs/deepsets_issue119/figures"),
+        default=Path("analysis/deepsets_issue119/figures"),
         help="Directory for PNG outputs.",
     )
     return parser.parse_args()
