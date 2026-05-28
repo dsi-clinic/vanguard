@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 r"""XGBoost interaction-aware pCR prediction with near-duplicate feature pruning.
 
-Companion to the marginal/linear elastic-net comparator in feature_selection.py.
+Companion to the marginal/linear elastic-net baseline in feature_selection.py.
 This pipeline tests whether shallow-tree XGBoost, trained on near-duplicate-pruned
 features (unsupervised only), improves held-out pCR prediction.
 
@@ -13,7 +13,7 @@ features (unsupervised only), improves held-out pCR prediction.
   and is block-aware: only features within the same semantic block are grouped.
 - Shallow trees (max_depth 2-3) learn low-order feature interactions.
 
-**Scientific context:** The elastic-net pipeline is a marginal/linear comparator that
+**Scientific context:** The elastic-net pipeline is a marginal/linear baseline that
 can miss features important only jointly or nonlinearly.  This pipeline serves as
 the interaction-aware comparator (see issue #152).
 
@@ -47,7 +47,6 @@ from sklearn.model_selection import (
     GridSearchCV,
     RandomizedSearchCV,
     RepeatedStratifiedKFold,
-    StratifiedGroupKFold,
     StratifiedKFold,
 )
 from sklearn.preprocessing import StandardScaler
@@ -75,16 +74,6 @@ _NON_FEATURE_COLUMNS = frozenset(
         "pcr",
     }
 )
-
-# Clinical columns that should be one-hot encoded when present.
-_CATEGORICAL_CLINICAL_COLUMNS = [
-    "tumor_subtype",
-    "menopausal_status",
-    "breast_density",
-    "scanner_manufacturer",
-    "scanner_model",
-    "bmi_group",
-]
 
 _BLOCK_PREFIXES: list[tuple[str, str]] = [
     ("tumor_size_", "tumor_size"),
@@ -158,38 +147,6 @@ def _get_feature_columns(df: pd.DataFrame) -> list[str]:
     ]
 
 
-def encode_categorical_clinical(features_df: pd.DataFrame) -> pd.DataFrame:
-    """One-hot encode categorical clinical columns present in *features_df*.
-
-    Columns listed in ``_CATEGORICAL_CLINICAL_COLUMNS`` that appear in *features_df*
-    (and are not already numeric) are one-hot encoded with a ``clinical_``
-    prefix.  The originals are dropped so downstream code sees only numeric
-    features.  Columns in ``_NON_FEATURE_COLUMNS`` that overlap (e.g.
-    ``tumor_subtype``, ``menopausal_status``) are **not** dropped — they stay
-    as metadata while the encoded dummies become modeling features.
-    """
-    to_encode = [
-        c
-        for c in _CATEGORICAL_CLINICAL_COLUMNS
-        if c in features_df.columns
-        and not pd.api.types.is_numeric_dtype(features_df[c])
-    ]
-    if not to_encode:
-        return features_df
-
-    dummies = pd.get_dummies(features_df[to_encode], prefix="clinical", drop_first=True)
-    dummies = dummies.astype("int32")
-    cols_to_drop = [c for c in to_encode if c not in _NON_FEATURE_COLUMNS]
-    features_df = features_df.drop(columns=cols_to_drop, errors="ignore")
-    features_df = pd.concat([features_df, dummies], axis=1)
-    logging.info(
-        "Encoded %d categorical clinical columns → %d dummy features",
-        len(to_encode),
-        len(dummies.columns),
-    )
-    return features_df
-
-
 # ── Step 1: Basic unsupervised cleanup ───────────────────────────────────
 
 
@@ -247,7 +204,7 @@ def basic_cleanup(
     return kept
 
 
-# ── Univariate screening (for elastic-net comparator arm only) ──────────
+# ── Univariate screening (for elastic-net baseline arm only) ────────────
 
 
 def _stage2_univariate(
@@ -257,7 +214,7 @@ def _stage2_univariate(
 ) -> list[str]:
     """Mann-Whitney U screening with BH FDR correction.
 
-    Used only for the elastic-net comparator arm to approximate the current
+    Used only for the elastic-net baseline arm to replicate the current
     marginal/linear pipeline.  The XGBoost arm does NOT use this.
     """
     grp0 = features[features[label_col] == 0]
@@ -438,26 +395,18 @@ def _fit_xgboost(
     device = _detect_gpu() or "cpu"
     if device == "cuda":
         logging.info("  XGBoost: using GPU (CUDA)")
-    n_neg = int((y_train == 0).sum())
-    n_pos = int((y_train == 1).sum())
-    default_spw = n_neg / max(n_pos, 1)
     base_model = XGBClassifier(
         objective="binary:logistic",
         eval_metric="logloss",
         tree_method="hist",
         device=device,
-        scale_pos_weight=default_spw,
         random_state=_RANDOM_STATE,
         n_jobs=-1,
     )
-    param_dist = {
-        **_XGBOOST_PARAM_DIST,
-        "scale_pos_weight": [1, default_spw, default_spw * 0.5],
-    }
     cv = StratifiedKFold(n_splits=_CV_FOLDS, shuffle=True, random_state=_RANDOM_STATE)
     search = RandomizedSearchCV(
         base_model,
-        param_dist,
+        _XGBOOST_PARAM_DIST,
         n_iter=_N_RANDOM_SEARCH_ITER,
         cv=cv,
         scoring="roc_auc",
@@ -476,7 +425,7 @@ def _fit_xgboost(
     return model, search.best_params_
 
 
-# ── Elastic-net fitting (comparator arm) ────────────────────────────────
+# ── Elastic-net fitting (baseline arm) ──────────────────────────────────
 
 
 def _fit_elastic_net(
@@ -530,43 +479,19 @@ def run_comparison_cv(
     feature_cols: list[str],
     label_col: str,
     outdir: Path,
-    *,
-    group_col: str | None = None,
 ) -> dict:
     """Run both arms (XGBoost + elastic-net) inside the same nested CV.
 
-    Outer loop: RepeatedStratifiedKFold (or StratifiedGroupKFold when
-    *group_col* is set) for unbiased performance estimation.
+    Outer loop: RepeatedStratifiedKFold for unbiased performance estimation.
     Both arms share the same outer folds for a fair paired comparison.
     """
     y = features[label_col].to_numpy()
+    outer_cv = RepeatedStratifiedKFold(
+        n_splits=_CV_FOLDS,
+        n_repeats=_N_OUTER_REPEATS,
+        random_state=_RANDOM_STATE,
+    )
     total_folds = _CV_FOLDS * _N_OUTER_REPEATS
-
-    if group_col and group_col in features.columns:
-        groups = features[group_col].to_numpy()
-        logging.info(
-            "Using site-grouped CV (group_col=%s, %d unique groups)",
-            group_col,
-            len(set(groups)),
-        )
-        all_splits = []
-        for repeat in range(_N_OUTER_REPEATS):
-            cv_r = StratifiedGroupKFold(
-                n_splits=_CV_FOLDS, shuffle=True, random_state=_RANDOM_STATE + repeat
-            )
-            all_splits.extend(cv_r.split(features, y, groups))
-    else:
-        if group_col:
-            logging.warning(
-                "group_col=%s not found in data — falling back to standard CV",
-                group_col,
-            )
-        outer_cv = RepeatedStratifiedKFold(
-            n_splits=_CV_FOLDS,
-            n_repeats=_N_OUTER_REPEATS,
-            random_state=_RANDOM_STATE,
-        )
-        all_splits = list(outer_cv.split(features, y))
 
     # Per-arm results
     xgb_aucs: list[float] = []
@@ -584,7 +509,7 @@ def run_comparison_cv(
     all_pruning_reports: list[pd.DataFrame] = []
     fold_summaries: list[dict] = []
 
-    for fold_idx, (train_idx, test_idx) in enumerate(all_splits):
+    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(features, y)):
         train_df = features.iloc[train_idx]
         test_df = features.iloc[test_idx]
         y_train = y[train_idx]
@@ -1065,32 +990,12 @@ def main() -> None:
         help="Output directory (default: experiments/xgboost_interaction)",
     )
     ap.add_argument("--label-col", type=str, default="pcr", help="Label column name")
-    ap.add_argument(
-        "--encode-clinical",
-        action="store_true",
-        default=False,
-        help="One-hot encode categorical clinical columns before modeling",
-    )
-    ap.add_argument(
-        "--site-group-cv",
-        action="store_true",
-        default=False,
-        help="Use site-grouped CV (StratifiedGroupKFold) instead of standard CV",
-    )
-    ap.add_argument(
-        "--group-col",
-        type=str,
-        default="site",
-        help="Column to use for group-aware CV splits (default: site)",
-    )
     args = ap.parse_args()
 
     outdir = args.outdir or Path("experiments/xgboost_interaction")
     outdir.mkdir(parents=True, exist_ok=True)
 
     features = pd.read_csv(args.input_csv)
-    if args.encode_clinical:
-        features = encode_categorical_clinical(features)
     logging.info(
         "Loaded %s: %d rows x %d cols",
         args.input_csv,
@@ -1111,10 +1016,7 @@ def main() -> None:
         logging.info("  Block '%s': %d features", block, count)
 
     # ── Step 1: Nested CV comparison ──
-    group_col = args.group_col if args.site_group_cv else None
-    cv_results = run_comparison_cv(
-        features, feature_cols, args.label_col, outdir, group_col=group_col
-    )
+    cv_results = run_comparison_cv(features, feature_cols, args.label_col, outdir)
 
     # ── Step 2: Save pruning report ──
     if not cv_results["pruning_report"].empty:
