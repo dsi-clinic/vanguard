@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -28,7 +29,11 @@ import pandas as pd
 import seaborn as sns
 from scipy import stats
 
-from features.second_order import SECOND_ORDER_COLUMNS
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from features.second_order import SECOND_ORDER_COLUMNS  # noqa: E402
 
 # Features whose source data was never computed into the JSON payloads and
 # therefore require a full re-extraction from raw imaging data.
