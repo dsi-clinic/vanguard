@@ -37,7 +37,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
-from scipy.sparse.csgraph import connected_components
 from scipy.stats import false_discovery_control
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import PartialDependenceDisplay, permutation_importance
@@ -47,6 +46,7 @@ from sklearn.model_selection import (
     GridSearchCV,
     RandomizedSearchCV,
     RepeatedStratifiedKFold,
+    StratifiedGroupKFold,
     StratifiedKFold,
 )
 from sklearn.preprocessing import StandardScaler
@@ -74,6 +74,16 @@ _NON_FEATURE_COLUMNS = frozenset(
         "pcr",
     }
 )
+
+# Clinical columns that should be one-hot encoded when present.
+_CATEGORICAL_CLINICAL_COLUMNS = [
+    "tumor_subtype",
+    "menopausal_status",
+    "breast_density",
+    "scanner_manufacturer",
+    "scanner_model",
+    "bmi_group",
+]
 
 _BLOCK_PREFIXES: list[tuple[str, str]] = [
     ("tumor_size_", "tumor_size"),
@@ -145,6 +155,38 @@ def _get_feature_columns(df: pd.DataFrame) -> list[str]:
         if c not in _NON_FEATURE_COLUMNS
         and df[c].dtype in ("float64", "float32", "int64", "int32")
     ]
+
+
+def encode_categorical_clinical(features_df: pd.DataFrame) -> pd.DataFrame:
+    """One-hot encode categorical clinical columns present in *features_df*.
+
+    Columns listed in ``_CATEGORICAL_CLINICAL_COLUMNS`` that appear in *features_df*
+    (and are not already numeric) are one-hot encoded with a ``clinical_``
+    prefix.  The originals are dropped so downstream code sees only numeric
+    features.  Columns in ``_NON_FEATURE_COLUMNS`` that overlap (e.g.
+    ``tumor_subtype``, ``menopausal_status``) are **not** dropped — they stay
+    as metadata while the encoded dummies become modeling features.
+    """
+    to_encode = [
+        c
+        for c in _CATEGORICAL_CLINICAL_COLUMNS
+        if c in features_df.columns
+        and not pd.api.types.is_numeric_dtype(features_df[c])
+    ]
+    if not to_encode:
+        return features_df
+
+    dummies = pd.get_dummies(features_df[to_encode], prefix="clinical", drop_first=True)
+    dummies = dummies.astype("int32")
+    cols_to_drop = [c for c in to_encode if c not in _NON_FEATURE_COLUMNS]
+    features_df = features_df.drop(columns=cols_to_drop, errors="ignore")
+    features_df = pd.concat([features_df, dummies], axis=1)
+    logging.info(
+        "Encoded %d categorical clinical columns → %d dummy features",
+        len(to_encode),
+        len(dummies.columns),
+    )
+    return features_df
 
 
 # ── Step 1: Basic unsupervised cleanup ───────────────────────────────────
@@ -279,8 +321,10 @@ def prune_near_duplicates(
 ) -> tuple[list[str], pd.DataFrame]:
     """Block-aware near-duplicate pruning using Spearman and Pearson correlations.
 
-    Groups features within the same block if |Spearman| >= threshold OR
-    |Pearson| >= threshold, then keeps one representative per group.
+    Within each block, greedily keeps the best remaining representative and only
+    drops features whose absolute Spearman or Pearson correlation to that kept
+    feature is above the threshold. This avoids chained components where A is
+    near-duplicate with B and B with C, but A is not near-duplicate with C.
 
     Returns the kept feature list and a pruning report DataFrame.
     """
@@ -301,49 +345,60 @@ def prune_near_duplicates(
 
         # Compute Spearman correlation via pandas rank correlation (much faster
         # than scipy.stats.spearmanr with nan_policy="omit" for large matrices)
-        spearman_corr = block_data.rank().corr().abs().to_numpy()
+        spearman_corr = block_data.rank().corr().abs()
 
         # Compute Pearson correlation
-        pearson_corr = block_data.corr().abs().to_numpy()
+        pearson_corr = block_data.corr().abs()
 
-        # Adjacency: connected if Spearman >= threshold OR Pearson >= threshold
-        adjacency = (
-            (spearman_corr >= _NEAR_DUPLICATE_THRESHOLD)
-            | (pearson_corr >= _NEAR_DUPLICATE_THRESHOLD)
-        ).astype(int)
-        np.fill_diagonal(adjacency, 0)
+        ordered = sorted(
+            block_cols,
+            key=lambda c: _unsupervised_rep_score(features, c),
+            reverse=True,
+        )
+        remaining = set(ordered)
+        greedy_group_idx = 0
 
-        n_components, labels = connected_components(adjacency, directed=False)
-
-        for comp in range(n_components):
-            member_idxs = [i for i in range(len(block_cols)) if labels[i] == comp]
-            members = [block_cols[i] for i in member_idxs]
-
-            if len(members) <= 1:
-                all_kept.extend(members)
+        for best in ordered:
+            if best not in remaining:
                 continue
 
-            # Pick best representative
-            best = max(members, key=lambda c: _unsupervised_rep_score(features, c))
             all_kept.append(best)
+            remaining.remove(best)
 
-            # Record pruning report entries
-            for m in members:
-                if m == best:
+            dropped_for_best: list[str] = []
+            for candidate in ordered:
+                if candidate not in remaining:
                     continue
-                # Compute correlation of dropped feature to kept representative
-                corr_to_kept = features[[m, best]].corr().iloc[0, 1]
+
+                spearman_abs = float(spearman_corr.loc[best, candidate])
+                pearson_abs = float(pearson_corr.loc[best, candidate])
+                finite_corrs = [
+                    value for value in (spearman_abs, pearson_abs) if np.isfinite(value)
+                ]
+                if not finite_corrs:
+                    continue
+                max_abs_corr = max(finite_corrs)
+                if max_abs_corr < _NEAR_DUPLICATE_THRESHOLD:
+                    continue
+
+                remaining.remove(candidate)
+                dropped_for_best.append(candidate)
                 report_rows.append(
                     {
                         "fold": fold_idx,
-                        "original_feature": m,
+                        "original_feature": candidate,
                         "kept_feature": best,
                         "feature_block": block,
-                        "correlation_to_kept": round(corr_to_kept, 4),
+                        "correlation_to_kept": round(max_abs_corr, 4),
+                        "pearson_abs_to_kept": round(pearson_abs, 4),
+                        "spearman_abs_to_kept": round(spearman_abs, 4),
                         "drop_reason": "near_duplicate",
-                        "semantic_group": f"{block}_component_{comp}",
+                        "semantic_group": f"{block}_greedy_group_{greedy_group_idx}",
                     }
                 )
+
+            if dropped_for_best:
+                greedy_group_idx += 1
 
         block_dropped = len(block_cols) - sum(
             1 for c in all_kept if col_blocks.get(c) == block
@@ -395,18 +450,26 @@ def _fit_xgboost(
     device = _detect_gpu() or "cpu"
     if device == "cuda":
         logging.info("  XGBoost: using GPU (CUDA)")
+    n_neg = int((y_train == 0).sum())
+    n_pos = int((y_train == 1).sum())
+    default_spw = n_neg / max(n_pos, 1)
     base_model = XGBClassifier(
         objective="binary:logistic",
         eval_metric="logloss",
         tree_method="hist",
         device=device,
+        scale_pos_weight=default_spw,
         random_state=_RANDOM_STATE,
         n_jobs=-1,
     )
+    param_dist = {
+        **_XGBOOST_PARAM_DIST,
+        "scale_pos_weight": [1, default_spw, default_spw * 0.5],
+    }
     cv = StratifiedKFold(n_splits=_CV_FOLDS, shuffle=True, random_state=_RANDOM_STATE)
     search = RandomizedSearchCV(
         base_model,
-        _XGBOOST_PARAM_DIST,
+        param_dist,
         n_iter=_N_RANDOM_SEARCH_ITER,
         cv=cv,
         scoring="roc_auc",
@@ -479,19 +542,43 @@ def run_comparison_cv(
     feature_cols: list[str],
     label_col: str,
     outdir: Path,
+    *,
+    group_col: str | None = None,
 ) -> dict:
     """Run both arms (XGBoost + elastic-net) inside the same nested CV.
 
-    Outer loop: RepeatedStratifiedKFold for unbiased performance estimation.
+    Outer loop: RepeatedStratifiedKFold (or StratifiedGroupKFold when
+    *group_col* is set) for unbiased performance estimation.
     Both arms share the same outer folds for a fair paired comparison.
     """
     y = features[label_col].to_numpy()
-    outer_cv = RepeatedStratifiedKFold(
-        n_splits=_CV_FOLDS,
-        n_repeats=_N_OUTER_REPEATS,
-        random_state=_RANDOM_STATE,
-    )
     total_folds = _CV_FOLDS * _N_OUTER_REPEATS
+
+    if group_col and group_col in features.columns:
+        groups = features[group_col].to_numpy()
+        logging.info(
+            "Using site-grouped CV (group_col=%s, %d unique groups)",
+            group_col,
+            len(set(groups)),
+        )
+        all_splits = []
+        for repeat in range(_N_OUTER_REPEATS):
+            cv_r = StratifiedGroupKFold(
+                n_splits=_CV_FOLDS, shuffle=True, random_state=_RANDOM_STATE + repeat
+            )
+            all_splits.extend(cv_r.split(features, y, groups))
+    else:
+        if group_col:
+            logging.warning(
+                "group_col=%s not found in data — falling back to standard CV",
+                group_col,
+            )
+        outer_cv = RepeatedStratifiedKFold(
+            n_splits=_CV_FOLDS,
+            n_repeats=_N_OUTER_REPEATS,
+            random_state=_RANDOM_STATE,
+        )
+        all_splits = list(outer_cv.split(features, y))
 
     # Per-arm results
     xgb_aucs: list[float] = []
@@ -509,7 +596,7 @@ def run_comparison_cv(
     all_pruning_reports: list[pd.DataFrame] = []
     fold_summaries: list[dict] = []
 
-    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(features, y)):
+    for fold_idx, (train_idx, test_idx) in enumerate(all_splits):
         train_df = features.iloc[train_idx]
         test_df = features.iloc[test_idx]
         y_train = y[train_idx]
@@ -783,6 +870,7 @@ def plot_comparison_roc(results: dict, outdir: Path) -> None:
             ax.plot(
                 rc["fpr"],
                 rc["tpr"],
+                color="#9E9E9E",
                 alpha=0.25,
                 linewidth=1,
                 label=f'Fold {rc["fold"]} (AUC={rc["auc"]:.2f})',
@@ -918,6 +1006,9 @@ def plot_partial_dependence_top_pairs(
     outdir: Path,
 ) -> None:
     """2D partial dependence plots for the top feature pairs."""
+    for stale_pdp in outdir.glob("pdp_*.png"):
+        stale_pdp.unlink()
+
     if importance_df.empty or len(feature_cols) < _MIN_PDP_FEATURES:
         return
 
@@ -990,12 +1081,35 @@ def main() -> None:
         help="Output directory (default: experiments/xgboost_interaction)",
     )
     ap.add_argument("--label-col", type=str, default="pcr", help="Label column name")
+    ap.add_argument(
+        "--encode-clinical",
+        action="store_true",
+        default=False,
+        help="One-hot encode categorical clinical columns before modeling",
+    )
+    ap.add_argument(
+        "--site-group-cv",
+        action="store_true",
+        default=False,
+        help=(
+            "Use site-grouped outer CV (StratifiedGroupKFold); inner tuning "
+            "still uses standard stratified CV"
+        ),
+    )
+    ap.add_argument(
+        "--group-col",
+        type=str,
+        default="site",
+        help="Column to use for group-aware CV splits (default: site)",
+    )
     args = ap.parse_args()
 
     outdir = args.outdir or Path("experiments/xgboost_interaction")
     outdir.mkdir(parents=True, exist_ok=True)
 
     features = pd.read_csv(args.input_csv)
+    if args.encode_clinical:
+        features = encode_categorical_clinical(features)
     logging.info(
         "Loaded %s: %d rows x %d cols",
         args.input_csv,
@@ -1016,7 +1130,10 @@ def main() -> None:
         logging.info("  Block '%s': %d features", block, count)
 
     # ── Step 1: Nested CV comparison ──
-    cv_results = run_comparison_cv(features, feature_cols, args.label_col, outdir)
+    group_col = args.group_col if args.site_group_cv else None
+    cv_results = run_comparison_cv(
+        features, feature_cols, args.label_col, outdir, group_col=group_col
+    )
 
     # ── Step 2: Save pruning report ──
     if not cv_results["pruning_report"].empty:
