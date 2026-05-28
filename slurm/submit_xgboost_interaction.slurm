@@ -11,7 +11,7 @@
 set -eo pipefail
 
 REPO_ROOT="${SLURM_SUBMIT_DIR:-${REPO_ROOT:-$PWD}}"
-INPUT_CSV="${INPUT_CSV:-vanguard/experiments/second_order_features/features_engineered_labeled.csv}"
+INPUT_CSV="${INPUT_CSV:-experiments/second_order_features/features_engineered_labeled.csv}"
 OUTDIR="${OUTDIR:-experiments/xgboost_interaction}"
 
 mkdir -p "${REPO_ROOT}/logs"

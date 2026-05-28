@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -51,7 +52,11 @@ from sklearn.model_selection import (
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
-from features import feature_block_for_column
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from features import feature_block_for_column  # noqa: E402
 
 matplotlib.use("Agg")
 
