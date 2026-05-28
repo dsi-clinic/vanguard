@@ -17,11 +17,19 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 import pandas as pd
 
-from features.second_order import SECOND_ORDER_COLUMNS, add_second_order_features
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from features.second_order import (  # noqa: E402
+    SECOND_ORDER_COLUMNS,
+    add_second_order_features,
+)
 
 
 def main() -> None:
