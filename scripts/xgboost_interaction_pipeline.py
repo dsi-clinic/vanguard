@@ -373,9 +373,7 @@ def prune_near_duplicates(
                 spearman_abs = float(spearman_corr.loc[best, candidate])
                 pearson_abs = float(pearson_corr.loc[best, candidate])
                 finite_corrs = [
-                    value
-                    for value in (spearman_abs, pearson_abs)
-                    if np.isfinite(value)
+                    value for value in (spearman_abs, pearson_abs) if np.isfinite(value)
                 ]
                 if not finite_corrs:
                     continue
