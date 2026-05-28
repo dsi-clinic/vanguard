@@ -50,6 +50,7 @@ def main() -> None:
         full_df,
         selected_blocks=blocks,
         label_col=label_col,
+        explicit_model_columns=arm.get("explicit_model_columns"),
     )
 
     arm_config = deepcopy(config)

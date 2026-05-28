@@ -14,6 +14,7 @@ dependencies:
   - libitk=5.2.1
   - imageio=2.37.0
   - imageio-ffmpeg=0.6.0
+  - pytest=8.4.2
   - ruff=0.14.14
   - pre-commit=4.5.1
   - ipykernel=7.1.0
