@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -47,12 +48,19 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from scipy.stats import spearmanr
+from sklearn.metrics import roc_auc_score
 
-from features import FEATURE_BLOCK_ORDER, feature_block_for_column
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from features import FEATURE_BLOCK_ORDER, feature_block_for_column  # noqa: E402
 
 matplotlib.use("Agg")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+_MIN_LABEL_CLASSES = 2
 
 _NON_FEATURE_COLUMNS = frozenset(
     {
@@ -241,29 +249,22 @@ def univariate_auc_ranking(
 ) -> pd.DataFrame:
     """Rank features by univariate AUC (label vs. each feature)."""
     _min_samples_auc = 10
-    label = table[label_col].to_numpy()
+    label = pd.to_numeric(table[label_col], errors="coerce").to_numpy()
     results = []
     for col in feature_cols:
-        vals = table[col].to_numpy().astype(float)
+        vals = pd.to_numeric(table[col], errors="coerce").to_numpy(dtype=float)
         mask = np.isfinite(vals) & np.isfinite(label)
-        if mask.sum() < _min_samples_auc:
+        finite_labels = label[mask]
+        finite_vals = vals[mask]
+        if (
+            mask.sum() < _min_samples_auc
+            or len(np.unique(finite_labels)) < _MIN_LABEL_CLASSES
+        ):
             results.append({"feature": col, "auc": np.nan})
             continue
         try:
-            auc = max(
-                float(
-                    np.mean(
-                        vals[mask & (label == 1)]
-                        > vals[mask & (label == 0)].reshape(-1, 1)
-                    )
-                ),
-                float(
-                    np.mean(
-                        vals[mask & (label == 0)]
-                        > vals[mask & (label == 1)].reshape(-1, 1)
-                    )
-                ),
-            )
+            auc_raw = float(roc_auc_score(finite_labels, finite_vals))
+            auc = max(auc_raw, 1.0 - auc_raw)
         except Exception:
             auc = np.nan
         results.append({"feature": col, "auc": auc})

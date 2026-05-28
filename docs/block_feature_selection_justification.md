@@ -54,12 +54,56 @@ top *k* globally.  Then repeats with a block-aware budget that guarantees
 every block at least ⌊k / n_blocks⌋ slots.  A side-by-side bar chart shows
 which blocks survive under each strategy.
 
-The expected result is that global top-k eliminates or severely under-
-represents small blocks like `clinical` and `tumor_size`, while the block-
-aware approach preserves representation from every measurement family.
+On the vessel-all feature table used for the PR diagnostics, global top-k
+eliminated the clinical block and put 43/64 selected features in the kinematic
+block.  The block-aware simulation preserved at least one feature from every
+measurement family.
 
 **Output:** `feature_auc_ranking.csv`, `selection_survival.csv`,
 `selection_survival.png`
+
+## Results from the vessel-all table
+
+Run:
+
+```bash
+python scripts/analyze_block_selection_bias.py \
+    experiments/clinical_graph_ablation/runs/clinical_plus_tumor_size_plus_vessel_all/features_engineered_labeled.csv \
+    -o experiments/block_selection_analysis \
+    --top-k 64
+```
+
+Block size imbalance:
+
+| Block | Numeric features | Share |
+|-------|------------------|-------|
+| `clinical` | 2 | 0.2% |
+| `tumor_size` | 13 | 1.4% |
+| `morph` | 50 | 5.3% |
+| `graph` | 54 | 5.7% |
+| `kinematic` | 827 | 87.4% |
+| **Total** | **946** | **100.0%** |
+
+Correlation summary:
+
+| Comparison | Mean absolute Spearman rho |
+|------------|----------------------------|
+| Within the same block | 0.420 |
+| Between different blocks | 0.152 |
+
+Global top-k versus block-aware survival at `k=64`:
+
+| Block | Global top-k | Block-aware |
+|-------|--------------|-------------|
+| `clinical` | 0 | 1 |
+| `tumor_size` | 11 | 13 |
+| `morph` | 9 | 13 |
+| `graph` | 1 | 13 |
+| `kinematic` | 43 | 13 |
+
+These results support the block-aware selector because the largest block
+dominates the global budget, while the block-aware allocation keeps every
+measurement family represented.
 
 ## Running the analysis
 
