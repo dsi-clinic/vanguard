@@ -11,7 +11,7 @@
 set -eo pipefail
 
 REPO_ROOT="${SLURM_SUBMIT_DIR:-${REPO_ROOT:-$PWD}}"
-INPUT_CSV="${INPUT_CSV:-vanguard/experiments/second_order_features/features_engineered_labeled.csv}"
+INPUT_CSV="${INPUT_CSV:-experiments/second_order_features/features_engineered_labeled.csv}"
 OUTDIR="${OUTDIR:-experiments/xgboost_interaction}"
 
 mkdir -p "${REPO_ROOT}/logs"
@@ -29,6 +29,11 @@ echo "Output: ${OUTDIR}"
 echo "GPU: ${CUDA_VISIBLE_DEVICES:-none}"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo "No GPU detected"
 echo ""
+
+if [[ ! -f "${INPUT_CSV}" ]]; then
+  echo "Missing input CSV: ${INPUT_CSV}" >&2
+  exit 1
+fi
 
 PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" python scripts/xgboost_interaction_pipeline.py \
   "${INPUT_CSV}" \

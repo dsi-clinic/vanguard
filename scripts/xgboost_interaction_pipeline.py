@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -36,7 +37,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
-from scipy.sparse.csgraph import connected_components
 from scipy.stats import false_discovery_control
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import PartialDependenceDisplay, permutation_importance
@@ -52,7 +52,11 @@ from sklearn.model_selection import (
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
-from features import feature_block_for_column
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from features import feature_block_for_column  # noqa: E402
 
 matplotlib.use("Agg")
 
@@ -317,8 +321,10 @@ def prune_near_duplicates(
 ) -> tuple[list[str], pd.DataFrame]:
     """Block-aware near-duplicate pruning using Spearman and Pearson correlations.
 
-    Groups features within the same block if |Spearman| >= threshold OR
-    |Pearson| >= threshold, then keeps one representative per group.
+    Within each block, greedily keeps the best remaining representative and only
+    drops features whose absolute Spearman or Pearson correlation to that kept
+    feature is above the threshold. This avoids chained components where A is
+    near-duplicate with B and B with C, but A is not near-duplicate with C.
 
     Returns the kept feature list and a pruning report DataFrame.
     """
@@ -339,49 +345,62 @@ def prune_near_duplicates(
 
         # Compute Spearman correlation via pandas rank correlation (much faster
         # than scipy.stats.spearmanr with nan_policy="omit" for large matrices)
-        spearman_corr = block_data.rank().corr().abs().to_numpy()
+        spearman_corr = block_data.rank().corr().abs()
 
         # Compute Pearson correlation
-        pearson_corr = block_data.corr().abs().to_numpy()
+        pearson_corr = block_data.corr().abs()
 
-        # Adjacency: connected if Spearman >= threshold OR Pearson >= threshold
-        adjacency = (
-            (spearman_corr >= _NEAR_DUPLICATE_THRESHOLD)
-            | (pearson_corr >= _NEAR_DUPLICATE_THRESHOLD)
-        ).astype(int)
-        np.fill_diagonal(adjacency, 0)
+        ordered = sorted(
+            block_cols,
+            key=lambda c: _unsupervised_rep_score(features, c),
+            reverse=True,
+        )
+        remaining = set(ordered)
+        greedy_group_idx = 0
 
-        n_components, labels = connected_components(adjacency, directed=False)
-
-        for comp in range(n_components):
-            member_idxs = [i for i in range(len(block_cols)) if labels[i] == comp]
-            members = [block_cols[i] for i in member_idxs]
-
-            if len(members) <= 1:
-                all_kept.extend(members)
+        for best in ordered:
+            if best not in remaining:
                 continue
 
-            # Pick best representative
-            best = max(members, key=lambda c: _unsupervised_rep_score(features, c))
             all_kept.append(best)
+            remaining.remove(best)
 
-            # Record pruning report entries
-            for m in members:
-                if m == best:
+            dropped_for_best: list[str] = []
+            for candidate in ordered:
+                if candidate not in remaining:
                     continue
-                # Compute correlation of dropped feature to kept representative
-                corr_to_kept = features[[m, best]].corr().iloc[0, 1]
+
+                spearman_abs = float(spearman_corr.loc[best, candidate])
+                pearson_abs = float(pearson_corr.loc[best, candidate])
+                finite_corrs = [
+                    value
+                    for value in (spearman_abs, pearson_abs)
+                    if np.isfinite(value)
+                ]
+                if not finite_corrs:
+                    continue
+                max_abs_corr = max(finite_corrs)
+                if max_abs_corr < _NEAR_DUPLICATE_THRESHOLD:
+                    continue
+
+                remaining.remove(candidate)
+                dropped_for_best.append(candidate)
                 report_rows.append(
                     {
                         "fold": fold_idx,
-                        "original_feature": m,
+                        "original_feature": candidate,
                         "kept_feature": best,
                         "feature_block": block,
-                        "correlation_to_kept": round(corr_to_kept, 4),
+                        "correlation_to_kept": round(max_abs_corr, 4),
+                        "pearson_abs_to_kept": round(pearson_abs, 4),
+                        "spearman_abs_to_kept": round(spearman_abs, 4),
                         "drop_reason": "near_duplicate",
-                        "semantic_group": f"{block}_component_{comp}",
+                        "semantic_group": f"{block}_greedy_group_{greedy_group_idx}",
                     }
                 )
+
+            if dropped_for_best:
+                greedy_group_idx += 1
 
         block_dropped = len(block_cols) - sum(
             1 for c in all_kept if col_blocks.get(c) == block
@@ -853,6 +872,7 @@ def plot_comparison_roc(results: dict, outdir: Path) -> None:
             ax.plot(
                 rc["fpr"],
                 rc["tpr"],
+                color="#9E9E9E",
                 alpha=0.25,
                 linewidth=1,
                 label=f'Fold {rc["fold"]} (AUC={rc["auc"]:.2f})',
@@ -1070,7 +1090,10 @@ def main() -> None:
         "--site-group-cv",
         action="store_true",
         default=False,
-        help="Use site-grouped CV (StratifiedGroupKFold) instead of standard CV",
+        help=(
+            "Use site-grouped outer CV (StratifiedGroupKFold); inner tuning "
+            "still uses standard stratified CV"
+        ),
     )
     ap.add_argument(
         "--group-col",
