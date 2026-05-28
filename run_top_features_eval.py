@@ -100,6 +100,7 @@ def main() -> None:
         }
     ]
     outdir = args.outdir
+    outdir.mkdir(parents=True, exist_ok=True)
     full_df = _prepare_full_dataset(config, placeholder_arms, outdir)
 
     arms, ranked = assemble_top_features_experiment_arms(
