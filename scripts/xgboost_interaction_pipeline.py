@@ -1008,6 +1008,9 @@ def plot_partial_dependence_top_pairs(
     outdir: Path,
 ) -> None:
     """2D partial dependence plots for the top feature pairs."""
+    for stale_pdp in outdir.glob("pdp_*.png"):
+        stale_pdp.unlink()
+
     if importance_df.empty or len(feature_cols) < _MIN_PDP_FEATURES:
         return
 
