@@ -113,8 +113,7 @@ def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
                 bilateral_filter = None
         except Exception as exc:  # noqa: BLE001
             logging.warning(
-                "Could not apply early bilateral prefilter: %s. "
-                "Continuing without it.",
+                "Could not apply early bilateral prefilter: %s. Continuing without it.",
                 exc,
             )
             bilateral_filter = None
@@ -461,13 +460,23 @@ def load_labels(path: Path, id_col: str, label_col: str) -> pd.DataFrame:
     return df_labels[[id_col, label_col]].rename(columns={id_col: "case_id"})
 
 
+_ERR_PREVIEW_LIMIT = 12
+
+
 def select_features(
     df: pd.DataFrame,
     *,
     selected_blocks: Any,
     label_col: str,
+    explicit_model_columns: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Filter a labeled feature table down to the requested canonical blocks."""
+    """Filter a labeled feature table down to the requested canonical blocks.
+
+    When ``explicit_model_columns`` is provided, only those modeling columns are
+    kept (in that order), among the columns permitted by ``selected_blocks``.
+    Annotation columns (see ``ANNOTATION_COLUMNS``) and the label column are
+    always retained and must not appear in ``explicit_model_columns``.
+    """
     normalized_blocks = normalize_selected_features(selected_blocks)
     if not normalized_blocks:
         return df
@@ -484,6 +493,34 @@ def select_features(
         if column not in keep_columns
         and feature_block_for_column(column) in selected_set
     ]
+
+    if explicit_model_columns is not None:
+        requested = [str(c) for c in explicit_model_columns if str(c).strip()]
+        if not requested:
+            raise ValueError("explicit_model_columns, if set, cannot be empty.")
+        unknown = [c for c in requested if c not in df.columns]
+        if unknown:
+            preview = unknown[:_ERR_PREVIEW_LIMIT]
+            more = "..." if len(unknown) > _ERR_PREVIEW_LIMIT else ""
+            raise ValueError(
+                f"explicit_model_columns contains unknown columns: {preview}{more}"
+            )
+        forbidden = [c for c in requested if c in keep_columns]
+        if forbidden:
+            raise ValueError(
+                "explicit_model_columns must list only modeling columns, not "
+                f"annotations/label: {forbidden}"
+            )
+        allowed = set(selected_feature_columns)
+        missing = [c for c in requested if c not in allowed]
+        if missing:
+            preview = missing[:_ERR_PREVIEW_LIMIT]
+            more = "..." if len(missing) > _ERR_PREVIEW_LIMIT else ""
+            raise ValueError(
+                "explicit_model_columns must be a subset of columns selected "
+                f"via selected_blocks; off-list: {preview}{more}"
+            )
+        selected_feature_columns = list(requested)
 
     if not selected_feature_columns:
         raise ValueError(
