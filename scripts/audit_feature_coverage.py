@@ -8,6 +8,7 @@ present:
 - pCR label (from ``pcr_labels.csv``)
 - centerline ``.npy`` skeleton file
 - tumor mask ``.nii.gz``
+- patient-info JSON ``{case_id}.json`` used for clinical metadata
 - ``*_morphometry.json``
 - ``*_tumor_graph_features.json``
 - the ``status == "ok"`` field inside the tumor-graph JSON
@@ -35,6 +36,9 @@ DEFAULT_TUMOR_MASK_ROOT = Path(
     "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
 )
 DEFAULT_LABELS_CSV = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv")
+DEFAULT_PATIENT_INFO_DIR = Path(
+    "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files"
+)
 DEFAULT_RADIOMICS_LABELS_CSV = Path("radiomics/labels.csv")
 
 
@@ -58,6 +62,15 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_LABELS_CSV,
         help="CSV mapping case ids to pCR labels (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--patient-info-dir",
+        type=Path,
+        default=DEFAULT_PATIENT_INFO_DIR,
+        help=(
+            "Directory containing clinical metadata JSONs named '{case_id}.json' "
+            "(default: %(default)s)."
+        ),
     )
     parser.add_argument(
         "--radiomics-labels-csv",
@@ -131,6 +144,7 @@ def audit_one_study(
     case_id: str,
     centerline_pattern: str,
     tumor_mask_root: Path,
+    patient_info_dir: Path,
     label_index: dict[str, int],
     radiomics_label_index: dict[str, int],
 ) -> dict[str, Any]:
@@ -139,6 +153,7 @@ def audit_one_study(
     morphometry_path = study_dir / f"{case_id}_morphometry.json"
     tumor_graph_path = study_dir / f"{case_id}_tumor_graph_features.json"
     tumor_mask_path = tumor_mask_root / f"{case_id}.nii.gz"
+    patient_info_path = patient_info_dir / f"{case_id}.json"
 
     tumor_graph_exists, tumor_graph_status = _read_tumor_graph_status(tumor_graph_path)
 
@@ -150,6 +165,7 @@ def audit_one_study(
         "has_tumor_graph_json": tumor_graph_exists,
         "tumor_graph_status": tumor_graph_status,
         "has_tumor_mask": tumor_mask_path.exists(),
+        "has_patient_info_json": patient_info_path.exists(),
         "has_pcr_label": case_id in label_index,
         "pcr": label_index.get(case_id),
         "has_radiomics_label": case_id in radiomics_label_index,
@@ -160,6 +176,7 @@ def audit_one_study(
         and row["has_tumor_graph_json"]
         and (row["tumor_graph_status"] == "ok")
         and row["has_tumor_mask"]
+        and row["has_patient_info_json"]
         and row["has_pcr_label"]
     )
     return row
@@ -207,6 +224,7 @@ def main() -> None:
                     case_id=study_dir.name,
                     centerline_pattern=args.centerline_pattern,
                     tumor_mask_root=args.tumor_mask_root,
+                    patient_info_dir=args.patient_info_dir,
                     label_index=label_index,
                     radiomics_label_index=radiomics_label_index,
                 )
@@ -231,6 +249,7 @@ def main() -> None:
                     (sub["tumor_graph_status"] == "ok").sum()
                 ),
                 "n_tumor_mask": int(sub["has_tumor_mask"].sum()),
+                "n_patient_info_json": int(sub["has_patient_info_json"].sum()),
                 "n_pcr_label": int(sub["has_pcr_label"].sum()),
                 "n_radiomics_label": int(sub["has_radiomics_label"].sum()),
                 "n_all_artifacts": int(sub["has_all_artifacts"].sum()),

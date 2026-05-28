@@ -22,13 +22,13 @@ reruns.
   artifacts. With those filters relaxed, the cohort jumps from 808 to 1491
   cases (+85%) with no additional pipeline work.
 
-| Dataset | Study dirs | Centerline `.npy` | Morph JSON | Tumor-graph `status=ok` | Tumor mask | pCR label | All artifacts + label |
-|---|---|---|---|---|---|---|---|
-| DUKE | 291 | 291 | 291 | 291 | 291 | 280 | 280 |
-| ISPY1 | 171 | 171 | 171 | 171 | 171 | 167 | 167 |
-| ISPY2 | 980 | 980 | 980 | 980 | 980 | 980 | 980 |
-| NACT | 64 | 64 | 64 | 64 | 64 | 64 | 64 |
-| **Total** | **1506** | **1506** | **1506** | **1506** | **1506** | **1491** | **1491** |
+| Dataset | Study dirs | Centerline `.npy` | Morph JSON | Tumor-graph `status=ok` | Tumor mask | Patient-info JSON | pCR label | All artifacts + label |
+|---|---|---|---|---|---|---|---|---|
+| DUKE | 291 | 291 | 291 | 291 | 291 | 291 | 280 | 280 |
+| ISPY1 | 171 | 171 | 171 | 171 | 171 | 171 | 167 | 167 |
+| ISPY2 | 980 | 980 | 980 | 980 | 980 | 980 | 980 | 980 |
+| NACT | 64 | 64 | 64 | 64 | 64 | 64 | 64 | 64 |
+| **Total** | **1506** | **1506** | **1506** | **1506** | **1506** | **1506** | **1491** | **1491** |
 
 Per-case audit table: `results/feature_coverage_audit.csv`
 Per-dataset summary: `results/feature_coverage_summary.csv`
@@ -41,7 +41,14 @@ micromamba run -n vanguard python scripts/audit_feature_coverage.py
 
 The script is read-only, walks the centerline tree directly, and takes
 ~1 minute. All paths can be overridden via CLI flags (see `--help`); the
-defaults match `configs/issue118_baseline_arms.yaml`.
+defaults match the production tabular paths (including
+`patient_info_files/` for clinical metadata JSONs).
+
+Clinical-source note: `clinical_features.get_clinical_features()` loads
+`patient_info_dir` first and only falls back to `clinical_excel` if the JSON
+directory is missing. This audit now checks those per-case patient-info JSONs
+explicitly (`has_patient_info_json`) so the artifact audit matches the actual
+runtime path.
 
 ## Multi-dataset config
 
