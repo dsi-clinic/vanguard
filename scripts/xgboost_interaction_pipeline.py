@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 r"""XGBoost interaction-aware pCR prediction with near-duplicate feature pruning.
 
-Companion to the marginal/linear elastic-net baseline in feature_selection.py.
+Companion to the marginal/linear elastic-net comparator in feature_selection.py.
 This pipeline tests whether shallow-tree XGBoost, trained on near-duplicate-pruned
 features (unsupervised only), improves held-out pCR prediction.
 
@@ -13,7 +13,7 @@ features (unsupervised only), improves held-out pCR prediction.
   and is block-aware: only features within the same semantic block are grouped.
 - Shallow trees (max_depth 2-3) learn low-order feature interactions.
 
-**Scientific context:** The elastic-net pipeline is a marginal/linear baseline that
+**Scientific context:** The elastic-net pipeline is a marginal/linear comparator that
 can miss features important only jointly or nonlinearly.  This pipeline serves as
 the interaction-aware comparator (see issue #152).
 
@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -52,7 +53,11 @@ from sklearn.model_selection import (
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
-from features import feature_block_for_column
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from features import feature_block_for_column  # noqa: E402
 
 matplotlib.use("Agg")
 
@@ -242,7 +247,7 @@ def basic_cleanup(
     return kept
 
 
-# ── Univariate screening (for elastic-net baseline arm only) ────────────
+# ── Univariate screening (for elastic-net comparator arm only) ──────────
 
 
 def _stage2_univariate(
@@ -252,7 +257,7 @@ def _stage2_univariate(
 ) -> list[str]:
     """Mann-Whitney U screening with BH FDR correction.
 
-    Used only for the elastic-net baseline arm to replicate the current
+    Used only for the elastic-net comparator arm to approximate the current
     marginal/linear pipeline.  The XGBoost arm does NOT use this.
     """
     grp0 = features[features[label_col] == 0]
@@ -471,7 +476,7 @@ def _fit_xgboost(
     return model, search.best_params_
 
 
-# ── Elastic-net fitting (baseline arm) ──────────────────────────────────
+# ── Elastic-net fitting (comparator arm) ────────────────────────────────
 
 
 def _fit_elastic_net(

@@ -68,9 +68,37 @@ def plot_auc_comparison(
     output_path: Path,
 ) -> None:
     """Create a grouped bar chart of AUC (mean ± std) per arm and model."""
+    required_cols = {"arm_name", "model_family", "auc_mean", "auc_std"}
+    missing_cols = sorted(required_cols - set(summary.columns))
+    if missing_cols:
+        raise ValueError(f"Summary CSV is missing required columns: {missing_cols}")
+
     summary = summary[summary["model_family"].isin(models)].copy()
     if summary.empty:
         raise ValueError(f"No rows for models {models}")
+
+    duplicate_rows = summary.duplicated(["arm_name", "model_family"], keep=False)
+    if duplicate_rows.any():
+        duplicates = (
+            summary.loc[duplicate_rows, ["arm_name", "model_family"]]
+            .drop_duplicates()
+            .to_dict("records")
+        )
+        raise ValueError(f"Duplicate arm/model rows found: {duplicates}")
+
+    arm_names = list(summary["arm_name"].drop_duplicates())
+    missing_pairs = [
+        {"arm_name": arm_name, "model_family": model}
+        for arm_name in arm_names
+        for model in models
+        if not (
+            (summary["arm_name"] == arm_name) & (summary["model_family"] == model)
+        ).any()
+    ]
+    if missing_pairs:
+        raise ValueError(
+            "Missing rows for requested arm/model combinations: " f"{missing_pairs}"
+        )
 
     # Friendly labels
     summary["arm_label"] = (
@@ -80,7 +108,7 @@ def plot_auc_comparison(
         summary["model_family"].map(MODEL_LABELS).fillna(summary["model_family"])
     )
 
-    arms = summary["arm_label"].unique()
+    arms = [ARM_LABELS.get(arm_name, arm_name) for arm_name in arm_names]
     n_arms = len(arms)
     n_models = len(models)
 
@@ -92,8 +120,8 @@ def plot_auc_comparison(
 
     for i, model_key in enumerate(models):
         subset = summary[summary["model_family"] == model_key].set_index("arm_label")
-        means = [subset.loc[a, "auc_mean"] if a in subset.index else 0 for a in arms]
-        stds = [subset.loc[a, "auc_std"] if a in subset.index else 0 for a in arms]
+        means = [subset.loc[a, "auc_mean"] for a in arms]
+        stds = [subset.loc[a, "auc_std"] for a in arms]
         offset = (i - (n_models - 1) / 2) * bar_width
         bars = ax.bar(
             x + offset,
@@ -141,18 +169,16 @@ def plot_auc_comparison(
     ax.grid(axis="y", alpha=0.3)
     ax.set_axisbelow(True)
 
-    # High-level conclusion annotation
+    # Label the best observed combination without embedding an interpretation.
     best_row = summary.loc[summary["auc_mean"].idxmax()]
-    conclusion = (
-        "Both linear and nonlinear models perform comparably,\n"
-        "suggesting the predictive signal is largely linear.\n"
+    best_label = (
         f"Best: {MODEL_LABELS.get(best_row['model_family'], best_row['model_family'])} "
         f"on {best_row['arm_label']} (AUC = {best_row['auc_mean']:.3f})"
     )
     ax.text(
         0.98,
         0.03,
-        conclusion,
+        best_label,
         transform=ax.transAxes,
         fontsize=9.5,
         ha="right",
