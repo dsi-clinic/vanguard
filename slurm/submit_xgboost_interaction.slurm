@@ -17,6 +17,11 @@ OUTDIR="${OUTDIR:-experiments/xgboost_interaction}"
 mkdir -p "${REPO_ROOT}/logs"
 cd "${REPO_ROOT}"
 
+if [[ ! -f "${INPUT_CSV}" ]]; then
+  echo "ERROR: input CSV not found: ${INPUT_CSV}" >&2
+  exit 2
+fi
+
 source ~/.bashrc || true
 if command -v micromamba >/dev/null 2>&1; then
   eval "$(micromamba shell hook -s bash)"
