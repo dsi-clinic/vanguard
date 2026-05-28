@@ -1,0 +1,5 @@
+dataset,n_study_dirs,n_centerline_npy,n_morphometry_json,n_tumor_graph_json,n_tumor_graph_status_ok,n_tumor_mask,n_patient_info_json,n_pcr_label,n_radiomics_label,n_all_artifacts
+DUKE,291,291,291,291,291,291,291,280,280,280
+ISPY1,171,171,171,171,171,171,171,167,167,167
+ISPY2,980,980,980,980,980,980,980,980,980,980
+NACT,64,64,64,64,64,64,64,64,64,64
