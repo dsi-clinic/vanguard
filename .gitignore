@@ -213,3 +213,10 @@ CLAUDE.md
 
 # Lab notebooks (local only, never committed) — matches in any directory
 lab_notebook.md
+
+# Local artifacts that should never be committed
+.claude/
+gmon.out
+repomix-output.xml
+sample_data/
+--input-root
