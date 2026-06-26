@@ -73,6 +73,7 @@ def run_inference_in_process(
     batch_size: int,
     num_workers: int,
     use_amp: bool,
+    z_division: int = 3,
 ):
     """Load each model once and run breast then vessel inference in-process."""
     import torchio as tio
@@ -107,7 +108,7 @@ def run_inference_in_process(
         additional_input_dir=str(step2_dir),
         input_dim=96,
         x_y_divisions=8,
-        z_division=3,
+        z_division=z_division,
         transforms=tio.Compose([]),
         one_hot_mask=True,
         image_only=True,
@@ -137,6 +138,11 @@ def main() -> None:
     p.add_argument("--no-amp", action="store_true", help="Disable mixed precision")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--cleanup", action="store_true")
+    p.add_argument(
+        "--z-division", type=int, default=3,
+        help="Number of z-axis tiles for Dataset3DDivided. Increase to 4+ for volumes "
+             "where (z - 96) / (z_division - 1) > 96 (i.e. z > 288 with default=3).",
+    )
     args = p.parse_args()
 
     out_dir = Path(args.output_dir)
@@ -178,11 +184,12 @@ def main() -> None:
         print("All files failed preprocessing — skipping inference.")
         return
 
-    print(f"Inference (batch_size={args.batch_size}, num_workers={args.num_workers}, amp={use_amp})...")
+    print(f"Inference (batch_size={args.batch_size}, num_workers={args.num_workers}, amp={use_amp}, z_division={args.z_division})...")
     run_inference_in_process(
         step1_dir, step2_dir, step3_dir,
         args.breast_model_path, args.vessel_model_path,
         args.batch_size, args.num_workers, use_amp,
+        z_division=args.z_division,
     )
     t_inf = time.time()
     print(f"Inference done in {t_inf - t_pre:.1f}s")

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=fast-seg-array
+#SBATCH --job-name=fast-seg-task91-rerun
 #SBATCH --partition=gpuq
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=04:00:00
-#SBATCH --output=/ess/home/home1/t-9sbose/vanguard/logs/fast-seg-array-%A-%a.out
-#SBATCH --error=/ess/home/home1/t-9sbose/vanguard/logs/fast-seg-array-%A-%a.err
+#SBATCH --time=02:00:00
+#SBATCH --output=/ess/home/home1/t-9sbose/vanguard/logs/fast-seg-task91-rerun-%j.out
+#SBATCH --error=/ess/home/home1/t-9sbose/vanguard/logs/fast-seg-task91-rerun-%j.err
 set -eo pipefail
 
 source ~/.bashrc || true
@@ -22,31 +22,27 @@ export MKL_NUM_THREADS=2
 export CUDA_VISIBLE_DEVICES=0
 export PYTHONUNBUFFERED=1
 
-IMAGES_DIR="${IMAGES_DIR:-/ess/scratch/scratch1/annawoodard/MAMA-MIA-syn60868042/images}"
-OUTPUT_DIR="${OUTPUT_DIR:-/ess/scratch/scratch1/t-9sbose/vessel_segmentations_fast_smoke}"
+IMAGES_DIR="${IMAGES_DIR:-/ess/scratch/scratch1/t-9sbose/resampled_segmentation_flat}"
+OUTPUT_DIR="${OUTPUT_DIR:-/gpfs/data/karczmar-lab/workspaces/saritbose/resampled-vessel-segmentations}"
 BREAST_MODEL="${BREAST_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/breast_model.pth}"
 VESSEL_MODEL="${VESSEL_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/dv_model.pth}"
-FILES_PER_TASK="${FILES_PER_TASK:-20}"
+FILE_START="${FILE_START:-1820}"
+FILE_END="${FILE_END:-1839}"
+Z_DIVISION="${Z_DIVISION:-4}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
-Z_DIVISION="${Z_DIVISION:-3}"
 
-TASK_ID=${SLURM_ARRAY_TASK_ID}
-FILE_START=$((TASK_ID * FILES_PER_TASK))
-FILE_END=$((FILE_START + FILES_PER_TASK - 1))
-
-TMPDIR="/tmp/fast_seg_array_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+TMPDIR="/tmp/fast_seg_task91_rerun_${SLURM_JOB_ID}"
 mkdir -p "${TMPDIR}"
 trap 'rm -rf "${TMPDIR}" || true' EXIT
 
 echo "========================================="
-echo "Fast Segmentation Array Job"
+echo "Fast Segmentation Task-91 Rerun"
 echo "========================================="
-echo "Array Job ID: ${SLURM_ARRAY_JOB_ID}"
-echo "Array Task ID: ${SLURM_ARRAY_TASK_ID}"
-echo "Node: $(hostname)  GPU: ${CUDA_VISIBLE_DEVICES:-?}  Date: $(date)"
-echo "Files: ${FILE_START}-${FILE_END}  batch_size=${BATCH_SIZE}"
-echo "Images dir: ${IMAGES_DIR}"
-echo "Output dir: ${OUTPUT_DIR}"
+echo "Job ID  : ${SLURM_JOB_ID}"
+echo "Node    : $(hostname)  GPU: ${CUDA_VISIBLE_DEVICES:-?}  Date: $(date)"
+echo "Files   : ${FILE_START}-${FILE_END}  z_division=${Z_DIVISION}  batch_size=${BATCH_SIZE}"
+echo "Images  : ${IMAGES_DIR}"
+echo "Output  : ${OUTPUT_DIR}"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 echo "========================================="
 
@@ -66,5 +62,5 @@ python -u "${PROJECT_ROOT}/faster-segmentation-test/batch_segmentation_fast.py" 
   --cleanup
 
 echo "========================================="
-echo "Task ${SLURM_ARRAY_TASK_ID} completed: $(date)"
+echo "Task-91 rerun completed: $(date)"
 echo "========================================="
