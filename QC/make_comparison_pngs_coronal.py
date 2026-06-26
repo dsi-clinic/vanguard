@@ -14,6 +14,7 @@ Best coronal y chosen per-version as the y slice with the most vessel signal.
 """
 
 import argparse
+import os
 from pathlib import Path
 
 import matplotlib
@@ -188,7 +189,7 @@ def build_figure(panels, labels, out_path: Path, match_resolution: bool) -> None
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exp-root",
-        default=str(Path.home() / "vanguard_qc_pngs" / "resampling_experiment"))
+        default=str(Path(os.environ.get("VANGUARD_QC_OUTPUT", str(Path.home() / "vanguard_qc_pngs"))) / "resampling_experiment"))
     parser.add_argument("--case-id", default="DUKE_001")
     parser.add_argument("--mask-thresh", type=float, default=0.5)
     parser.add_argument("--fixed-y", type=int, default=None,

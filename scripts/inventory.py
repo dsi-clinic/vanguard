@@ -37,12 +37,16 @@ class StudyRecord:
     study_id: str
     cohort: str
     seg_timepoints: int
-    centerlines: bool
+    centerline_voxels: int  # -1 = file missing/unreadable; >=0 = nonzero voxel count
     graph_features: bool
 
     @property
     def segmentation(self) -> bool:
         return self.seg_timepoints > 0
+
+    @property
+    def centerlines(self) -> bool:
+        return self.centerline_voxels >= 0
 
     @property
     def status(self) -> str:
@@ -99,9 +103,16 @@ def check_segmentation(input_root: Path, cohort: str, case_id: str) -> int:
     )
 
 
-def check_centerlines(output_root: Path, cohort: str, case_id: str) -> bool:
+def count_centerline_voxels(output_root: Path, cohort: str, case_id: str) -> int:
+    """Return number of nonzero voxels in skeleton_4d_exam_mask.npy, or -1 if missing."""
+    import numpy as np  # lazy — keeps startup fast when numpy isn't needed
     p = output_root / cohort / case_id / f"{case_id}_skeleton_4d_exam_mask.npy"
-    return p.exists()
+    if not p.exists():
+        return -1
+    try:
+        return int(np.count_nonzero(np.load(p, allow_pickle=False)))
+    except Exception:
+        return -1
 
 
 def check_graph_features(output_root: Path, cohort: str, case_id: str) -> bool:
@@ -119,7 +130,7 @@ def build_record(
         study_id=case_id,
         cohort=cohort,
         seg_timepoints=check_segmentation(input_root, cohort, case_id),
-        centerlines=check_centerlines(output_root, cohort, case_id),
+        centerline_voxels=count_centerline_voxels(output_root, cohort, case_id),
         graph_features=check_graph_features(output_root, cohort, case_id),
     )
 
@@ -157,6 +168,10 @@ def _yn(flag: bool) -> str:
     return "yes" if flag else "no "
 
 
+def _cl_vox(n: int) -> str:
+    return "-" if n < 0 else str(n)
+
+
 def print_table(records: list[StudyRecord], stage_filter: str | None) -> None:
     if not records:
         print("No studies found.")
@@ -165,6 +180,8 @@ def print_table(records: list[StudyRecord], stage_filter: str | None) -> None:
     if stage_filter:
         if stage_filter == "segmentation":
             header = f"{'study_id':<18}  {'cohort':<8}  {'segmentation':<14}  {'seg_tp':<7}  status"
+        elif stage_filter == "centerlines":
+            header = f"{'study_id':<18}  {'cohort':<8}  {'centerlines':<12}  {'cl_voxels':<12}  status"
         else:
             header = f"{'study_id':<18}  {'cohort':<8}  {stage_filter:<16}  status"
         sep = "-" * len(header)
@@ -173,6 +190,8 @@ def print_table(records: list[StudyRecord], stage_filter: str | None) -> None:
         for r in records:
             if stage_filter == "segmentation":
                 print(f"{r.study_id:<18}  {r.cohort:<8}  {_yn(r.segmentation):<14}  {r.seg_timepoints:<7}  {r.status}")
+            elif stage_filter == "centerlines":
+                print(f"{r.study_id:<18}  {r.cohort:<8}  {_yn(r.centerlines):<12}  {_cl_vox(r.centerline_voxels):<12}  {r.status}")
             else:
                 flag = _yn(r.stage_flag(stage_filter))
                 print(f"{r.study_id:<18}  {r.cohort:<8}  {flag:<16}  {r.status}")
@@ -180,7 +199,7 @@ def print_table(records: list[StudyRecord], stage_filter: str | None) -> None:
         header = (
             f"{'study_id':<18}  {'cohort':<8}  "
             f"{'segmentation':<14}  {'seg_tp':<7}  {'centerlines':<12}  "
-            f"{'graph_features':<15}  status"
+            f"{'cl_voxels':<12}  {'graph_features':<15}  status"
         )
         sep = "-" * len(header)
         print(header)
@@ -189,7 +208,7 @@ def print_table(records: list[StudyRecord], stage_filter: str | None) -> None:
             print(
                 f"{r.study_id:<18}  {r.cohort:<8}  "
                 f"{_yn(r.segmentation):<14}  {r.seg_timepoints:<7}  {_yn(r.centerlines):<12}  "
-                f"{_yn(r.graph_features):<15}  {r.status}"
+                f"{_cl_vox(r.centerline_voxels):<12}  {_yn(r.graph_features):<15}  {r.status}"
             )
 
 
@@ -220,7 +239,10 @@ def write_csv(records: list[StudyRecord], path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(
             fh,
-            fieldnames=["study_id", "cohort", "segmentation", "seg_timepoints", "centerlines", "graph_features", "status"],
+            fieldnames=[
+                "study_id", "cohort", "segmentation", "seg_timepoints",
+                "centerlines", "centerline_voxels", "graph_features", "status",
+            ],
         )
         writer.writeheader()
         for r in records:
@@ -230,10 +252,39 @@ def write_csv(records: list[StudyRecord], path: Path) -> None:
                 "segmentation": "yes" if r.segmentation else "no",
                 "seg_timepoints": r.seg_timepoints,
                 "centerlines": "yes" if r.centerlines else "no",
+                "centerline_voxels": r.centerline_voxels if r.centerline_voxels >= 0 else "",
                 "graph_features": "yes" if r.graph_features else "no",
                 "status": r.status,
             })
     print(f"\nCSV written to: {path}")
+
+
+def print_cohort_distribution(records: list[StudyRecord]) -> None:
+    """Print per-cohort distribution of centerline voxel counts."""
+    import statistics
+
+    with_cl = [r for r in records if r.centerline_voxels >= 0]
+    if not with_cl:
+        return
+
+    cohorts: dict[str, list[int]] = {}
+    for r in with_cl:
+        cohorts.setdefault(r.cohort, []).append(r.centerline_voxels)
+
+    print()
+    print("Centerline voxel count distribution by cohort")
+    print("(studies with centerlines only)")
+    header = f"{'cohort':<10}  {'n':>5}  {'min':>8}  {'P25':>8}  {'median':>8}  {'P75':>8}  {'max':>8}"
+    print(header)
+    print("-" * len(header))
+    for cohort in sorted(cohorts):
+        vals = sorted(cohorts[cohort])
+        n = len(vals)
+        lo, hi = vals[0], vals[-1]
+        med = statistics.median(vals)
+        p25 = vals[max(0, int(n * 0.25))]
+        p75 = vals[min(n - 1, int(n * 0.75))]
+        print(f"{cohort:<10}  {n:>5}  {lo:>8}  {p25:>8}  {int(med):>8}  {p75:>8}  {hi:>8}")
 
 
 # ── config loading ────────────────────────────────────────────────────────────
@@ -352,6 +403,7 @@ def main() -> None:
     else:
         print_table(records, stage_filter=None)
         print_summary(records, stage_filter=None)
+        print_cohort_distribution(records)
 
     if args.output_csv:
         write_csv(records, args.output_csv)

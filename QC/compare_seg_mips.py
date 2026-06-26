@@ -22,6 +22,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import matplotlib
@@ -36,7 +37,7 @@ _DEFAULT_ORIG = Path(
 _DEFAULT_RESAMPLED = Path(
     "/gpfs/data/karczmar-lab/workspaces/saritbose/resampled-vessel-segmentations"
 )
-_DEFAULT_OUT = Path.home() / "vanguard_qc_pngs" / "seg_mip_comparison.png"
+_DEFAULT_OUT = Path(os.environ.get("VANGUARD_QC_OUTPUT", str(Path.home() / "vanguard_qc_pngs"))) / "seg_mip_comparison.png"
 
 # Background colours for the two rows of the figure.
 _COLOR_ORIG = "white"

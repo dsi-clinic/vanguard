@@ -32,6 +32,7 @@ axial views this is essentially a no-op because we never resample in-plane.
 """
 
 import argparse
+import os
 from pathlib import Path
 
 import matplotlib
@@ -232,7 +233,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--exp-root",
-        default=str(Path.home() / "vanguard_qc_pngs" / "resampling_experiment"),
+        default=str(Path(os.environ.get("VANGUARD_QC_OUTPUT", str(Path.home() / "vanguard_qc_pngs"))) / "resampling_experiment"),
         help="Experiment root holding volumes/ and segmentations/.",
     )
     parser.add_argument("--case-id", default="DUKE_001")

@@ -14,7 +14,7 @@ FILES_PER_TASK="${FILES_PER_TASK:-20}"
 MAX_CONCURRENT_TASKS="${MAX_CONCURRENT_TASKS:-16}"
 PARTITION="${PARTITION:-gpuq}"
 
-PYTHON="${PYTHON:-python}"
+PYTHON="${PYTHON:-python3}"
 COUNT=$("${PYTHON}" - <<'PY'
 from pathlib import Path
 import os

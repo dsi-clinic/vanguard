@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=tc4d-array
-#SBATCH --partition=general
+#SBATCH --partition=tier1q
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=08:00:00
@@ -10,11 +10,13 @@
 set -euo pipefail
 
 cd "${REPO_ROOT}"
+set +u
 source ~/.bashrc || true
 if command -v micromamba >/dev/null 2>&1; then
   eval "$(micromamba shell hook -s bash)"
   micromamba activate vanguard
 fi
+set -u
 
 LINE_NO=$((SLURM_ARRAY_TASK_ID + 1))
 REL_PATH="$(sed -n "${LINE_NO}p" "${STUDY_LIST}")"
@@ -25,7 +27,7 @@ OUTPUT_DIR="${OUTPUT_ROOT}/${SITE}/${STUDY_ID}"
 
 ARGS=(
   python graph_extraction/run_skeleton_processing.py
-  --study-id "${STUDY_ID}"
+  --case-id "${STUDY_ID}"
   --input-dir "${INPUT_DIR}"
   --output-dir "${OUTPUT_DIR}"
 )

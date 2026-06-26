@@ -14,7 +14,7 @@ node without a GPU.
 
 Outputs:
   - Per-scan CSV : ~/vanguard/scripts/spacing_range_check_results.csv
-  - Scatter plot : ~/vanguard_qc_pngs/spacing_distribution.png
+  - Scatter plot : $VANGUARD_QC_OUTPUT/spacing_distribution.png  (falls back to ~/vanguard_qc_pngs)
 
 Usage:
     micromamba run -n vanguard python scripts/spacing_range_check.py
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 from pathlib import Path
 
@@ -39,7 +40,7 @@ _DEFAULT_DATA_ROOT = Path(
     "/ess/scratch/scratch1/annawoodard/MAMA-MIA-syn60868042/images"
 )
 _DEFAULT_CSV = Path.home() / "vanguard" / "scripts" / "spacing_range_check_results.csv"
-_DEFAULT_FIG = Path.home() / "vanguard_qc_pngs" / "spacing_distribution.png"
+_DEFAULT_FIG = Path(os.environ.get("VANGUARD_QC_OUTPUT", str(Path.home() / "vanguard_qc_pngs"))) / "spacing_distribution.png"
 
 # Directory prefix -> cohort label used in outputs. The pilot NACT cohort is
 # stored on disk under the "NACT" prefix but the user calls it "NACT-Pilot".

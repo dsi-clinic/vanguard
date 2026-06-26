@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=batch-seg-array
-#SBATCH --partition=general
+#SBATCH --partition=gpuq
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/batch-seg-array-%A-%a.out
 #SBATCH --error=logs/batch-seg-array-%A-%a.err
@@ -29,8 +29,9 @@ cleanup() {
 trap cleanup EXIT
 
 # --- Optimize thread/process settings ---
-export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
-export MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+# Leave one CPU for the DataLoader workers so inference isn't starved.
+export OMP_NUM_THREADS=2
+export MKL_NUM_THREADS=2
 export CUDA_VISIBLE_DEVICES=0
 export PYTHONUNBUFFERED=1
 
@@ -44,7 +45,7 @@ VESSEL_MODEL="${VESSEL_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation
 cd "${PROJECT_ROOT}"
 
 TASK_ID=${SLURM_ARRAY_TASK_ID}
-FILES_PER_TASK=${FILES_PER_TASK:-40}
+FILES_PER_TASK=${FILES_PER_TASK:-20}
 FILE_START=$((TASK_ID * FILES_PER_TASK))
 FILE_END=$((FILE_START + FILES_PER_TASK - 1))
 
@@ -57,6 +58,7 @@ echo "Node: $(hostname)"
 echo "GPUs: ${CUDA_VISIBLE_DEVICES:-none}"
 echo "CPUs: ${SLURM_CPUS_PER_TASK}"
 echo "Memory: ${SLURM_MEM_PER_NODE}MB"
+echo "Files per task: ${FILES_PER_TASK} (indices ${FILE_START}-${FILE_END})"
 echo "Images dir: ${IMAGES_DIR}"
 echo "Output dir: ${OUTPUT_DIR}"
 echo "Date: $(date)"

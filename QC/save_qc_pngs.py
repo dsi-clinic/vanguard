@@ -23,6 +23,7 @@ Usage examples:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -31,7 +32,7 @@ import numpy as np
 _DEFAULT_DATA_ROOT = Path(
     "/ess/scratch/scratch1/annawoodard/MAMA-MIA-syn60868042/images"
 )
-_DEFAULT_OUT_ROOT = Path.home() / "vanguard_qc_pngs"
+_DEFAULT_OUT_ROOT = Path(os.environ.get("VANGUARD_QC_OUTPUT", str(Path.home() / "vanguard_qc_pngs")))
 
 _KNOWN_COHORT_PREFIXES = ["ISPY1", "ISPY2", "NACT", "DUKE"]
 
