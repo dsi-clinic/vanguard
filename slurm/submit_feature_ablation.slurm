@@ -22,6 +22,6 @@ if command -v micromamba >/dev/null 2>&1; then
   micromamba activate vanguard
 fi
 
-python run_ablation_matrix.py \
+python scripts/run_ablation_matrix.py \
   --config "${CONFIG}" \
   --outdir "${OUTDIR}"
