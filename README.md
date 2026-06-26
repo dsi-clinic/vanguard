@@ -69,7 +69,12 @@ Clone with `--recursive` so the segmentation submodule is available.
 This project uses the MAMA-MIA breast cancer MRI dataset. It combines 1,506 patients across four collections:
 
 - I-SPY1
-- I-SPY
+- I-SPY2
+- NACT-Pilot
+- Duke-Breast-Cancer-MRI
+
+Relevant inputs for this repository:
+
 - multi-timepoint breast DCE-MRI volumes
 - expert 3D tumor segmentations
 - harmonized clinical variables, including pCR labels
