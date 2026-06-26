@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 from config import load_config
-from run_ablation_matrix import _normalize_ablation_arms, _prepare_full_dataset
+from modeling.ablation import _normalize_ablation_arms, _prepare_full_dataset
 
 
 def parse_args() -> argparse.Namespace:

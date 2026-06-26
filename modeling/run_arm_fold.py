@@ -12,7 +12,7 @@ import pandas as pd
 import yaml
 
 from config import load_config, to_plain_data
-from run_ablation_matrix import _normalize_ablation_arms
+from modeling.ablation import _normalize_ablation_arms
 from tabular.tabular_cohort import select_features
 from tabular.train_tabular import prepare_evaluation_context, run_single_fold_from_context
 

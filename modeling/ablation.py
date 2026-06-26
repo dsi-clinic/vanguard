@@ -1,8 +1,12 @@
-"""Run a reproducible pCR feature-block ablation matrix."""
+"""Shared helpers for the ablation matrix pipeline.
+
+Contains the core logic used by both the CLI entry points (scripts/run_ablation_matrix.py,
+scripts/run_top_features_eval.py) and the Slurm array workers (modeling/run_arm_fold.py,
+modeling/build_cached_table.py, modeling/merge_results.py).
+"""
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 from copy import deepcopy
@@ -12,28 +16,10 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from config import DEFAULT_ABLATION_ARMS, load_config, to_plain_data
+from config import DEFAULT_ABLATION_ARMS, to_plain_data
 from features import FEATURE_BLOCK_DESCRIPTIONS, normalize_selected_features
 from tabular.tabular_cohort import build_modular_features, load_labels, select_features
 from tabular.train_tabular import run_evaluation_pipeline
-
-
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Run feature-block ablation matrix.")
-    parser.add_argument(
-        "--config",
-        type=Path,
-        required=True,
-        help="Path to base YAML config with optional ablation_arms block.",
-    )
-    parser.add_argument(
-        "--outdir",
-        type=Path,
-        required=True,
-        help="Root output directory for shared features and per-arm runs.",
-    )
-    return parser.parse_args()
 
 
 def _normalize_ablation_arms(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -496,18 +482,3 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
             outdir / "ablation_subtype_summary.csv", index=False
         )
     logging.info("Wrote ablation summary to %s", outdir / "ablation_summary.csv")
-
-
-def main() -> None:
-    """Entry point."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-    )
-    args = parse_args()
-    config = load_config(args.config)
-    run_ablation_matrix(config, args.outdir)
-
-
-if __name__ == "__main__":
-    main()

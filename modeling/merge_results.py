@@ -14,7 +14,7 @@ import yaml
 
 from config import load_config, to_plain_data
 from evaluation import Evaluator, FoldResults
-from run_ablation_matrix import (
+from modeling.ablation import (
     _add_baseline_deltas,
     _metrics_summary_row,
     _normalize_ablation_arms,
