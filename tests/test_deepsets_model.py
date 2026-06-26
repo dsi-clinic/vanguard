@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from deepsets_model import POOLING_CHOICES, DeepSetsClassifier, _pooling_width
+from deepsets.deepsets_model import POOLING_CHOICES, DeepSetsClassifier, _pooling_width
 
 INPUT_DIM = 4
 HIDDEN_DIM = 8

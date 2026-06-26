@@ -15,15 +15,15 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from deepsets_data import (
+from deepsets.deepsets_data import (
     REQUIRED_DEEPSETS_MANIFEST_COLUMNS,
     SavedSetLookup,
     apply_feature_standardizer,
     collate_case_sets,
     fit_feature_standardizer,
 )
-from deepsets_model import DeepSetsClassifier
-from deepsets_runtime import stage_timer
+from deepsets.deepsets_model import DeepSetsClassifier
+from deepsets.deepsets_runtime import stage_timer
 from evaluation import FoldResults
 from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.kfold import FoldSplit

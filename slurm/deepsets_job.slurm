@@ -29,7 +29,7 @@ case "${MODE}" in
     CONFIG="${CONFIG:?CONFIG is required for MODE=build-single}"
     OUT_ROOT="${OUT_ROOT:?OUT_ROOT is required for MODE=build-single}"
     mkdir -p "${OUT_ROOT}"
-    python -u build_deepsets_dataset.py \
+    python -u deepsets/build_deepsets_dataset.py \
       --config "${CONFIG}" \
       --output-dir "${OUT_ROOT}"
     ;;
@@ -43,7 +43,7 @@ case "${MODE}" in
     if [[ -n "${SLURM_TMPDIR:-}" ]]; then
       export DEEPSETS_CACHE_ROOT="${DEEPSETS_CACHE_ROOT:-${SLURM_TMPDIR}/deepsets_build_cache}"
     fi
-    python -u build_deepsets_dataset.py \
+    python -u deepsets/build_deepsets_dataset.py \
       --config "${CONFIG}" \
       --output-dir "${OUT_ROOT}" \
       --num-shards "${NUM_SHARDS}" \
@@ -53,13 +53,13 @@ case "${MODE}" in
   merge)
     OUT_ROOT="${OUT_ROOT:?OUT_ROOT is required for MODE=merge}"
     mkdir -p "${OUT_ROOT}"
-    python -u merge_deepsets_manifest.py --output-dir "${OUT_ROOT}"
+    python -u deepsets/merge_deepsets_manifest.py --output-dir "${OUT_ROOT}"
     ;;
   train)
     CONFIG="${CONFIG:?CONFIG is required for MODE=train}"
     OUTDIR="${OUTDIR:?OUTDIR is required for MODE=train}"
     mkdir -p "${OUTDIR}"
-    python -u train_deepsets.py \
+    python -u deepsets/train_deepsets.py \
       --config "${CONFIG}" \
       --outdir "${OUTDIR}"
     ;;

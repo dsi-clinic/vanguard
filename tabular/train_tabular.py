@@ -23,8 +23,8 @@ from load_cohort import (
     resolve_run_output_dir,
     write_config_snapshot,
 )
-from tabular_cohort import prepare_data
-from tabular_models import (
+from tabular.tabular_cohort import prepare_data
+from tabular.tabular_models import (
     build_model_pipeline,
     log_feature_selector_stats,
     pick_nested_candidate_for_outer_fold,

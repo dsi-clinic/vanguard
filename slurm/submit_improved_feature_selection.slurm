@@ -27,7 +27,7 @@ fi
 
 echo "=== Step 1: Build features with clinical columns ==="
 PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" python -c "
-from tabular_cohort import prepare_data
+from tabular.tabular_cohort import prepare_data
 from config import load_config
 from pathlib import Path
 config = load_config('${CONFIG}')

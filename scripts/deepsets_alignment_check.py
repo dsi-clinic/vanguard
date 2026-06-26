@@ -39,7 +39,7 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
-from deepsets_volume_align import align_zyx_volume_to_shape
+from deepsets.deepsets_volume_align import align_zyx_volume_to_shape
 from load_cohort import load_config
 
 CONTOUR_LEVEL = 0.5

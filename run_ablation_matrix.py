@@ -14,8 +14,8 @@ import yaml
 
 from config import DEFAULT_ABLATION_ARMS, load_config, to_plain_data
 from features import FEATURE_BLOCK_DESCRIPTIONS, normalize_selected_features
-from tabular_cohort import build_modular_features, load_labels, select_features
-from train_tabular import run_evaluation_pipeline
+from tabular.tabular_cohort import build_modular_features, load_labels, select_features
+from tabular.train_tabular import run_evaluation_pipeline
 
 
 def parse_args() -> argparse.Namespace:

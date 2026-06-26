@@ -11,7 +11,7 @@ from analysis.top_k_arms import (
     build_topk_ablation_arms,
     modeling_columns_for_blocks,
 )
-from tabular_cohort import select_features
+from tabular.tabular_cohort import select_features
 
 
 def test_select_features_explicit_order() -> None:
