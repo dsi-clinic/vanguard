@@ -14,7 +14,7 @@ Frozen feature arm: **clinical + tumor_size + morph + graph + kinematic**.
 ## Reproducible artifacts
 
 - Config: `configs/model_family_robustness.yaml`
-- Same runner as feature ablation: `run_ablation_matrix.py`
+- Same runner as feature ablation: `modeling/run_ablation_matrix.py`
 - Slurm: `slurm/submit_model_family_robustness.slurm`
 - Outputs (example): `experiments/model_family_robustness_ispy2/`
   - `ablation_summary.csv` — **AUC mean and `auc_std` over folds**

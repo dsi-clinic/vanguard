@@ -2,7 +2,7 @@
 
 ## What this delivers
 
-A reproducible rerun of the **five vessel baseline arms** from the issue description, using **one** `run_ablation_matrix.py` job with:
+A reproducible rerun of the **five vessel baseline arms** from the issue description, using **one** `modeling/run_ablation_matrix.py` job with:
 
 - `model_families: [lr, xgb]`
 - `split_mode_matrix: [{ name: cv, use_group_split: false }]`
