@@ -33,6 +33,15 @@ source ~/.bashrc
 micromamba config append channels conda-forge
 ```
 
+> **If using the Randi Cluster**
+>
+> On the Randi cluster, redirect pip's build temp directory away from `/tmp` (which is mounted
+> noexec). Add this to your `~/.bashrc` once, then source it:
+>
+> ```bash
+> echo 'export TMPDIR=/ess/scratch/scratch1/$USER/tmp' >> ~/.bashrc
+> mkdir -p /ess/scratch/scratch1/$USER/tmp
+> source ~/.bashrc```
 Set up the repository once:
 
 ```bash
@@ -60,12 +69,7 @@ Clone with `--recursive` so the segmentation submodule is available.
 This project uses the MAMA-MIA breast cancer MRI dataset. It combines 1,506 patients across four collections:
 
 - I-SPY1
-- I-SPY2
-- NACT-Pilot
-- Duke-Breast-Cancer-MRI
-
-Relevant inputs for this repository:
-
+- I-SPY
 - multi-timepoint breast DCE-MRI volumes
 - expert 3D tumor segmentations
 - harmonized clinical variables, including pCR labels
