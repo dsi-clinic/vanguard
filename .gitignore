@@ -210,3 +210,6 @@ analysis/issue121_figures/*.png
 
 # Claude Code instructions (local only, not tracked)
 CLAUDE.md
+
+# Lab notebooks (local only, never committed) — matches in any directory
+lab_notebook.md
