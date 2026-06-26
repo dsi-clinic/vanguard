@@ -26,7 +26,7 @@ OUTDIR="${OUTDIR:-experiments/issue151_topk_run}"
 echo "REPO_ROOT=${REPO_ROOT}"
 echo "CONFIG=${CONFIG} OUTDIR=${OUTDIR}"
 
-python scripts/run_top_features_eval.py --config "${CONFIG}" --outdir "${OUTDIR}"
+python modeling/run_top_features_eval.py --config "${CONFIG}" --outdir "${OUTDIR}"
 
 echo "Ranking: ${OUTDIR}/feature_ranking_global.csv"
 echo "Summary: ${OUTDIR}/ablation_summary.csv"

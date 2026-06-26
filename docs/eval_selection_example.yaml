@@ -1,11 +1,11 @@
 # Example YAML config for evaluation selection criteria.
-# Use with --config when running baseline_model_example.py or scripts/export_splits.py.
+# Use with --config when running baseline_model_example.py or evaluation/export_splits.py.
 # All fields under "selection" are optional; omit or set to null for no filter.
 #
 # Usage:
 #   python examples/baseline_model_example.py --model random \
 #     --excel-metadata path/to/metadata.xlsx --config docs/eval_selection_example.yaml
-#   python scripts/export_splits.py --excel metadata.xlsx --output splits.csv --config docs/eval_selection_example.yaml
+#   python evaluation/export_splits.py --excel metadata.xlsx --output splits.csv --config docs/eval_selection_example.yaml
 
 selection:
   datasets: [ISPY2, DUKE]

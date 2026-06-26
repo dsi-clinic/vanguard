@@ -1,7 +1,7 @@
 # Issue #151: top-K vessel features (global screening ranker) vs baseline.
 #
 # Example:
-#   micromamba run -n vanguard python scripts/run_top_features_eval.py \
+#   micromamba run -n vanguard python modeling/run_top_features_eval.py \
 #     --config configs/top_features_eval.yaml --outdir experiments/issue151_run
 #
 # Default assumptions:

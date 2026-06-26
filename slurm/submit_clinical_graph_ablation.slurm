@@ -29,6 +29,6 @@ echo "Config: ${CONFIG}"
 echo "Output: ${OUTDIR}"
 echo ""
 
-python scripts/run_ablation_matrix.py \
+python modeling/run_ablation_matrix.py \
   --config "${CONFIG}" \
   --outdir "${OUTDIR}"

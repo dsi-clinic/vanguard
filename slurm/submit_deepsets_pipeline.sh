@@ -50,7 +50,7 @@ if [[ ! -f "${CONFIG}" ]]; then
   exit 2
 fi
 
-PROFILE_JSON="$(python "${SCRIPT_DIR}/deepsets_pipeline_profile.py" --config "${CONFIG}")"
+PROFILE_JSON="$(python "${REPO_ROOT}/deepsets/deepsets_pipeline_profile.py" --config "${CONFIG}")"
 if [[ "${BUILD_TIME}" == "04:00:00" ]]; then
   BUILD_TIME="$(python - <<PY
 import json

@@ -6,7 +6,7 @@ family.
 Run locally from the repository root:
 
 ```bash
-python scripts/run_ablation_matrix.py \
+python modeling/run_ablation_matrix.py \
   --config configs/clinical_graph_ablation_xgb.yaml \
   --outdir experiments/clinical_graph_ablation_xgb
 ```

@@ -7,7 +7,7 @@ matplotlib, PyYAML, SimpleITK.
 
 Example::
 
-    PYTHONPATH=. python scripts/deepsets_alignment_check.py \\
+    PYTHONPATH=. python deepsets/deepsets_alignment_check.py \\
         --case-ids ISPY2_100899,ISPY2_102011,ISPY2_102212
 
 Clinical DCE (default)::
@@ -27,8 +27,13 @@ import logging
 import math
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 from scipy import ndimage

@@ -1,7 +1,7 @@
 """Shared helpers for the ablation matrix pipeline.
 
-Contains the core logic used by both the CLI entry points (scripts/run_ablation_matrix.py,
-scripts/run_top_features_eval.py) and the Slurm array workers (modeling/run_arm_fold.py,
+Contains the core logic used by both the CLI entry points (modeling/run_ablation_matrix.py,
+modeling/run_top_features_eval.py) and the Slurm array workers (modeling/run_arm_fold.py,
 modeling/build_cached_table.py, modeling/merge_results.py).
 """
 

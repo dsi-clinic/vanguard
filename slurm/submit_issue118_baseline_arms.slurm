@@ -28,6 +28,6 @@ OUTDIR="${OUTDIR:-experiments/issue118_baseline_arms}"
 echo "REPO_ROOT=${REPO_ROOT}"
 echo "CONFIG=${CONFIG} OUTDIR=${OUTDIR}"
 
-python scripts/run_ablation_matrix.py --config "${CONFIG}" --outdir "${OUTDIR}"
+python modeling/run_ablation_matrix.py --config "${CONFIG}" --outdir "${OUTDIR}"
 
 echo "Summary: ${OUTDIR}/ablation_summary.csv"

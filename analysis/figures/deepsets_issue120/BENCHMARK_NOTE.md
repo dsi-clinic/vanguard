@@ -35,7 +35,7 @@ PARTITION=general FORCE_BUILD=1 FORCE_MERGE=1 FORCE_RETRAIN=1 \
 bash slurm/submit_deepsets_pipeline.sh
 ```
 
-Profile expects **12 build shards** and **08:00:00** wall time for dynamic configs (`slurm/deepsets_pipeline_profile.py`). Prior partial builds (7 and 3 manifest parts) were incomplete; FORCE_* triggers clean rebuild.
+Profile expects **12 build shards** and **08:00:00** wall time for dynamic configs (`deepsets/deepsets_pipeline_profile.py`). Prior partial builds (7 and 3 manifest parts) were incomplete; FORCE_* triggers clean rebuild.
 
 Jobs submitted this session: build arrays **869562** (geom_topo_dynamic), **869576** (curvature_plus_dynamic); merge/train depend on build completion.
 
@@ -56,7 +56,7 @@ python scripts/refresh_issue120_benchmark_summary.py
 Optional coverage audit on built `.pt` sets:
 
 ```bash
-python scripts/deepsets_kinetic_coverage.py \
+python deepsets/deepsets_kinetic_coverage.py \
   --out-root experiments/deepsets_ispy2_pointfeat_geom_topo_dynamic
 ```
 
