@@ -1,5 +1,5 @@
 # Focused model-family x feature-arm matrix for Project 2 (Issue #116).
-# Uses run_ablation_matrix.py with model_families + split_mode_matrix.
+# Uses modeling/run_ablation_matrix.py with model_families + split_mode_matrix.
 
 feature_toggles:
   use_vascular: true

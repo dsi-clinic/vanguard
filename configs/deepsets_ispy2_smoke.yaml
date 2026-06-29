@@ -1,0 +1,43 @@
+# Smoke-test config for the Deep Sets pipeline.
+# Goal: exercise build -> train end-to-end fast on an interactive node.
+# 8 ISPY2 cases (4 pcr=1 / 4 pcr=0), 2-fold CV, 3 epochs. Results are NOT meaningful.
+# Data paths point at the real /gpfs locations (the /net/projects2/vanguard paths
+# in the other configs are stale and do not resolve on the cluster nodes).
+feature_toggles:
+  dataset_include: ["ISPY2"]
+  tumor_mask_file_pattern: "{case_id}.nii.gz"
+
+experiment_setup:
+  name: "deepsets_ispy2_smoke"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 2
+  batch_size: 4
+  epochs: 3
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  pooling: "mean_max_logcount"
+  deepsets_local_radius_floor_mm: 50.0
+  deepsets_local_radius_scale: 2.0
+  deepsets_local_radius_cap_mm: 60.0
+  deepsets_inclusion_rule: "local_radius_with_fallback"
+  deepsets_compare_inclusion_rules: []
+  deepsets_point_feature_set: "baseline"
+
+data_paths:
+  centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  tumor_mask_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/segmentations/expert"
+  patient_info_dir: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/patient_info_files"
+  clinical_excel: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
+  labels_csv: "/ess/home/home1/t-9svena/vanguard/configs/ispy2_smoke_labels.csv"
+  label_column: "pcr"
+  id_column: "case_id"
+  # Set by the interactive runner after the single-shard build writes it.
+  deepsets_manifest_csv: "/ess/home/home1/t-9svena/vanguard/experiments/deepsets_ispy2_smoke/deepsets_manifest.csv"
+  deepsets_label_column: "label"
+  vessel_segmentation_root: ""

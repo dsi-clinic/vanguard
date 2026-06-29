@@ -9,7 +9,7 @@ Usage (from ``vanguard/``)::
         experiments/second_order_features/features_engineered_labeled.csv \
         -o experiments/second_order_features/
 
-Reads the labeled features CSV produced by ``tabular_cohort.py`` and writes:
+Reads the labeled features CSV produced by ``cohort.py`` and writes:
 
 - ``distributions_second_order.png``
 - ``distributions_first_order_sources.png``

@@ -717,7 +717,7 @@ def export_splits_to_csv(
 ) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     """Generate group-stratified k-fold splits from Excel and write to CSV.
 
-    Used by the export_splits CLI script. Uses all cases from Excel.
+    Used by evaluation/export_splits.py. Uses all cases from Excel.
 
     Parameters
     ----------

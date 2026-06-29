@@ -24,4 +24,4 @@ OUTDIR="${OUTDIR:-experiments/model_family_matrix_ispy2}"
 echo "REPO_ROOT=${REPO_ROOT}"
 echo "CONFIG=${CONFIG} OUTDIR=${OUTDIR}"
 
-python run_ablation_matrix.py --config "${CONFIG}" --outdir "${OUTDIR}"
+python modeling/run_ablation_matrix.py --config "${CONFIG}" --outdir "${OUTDIR}"
