@@ -18,8 +18,8 @@ import yaml
 
 from config import DEFAULT_ABLATION_ARMS, to_plain_data
 from features import FEATURE_BLOCK_DESCRIPTIONS, normalize_selected_features
-from tabular.tabular_cohort import build_modular_features, load_labels, select_features
-from tabular.train_tabular import run_evaluation_pipeline
+from tabular.cohort import build_modular_features, load_labels, select_features
+from tabular.train import run_evaluation_pipeline
 
 
 def _normalize_ablation_arms(config: dict[str, Any]) -> list[dict[str, Any]]:

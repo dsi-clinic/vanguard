@@ -6,7 +6,7 @@ This module owns the sklearn-side logic for the tabular pipeline:
 - inner-CV candidate generation and scoring
 - logging of per-fold selector diagnostics
 
-Keeping this separate from train_tabular.py makes feature work safer. Students can
+Keeping this separate from train.py makes feature work safer. Students can
 change cohort assembly and feature blocks without also editing estimator code.
 """
 

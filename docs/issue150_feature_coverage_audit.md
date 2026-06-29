@@ -4,7 +4,7 @@
 
 A reproducible per-case audit of upstream tabular-pipeline artifact coverage
 across **DUKE, ISPY1, ISPY2, NACT**, plus a multi-dataset config that exposes
-the full labeled cohort to `tabular_cohort.py` without any additional Slurm
+the full labeled cohort to `cohort.py` without any additional Slurm
 reruns.
 
 ## Bottom line
@@ -77,7 +77,7 @@ After inner-merging labels:  (1491, 1217)
   NACT    64
 ```
 
-No code changes to `tabular_cohort.py` were required — it already supports
+No code changes to `cohort.py` were required — it already supports
 `dataset_include` as a list and skips the bilateral filter when set to
 `null`.
 

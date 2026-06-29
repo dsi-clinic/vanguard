@@ -13,7 +13,7 @@ if [[ ! -d "${FIXTURE_ROOT}/centerlines" ]]; then
 fi
 
 OUT_ROOT="${REPO_ROOT}/experiments/issue121_fixture_build"
-python deepsets/build_deepsets_dataset.py \
+python deepsets/build_dataset.py \
   --config configs/deepsets_issue121_fixture.yaml \
   --output-dir "${OUT_ROOT}" \
   --num-shards 1 \

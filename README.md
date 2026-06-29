@@ -88,7 +88,7 @@ This repository has four main workflows.
   - runs the vessel-segmentation models that produce the binary vessel masks used downstream
 - `graph_extraction/`
   - turns vessel masks into exam-level centerlines, graphs, vessel summaries, and tumor-focused feature JSONs
-- `tabular/train_tabular.py`
+- `tabular/train.py`
   - trains tabular pCR models from clinical, vessel, and radiomics feature tables
 - `radiomics/`
   - separate radiomics-only modeling workflow
@@ -97,7 +97,7 @@ Supporting pieces:
 
 - `features/`
   - canonical definitions of the five modeling blocks: `clinical`, `tumor_size`, `morph`, `graph`, and `kinematic`
-- `deepsets/train_deepsets.py`
+- `deepsets/train.py`
   - plain-PyTorch Deep Sets baseline over tumor-local vessel points that reuses the shared evaluator
 - `evaluation/`
   - shared split generation, metrics, result aggregation, and output saving used across model families
@@ -178,7 +178,7 @@ Single training run:
 
 ```bash
 micromamba activate vanguard
-python tabular/train_tabular.py --config configs/ispy2.yaml --outdir experiments/debug_run
+python tabular/train.py --config configs/ispy2.yaml --outdir experiments/debug_run
 ```
 
 Primary training config:
@@ -228,9 +228,9 @@ Reference:
 
 Current entrypoints:
 
-- [`deepsets/build_deepsets_dataset.py`](deepsets/build_deepsets_dataset.py)
+- [`deepsets/build_dataset.py`](deepsets/build_dataset.py)
   - builds one tumor-local point set per case from saved centerline and support masks
-- [`deepsets/train_deepsets.py`](deepsets/train_deepsets.py)
+- [`deepsets/train.py`](deepsets/train.py)
   - trains the baseline Deep Sets classifier using the shared evaluator
 - [`configs/deepsets_ispy2.yaml`](configs/deepsets_ispy2.yaml)
   - starting config for the I-SPY2 Deep Sets baseline
@@ -291,7 +291,7 @@ Internally, the wrapper chains three dependent Slurm stages:
 - model training
 
 - `data_paths.deepsets_manifest_csv` if you already built the dataset
-- or rerun [`deepsets/build_deepsets_dataset.py`](deepsets/build_deepsets_dataset.py) from the current centerline outputs
+- or rerun [`deepsets/build_dataset.py`](deepsets/build_dataset.py) from the current centerline outputs
 
 ## Evaluation Framework
 
@@ -299,9 +299,9 @@ The `evaluation/` package is the shared comparison layer for this repo. It creat
 
 Current users:
 
-- `tabular/train_tabular.py`
+- `tabular/train.py`
   - tabular clinical, vessel, and radiomics models
-- `deepsets/train_deepsets.py`
+- `deepsets/train.py`
   - Deep Sets baseline over tumor-local vessel point sets
 
 Start here:

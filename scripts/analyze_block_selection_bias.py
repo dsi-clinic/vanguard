@@ -2,7 +2,7 @@
 r"""Quantify why block-aware feature selection matters for pCR modeling.
 
 This script loads a labeled feature table (the same CSV produced by
-``tabular/train_tabular.py`` or ``scripts/feature_selection.py``) and reports three
+``tabular/train.py`` or ``scripts/feature_selection.py``) and reports three
 diagnostics that justify selecting features per-block rather than globally:
 
 1. **Block size imbalance** — counts how many numeric features belong to each

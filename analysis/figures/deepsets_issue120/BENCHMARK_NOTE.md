@@ -35,7 +35,7 @@ PARTITION=general FORCE_BUILD=1 FORCE_MERGE=1 FORCE_RETRAIN=1 \
 bash slurm/submit_deepsets_pipeline.sh
 ```
 
-Profile expects **12 build shards** and **08:00:00** wall time for dynamic configs (`deepsets/deepsets_pipeline_profile.py`). Prior partial builds (7 and 3 manifest parts) were incomplete; FORCE_* triggers clean rebuild.
+Profile expects **12 build shards** and **08:00:00** wall time for dynamic configs (`deepsets/pipeline_profile.py`). Prior partial builds (7 and 3 manifest parts) were incomplete; FORCE_* triggers clean rebuild.
 
 Jobs submitted this session: build arrays **869562** (geom_topo_dynamic), **869576** (curvature_plus_dynamic); merge/train depend on build completion.
 
@@ -47,7 +47,7 @@ python scripts/refresh_issue120_benchmark_summary.py
 
 ## 4D kinetic alignment (point features)
 
-- Vessel 4D series: `_try_load_vessel_4d` in `deepsets/build_deepsets_dataset.py` → `discover_study_timepoints` + `load_time_series_from_files` + `align_zyx_4d_to_shape` to skeleton ZYX.
+- Vessel 4D series: `_try_load_vessel_4d` in `deepsets/build_dataset.py` → `discover_study_timepoints` + `load_time_series_from_files` + `align_zyx_4d_to_shape` to skeleton ZYX.
 - `vessel_segmentation_root` is set only on dynamic YAML configs (e.g. `configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml`).
 - Load/alignment failures → zero dynamic columns and `kinetic_signal_ok=0`.
 - Reference enhancement for relative ratios uses support/tumor heuristic (`_reference_enhancement_baseline`), not the full breast reference mask from tabular `features/kinematic.py`.
@@ -56,7 +56,7 @@ python scripts/refresh_issue120_benchmark_summary.py
 Optional coverage audit on built `.pt` sets:
 
 ```bash
-python deepsets/deepsets_kinetic_coverage.py \
+python deepsets/kinetic_coverage.py \
   --out-root experiments/deepsets_ispy2_pointfeat_geom_topo_dynamic
 ```
 

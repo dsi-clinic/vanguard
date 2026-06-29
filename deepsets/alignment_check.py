@@ -7,7 +7,7 @@ matplotlib, PyYAML, SimpleITK.
 
 Example::
 
-    PYTHONPATH=. python deepsets/deepsets_alignment_check.py \\
+    PYTHONPATH=. python deepsets/alignment_check.py \\
         --case-ids ISPY2_100899,ISPY2_102011,ISPY2_102212
 
 Clinical DCE (default)::
@@ -36,7 +36,7 @@ import numpy as np
 import SimpleITK as sitk
 from scipy import ndimage
 
-from deepsets.deepsets_volume_align import align_zyx_volume_to_shape
+from deepsets.volume_align import align_zyx_volume_to_shape
 from load_cohort import load_config
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

@@ -17,14 +17,14 @@ import torch
 from scipy import ndimage
 
 from clinical_features import get_clinical_features
-from deepsets.deepsets_build_cache import (
+from deepsets.build_cache import (
     cache_dir_for_case,
     load_case_cache,
     resolve_cache_root,
     save_case_cache,
 )
-from deepsets.deepsets_runtime import log_case_timing, stage_timer
-from deepsets.deepsets_volume_align import align_zyx_4d_to_shape
+from deepsets.runtime import log_case_timing, stage_timer
+from deepsets.volume_align import align_zyx_4d_to_shape
 from features.tumor_size import load_tumor_mask_zyx, resolve_tumor_mask_path
 from graph_extraction.constants import (
     BIFURCATION_MIN_DEGREE,
@@ -42,7 +42,7 @@ from graph_extraction.feature_stats import (
     _shell_name_for_signed_distance,
 )
 from load_cohort import load_config
-from tabular.tabular_cohort import _as_optional_bool, load_labels
+from tabular.cohort import _as_optional_bool, load_labels
 
 
 def _numpy_trapz(

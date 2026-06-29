@@ -32,10 +32,10 @@ run_arm() {
     if [[ "${FORCE_BUILD}" != "1" ]] && [[ -f "${out_root}/deepsets_manifest.csv" ]]; then
       echo "Skipping local build for ${out_root}"
     else
-      python deepsets/build_deepsets_dataset.py --config "${config}" --output-dir "${out_root}"
+      python deepsets/build_dataset.py --config "${config}" --output-dir "${out_root}"
     fi
     if compgen -G "${out_root}/manifest_parts/deepsets_manifest_part_*.csv" >/dev/null 2>&1; then
-      python deepsets/merge_deepsets_manifest.py --output-dir "${out_root}"
+      python deepsets/merge_manifest.py --output-dir "${out_root}"
     fi
     export BENCH_CONFIG_PATH="${config}"
     export BENCH_OUT_ROOT="${out_root}"
@@ -58,7 +58,7 @@ PY
     if [[ "${FORCE_RETRAIN}" != "1" ]] && find "${out_root}/train" -name metrics.json -print -quit | grep -q .; then
       echo "Skipping local train for ${out_root}"
     else
-      python deepsets/train_deepsets.py --config "${out_root}/deepsets_runtime_config.yaml" --outdir "${out_root}/train"
+      python deepsets/train.py --config "${out_root}/deepsets_runtime_config.yaml" --outdir "${out_root}/train"
     fi
   )
 }

@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from deepsets.build_deepsets_dataset import (
+from deepsets.build_dataset import (
     DEEPSETS_FEATURE_BASELINE,
     DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY,

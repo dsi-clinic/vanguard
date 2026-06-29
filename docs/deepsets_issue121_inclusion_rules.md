@@ -74,7 +74,7 @@ Requires fixture data under `tmp/issue121_fixture/` (centerlines, tumor masks,
 labels). Not committed to the repo.
 
 ```bash
-python deepsets/build_deepsets_dataset.py \
+python deepsets/build_dataset.py \
   --config configs/deepsets_issue121_fixture.yaml \
   --output-dir experiments/issue121_fixture_build \
   --num-shards 1 --shard-index 0

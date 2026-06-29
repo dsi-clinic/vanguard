@@ -3,12 +3,12 @@
 ## What currently exists
 
 - **Tabular training entrypoint**
-  - `tabular/train_tabular.py`
-  - Builds features via `tabular_cohort.py`, then runs evaluator CV and saves metrics/predictions/plots.
+  - `tabular/train.py`
+  - Builds features via `cohort.py`, then runs evaluator CV and saves metrics/predictions/plots.
 - **Model families in code**
   - logistic regression (`model: lr`)
   - random forest (`model: rf`)
-  - XGBoost (`model: xgb`) in `tabular_models.py`
+  - XGBoost (`model: xgb`) in `models.py`
 - **Feature-arm ablations**
   - `modeling/run_ablation_matrix.py` (single entrypoint for feature arms, optional **model-family** and **split-mode** grids)
   - driven by YAML such as `configs/independent_signal.yaml` or `configs/model_family_matrix.yaml`

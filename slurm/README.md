@@ -142,7 +142,7 @@ Defaults:
 - `CONFIG=${REPO_ROOT}/configs/deepsets_ispy2.yaml`
 - `OUT_ROOT=${REPO_ROOT}/results/deepsets` (absolute path after normalization)
 - `BUILD_SHARDS=8` → Slurm job array shards + dependent merge step
-- **`BUILD_SHARDS=1`** → one long `MODE=build-single` job (`deepsets/build_deepsets_dataset.py` with default `--num-shards 1`, manifest written straight to `--output-dir`)
+- **`BUILD_SHARDS=1`** → one long `MODE=build-single` job (`deepsets/build_dataset.py` with default `--num-shards 1`, manifest written straight to `--output-dir`)
 
 Override examples:
 
