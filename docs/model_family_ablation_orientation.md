@@ -3,21 +3,21 @@
 ## What currently exists
 
 - **Tabular training entrypoint**
-  - `train_tabular.py`
-  - Builds features via `tabular_cohort.py`, then runs evaluator CV and saves metrics/predictions/plots.
+  - `tabular/train.py`
+  - Builds features via `cohort.py`, then runs evaluator CV and saves metrics/predictions/plots.
 - **Model families in code**
   - logistic regression (`model: lr`)
   - random forest (`model: rf`)
-  - XGBoost (`model: xgb`) in `tabular_models.py`
+  - XGBoost (`model: xgb`) in `models.py`
 - **Feature-arm ablations**
-  - `run_ablation_matrix.py` (single entrypoint for feature arms, optional **model-family** and **split-mode** grids)
+  - `modeling/run_ablation_matrix.py` (single entrypoint for feature arms, optional **model-family** and **split-mode** grids)
   - driven by YAML such as `configs/independent_signal.yaml` or `configs/model_family_matrix.yaml`
 - **Shared evaluation**
   - `evaluation/` handles folds and metrics (including **AUC** and **AP** in fold aggregates when both classes appear)
 
 ## Existing tracked result summaries
 
-- `run_ablation_matrix.py` writes:
+- `modeling/run_ablation_matrix.py` writes:
   - `ablation_summary.csv`, `ablation_fold_auc.csv`
 - Independent-signal artifacts referenced elsewhere:
   - `results/independent_signal_q3_summary.csv`

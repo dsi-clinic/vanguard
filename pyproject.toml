@@ -7,9 +7,15 @@ requires-python = ">=3.10"
 name = "vanguard"
 dynamic = ["version"]
 
+[tool.setuptools]
+# Top-level single-file modules imported by the subpackages (e.g. deepsets/, tabular/).
+# Without these, invoking a moved script by file path (python deepsets/build_dataset.py)
+# fails with ModuleNotFoundError because the repo root is not on sys.path.
+py-modules = ["clinic_metadata", "clinical_features", "config", "load_cohort"]
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["evaluation*", "graph_extraction*", "modeling*"]
+include = ["deepsets*", "tabular*", "evaluation*", "graph_extraction*", "modeling*", "features*", "analysis*"]
 
 [tool.ruff.lint]
 extend-select = [

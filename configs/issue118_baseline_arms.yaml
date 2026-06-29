@@ -1,4 +1,4 @@
-# Issue #118: five baseline vessel arms x (lr, xgb) via run_ablation_matrix.py.
+# Issue #118: five baseline vessel arms x (lr, xgb) via modeling/run_ablation_matrix.py.
 
 baseline_arm_name: clinical_plus_tumor_size
 baseline_run_name: clinical_plus_tumor_size__lr__cv

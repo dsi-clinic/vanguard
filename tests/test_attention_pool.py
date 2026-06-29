@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from deepsets_model import (
+from deepsets.model import (
     POOLING_CHOICES,
     AttentionPool,
     DeepSetsClassifier,

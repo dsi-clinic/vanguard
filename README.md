@@ -26,6 +26,16 @@ source ~/.bashrc
 micromamba config append channels conda-forge
 ```
 
+> **If using the Randi Cluster**
+>
+> On the Randi cluster, redirect pip's build temp directory away from `/tmp` (which is mounted
+> noexec). Add this to your `~/.bashrc` once, then source it:
+>
+> ```bash
+> echo 'export TMPDIR=/ess/scratch/scratch1/$USER/tmp' >> ~/.bashrc
+> mkdir -p /ess/scratch/scratch1/$USER/tmp
+> source ~/.bashrc
+> ```
 Set up the repository once:
 
 ```bash
@@ -78,7 +88,7 @@ This repository has four main workflows.
   - runs the vessel-segmentation models that produce the binary vessel masks used downstream
 - `graph_extraction/`
   - turns vessel masks into exam-level centerlines, graphs, vessel summaries, and tumor-focused feature JSONs
-- `train_tabular.py`
+- `tabular/train.py`
   - trains tabular pCR models from clinical, vessel, and radiomics feature tables
 - `radiomics/`
   - separate radiomics-only modeling workflow
@@ -87,7 +97,7 @@ Supporting pieces:
 
 - `features/`
   - canonical definitions of the five modeling blocks: `clinical`, `tumor_size`, `morph`, `graph`, and `kinematic`
-- `train_deepsets.py`
+- `deepsets/train.py`
   - plain-PyTorch Deep Sets baseline over tumor-local vessel points that reuses the shared evaluator
 - `evaluation/`
   - shared split generation, metrics, result aggregation, and output saving used across model families
@@ -143,7 +153,7 @@ Single-study run:
 ```bash
 micromamba activate vanguard
 python graph_extraction/run_skeleton_processing.py \
-  --study-id DUKE_041 \
+  --case-id DUKE_041 \
   --input-dir /net/projects2/vanguard/vessel_segmentations/DUKE \
   --output-dir /net/projects2/vanguard/centerlines_tc4d/studies/DUKE/DUKE_041
 ```
@@ -153,7 +163,7 @@ Feature-only recompute from existing centerline outputs:
 ```bash
 micromamba activate vanguard
 python graph_extraction/run_skeleton_processing.py \
-  --study-id DUKE_041 \
+  --case-id DUKE_041 \
   --input-dir /net/projects2/vanguard/vessel_segmentations/DUKE \
   --output-dir /net/projects2/vanguard/centerlines_tc4d/studies/DUKE/DUKE_041 \
   --features-only \
@@ -168,7 +178,7 @@ Single training run:
 
 ```bash
 micromamba activate vanguard
-python train_tabular.py --config configs/ispy2.yaml --outdir experiments/debug_run
+python tabular/train.py --config configs/ispy2.yaml --outdir experiments/debug_run
 ```
 
 Primary training config:
@@ -218,9 +228,9 @@ Reference:
 
 Current entrypoints:
 
-- [`build_deepsets_dataset.py`](build_deepsets_dataset.py)
+- [`deepsets/build_dataset.py`](deepsets/build_dataset.py)
   - builds one tumor-local point set per case from saved centerline and support masks
-- [`train_deepsets.py`](train_deepsets.py)
+- [`deepsets/train.py`](deepsets/train.py)
   - trains the baseline Deep Sets classifier using the shared evaluator
 - [`configs/deepsets_ispy2.yaml`](configs/deepsets_ispy2.yaml)
   - starting config for the I-SPY2 Deep Sets baseline
@@ -281,7 +291,7 @@ Internally, the wrapper chains three dependent Slurm stages:
 - model training
 
 - `data_paths.deepsets_manifest_csv` if you already built the dataset
-- or rerun [`build_deepsets_dataset.py`](build_deepsets_dataset.py) from the current centerline outputs
+- or rerun [`deepsets/build_dataset.py`](deepsets/build_dataset.py) from the current centerline outputs
 
 ## Evaluation Framework
 
@@ -289,9 +299,9 @@ The `evaluation/` package is the shared comparison layer for this repo. It creat
 
 Current users:
 
-- `train_tabular.py`
+- `tabular/train.py`
   - tabular clinical, vessel, and radiomics models
-- `train_deepsets.py`
+- `deepsets/train.py`
   - Deep Sets baseline over tumor-local vessel point sets
 
 Start here:

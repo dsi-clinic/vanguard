@@ -18,16 +18,21 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
 import yaml
 
-from analysis.feature_ranking import RankingMethod
-from analysis.top_k_arms import assemble_top_features_experiment_arms
-from config import load_config, to_plain_data
-from run_ablation_matrix import _prepare_full_dataset, run_ablation_matrix
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from analysis.feature_ranking import RankingMethod  # noqa: E402
+from analysis.top_k_arms import assemble_top_features_experiment_arms  # noqa: E402
+from config import load_config, to_plain_data  # noqa: E402
+from modeling.ablation import _prepare_full_dataset, run_ablation_matrix  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

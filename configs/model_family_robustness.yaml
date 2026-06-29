@@ -1,4 +1,4 @@
-# Robustness checks for Issue #117 via run_ablation_matrix.py.
+# Robustness checks for Issue #117 via modeling/run_ablation_matrix.py.
 
 feature_toggles:
   use_vascular: true

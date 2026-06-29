@@ -14,13 +14,13 @@ import yaml
 
 from config import load_config, to_plain_data
 from evaluation import Evaluator, FoldResults
-from run_ablation_matrix import (
+from modeling.ablation import (
     _add_baseline_deltas,
     _metrics_summary_row,
     _normalize_ablation_arms,
 )
-from tabular_cohort import select_features
-from train_tabular import prepare_evaluation_context
+from tabular.cohort import select_features
+from tabular.train import prepare_evaluation_context
 
 
 def _write_auc_summary_plot(summary_df: pd.DataFrame, out_root: Path) -> None:

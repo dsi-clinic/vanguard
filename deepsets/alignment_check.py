@@ -7,7 +7,7 @@ matplotlib, PyYAML, SimpleITK.
 
 Example::
 
-    PYTHONPATH=. python scripts/deepsets_alignment_check.py \\
+    PYTHONPATH=. python deepsets/alignment_check.py \\
         --case-ids ISPY2_100899,ISPY2_102011,ISPY2_102212
 
 Clinical DCE (default)::
@@ -27,20 +27,24 @@ import logging
 import math
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
+import matplotlib.pyplot as plt
 import numpy as np
+import SimpleITK as sitk
 from scipy import ndimage
+
+from deepsets.volume_align import align_zyx_volume_to_shape
+from load_cohort import load_config
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # Headless plotting on clusters without a display
 os.environ.setdefault("MPLBACKEND", "Agg")
-
-import matplotlib.pyplot as plt
-import SimpleITK as sitk
-
-from deepsets_volume_align import align_zyx_volume_to_shape
-from load_cohort import load_config
 
 CONTOUR_LEVEL = 0.5
 

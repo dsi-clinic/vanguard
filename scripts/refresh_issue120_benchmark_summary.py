@@ -77,7 +77,7 @@ def find_latest_deepsets_metrics(out_root: Path) -> Path | None:
 def build_summary(repo_root: Path) -> pd.DataFrame:
     """Build the Issue #120 benchmark summary table from experiment metrics."""
     deepsets_point_feature_names = importlib.import_module(
-        "build_deepsets_dataset"
+        "deepsets.build_dataset"
     ).deepsets_point_feature_names
     rows = []
     for arm in ARMS:

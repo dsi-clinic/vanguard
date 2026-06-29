@@ -15,15 +15,15 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from deepsets_data import (
+from deepsets.data import (
     REQUIRED_DEEPSETS_MANIFEST_COLUMNS,
     SavedSetLookup,
     apply_feature_standardizer,
     collate_case_sets,
     fit_feature_standardizer,
 )
-from deepsets_model import DeepSetsClassifier
-from deepsets_runtime import stage_timer
+from deepsets.model import DeepSetsClassifier
+from deepsets.runtime import stage_timer
 from evaluation import FoldResults
 from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.kfold import FoldSplit
@@ -59,7 +59,7 @@ def describe_required_deepsets_config() -> dict[str, str]:
     """Return the config keys expected for the Deep Sets path."""
     return {
         "data_paths.deepsets_manifest_csv": (
-            "CSV produced by build_deepsets_dataset.py with one row per case and set_path."
+            "CSV produced by build_dataset.py with one row per case and set_path."
         ),
         "model_params.batch_size": "Mini-batch size for case sets.",
         "model_params.epochs": "Number of training epochs per outer fold.",
@@ -106,12 +106,12 @@ def validate_deepsets_manifest(
 
 
 def load_deepsets_manifest(config: dict[str, Any]) -> pd.DataFrame:
-    """Load the case-level manifest built by build_deepsets_dataset.py."""
+    """Load the case-level manifest built by build_dataset.py."""
     _ = describe_required_deepsets_config()
     manifest_path = config.data_paths.deepsets_manifest_csv
     if not manifest_path:
         raise ValueError(
-            "Missing data_paths.deepsets_manifest_csv. Run build_deepsets_dataset.py first."
+            "Missing data_paths.deepsets_manifest_csv. Run build_dataset.py first."
         )
     manifest_df = pd.read_csv(Path(manifest_path))
     manifest_df["case_id"] = manifest_df["case_id"].astype(str)
