@@ -41,7 +41,8 @@ micromamba config append channels conda-forge
 > ```bash
 > echo 'export TMPDIR=/ess/scratch/scratch1/$USER/tmp' >> ~/.bashrc
 > mkdir -p /ess/scratch/scratch1/$USER/tmp
-> source ~/.bashrc```
+> source ~/.bashrc
+> ```
 Set up the repository once:
 
 ```bash
