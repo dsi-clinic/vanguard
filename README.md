@@ -15,6 +15,10 @@ Our central idea is to turn the vessel network into something we can measure mor
 - Train and evaluate pCR models using clinical, vessel, and radiomics inputs.
 - Measure which vessel feature groups appear to add signal beyond clinical and tumor-size baselines.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and workflow.
+
 ## Team
 
 - Bella Summe
