@@ -9,7 +9,7 @@ dynamic = ["version"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["evaluation*", "graph_extraction*", "modeling*"]
+include = ["deepsets*","tabular*", "evaluation*", "graph_extraction*", "modeling*"]
 
 [tool.ruff.lint]
 extend-select = [
