@@ -26,9 +26,9 @@ This package is the shared evaluation layer for the repository. Its job is to ma
 - `prediction table`
   - a table with one row per case and columns for the true label and model output
 
-## When To Use `train_tabular.py`
+## When To Use `tabular/train_tabular.py`
 
-Use `train_tabular.py` when:
+Use `tabular/train_tabular.py` when:
 
 - your inputs are case-level feature tables
 - you want the existing tabular pipeline
@@ -44,7 +44,7 @@ Use `evaluation/` directly when:
 
 In short:
 
-- `train_tabular.py` is one concrete model pipeline
+- `tabular/train_tabular.py` is one concrete model pipeline
 - `evaluation/` is the shared comparison framework behind it
 
 ## Minimal Output Contract
@@ -74,7 +74,7 @@ For multi-fold runs, each fold is stored as a `FoldResults` object. The framewor
 
 ## Reusing This For A New Model
 
-A future learned set model should keep its own training code in `train_deepsets.py`, then call into `evaluation/` for the parts that should stay consistent across models.
+A future learned set model should keep its own training code in `deepsets/train_deepsets.py`, then call into `evaluation/` for the parts that should stay consistent across models.
 
 Typical pattern:
 
@@ -84,7 +84,7 @@ Typical pattern:
 4. Convert validation predictions into the standard prediction table.
 5. Aggregate the fold results and save them.
 
-The current `train_deepsets.py` template already gives students:
+The current `deepsets/train_deepsets.py` template already gives students:
 
 - required manifest columns
 - suggested config keys for point-set data
@@ -137,8 +137,8 @@ evaluator.save_results(kfold_results, output_dir)
 
 ## Related Files
 
-- [`../train_tabular.py`](../train_tabular.py)
-- [`../train_deepsets.py`](../train_deepsets.py)
+- [`../tabular/train_tabular.py`](../tabular/train_tabular.py)
+- [`../deepsets/train_deepsets.py`](../deepsets/train_deepsets.py)
 - [`../config.py`](../config.py)
 - [`../configs/ispy2.yaml`](../configs/ispy2.yaml)
 - [`../configs/ablation.yaml`](../configs/ablation.yaml)

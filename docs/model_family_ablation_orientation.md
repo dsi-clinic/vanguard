@@ -3,7 +3,7 @@
 ## What currently exists
 
 - **Tabular training entrypoint**
-  - `train_tabular.py`
+  - `tabular/train_tabular.py`
   - Builds features via `tabular_cohort.py`, then runs evaluator CV and saves metrics/predictions/plots.
 - **Model families in code**
   - logistic regression (`model: lr`)

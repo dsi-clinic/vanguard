@@ -47,7 +47,7 @@ python scripts/refresh_issue120_benchmark_summary.py
 
 ## 4D kinetic alignment (point features)
 
-- Vessel 4D series: `_try_load_vessel_4d` in `build_deepsets_dataset.py` → `discover_study_timepoints` + `load_time_series_from_files` + `align_zyx_4d_to_shape` to skeleton ZYX.
+- Vessel 4D series: `_try_load_vessel_4d` in `deepsets/build_deepsets_dataset.py` → `discover_study_timepoints` + `load_time_series_from_files` + `align_zyx_4d_to_shape` to skeleton ZYX.
 - `vessel_segmentation_root` is set only on dynamic YAML configs (e.g. `configs/deepsets_ispy2_pointfeat_geom_topo_dynamic.yaml`).
 - Load/alignment failures → zero dynamic columns and `kinetic_signal_ok=0`.
 - Reference enhancement for relative ratios uses support/tumor heuristic (`_reference_enhancement_baseline`), not the full breast reference mask from tabular `features/kinematic.py`.

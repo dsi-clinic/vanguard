@@ -5,13 +5,13 @@ These scripts submit pCR modeling experiments from the top-level training and ab
 ## Files
 
 - `submit_feature_ablation.slurm`
-  - serial feature-block matrix run using `run_ablation_matrix.py`
+  - serial feature-block matrix run using `modeling/run_ablation_matrix.py`
 - `submit_model_family_matrix.slurm`
-  - Issue #116 matrix: `model_families` × `ablation_arms` via `run_ablation_matrix.py`
+  - Issue #116 matrix: `model_families` × `ablation_arms` via `modeling/run_ablation_matrix.py`
 - `submit_model_family_robustness.slurm`
-  - Issue #117: top families × `split_mode_matrix` via `run_ablation_matrix.py`
+  - Issue #117: top families × `split_mode_matrix` via `modeling/run_ablation_matrix.py`
 - `submit_issue118_baseline_arms.slurm`
-  - Issue #118: five baseline arms × (`lr`, `xgb`) in one `run_ablation_matrix.py` run
+  - Issue #118: five baseline arms × (`lr`, `xgb`) in one `modeling/run_ablation_matrix.py` run
 - `submit_independent_signal_matrix_array.sh`
   - wrapper that submits the cached-table job, the arm/fold array job, and the merge job
 - `submit_ablation_arm_fold_array.slurm`
@@ -142,7 +142,7 @@ Defaults:
 - `CONFIG=${REPO_ROOT}/configs/deepsets_ispy2.yaml`
 - `OUT_ROOT=${REPO_ROOT}/results/deepsets` (absolute path after normalization)
 - `BUILD_SHARDS=8` → Slurm job array shards + dependent merge step
-- **`BUILD_SHARDS=1`** → one long `MODE=build-single` job (`build_deepsets_dataset.py` with default `--num-shards 1`, manifest written straight to `--output-dir`)
+- **`BUILD_SHARDS=1`** → one long `MODE=build-single` job (`deepsets/build_deepsets_dataset.py` with default `--num-shards 1`, manifest written straight to `--output-dir`)
 
 Override examples:
 
