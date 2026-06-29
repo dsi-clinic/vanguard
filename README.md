@@ -153,7 +153,7 @@ Single-study run:
 ```bash
 micromamba activate vanguard
 python graph_extraction/run_skeleton_processing.py \
-  --study-id DUKE_041 \
+  --case-id DUKE_041 \
   --input-dir /net/projects2/vanguard/vessel_segmentations/DUKE \
   --output-dir /net/projects2/vanguard/centerlines_tc4d/studies/DUKE/DUKE_041
 ```
@@ -163,7 +163,7 @@ Feature-only recompute from existing centerline outputs:
 ```bash
 micromamba activate vanguard
 python graph_extraction/run_skeleton_processing.py \
-  --study-id DUKE_041 \
+  --case-id DUKE_041 \
   --input-dir /net/projects2/vanguard/vessel_segmentations/DUKE \
   --output-dir /net/projects2/vanguard/centerlines_tc4d/studies/DUKE/DUKE_041 \
   --features-only \
