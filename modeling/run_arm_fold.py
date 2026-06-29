@@ -14,7 +14,10 @@ import yaml
 from config import load_config, to_plain_data
 from modeling.ablation import _normalize_ablation_arms
 from tabular.tabular_cohort import select_features
-from tabular.train_tabular import prepare_evaluation_context, run_single_fold_from_context
+from tabular.train_tabular import (
+    prepare_evaluation_context,
+    run_single_fold_from_context,
+)
 
 
 def parse_args() -> argparse.Namespace:
