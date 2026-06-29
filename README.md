@@ -3,7 +3,7 @@
 ## Project Background
 
 A major challenge in breast cancer care is figuring out whether treatment is working early enough to change course. Standard imaging measures such as tumor shrinkage often do not change until weeks or months into therapy. That delay can leave patients on an ineffective regimen for too long.
-
+what
 This project studies blood vessels around the tumor as a possible earlier signal of response. Tumors depend on nearby vessels for oxygen and nutrients, and those vessels can change during treatment. Breast dynamic contrast-enhanced MRI (DCE-MRI) is useful here because it shows both anatomy and how contrast moves through tissue over time.
 
 Our central idea is to turn the vessel network into something we can measure more directly. We extract vessel centerlines, convert them into graphs, summarize the graph near the tumor, and use those summaries for pathologic complete response (pCR) modeling together with clinical and radiomics features.
@@ -14,6 +14,10 @@ Our central idea is to turn the vessel network into something we can measure mor
 - Extract vessel features that describe size, shape, connectivity, and contrast behavior near the tumor.
 - Train and evaluate pCR models using clinical, vessel, and radiomics inputs.
 - Measure which vessel feature groups appear to add signal beyond clinical and tumor-size baselines.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and workflow.
 
 ## Team
 
