@@ -29,9 +29,9 @@ float16 either way.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -40,19 +40,23 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 # --- Make the vendored segmentation package importable ----------------------
-_SUBMODULE = Path(__file__).resolve().parent.parent / "vanguard-blood-vessel-segmentation"
+_SUBMODULE = (
+    Path(__file__).resolve().parent.parent / "vanguard-blood-vessel-segmentation"
+)
 if str(_SUBMODULE) not in sys.path:
     sys.path.insert(0, str(_SUBMODULE))
 
 # Reuse the exact helpers from the original implementation so behaviour matches.
 from model_utils import (  # noqa: E402
     _center_align_prediction,
-    _slice_bounds,
     _save_vessel_probability,
+    _slice_bounds,
 )
 
 
-def _align_skip_connection_spatial(skip_connection, x):
+def _align_skip_connection_spatial(
+    skip_connection: torch.Tensor, x: torch.Tensor
+) -> torch.Tensor:
     """Center-crop/pad skip tensor so spatial dims match x exactly.
 
     Copied from ``predict.py`` — required so odd input dimensions don't break
@@ -90,14 +94,17 @@ def apply_shape_patch() -> None:
     from unet.decoding import DecodingBlock
 
     if not getattr(DecodingBlock, "_vanguard_shape_patch", False):
-        def _patched_center_crop(self, skip_connection, x):
+
+        def _patched_center_crop(
+            self: Any, skip_connection: torch.Tensor, x: torch.Tensor
+        ) -> torch.Tensor:
             return _align_skip_connection_spatial(skip_connection, x)
 
         DecodingBlock.center_crop = _patched_center_crop
         DecodingBlock._vanguard_shape_patch = True
 
 
-def build_unet(target_tissue: str):
+def build_unet(target_tissue: str) -> tuple[nn.Module, int, int]:
     """Construct the UNet3D for ``breast`` (1->1) or ``dv`` (2->3)."""
     from unet import UNet3D
 
@@ -118,7 +125,9 @@ def build_unet(target_tissue: str):
     return unet, n_channels, n_classes
 
 
-def load_model(unet, saved_model_path, device):
+def load_model(
+    unet: nn.Module, saved_model_path: str, device: torch.device
+) -> nn.Module:
     """Wrap in DataParallel + load weights (matches the original loaders)."""
     unet = nn.DataParallel(unet)
     unet.load_state_dict(torch.load(saved_model_path, map_location=device))
@@ -127,21 +136,21 @@ def load_model(unet, saved_model_path, device):
     return unet
 
 
-def _autocast(use_amp: bool, device):
+def _autocast(use_amp: bool, device: torch.device) -> Any:
     """Return an autocast context manager (no-op unless CUDA + use_amp)."""
     enabled = bool(use_amp) and device.type == "cuda"
     return torch.cuda.amp.autocast(enabled=enabled)
 
 
 def predict_breast_batched(
-    unet,
-    dataset,
-    save_masks_dir,
-    device=None,
+    unet: nn.Module,
+    dataset: Any,
+    save_masks_dir: str,
+    device: torch.device | None = None,
     batch_size: int = 8,
     num_workers: int = 1,
     use_amp: bool = True,
-):
+) -> None:
     """Batched equivalent of ``pred_and_save_masks_3d_simple`` (breast stage).
 
     The breast dataset (``Dataset3DSimple`` + ``tio.Resize((144,144,96))``) yields
@@ -178,20 +187,20 @@ def predict_breast_batched(
             resize_transform = tio.Resize((x_length, y_length, z_length))
             out = resize_transform(pred[b])  # (1, x, y, z)
             out = np.squeeze(out).astype(np.half)
-            np.save(save_masks_dir / "{}.npy".format(subject_id), out)
+            np.save(save_masks_dir / f"{subject_id}.npy", out)
 
 
 def predict_vessel_batched(
-    unet,
-    dataset,
-    n_classes,
-    save_masks_dir,
-    device=None,
+    unet: nn.Module,
+    dataset: Any,
+    n_classes: int,
+    save_masks_dir: str,
+    device: torch.device | None = None,
     batch_size: int = 16,
     num_workers: int = 1,
     use_amp: bool = True,
-    accum_dtype=np.float32,
-):
+    accum_dtype: type = np.float32,
+) -> None:
     """Batched equivalent of ``pred_and_save_masks_3d_divided``.
 
     Parameters mirror the original where they overlap. ``unet`` must already be
@@ -216,16 +225,16 @@ def predict_vessel_batched(
     pred_volume_denom = None
     current_list_index = None
 
-    def _finalize(list_index):
+    def _finalize(list_index: int) -> None:
         """Divide accumulators and save the vessel channel for one subject."""
         assert pred_volume_denom is not None
         assert (pred_volume_denom != 0).all(), (
-            "{} has regions that weren't analyzed; configure `x_y_divisions` or "
-            "`z_division`".format(dataset.subject_id_list[list_index])
+            f"{dataset.subject_id_list[list_index]} has regions that weren't analyzed; configure `x_y_divisions` or "
+            "`z_division`"
         )
         volume_pred_array = (pred_volume_numer / pred_volume_denom).astype(np.half)
         _save_vessel_probability(
-            save_masks_dir / "{}.npz".format(dataset.subject_id_list[list_index]),
+            save_masks_dir / f"{dataset.subject_id_list[list_index]}.npz",
             volume_pred_array,
         )
 
@@ -256,11 +265,19 @@ def predict_vessel_batched(
                 current_list_index = list_index
                 x_len, y_len, z_len = dataset.image_array_list[list_index].shape
                 if n_classes == 1:
-                    pred_volume_numer = np.zeros((x_len, y_len, z_len), dtype=accum_dtype)
-                    pred_volume_denom = np.zeros((x_len, y_len, z_len), dtype=accum_dtype)
+                    pred_volume_numer = np.zeros(
+                        (x_len, y_len, z_len), dtype=accum_dtype
+                    )
+                    pred_volume_denom = np.zeros(
+                        (x_len, y_len, z_len), dtype=accum_dtype
+                    )
                 else:
-                    pred_volume_numer = np.zeros((n_classes, x_len, y_len, z_len), dtype=accum_dtype)
-                    pred_volume_denom = np.zeros((n_classes, x_len, y_len, z_len), dtype=accum_dtype)
+                    pred_volume_numer = np.zeros(
+                        (n_classes, x_len, y_len, z_len), dtype=accum_dtype
+                    )
+                    pred_volume_denom = np.zeros(
+                        (n_classes, x_len, y_len, z_len), dtype=accum_dtype
+                    )
 
             x_length, y_length, z_length = dataset.image_array_list[list_index].shape
             x_start, x_stop = _slice_bounds(x_index, dataset.input_dim, x_length)
@@ -277,10 +294,12 @@ def predict_vessel_batched(
                 )
                 pred_volume_denom[x_start:x_stop, y_start:y_stop, z_start:z_stop] += 1
             else:
-                pred_volume_numer[:, x_start:x_stop, y_start:y_stop, z_start:z_stop] += (
-                    patch.astype(accum_dtype, copy=False)
-                )
-                pred_volume_denom[:, x_start:x_stop, y_start:y_stop, z_start:z_stop] += 1
+                pred_volume_numer[
+                    :, x_start:x_stop, y_start:y_stop, z_start:z_stop
+                ] += patch.astype(accum_dtype, copy=False)
+                pred_volume_denom[
+                    :, x_start:x_stop, y_start:y_stop, z_start:z_stop
+                ] += 1
 
     # Finalize the last subject.
     if current_list_index is not None:

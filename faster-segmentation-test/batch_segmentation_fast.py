@@ -33,21 +33,23 @@ for _p in (str(_HERE), str(_SEG_DIR), str(_SUBMODULE)):
         sys.path.insert(0, _p)
 
 # Reuse the original, unchanged helpers so discovery/output layout match exactly.
+import predict_fast  # noqa: E402
 from batch_segmentation import (  # noqa: E402
-    find_nii_files,
-    preprocess_image,
     build_output_path,
     collect_all_step3_files,
+    find_nii_files,
+    preprocess_image,
 )
-import predict_fast  # noqa: E402
 
 
-def preprocess_parallel(file_list, step1_dir: Path, workers: int):
+def preprocess_parallel(
+    file_list: list[tuple[str, str]], step1_dir: Path, workers: int
+) -> tuple[dict[str, str], list[str]]:
     """Run STEP-1 preprocessing across a thread pool. Returns base_name->case_id."""
     base_name_to_case = {}
     failed = []
 
-    def _work(item):
+    def _work(item: tuple[str, str]) -> tuple[str, str, bool]:
         case_id, file_path = item
         base_name = Path(file_path).name.replace(".nii.gz", "")
         step1_file = step1_dir / f"{base_name}.npy"
@@ -73,10 +75,10 @@ def run_inference_in_process(
     batch_size: int,
     num_workers: int,
     use_amp: bool,
-):
+) -> None:
     """Load each model once and run breast then vessel inference in-process."""
     import torchio as tio
-    from dataset_3d import Dataset3DSimple, Dataset3DDivided
+    from dataset_3d import Dataset3DDivided, Dataset3DSimple
 
     predict_fast.apply_shape_patch()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -91,8 +93,13 @@ def run_inference_in_process(
         image_only=True,
     )
     predict_fast.predict_breast_batched(
-        breast_unet, breast_ds, str(step2_dir), device=device,
-        batch_size=max(2, batch_size // 2), num_workers=num_workers, use_amp=use_amp,
+        breast_unet,
+        breast_ds,
+        str(step2_dir),
+        device=device,
+        batch_size=max(2, batch_size // 2),
+        num_workers=num_workers,
+        use_amp=use_amp,
     )
     del breast_unet
     if device.type == "cuda":
@@ -113,21 +120,41 @@ def run_inference_in_process(
         image_only=True,
     )
     predict_fast.predict_vessel_batched(
-        vessel_unet, vessel_ds, n_classes=n_classes, save_masks_dir=str(step3_dir),
-        device=device, batch_size=batch_size, num_workers=num_workers, use_amp=use_amp,
+        vessel_unet,
+        vessel_ds,
+        n_classes=n_classes,
+        save_masks_dir=str(step3_dir),
+        device=device,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        use_amp=use_amp,
     )
 
 
 def main() -> None:
+    """Run the fast batch-segmentation CLI."""
     p = argparse.ArgumentParser(
         description="Fast in-process batched vessel segmentation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--images-dir", default="/ess/scratch/scratch1/annawoodard/MAMA-MIA-syn60868042/images")
-    p.add_argument("--output-dir", default=str(_PROJECT_ROOT / "vessel_segmentations_fast"))
-    p.add_argument("--temp-dir", required=True, help="Scratch dir for STEP-1/2/3 intermediates")
-    p.add_argument("--breast-model-path", default=str(_SUBMODULE / "trained_models" / "breast_model.pth"))
-    p.add_argument("--vessel-model-path", default=str(_SUBMODULE / "trained_models" / "dv_model.pth"))
+    p.add_argument(
+        "--images-dir",
+        default="/ess/scratch/scratch1/annawoodard/MAMA-MIA-syn60868042/images",
+    )
+    p.add_argument(
+        "--output-dir", default=str(_PROJECT_ROOT / "vessel_segmentations_fast")
+    )
+    p.add_argument(
+        "--temp-dir", required=True, help="Scratch dir for STEP-1/2/3 intermediates"
+    )
+    p.add_argument(
+        "--breast-model-path",
+        default=str(_SUBMODULE / "trained_models" / "breast_model.pth"),
+    )
+    p.add_argument(
+        "--vessel-model-path",
+        default=str(_SUBMODULE / "trained_models" / "dv_model.pth"),
+    )
     p.add_argument("--patient-limit", type=int, default=None)
     p.add_argument("--file-start", type=int, default=None)
     p.add_argument("--file-end", type=int, default=None)
@@ -141,7 +168,11 @@ def main() -> None:
 
     out_dir = Path(args.output_dir)
     temp_dir = Path(args.temp_dir)
-    step1_dir, step2_dir, step3_dir = temp_dir / "step1", temp_dir / "step2", temp_dir / "step3"
+    step1_dir, step2_dir, step3_dir = (
+        temp_dir / "step1",
+        temp_dir / "step2",
+        temp_dir / "step3",
+    )
     for d in (out_dir, step1_dir, step2_dir, step3_dir):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -160,8 +191,11 @@ def main() -> None:
     if args.resume:
         before = len(nii_files)
         nii_files = [
-            (cid, fp) for cid, fp in nii_files
-            if not build_output_path(out_dir, cid, Path(fp).name.replace(".nii.gz", "")).exists()
+            (cid, fp)
+            for cid, fp in nii_files
+            if not build_output_path(
+                out_dir, cid, Path(fp).name.replace(".nii.gz", "")
+            ).exists()
         ]
         print(f"Resume: {len(nii_files)} remaining (skipped {before - len(nii_files)})")
     if not nii_files:
@@ -170,19 +204,32 @@ def main() -> None:
 
     t0 = time.time()
     use_amp = not args.no_amp
-    print(f"Preprocessing {len(nii_files)} file(s) with {args.preprocess_workers} workers...")
-    base_name_to_case, failed = preprocess_parallel(nii_files, step1_dir, args.preprocess_workers)
+    print(
+        f"Preprocessing {len(nii_files)} file(s) with {args.preprocess_workers} workers..."
+    )
+    base_name_to_case, failed = preprocess_parallel(
+        nii_files, step1_dir, args.preprocess_workers
+    )
     t_pre = time.time()
-    print(f"Preprocessing done in {t_pre - t0:.1f}s ({len(base_name_to_case)} ok, {len(failed)} failed)")
+    print(
+        f"Preprocessing done in {t_pre - t0:.1f}s ({len(base_name_to_case)} ok, {len(failed)} failed)"
+    )
     if not base_name_to_case:
         print("All files failed preprocessing — skipping inference.")
         return
 
-    print(f"Inference (batch_size={args.batch_size}, num_workers={args.num_workers}, amp={use_amp})...")
+    print(
+        f"Inference (batch_size={args.batch_size}, num_workers={args.num_workers}, amp={use_amp})..."
+    )
     run_inference_in_process(
-        step1_dir, step2_dir, step3_dir,
-        args.breast_model_path, args.vessel_model_path,
-        args.batch_size, args.num_workers, use_amp,
+        step1_dir,
+        step2_dir,
+        step3_dir,
+        args.breast_model_path,
+        args.vessel_model_path,
+        args.batch_size,
+        args.num_workers,
+        use_amp,
     )
     t_inf = time.time()
     print(f"Inference done in {t_inf - t_pre:.1f}s")
@@ -202,7 +249,9 @@ def main() -> None:
 
     total = time.time() - t0
     print(f"\n{'='*60}\nFAST BATCH COMPLETE")
-    print(f"Files: {len(nii_files)}  Successful: {len(successful)}  Failed: {len(failed_cases)}")
+    print(
+        f"Files: {len(nii_files)}  Successful: {len(successful)}  Failed: {len(failed_cases)}"
+    )
     print(f"Total: {total:.1f}s  ({total/len(nii_files):.1f}s/file)")
     print(f"  preprocess: {t_pre - t0:.1f}s  inference: {t_inf - t_pre:.1f}s")
     print(f"Outputs collected: {len(collect_all_step3_files(str(out_dir)))}")

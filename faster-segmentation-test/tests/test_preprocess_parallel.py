@@ -23,17 +23,24 @@ from batch_segmentation import find_nii_files, preprocess_image  # noqa: E402
 
 
 def main() -> int:
+    """Run the parallel-vs-serial preprocessing equivalence check."""
     rng = np.random.default_rng(0)
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         images_dir = tmp / "images"
         # 3 cases, varied tiny shapes (sitk array order is z,y,x).
-        cases = {"CASE_001": (8, 16, 16), "CASE_002": (6, 14, 18), "CASE_003": (10, 12, 12)}
+        cases = {
+            "CASE_001": (8, 16, 16),
+            "CASE_002": (6, 14, 18),
+            "CASE_003": (10, 12, 12),
+        }
         for cid, shape in cases.items():
             cdir = images_dir / cid
             cdir.mkdir(parents=True)
             arr = rng.random(shape).astype(np.float32)
-            sitk.WriteImage(sitk.GetImageFromArray(arr), str(cdir / f"{cid}_0000.nii.gz"))
+            sitk.WriteImage(
+                sitk.GetImageFromArray(arr), str(cdir / f"{cid}_0000.nii.gz")
+            )
 
         files = sorted(find_nii_files(str(images_dir)), key=lambda x: (x[0], str(x[1])))
 
@@ -49,7 +56,7 @@ def main() -> int:
             base = Path(fp).name.replace(".nii.gz", "")
             preprocess_image(fp, ser_dir / f"{base}.npy")
 
-        ok = (len(failed) == 0 and len(base_to_case) == len(files))
+        ok = len(failed) == 0 and len(base_to_case) == len(files)
         for base in base_to_case:
             a = np.load(par_dir / f"{base}.npy")
             b = np.load(ser_dir / f"{base}.npy")

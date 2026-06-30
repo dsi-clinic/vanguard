@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate fast-pipeline vessel outputs against the completed ground-truth run.
+r"""Validate fast-pipeline vessel outputs against the completed ground-truth run.
 
 Compares each ``*_vessel_segmentation.npz`` produced by the fast pipeline with the
 matching file from the existing (52%-complete) run, reporting metrics that show
@@ -31,6 +31,7 @@ DEFAULT_TRUTH = "/ess/scratch/scratch1/t-9sbose/vessel_segmentations"
 
 
 def dice(a: np.ndarray, b: np.ndarray, thr: float) -> float:
+    """Dice coefficient between ``a`` and ``b`` thresholded at ``thr``."""
     A, B = a > thr, b > thr
     s = int(A.sum()) + int(B.sum())
     if s == 0:
@@ -39,21 +40,31 @@ def dice(a: np.ndarray, b: np.ndarray, thr: float) -> float:
 
 
 def find_truth(truth_root: Path, name: str) -> Path | None:
+    """Find the ground-truth file matching ``name`` under ``truth_root``."""
     hits = list(truth_root.rglob(name))
     return hits[0] if hits else None
 
 
 def main() -> int:
+    """Compare fast-pipeline outputs against ground truth and write a report."""
     ap = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--fast-dir", required=True, help="Root of fast-pipeline outputs")
-    ap.add_argument("--truth-dir", default=DEFAULT_TRUTH, help="Root of ground-truth outputs")
+    ap.add_argument(
+        "--truth-dir", default=DEFAULT_TRUTH, help="Root of ground-truth outputs"
+    )
     ap.add_argument("--threshold", type=float, default=0.5)
-    ap.add_argument("--report", default=None, help="Report path (default: <fast-dir>/validation_report.txt)")
+    ap.add_argument(
+        "--report",
+        default=None,
+        help="Report path (default: <fast-dir>/validation_report.txt)",
+    )
     args = ap.parse_args()
 
     fast_root = Path(args.fast_dir)
     truth_root = Path(args.truth_dir)
-    report_path = Path(args.report) if args.report else fast_root / "validation_report.txt"
+    report_path = (
+        Path(args.report) if args.report else fast_root / "validation_report.txt"
+    )
 
     fast_files = sorted(fast_root.rglob("*_vessel_segmentation.npz"))
     if not fast_files:
@@ -62,7 +73,7 @@ def main() -> int:
 
     lines = []
 
-    def emit(s=""):
+    def emit(s: str = "") -> None:
         print(s)
         lines.append(s)
 
@@ -93,7 +104,9 @@ def main() -> int:
         vt = int((b > args.threshold).sum())
         vf = int((a > args.threshold).sum())
         ratio = (vf / vt) if vt else float("nan")
-        emit(f"{fp.name:<34} {str(shape_ok):<9} {max_abs:<9.4f} {mean_abs:<10.6f} {d:<7.4f} {vt:<11} {vf:<10} {ratio:<6.3f}")
+        emit(
+            f"{fp.name:<34} {str(shape_ok):<9} {max_abs:<9.4f} {mean_abs:<10.6f} {d:<7.4f} {vt:<11} {vf:<10} {ratio:<6.3f}"
+        )
         n_compared += 1
         dice_vals.append(d)
         max_abs_vals.append(max_abs)
@@ -102,7 +115,9 @@ def main() -> int:
     if n_compared:
         emit(f"Compared {n_compared} case(s).")
         emit(f"  Dice:     min={min(dice_vals):.4f}  mean={np.mean(dice_vals):.4f}")
-        emit(f"  Max|diff|: max={max(max_abs_vals):.4f}  mean={np.mean(max_abs_vals):.4f}")
+        emit(
+            f"  Max|diff|: max={max(max_abs_vals):.4f}  mean={np.mean(max_abs_vals):.4f}"
+        )
         emit("")
         emit("Interpretation: Dice ~1.0 and small max|diff| (float16 rounding scale)")
         emit("means the fast pipeline reproduces the ground truth within precision.")
