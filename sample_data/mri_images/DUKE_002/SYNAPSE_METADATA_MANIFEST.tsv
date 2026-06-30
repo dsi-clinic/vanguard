@@ -1,5 +1,0 @@
-path	parent	name	id	synapseStore	contentType	used	executed	activityName	activityDescription
-/net/projects2/vanguard/MAMA-MIA-syn60868042/images/DUKE_002/DUKE_002_0000.nii.gz	syn64880842	DUKE_002_0000.nii.gz	syn64880844	True	application/octet-stream				
-/net/projects2/vanguard/MAMA-MIA-syn60868042/images/DUKE_002/DUKE_002_0001.nii.gz	syn64880842	DUKE_002_0001.nii.gz	syn64880845	True	application/octet-stream				
-/net/projects2/vanguard/MAMA-MIA-syn60868042/images/DUKE_002/DUKE_002_0002.nii.gz	syn64880842	DUKE_002_0002.nii.gz	syn64880843	True	application/octet-stream				
-/net/projects2/vanguard/MAMA-MIA-syn60868042/images/DUKE_002/DUKE_002_0003.nii.gz	syn64880842	DUKE_002_0003.nii.gz	syn64880846	True	application/octet-stream				

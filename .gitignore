@@ -208,3 +208,9 @@ results/deepsets/
 analysis/deepsets_issue119/figures/
 analysis/issue121_figures/*.png
 vanguard-blood-vessel-segmentation/
+sample_data/mri_images/
+sample_data/expert_tumors/
+repomix-output.xml
+gmon.out
+HANDOFF_2026-06-29.md
+.claude/
