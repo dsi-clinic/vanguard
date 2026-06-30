@@ -1001,3 +1001,70 @@ Visually confirms the three-way comparison: resampling doesn't dramatically shif
 either direction. Differences are visible but not alarming given the fold variance.
 
 ---
+
+## 2026-06-30 — Locked-split native run: isolating resampling effect
+
+**Goal:** Address mentor's concern that the resampled vs. Q3 baseline comparison
+confounds three variables: train/test split, code version, and resampling.
+Lock the split constant so the only variable between the two runs is the
+centerline source (resampled vs. native).
+
+**What I did:**
+
+1. Discovered that both native and resampled feature sets contain the exact same
+   808 patients in the same order — so the StratifiedKFold(random_state=42) split
+   was already identical. But made it explicit and documented by locking it.
+
+2. Built the following infrastructure:
+   - `scripts/extract_resampled_splits.py` — reads `predictions.csv` from the
+     resampled run's baseline arm, saves `case_id, val_fold` to a canonical CSV.
+   - `evaluation/build_splits.py` — added `_load_fixed_splits()` and a
+     `fixed_splits_csv` check in `create_splits_for_dataframe()`. When the config
+     sets `data_paths.fixed_splits_csv`, splits are loaded from that CSV instead
+     of being generated from scratch.
+   - `configs/native_locked_split_ispy2.yaml` — native centerlines config with
+     `fixed_splits_csv` set.
+   - `slurm/submit_native_locked_split.sh` — Slurm wrapper.
+   - `scripts/compare_locked_split_auc.py` — generates the three-way AUC table
+     and prints an interpretation.
+
+3. Extracted and saved the locked split:
+   ```
+   python scripts/extract_resampled_splits.py
+   # → /ess/scratch/scratch1/t-9sbose/vanguard_experiments/locked_split_resampled_ispy2.csv
+   # 808 patients, folds: {0:162, 1:162, 2:162, 3:161, 4:161}
+   ```
+
+4. Submitted the native locked-split ablation to Slurm:
+   ```
+   PARTITION=tier1q bash slurm/submit_native_locked_split.sh
+   ```
+
+**Slurm job IDs:**
+- Cache build : 12420112
+- Fold array  : 12420113 (30 tasks: 6 arms × 5 folds)
+- Merge       : 12420114
+
+**Monitor:**
+```bash
+squeue -j 12420112,12420113,12420114
+sacct -j 12420112,12420113,12420114 --format=JobIDRaw,State,Elapsed,ExitCode -n -P
+```
+
+**After completion:**
+```bash
+micromamba run -n vanguard python scripts/compare_locked_split_auc.py
+```
+Output: `results/locked_split_auc_comparison.csv`
+
+**What to look for:**
+- If native_locked ≈ resampled for vessel arms → resampling is NOT the cause of the
+  AUC drop; `second_order.py` code change (added Apr 20, high NaN features) is
+  the more likely explanation.
+- If native_locked > resampled for vessel arms → resampled centerlines genuinely
+  degrade the vessel signal.
+
+**Output directory:**
+`/ess/scratch/scratch1/t-9sbose/vanguard_experiments/independent_signal_native_locked_ispy2/`
+
+---
