@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from deepsets_runtime import stage_timer
+from deepsets.runtime import stage_timer
 
 
 def parse_args() -> argparse.Namespace:

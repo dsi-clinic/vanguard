@@ -12,9 +12,12 @@ import pandas as pd
 import yaml
 
 from config import load_config, to_plain_data
-from run_ablation_matrix import _normalize_ablation_arms
-from tabular_cohort import select_features
-from train_tabular import prepare_evaluation_context, run_single_fold_from_context
+from modeling.ablation import _normalize_ablation_arms
+from tabular.cohort import select_features
+from tabular.train import (
+    prepare_evaluation_context,
+    run_single_fold_from_context,
+)
 
 
 def parse_args() -> argparse.Namespace:

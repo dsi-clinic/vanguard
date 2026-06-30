@@ -1,6 +1,6 @@
 # Project 2 — Tabular model selection & baseline-arm comparison
 
-Summary of outputs for **Issues #116, #117, and #118**. All three are driven by the unified `run_ablation_matrix.py` pipeline so the runs are directly comparable. Per-issue background and run instructions live in `docs/`.
+Summary of outputs for **Issues #116, #117, and #118**. All three are driven by the unified `modeling/run_ablation_matrix.py` pipeline so the runs are directly comparable. Per-issue background and run instructions live in `docs/`.
 
 ## TL;DR
 
@@ -26,7 +26,7 @@ Summary of outputs for **Issues #116, #117, and #118**. All three are driven by 
 **Question:** Across `lr`, `rf`, `xgb`, which family wins on each feature arm?
 
 **Setup**
-- Runner: `run_ablation_matrix.py`
+- Runner: `modeling/run_ablation_matrix.py`
 - Config: `configs/model_family_matrix.yaml`
 - Slurm: `slurm/submit_model_family_matrix.slurm`
 - Per-family overrides: nested tuning **on** for `lr`, off for `rf` / `xgb`
@@ -49,7 +49,7 @@ Summary of outputs for **Issues #116, #117, and #118**. All three are driven by 
 **Question:** On the frozen `+ vessel_all` arm, do `lr` and `xgb` hold up under a stricter "no shared site between train and validation" evaluation?
 
 **Setup**
-- Runner: `run_ablation_matrix.py` (same one as #116)
+- Runner: `modeling/run_ablation_matrix.py` (same one as #116)
 - Config: `configs/model_family_robustness.yaml`
 - Slurm: `slurm/submit_model_family_robustness.slurm`
 - Frozen arm: `clinical + tumor_size + morph + graph + kinematic`
@@ -73,7 +73,7 @@ Summary of outputs for **Issues #116, #117, and #118**. All three are driven by 
 **Question:** With one frozen setup, how do the five vessel arms compare to each other and to the radiomics baseline from last quarter?
 
 **Setup**
-- Runner: `run_ablation_matrix.py`
+- Runner: `modeling/run_ablation_matrix.py`
 - Config: `configs/issue118_baseline_arms.yaml`
 - Slurm: `slurm/submit_issue118_baseline_arms.slurm`
 - Families: `lr` (nested-tuned), `xgb`

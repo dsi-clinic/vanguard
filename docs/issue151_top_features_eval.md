@@ -9,7 +9,7 @@ columns** adds signal on top of a **clinical + tumor size** baseline.
   rankers (shared tidy schema).
 - `analysis/top_k_arms.py` — builds baseline + top-K ablation arms with
   `explicit_model_columns`.
-- `run_top_features_eval.py` — loads the feature superset, runs the ranker,
+- `modeling/run_top_features_eval.py` — loads the feature superset, runs the ranker,
   writes `feature_ranking_global.csv`, then calls `run_ablation_matrix`.
 - `configs/top_features_eval.yaml` — worked example matching Issue #118 cohort
   defaults (ISPY2, `bilateral_filter: false`).
@@ -27,7 +27,7 @@ A stricter follow-up ranks inside each outer-fold training split only.
 ## Running
 
 ```bash
-micromamba run -n vanguard python run_top_features_eval.py \
+micromamba run -n vanguard python modeling/run_top_features_eval.py \
   --config configs/top_features_eval.yaml \
   --outdir experiments/issue151_run
 ```
