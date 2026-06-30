@@ -44,10 +44,11 @@ dependencies:
   - umap-learn=0.5.11
   - pip:
       - git+https://github.com/AIM-Harvard/pyradiomics.git@v3.1.0
-      - unet
+      - torch_geometric==2.3.1
       - xgboost~=2.1
       - SimpleITK~=2.5
       - torchio>=0.21.0
       - mrmr-selection~=0.2
       - neuroCombat~=0.2
+      - torch_geometric
       - -e .
