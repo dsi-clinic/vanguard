@@ -207,3 +207,7 @@ _pip119/
 results/deepsets/
 analysis/deepsets_issue119/figures/
 analysis/issue121_figures/*.png
+
+# Spencer's Notes/Notebooks
+NOTES.md
+notebooks/
