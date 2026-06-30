@@ -1,0 +1,81 @@
+ablation_arms:
+- name: clinical_plus_tumor_size
+  selected_features:
+  - clinical
+  - tumor_size
+  explicit_model_columns: null
+  model_params_override: {}
+  feature_toggles_override: {}
+- name: clinical_plus_tumor_size_plus_morph
+  selected_features:
+  - clinical
+  - tumor_size
+  - morph
+  explicit_model_columns: null
+  model_params_override: {}
+  feature_toggles_override: {}
+- name: clinical_plus_tumor_size_plus_graph
+  selected_features:
+  - clinical
+  - tumor_size
+  - graph
+  explicit_model_columns: null
+  model_params_override: {}
+  feature_toggles_override: {}
+- name: clinical_plus_tumor_size_plus_kinematic
+  selected_features:
+  - clinical
+  - tumor_size
+  - kinematic
+  explicit_model_columns: null
+  model_params_override:
+    feature_select_mode: block_kinematic
+    nested_feature_select_mode_grid:
+    - block_kinematic
+    feature_select_k_kin: 16
+    nested_k_kin_grid:
+    - 0
+    - 8
+    - 16
+    - 32
+    feature_select_kin_method: mrmr
+    nested_kin_method_grid:
+    - topk_auc
+    - mrmr
+  feature_toggles_override: {}
+- name: clinical_plus_tumor_size_plus_vessel_all
+  selected_features:
+  - clinical
+  - tumor_size
+  - morph
+  - graph
+  - kinematic
+  explicit_model_columns: null
+  model_params_override:
+    feature_select_mode: block_kinematic
+    nested_feature_select_mode_grid:
+    - block_kinematic
+    feature_select_k_kin: 16
+    nested_k_kin_grid:
+    - 0
+    - 8
+    - 16
+    - 32
+    feature_select_kin_method: mrmr
+    nested_kin_method_grid:
+    - topk_auc
+    - mrmr
+  feature_toggles_override: {}
+model_families:
+- lr
+- xgb
+split_mode_matrix:
+- name: cv
+  use_group_split: false
+  model_params_override: {}
+model_family_overrides:
+  lr:
+    nested_tune_enabled: true
+  xgb:
+    nested_tune_enabled: false
+multi_combo: true

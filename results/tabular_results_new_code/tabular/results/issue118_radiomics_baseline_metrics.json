@@ -1,0 +1,89 @@
+{
+  "evaluation_type": "train_test",
+  "model_name": "training",
+  "metrics": {
+    "auc": 0.5938496473089188
+  },
+  "n_samples": 447,
+  "n_features": 428,
+  "validation_summary": {
+    "overall": {
+      "auc": 0.5938496473089188
+    },
+    "by_group": {
+      "her2_enriched": {
+        "auc": 0.5652173913043478
+      },
+      "her2_pure": {
+        "auc": 0.5777777777777777
+      },
+      "luminal": {
+        "auc": 0.5064935064935066
+      },
+      "luminal_a": {
+        "auc": 0.6742382271468144
+      },
+      "luminal_b": {
+        "auc": 0.5273833671399595
+      },
+      "triple_negative": {
+        "auc": 0.6421663442940039
+      }
+    }
+  },
+  "auc_test": 0.5938496473089188,
+  "auc_train": 0.633745019043216,
+  "auc_train_cv": 0.5446929062476392,
+  "auc_train_cv_std": 0.03226518624433329,
+  "n_features_used": 50,
+  "auc_train_cv_by_subtype": {
+    "her2_enriched": 0.5379330943847073,
+    "her2_pure": 0.396694214876033,
+    "luminal": 0.4701250578971746,
+    "luminal_a": 0.5804804804804805,
+    "luminal_b": 0.5293478260869565,
+    "triple_negative": 0.5481831972838258
+  },
+  "auc_test_by_subtype": {
+    "her2_enriched": 0.5652173913043478,
+    "her2_pure": 0.5777777777777777,
+    "luminal": 0.5064935064935066,
+    "luminal_a": 0.6742382271468144,
+    "luminal_b": 0.5273833671399595,
+    "triple_negative": 0.6421663442940039
+  },
+  "auc_test_by_site": {
+    "DUKE": 0.6179615110477549,
+    "ISPY1": 0.41597796143250687,
+    "ISPY2": 0.6153572698186989,
+    "NACT": NaN
+  },
+  "classifier_type": "logistic",
+  "class_order": [
+    0,
+    1
+  ],
+  "threshold_train_youdenJ": 0.5247524355371128,
+  "sensitivity_test": 0.48854961832061067,
+  "specificity_test": 0.6708860759493671,
+  "tn_fp_fn_tp_test": [
+    212,
+    104,
+    67,
+    64
+  ],
+  "calibration": "ok",
+  "subtype_filter": null,
+  "site_filter": null,
+  "corr_threshold": 0.9,
+  "k_best": 50,
+  "feature_selection": "kbest",
+  "grid_search": true,
+  "cv_folds": 5,
+  "cv_only": false,
+  "harmonization_mode": "none",
+  "harmonization_batch_col": "site",
+  "harmonization_covariates": [],
+  "harmonization_unknown_batches_fit": 0,
+  "harmonization_unknown_batches_apply": 0
+}

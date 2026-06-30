@@ -1,0 +1,6 @@
+outer_fold,inner_auc_mean,inner_auc_std,inner_auc_n_folds,C,l1_ratio,feature_select_enabled,feature_select_mode,feature_select_k_kin,feature_select_kin_method,feature_select_max_abs_corr,feature_select_max_zero_rate
+0,0.5491327959548299,0.03192459633220344,3,0.5,0.75,True,block_kinematic,0,topk_auc,0.9,0.9
+1,0.5479226604957952,0.01167963195485819,3,0.5,0.5,True,block_kinematic,0,topk_auc,0.9,0.9
+2,0.5595889393472179,0.001891835802397065,3,0.5,0.75,True,block_kinematic,16,mrmr,0.95,0.9
+3,0.5172055245634773,0.02822844106079456,3,0.5,0.75,True,block_kinematic,8,mrmr,0.95,0.9
+4,0.5598031675305636,0.01976691268361179,3,0.5,0.75,True,block_kinematic,0,topk_auc,0.9,0.9

@@ -163,6 +163,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_manifest_csv": "",
         "deepsets_label_column": "label",
         "vessel_segmentation_root": "",
+        # When set to a CSV path (columns: case_id, val_fold), the pipeline will
+        # use this pre-saved fold assignment instead of generating new splits.
+        # This locks the train/test split so that different input sources
+        # (e.g. resampled vs. native centerlines) can be compared fairly.
+        "fixed_splits_csv": "",
     },
     "ablation_arms": deepcopy(DEFAULT_ABLATION_ARMS),
     # Optional multipliers for run_ablation_matrix (Issue #116 / #117 style experiments).

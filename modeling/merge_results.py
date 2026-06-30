@@ -189,7 +189,10 @@ def main() -> None:
 
         summary_rows.append(
             _metrics_summary_row(
+                run_name=arm_name,
                 arm_name=arm_name,
+                model_family=arm_config.model_params.model,
+                split_mode="cv",
                 blocks=blocks,
                 results_dir=arm_results_dir,
             )
@@ -211,6 +214,7 @@ def main() -> None:
     summary_df, fold_df = _add_baseline_deltas(
         summary_df,
         fold_df,
+        baseline_run_name=None,
         baseline_arm_name=config.baseline_arm_name,
     )
     summary_df.to_csv(args.out_root / "ablation_summary.csv", index=False)

@@ -1,0 +1,13 @@
+arm_name,selected_feature_blocks,status,n_features,n_samples,auc_mean,auc_std,ap_mean,ap_std,accuracy_mean,accuracy_std
+tumor_size_only,tumor_size,ok,31,808,0.5941481526775644,0.044201091783285275,,,,
+morph_only,morph,ok,47,808,0.5379860362213303,0.018972531288726863,,,,
+graph_only,graph,ok,295,808,0.5745339786516257,0.04012994921336862,,,,
+kinematic_only,kinematic,ok,829,808,0.564341501106207,0.0311064105279029,,,,
+tumor_size_plus_morph,"tumor_size,morph",ok,78,808,0.5866439001733119,0.022412407834572965,,,,
+tumor_size_plus_graph,"tumor_size,graph",ok,326,808,0.584680972622149,0.04014631798719065,,,,
+tumor_size_plus_kinematic,"tumor_size,kinematic",ok,860,808,0.5839965201729908,0.04041994549921696,,,,
+clinical_plus_tumor_size,"clinical,tumor_size",ok,35,808,0.5610792157850981,0.03196654697534405,,,,
+clinical_plus_tumor_size_plus_morph,"clinical,tumor_size,morph",ok,82,808,0.5872201778084131,0.019418313787758733,,,,
+clinical_plus_tumor_size_plus_graph,"clinical,tumor_size,graph",ok,330,808,0.5656871762754114,0.03285643623149602,,,,
+clinical_plus_tumor_size_plus_kinematic,"clinical,tumor_size,kinematic",ok,864,808,0.5648456807280337,0.03746480314923122,,,,
+clinical_plus_tumor_size_plus_graph_plus_kinematic,"clinical,tumor_size,graph,kinematic",ok,1159,808,0.5789668236727061,0.026902405836330634,,,,
