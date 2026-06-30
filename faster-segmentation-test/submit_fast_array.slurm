@@ -23,7 +23,10 @@ export CUDA_VISIBLE_DEVICES=0
 export PYTHONUNBUFFERED=1
 
 IMAGES_DIR="${IMAGES_DIR:-/ess/scratch/scratch1/annawoodard/MAMA-MIA-syn60868042/images}"
-OUTPUT_DIR="${OUTPUT_DIR:-/ess/scratch/scratch1/t-9sbose/vessel_segmentations_fast_smoke}"
+if [[ -z "${OUTPUT_DIR:-}" ]]; then
+  echo "Error: OUTPUT_DIR must be set for a full array run (it must NOT reuse the smoke-test directory)." >&2
+  exit 1
+fi
 BREAST_MODEL="${BREAST_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/breast_model.pth}"
 VESSEL_MODEL="${VESSEL_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/dv_model.pth}"
 FILES_PER_TASK="${FILES_PER_TASK:-20}"
