@@ -1057,14 +1057,35 @@ micromamba run -n vanguard python scripts/compare_locked_split_auc.py
 ```
 Output: `results/locked_split_auc_comparison.csv`
 
-**What to look for:**
-- If native_locked ≈ resampled for vessel arms → resampling is NOT the cause of the
-  AUC drop; `second_order.py` code change (added Apr 20, high NaN features) is
-  the more likely explanation.
-- If native_locked > resampled for vessel arms → resampled centerlines genuinely
-  degrade the vessel signal.
+**Results (all 30/30 tasks completed, 0 failures):**
 
-**Output directory:**
-`/ess/scratch/scratch1/t-9sbose/vanguard_experiments/independent_signal_native_locked_ispy2/`
+| Arm | Q3 baseline | Resampled | Native locked | Δ (native−resamp) |
+|-----|-------------|-----------|---------------|-------------------|
+| clinical + tumor_size | 0.572 | 0.603 | 0.599 | −0.004 |
+| + morph | 0.591 | 0.589 | 0.603 | **+0.013** |
+| + graph | 0.588 | 0.581 | 0.606 | **+0.025** |
+| + kinematic | 0.594 | 0.588 | 0.596 | **+0.008** |
+| + graph + kinematic | 0.594 | 0.579 | 0.584 | **+0.005** |
+| + vessel_all | 0.596 | 0.561 | 0.577 | **+0.016** |
+
+**Finding: Resampling degrades vessel features.**
+Native locked > resampled for ALL 5 vessel arms (same split, same code).
+The spacing change (resampling to DUKE's 0.7×0.7×1.0 mm) distorts the
+vessel centerline geometry enough to reduce feature quality by 0.005–0.025 AUC.
+
+**Important nuance:** Even native locked vessel arms show negative deltas vs.
+their own clinical baseline (−0.003 to −0.022). Both factors compound:
+- Resampling degrades vessel geometry → worse features
+- `second_order.py` adds NaN-heavy features → noise in model
+
+**Output files:**
+- `results/locked_split_auc_comparison.csv` — full numeric table
+- `results/locked_split_auc_comparison.png` — three-way visual
+- `/ess/scratch/scratch1/t-9sbose/vanguard_experiments/independent_signal_native_locked_ispy2/ablation_summary.csv`
+
+**Visual generated with:**
+```bash
+micromamba run -n vanguard python scripts/plot_locked_split_comparison.py
+```
 
 ---
