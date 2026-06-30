@@ -124,6 +124,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "use_group_split": False,
         "group_col": "site",
         "stratum_col": "tumor_subtype",
+        # Split source: "random" (stratified/group k-fold, default) or
+        # "predefined" (honor a hardcoded train/val column named ``split_col``).
+        "split_mode": "random",
+        "split_col": "fold",
         "device": "auto",
         "batch_size": 8,
         "epochs": 25,
