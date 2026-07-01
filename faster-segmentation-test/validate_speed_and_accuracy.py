@@ -230,10 +230,18 @@ def main() -> int:
         base_name = Path(file_path).name.replace(".nii.gz", "")
         print(f"\n[{idx}] {case_id} :: {base_name}")
 
+        # Each call gets its own scratch dir. The old pipeline names its scratch
+        # dirs by case_id alone and predict.py processes every .npy it finds in
+        # them, so a shared temp dir across timepoints of the same case would
+        # make each call reprocess all prior files too (same issue for fast's
+        # single shared step1/2/3 dirs). Isolating per-index avoids that.
+        old_file_temp_dir = old_temp_dir / f"idx_{idx}"
+        fast_file_temp_dir = fast_temp_dir / f"idx_{idx}"
+
         old_cmd = build_old_cmd(
             args.images_dir,
             old_output_dir,
-            old_temp_dir,
+            old_file_temp_dir,
             args.breast_model_path,
             args.vessel_model_path,
             idx,
@@ -241,7 +249,7 @@ def main() -> int:
         fast_cmd = build_fast_cmd(
             args.images_dir,
             fast_output_dir,
-            fast_temp_dir,
+            fast_file_temp_dir,
             args.breast_model_path,
             args.vessel_model_path,
             idx,
