@@ -32,10 +32,7 @@ from torch_geometric.utils import from_networkx
 
 from config import DEFAULT_CONFIG
 from graph_extraction.constants import NDIM_3D
-from graph_extraction.core4d import (
-    discover_study_timepoints,
-    load_time_series_from_files,
-)
+from graph_extraction.core4d import load_time_series_from_files
 from graph_extraction.feature_stats import mask_to_edges_bitmask
 from graph_extraction.skeleton_to_graph_primitives import (
     edges_to_segments,
@@ -143,8 +140,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
             ``"peak_time"`` (normalized peak-contrast time) and ``"radius"``.
         id_column: Case-ID column in the labels file.
         label_column: Binary label column in the labels file.
-        timeseries_root: Optional vessel-segmentation root used to discover 4D
-            timepoints when a case has no ``run_summary.json`` ``study_files``.
         profile: When true, accumulate and log per-stage timings.
     """
 
@@ -159,7 +154,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
         node_features: Sequence[str] = _DEFAULT_NODE_FEATURES,
         id_column: str = "case_id",
         label_column: str = "pcr",
-        timeseries_root: str | Path | None = None,
         profile: bool = False,
         transform: object = None,
         pre_transform: object = None,
@@ -183,9 +177,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._node_features = tuple(node_features)
         self._id_column = id_column
         self._label_column = label_column
-        self._timeseries_root = (
-            Path(timeseries_root) if timeseries_root is not None else None
-        )
         self._profile = profile
         self._timings = _StageTimings()
 
@@ -338,8 +329,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
         radius_map = obtain_radius_map(support, graph)
 
         signal_4d = self._load_time_series(case_id, study_dir)
-        if signal_4d is None:
-            return None
         num_timepoints = int(signal_4d.shape[0])
 
         with self._timings.measure("peak_time"):
@@ -350,38 +339,32 @@ class VanguardCenterlineDataset(InMemoryDataset):
 
         return self._finalize_data(data, case_id, study_dir, label, num_timepoints)
 
-    def _load_time_series(self, case_id: str, study_dir: Path) -> np.ndarray | None:
-        """Load the stacked 4D signal for a case, or ``None`` if unavailable."""
+    def _load_time_series(self, case_id: str, study_dir: Path) -> np.ndarray:
+        """Load the stacked 4D signal for a case."""
         paths = self._resolve_timepoint_paths(case_id, study_dir)
-        if not paths:
-            logger.info("case=%s no timepoint files found", case_id)
-            return None
         with self._timings.measure("timeseries_load"):
-            try:
-                return load_time_series_from_files(paths)
-            except ValueError as exc:
-                logger.info("case=%s failed to load timepoints: %s", case_id, exc)
-                return None
+            return load_time_series_from_files(paths)
 
     def _resolve_timepoint_paths(self, case_id: str, study_dir: Path) -> list[Path]:
-        """Prefer ``run_summary.json`` ``study_files``; else discover on disk."""
+        """Return timepoint paths from ``run_summary.json["study_files"]``.
+
+        Raises ``FileNotFoundError`` if the summary is missing, ``KeyError`` if
+        ``study_files`` is absent or empty, and propagates ``json.JSONDecodeError``
+        if the file is malformed.
+        """
         summary_path = study_dir / _RUN_SUMMARY_NAME
-        if summary_path.exists():
-            try:
-                summary = json.loads(summary_path.read_text())
-            except (OSError, json.JSONDecodeError) as exc:
-                logger.info("case=%s unreadable run_summary: %s", case_id, exc)
-                summary = {}
-            study_files = summary.get("study_files")
-            if study_files:
-                return [Path(p) for p in study_files]
-        if self._timeseries_root is not None:
-            try:
-                paths, _ = discover_study_timepoints(self._timeseries_root, case_id)
-                return paths
-            except ValueError as exc:
-                logger.info("case=%s timepoint discovery failed: %s", case_id, exc)
-        return []
+        if not summary_path.exists():
+            raise FileNotFoundError(
+                f"case={case_id}: {summary_path} not found; "
+                "run_summary.json is required"
+            )
+        summary = json.loads(summary_path.read_text())
+        study_files = summary.get("study_files")
+        if not study_files:
+            raise KeyError(
+                f"case={case_id}: run_summary.json missing or empty 'study_files' key"
+            )
+        return [Path(p) for p in study_files]
 
     def _attach_node_features(
         self,

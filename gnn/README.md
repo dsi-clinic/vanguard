@@ -44,9 +44,8 @@ computed from the same `*_vessel_segmentation.npz` timepoints that
 ```
 
 The loader reads `run_summary.json["study_files"]` (absolute `*_vessel_segmentation.npz`
-paths) to load the 4D signal without re-globbing. If that key is absent, pass
-`timeseries_root=<vessel-segmentation root>` and it falls back to
-`graph_extraction.core4d.discover_study_timepoints`.
+paths) to load the 4D signal. `run_summary.json` and its `study_files` key are
+**required** — the loader raises immediately if either is absent or malformed.
 
 ## Labels are required
 
