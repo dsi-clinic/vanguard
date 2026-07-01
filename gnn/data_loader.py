@@ -41,22 +41,6 @@ from graph_extraction.skeleton_to_graph_primitives import (
 )
 from tabular.cohort import load_labels
 
-logger = logging.getLogger(__name__)
-
-
-def _torch_load(path: str) -> object:
-    """``torch.load`` a full object across torch versions.
-
-    ``weights_only`` did not exist before torch 1.13 (the cluster env pins
-    1.11), while newer torch defaults it to ``True`` and refuses to unpickle
-    ``Data`` objects. Request the full load when supported, else fall back.
-    """
-    try:
-        return torch.load(path, weights_only=False)
-    except TypeError:
-        return torch.load(path)
-
-
 # Filename patterns come straight from the shared config so the loader stays in
 # sync with how the centerline pipeline writes its outputs.
 _CENTERLINE_PATTERN: str = DEFAULT_CONFIG["feature_toggles"]["centerline_file_pattern"]
@@ -103,9 +87,9 @@ class _StageTimings:
         """Log mean / median / max seconds for every recorded stage."""
         if not self._stages:
             return
-        logger.info("GNN build stage timings (seconds):")
+        logging.info("GNN build stage timings (seconds):")
         for stage, samples in self._stages.items():
-            logger.info(
+            logging.info(
                 "  %-16s n=%d mean=%.3f median=%.3f max=%.3f",
                 stage,
                 len(samples),
@@ -122,8 +106,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
     skeleton voxels keyed by ``(x, y, z)``, edges connect 26-connected voxels,
     and node features are stacked into ``data.x`` in the order given by
     ``node_features``. A binary ``data.y`` label is **required** for every graph;
-    cases without a matching label are skipped so the built dataset is always
-    training-ready.
+    cases with no matching label or degenerate geometry raise immediately.
 
     Args:
         root: The centerline ``studies`` tree containing per-case output
@@ -213,19 +196,13 @@ class VanguardCenterlineDataset(InMemoryDataset):
         """No-op: centerline outputs are produced upstream, never downloaded."""
 
     def _load_processed(self) -> None:
-        """Restore the collated tensors, tolerating PyG version differences."""
-        try:
-            self.load(self.processed_paths[0])
-        except AttributeError:  # PyG < 2.4 has no ``self.load``
-            self.data, self.slices = _torch_load(self.processed_paths[0])
+        """Restore the collated tensors."""
+        self.data, self.slices = torch.load(self.processed_paths[0])
 
     def _save_processed(self, data_list: list[Data]) -> None:
-        """Persist the collated dataset, tolerating PyG version differences."""
-        try:
-            self.save(data_list, self.processed_paths[0])
-        except AttributeError:  # PyG < 2.4 has no ``self.save``
-            data, slices = self.collate(data_list)
-            torch.save((data, slices), self.processed_paths[0])
+        """Persist the collated dataset."""
+        data, slices = self.collate(data_list)
+        torch.save((data, slices), self.processed_paths[0])
 
     # -- build --------------------------------------------------------------
 
@@ -233,28 +210,21 @@ class VanguardCenterlineDataset(InMemoryDataset):
         """Discover cases, build one labeled graph each, and collate the cache."""
         labels = self._load_label_map()
         discovered = self._discover_cases()
-        logger.info(
+        logging.info(
             "GNN build: %d candidate case(s) under %s",
             len(discovered),
             self._centerline_root,
         )
 
         data_list: list[Data] = []
-        skipped: dict[str, int] = {}
-
-        def skip(reason: str, case_id: str) -> None:
-            skipped[reason] = skipped.get(reason, 0) + 1
-            logger.info("skip case=%s reason=%s", case_id, reason)
 
         for case_id, mask_path in discovered:
             label = labels.get(case_id)
             if label is None:
-                skip("no_label", case_id)
-                continue
+                raise ValueError(
+                    f"No label found for case {case_id} in {self._labels_path}"
+                )
             data = self._build_one_case(case_id, mask_path, label)
-            if data is None:
-                skip("degenerate_or_missing_inputs", case_id)
-                continue
             torch.save(data, Path(self.processed_dir) / f"{case_id}_graph.pt")
             data_list.append(data)
 
@@ -265,12 +235,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
 
         self._save_processed(data_list)
 
-        logger.info(
-            "GNN build complete: matched=%d skipped=%d (%s)",
-            len(data_list),
-            sum(skipped.values()),
-            ", ".join(f"{k}={v}" for k, v in skipped.items()) or "none",
-        )
+        logging.info("GNN build complete: %d graphs built", len(data_list))
         if self._profile:
             self._timings.log_summary()
 
@@ -292,39 +257,34 @@ class VanguardCenterlineDataset(InMemoryDataset):
             pairs.append((case_id, mask_path))
         return pairs
 
-    def _build_one_case(self, case_id: str, mask_path: Path, label: int) -> Data | None:
-        """Build one :class:`Data` graph, or ``None`` if the case is unusable."""
+    def _build_one_case(self, case_id: str, mask_path: Path, label: int) -> Data:
+        """Build one :class:`Data` graph for ``case_id``."""
         study_dir = mask_path.parent
 
         with self._timings.measure("mask_load"):
             skeleton = np.load(mask_path).astype(bool, copy=False)
             support_path = study_dir / _SUPPORT_PATTERN.format(case_id=case_id)
             if not support_path.exists():
-                logger.info("case=%s missing support mask %s", case_id, support_path)
-                return None
+                raise FileNotFoundError(
+                    f"Support mask not found for {case_id}: {support_path}"
+                )
             support = np.load(support_path).astype(bool, copy=False)
 
         if skeleton.ndim != NDIM_3D or not skeleton.any():
-            logger.info("case=%s empty or non-3D skeleton", case_id)
-            return None
+            raise ValueError(f"Empty or non-3D skeleton for {case_id}")
         if skeleton.shape != support.shape:
-            logger.info(
-                "case=%s skeleton/support shape mismatch %s vs %s",
-                case_id,
-                skeleton.shape,
-                support.shape,
+            raise ValueError(
+                f"Skeleton/support shape mismatch for {case_id}: "
+                f"{skeleton.shape} vs {support.shape}"
             )
-            return None
 
         with self._timings.measure("graph_build"):
             segments = edges_to_segments(mask_to_edges_bitmask(skeleton))
             if segments.size == 0:
-                logger.info("case=%s skeleton has zero segments", case_id)
-                return None
+                raise ValueError(f"Skeleton for {case_id} has zero segments")
             graph = segments_to_graph(segments)
         if graph.number_of_nodes() == 0:
-            logger.info("case=%s graph has zero nodes", case_id)
-            return None
+            raise ValueError(f"Graph for {case_id} has zero nodes")
 
         radius_map = obtain_radius_map(support, graph)
 
@@ -400,10 +360,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         data.case_id = case_id
         data.num_timepoints = num_timepoints
 
-        try:
-            rel_parts = study_dir.relative_to(self._centerline_root).parts
-        except ValueError:
-            rel_parts = ()
+        rel_parts = study_dir.relative_to(self._centerline_root).parts
         dataset = rel_parts[0] if rel_parts else "unknown"
         data.dataset = dataset
         data.site = dataset
