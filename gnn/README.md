@@ -1,15 +1,23 @@
-# GNN track — raw vessel-graph datasets
+# GNN modeling track
 
-This package delivers the **raw** vessel graph (nodes, edges, node features) as
-[`torch_geometric.data.Data`](https://pytorch-geometric.readthedocs.io/) objects,
-in contrast to the tabular / Deep Sets pipelines, which consume *summarized*
-morphometry + kinematic features. It is the data layer for the GNN modeling
-track.
+This package is the GNN counterpart to the tabular / Deep Sets pipelines: instead
+of consuming *summarized* morphometry + kinematic features, it operates on the
+**raw** vessel graph (nodes, edges, node features) as
+[`torch_geometric.data.Data`](https://pytorch-geometric.readthedocs.io/) objects.
+It covers the full track end to end:
 
-`gnn/data_loader.py` provides `VanguardCenterlineDataset`, an
-`InMemoryDataset` that builds one graph per case from saved centerline outputs.
+- **`gnn/data_loader.py`** — `VanguardCenterlineDataset`, an `InMemoryDataset`
+  that builds one graph per case from saved centerline outputs.
+- **`gnn/build_dataset.py`** — CLI wrapper to build/cache the full dataset on
+  the cluster.
+- **`gnn/model.py`** — `GCNClassifier`, the current MVP model.
+- **`gnn/train.py`** — minimal training script (single stratified split,
+  standardization, `BCEWithLogitsLoss`, shared metrics).
+- **`gnn/slurm/`** — Slurm submission scripts for both build and train.
 
-## What it builds
+## Data pipeline
+
+### What it builds
 
 - **Nodes:** one per skeleton voxel (voxel-level granularity), keyed by
   `(x, y, z)`. A `segment` mode (one node per bifurcation/endpoint) is an
@@ -32,7 +40,7 @@ The mask → graph conversion reuses the existing `graph_extraction` primitives
 computed from the same `*_vessel_segmentation.npz` timepoints that
 `features/kinematic.py` samples via `signal_4d[:, z, y, x]`.
 
-## Input tree
+### Input tree
 
 `root` is the centerline `studies/` tree. Each case directory contains:
 
@@ -47,16 +55,24 @@ The loader reads `run_summary.json["study_files"]` (absolute `*_vessel_segmentat
 paths) to load the 4D signal. `run_summary.json` and its `study_files` key are
 **required** — the loader raises immediately if either is absent or malformed.
 
-## Labels are required
+### Labels are required
 
 Every graph must carry a label. Labels are loaded with
 `tabular.cohort.load_labels(labels_path, id_column, label_column)` (normalizes to
 `{0, 1}`, handles CSV/JSON and true/false). **Cases with no matching label are
-skipped** with a logged reason, so a built dataset is always training-ready and
-never carries unlabeled graphs. Matched/skipped counts are logged at the end of
-`process()`.
+dropped** (not built) with a loud `logging.warning` and recorded in
+`dataset.dropped_case_ids` / `<cache_dir>/processed/dropped_cases.json`, so a
+built dataset is always training-ready and never carries unlabeled graphs. If
+the dropped fraction exceeds `max_missing_label_frac` (default `0.1`) the
+whole build raises `RuntimeError` instead of silently training on a shrunken
+cohort -- this guards against a labels file that's stale, mismatched, or
+pointed at the wrong cohort. On a cache hit (no rebuild), the manifest is
+reloaded and the drop warning is re-logged so missing labels stay visible
+without needing a fresh build. Degenerate geometry (empty skeleton, zero
+segments, shape mismatch) still raises immediately -- that's a data problem,
+not an expected missing-label case.
 
-## Usage
+### Usage
 
 ```python
 from gnn.data_loader import VanguardCenterlineDataset
@@ -78,7 +94,27 @@ The collated cache is written to `<cache_dir>/processed/data.pt`, plus a
 per-case `<case_id>_graph.pt` for debugging. Delete `<cache_dir>/processed/` to
 force a rebuild.
 
-## Profiling
+### Building the full dataset on the cluster
+
+`gnn/build_dataset.py` is a thin CLI wrapper: constructing
+`VanguardCenterlineDataset` triggers the build, so the script just parses args
+and instantiates it. Defaults point at the real cluster paths (see the
+project `CLAUDE.md`), with the cache written to Spencer's own workspace
+(`/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache`) rather than
+into `saritbose`'s centerline tree.
+
+```bash
+sbatch gnn/slurm/submit_gnn_build.slurm
+```
+
+Override any path via environment variables (`ROOT`, `LABELS_PATH`,
+`CACHE_DIR`, `ID_COLUMN`, `LABEL_COLUMN`, `NODE_FEATURES`, `CASES`,
+`NO_CACHE=1`) -- see the script header for usage. `CASES` (comma-separated
+case IDs) is handy for a smoke-test submission before committing to the full
+~1500-case build. See `docs/slurm-site.md` for why the job targets `tier1q`
+rather than the `general` partition used by older scripts in this repo.
+
+### Profiling
 
 With `profile=True` the loader accumulates wall time for each build stage
 (`mask_load`, `graph_build`, `timeseries_load`, `peak_time`, `from_networkx`) and
@@ -90,7 +126,7 @@ each case has many timepoints.
 > cluster (login-node smoke set of 2–3 NACT cases, then the full cohort via
 > Slurm).
 
-## Verification status
+### Data verification status
 
 - **Synthetic smoke test** (`tests/test_gnn_data_loader.py`): fabricates a tiny
   centerline tree and asserts `num_nodes > 0`, symmetric `edge_index`,
@@ -102,7 +138,7 @@ each case has many timepoints.
   conda env (pinned `torch` 1.11 / PyG 2.3.1), not in CI. The `from_networkx`,
   `InMemoryDataset`, and `Data` APIs used here are stable across PyG 2.x.
 
-## Resolved design decisions
+### Resolved data-loader design decisions
 
 Captured here because `$SV_DATA_DIR/gnn_data_loader_design_doc.md` was not
 reachable from this environment (`SV_DATA_DIR` unset); fold these back into that
@@ -114,4 +150,27 @@ doc when it is available.
 - Storage: `InMemoryDataset` (cohort n≈200 fits in memory).
 - Node feature v1: peak-contrast time (+ radius), computed from the raw 4D
   timepoints.
-- Labels: **required**; unlabeled cases skipped. 
+- Labels: **required**; unlabeled cases skipped.
+
+## Model + training (MVP)
+
+`gnn/model.py` provides `GCNClassifier`: a stack of `GCNConv` layers, a global
+mean-pool readout to one embedding per graph, and a linear head producing one
+logit per graph. No edge features, attention, or segment-level pooling yet --
+those are deliberate next steps once this MVP is validated end-to-end, not
+omissions. `gnn/train.py` is a minimal training script: a single stratified
+train/val split over case indices (not k-fold CV), node-feature
+standardization fit on the train split only, plain `BCEWithLogitsLoss`, and
+metrics via the shared `evaluation.metrics.compute_binary_metrics` (so numbers
+stay comparable once this grows into a pipeline that mirrors
+`deepsets/train.py` -- YAML config, `evaluation/build_splits.py` k-fold CV,
+results-dir README convention -- which it intentionally does not attempt yet).
+
+```bash
+python -m gnn.train --cache-dir /path/to/gnn_cache_smoke --cases NACT_01,NACT_02
+```
+
+Every run writes `README.md` + `metrics.json` + `config_used.json` to
+`experiments/gnn_mvp_<timestamp>/` (or `--outdir`) per the project's auditing
+convention. `gnn/slurm/submit_gnn_train.slurm` mirrors
+`submit_gnn_build.slurm` and defaults to the 8-case `gnn_cache_smoke`.
