@@ -10,7 +10,8 @@ pre-commit run --all-files
 
 pre-commit is just a command-line tool that reads the repo's config file:
 
-.pre-commit-config.yaml
+`.pre-commit-config.yaml`
+
 
 That file lists the checks to run. In this repo, it runs:
 
@@ -20,7 +21,7 @@ That file lists the checks to run. In this repo, it runs:
 
 Ruff's detailed rule settings live in:
 
-pyproject.toml
+`pyproject.toml`
 
 So the flow is:
 
@@ -33,8 +34,10 @@ pre-commit command
 
 After activating the environment:
 
+```bash 
 micromamba activate vanguard
 pre-commit install
+```
 
 This adds a local git hook so the same checks run automatically when you commit.
 
@@ -42,16 +45,22 @@ This adds a local git hook so the same checks run automatically when you commit.
 
 Run all checks before pushing:
 
+```bash
 pre-commit run --all-files
+```
 
 Many issues are auto-fixed. If that happens, inspect and stage the edits:
 
+```bash
 git diff
 git status
 git add path/to/changed_file.py
+```
 
 Then rerun:
 
+```bash 
 pre-commit run --all-files
+```
 
 A PR should be pushed only after this passes locally.
