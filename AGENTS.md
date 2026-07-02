@@ -4,11 +4,16 @@ These are shared instructions for AI coding agents working in this repo.
 
 ## Shared Rules
 - Read existing code before adding new code.
+- Prefer clear, small changes over large rewrites.
 - Treat raw imaging data as read-only.
+- Do not discard, flatten, or obscure dynamic/kinematic information in DCE-MRI data.
+- Preserve how signal intensity changes across time points unless the user explicitly asks for a derived summary.
+- For visual comparison across DCE-MRI time points, prefer one shared intensity window computed over the full 4D image.
+- Avoid per-timepoint windowing by default because it can hide real enhancement or washout patterns.
 - Use Slurm for heavy compute; do not run large jobs on the head node.
 - Record important commands, configs, input paths, output paths, and job IDs.
 - Keep outputs reproducible and easy to find.
-- Prefer clear, small changes over large rewrites.
+- Before trusting or reporting results, sanity-check inputs, outputs, and assumptions.
 
 ## Environment
 - Run commands from `~/vanguard`.
