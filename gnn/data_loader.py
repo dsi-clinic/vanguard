@@ -51,6 +51,7 @@ _CENTERLINE_SUFFIX: str = _CENTERLINE_PATTERN.replace("{case_id}", "", 1)
 
 _RUN_SUMMARY_NAME = "run_summary.json"
 _SINGLE_TIMEPOINT = 1
+_DROPPED_MANIFEST_NAME = "dropped_cases.json"
 
 # Maps a requested node-feature name to the per-node ``Data`` attribute used to
 # populate the corresponding column of ``data.x``.
@@ -105,8 +106,14 @@ class VanguardCenterlineDataset(InMemoryDataset):
     One graph is produced per case (named ``<case_id>_graph``): nodes are
     skeleton voxels keyed by ``(x, y, z)``, edges connect 26-connected voxels,
     and node features are stacked into ``data.x`` in the order given by
-    ``node_features``. A binary ``data.y`` label is **required** for every graph;
-    cases with no matching label or degenerate geometry raise immediately.
+    ``node_features``. A binary ``data.y`` label is required to build a graph;
+    cases with no matching label are **dropped** (not built), which is logged
+    loudly and recorded in ``dropped_case_ids`` / ``processed/dropped_cases.json``
+    every time the dataset is built or loaded. If the dropped fraction exceeds
+    ``max_missing_label_frac`` the whole build raises instead of silently
+    training on a shrunken cohort. Degenerate geometry (empty skeleton, zero
+    segments, shape mismatch, ...) still raises immediately -- that is a data
+    problem, not an expected missing-label case.
 
     Args:
         root: The centerline ``studies`` tree containing per-case output
@@ -125,6 +132,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
             ``"peak_time"`` (normalized peak-contrast time) and ``"radius"``.
         id_column: Case-ID column in the labels file.
         label_column: Binary label column in the labels file.
+        max_missing_label_frac: Maximum fraction of discovered cases allowed to
+            be dropped for lacking a ``label_column`` value. Every drop is
+            logged regardless; exceeding this fraction raises ``RuntimeError``
+            instead of building a silently-shrunken cohort. Default 0.1 (10%).
         profile: When true, accumulate and log per-stage timings.
     """
 
@@ -140,6 +151,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         node_features: Sequence[str] = _DEFAULT_NODE_FEATURES,
         id_column: str = "case_id",
         label_column: str = "pcr",
+        max_missing_label_frac: float = 0.1,
         profile: bool = False,
         transform: object = None,
         pre_transform: object = None,
@@ -155,6 +167,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
             raise ValueError(
                 f"Unknown node_features {unknown}; supported: {sorted(_FEATURE_ATTR)}"
             )
+        if not 0.0 <= max_missing_label_frac <= 1.0:
+            raise ValueError(
+                f"max_missing_label_frac must be in [0, 1], got {max_missing_label_frac}"
+            )
 
         self._centerline_root = Path(root)
         self._labels_path = Path(labels_path)
@@ -165,8 +181,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._node_features = tuple(node_features)
         self._id_column = id_column
         self._label_column = label_column
+        self._max_missing_label_frac = max_missing_label_frac
         self._profile = profile
         self._timings = _StageTimings()
+        self.dropped_case_ids: list[str] = []
 
         resolved_cache = (
             Path(cache_dir)
@@ -214,6 +232,32 @@ class VanguardCenterlineDataset(InMemoryDataset):
             self.data, self.slices = self.collate(self._data_list_cache)
         else:
             self.data, self.slices = torch.load(self.processed_paths[0])
+            self._reload_dropped_manifest()
+
+    def _reload_dropped_manifest(self) -> None:
+        """Restore and re-log dropped-case bookkeeping on a cache hit.
+
+        ``process()`` only runs once per cache; every later load of the same
+        cache still goes through here, so this is what keeps missing-label
+        drops visible instead of only being logged the one time the cache was
+        built.
+        """
+        manifest_path = Path(self.processed_dir) / _DROPPED_MANIFEST_NAME
+        if not manifest_path.exists():
+            return
+        manifest = json.loads(manifest_path.read_text())
+        self.dropped_case_ids = manifest["dropped_case_ids"]
+        if self.dropped_case_ids:
+            logging.warning(
+                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped for "
+                "missing %r label in %s: %s",
+                len(self.dropped_case_ids),
+                manifest["num_discovered"],
+                manifest["dropped_frac"] * 100,
+                manifest["label_column"],
+                manifest["labels_path"],
+                self.dropped_case_ids,
+            )
 
     def _save_processed(self, data_list: list[Data]) -> None:
         """Persist the collated dataset, or keep in memory when no_cache=True."""
@@ -236,16 +280,40 @@ class VanguardCenterlineDataset(InMemoryDataset):
         )
 
         data_list: list[Data] = []
+        dropped: list[str] = []
 
         for case_id, mask_path in discovered:
             label = labels.get(case_id)
             if label is None:
-                raise ValueError(
-                    f"No label found for case {case_id} in {self._labels_path}"
-                )
+                dropped.append(case_id)
+                continue
             data = self._build_one_case(case_id, mask_path, label)
             torch.save(data, Path(self.processed_dir) / f"{case_id}_graph.pt")
             data_list.append(data)
+
+        self.dropped_case_ids = dropped
+        self._write_dropped_manifest(dropped, len(discovered))
+        if dropped:
+            dropped_frac = len(dropped) / len(discovered)
+            logging.warning(
+                "GNN build: dropped %d/%d case(s) (%.1f%%) with no %r label in "
+                "%s: %s",
+                len(dropped),
+                len(discovered),
+                dropped_frac * 100,
+                self._label_column,
+                self._labels_path,
+                dropped,
+            )
+            if dropped_frac > self._max_missing_label_frac:
+                raise RuntimeError(
+                    f"{len(dropped)}/{len(discovered)} cases ({dropped_frac:.1%}) "
+                    f"are missing a {self._label_column!r} label in "
+                    f"{self._labels_path}, exceeding max_missing_label_frac="
+                    f"{self._max_missing_label_frac}. Fix the labels file, or "
+                    "pass a higher max_missing_label_frac if this many missing "
+                    "labels is expected."
+                )
 
         if not data_list:
             raise RuntimeError(
@@ -254,9 +322,27 @@ class VanguardCenterlineDataset(InMemoryDataset):
 
         self._save_processed(data_list)
 
-        logging.info("GNN build complete: %d graphs built", len(data_list))
+        logging.info(
+            "GNN build complete: %d graphs built, %d dropped for missing label",
+            len(data_list),
+            len(dropped),
+        )
         if self._profile:
             self._timings.log_summary()
+
+    def _write_dropped_manifest(self, dropped: list[str], num_discovered: int) -> None:
+        """Persist dropped-case bookkeeping so cache hits can re-surface it."""
+        if self._no_cache:
+            return
+        manifest = {
+            "dropped_case_ids": dropped,
+            "num_discovered": num_discovered,
+            "dropped_frac": len(dropped) / num_discovered if num_discovered else 0.0,
+            "label_column": self._label_column,
+            "labels_path": str(self._labels_path),
+        }
+        manifest_path = Path(self.processed_dir) / _DROPPED_MANIFEST_NAME
+        manifest_path.write_text(json.dumps(manifest, indent=2))
 
     def _load_label_map(self) -> dict[str, int]:
         """Load labels into a ``case_id -> {0, 1}`` mapping."""

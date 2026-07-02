@@ -92,6 +92,10 @@ def test_builds_labeled_graph_and_skips_unlabeled(
         cache_dir=cache_dir,
         node_features=("peak_time", "radius"),
         profile=True,
+        # This 2-case fixture is 50% unlabeled by construction; the default
+        # max_missing_label_frac=0.1 is calibrated for real cohorts, not
+        # tiny synthetic ones, so raise it here to exercise the drop path.
+        max_missing_label_frac=0.5,
     )
 
     # Only the labeled case survives; NACT_99 is skipped for lacking a label.
