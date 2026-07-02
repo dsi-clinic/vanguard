@@ -212,3 +212,7 @@ analysis/issue121_figures/*.png
 NOTES.md
 notebooks/
 LAB_NOTEBOOK.md
+
+
+# Local AI Agent Config 
+agents.local.md
