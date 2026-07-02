@@ -117,6 +117,8 @@ class VanguardCenterlineDataset(InMemoryDataset):
             to ``<root>/gnn_cache`` so the source tree can stay read-only when an
             explicit path is given.
         cases: Optional whitelist of case IDs to include.
+        no_cache: Skip reading and writing the on-disk cache; always rebuild from
+            source. Useful during development to avoid stale-cache surprises.
         node_mode: Node granularity. Only ``"voxel"`` is implemented; ``"segment"``
             raises :class:`NotImplementedError` as an explicit extension point.
         node_features: Node-feature names, in ``data.x`` column order. Supported:
@@ -133,6 +135,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         labels_path: str | Path,
         cache_dir: str | Path | None = None,
         cases: Sequence[str] | None = None,
+        no_cache: bool = False,
         node_mode: str = "voxel",
         node_features: Sequence[str] = _DEFAULT_NODE_FEATURES,
         id_column: str = "case_id",
@@ -156,6 +159,8 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._centerline_root = Path(root)
         self._labels_path = Path(labels_path)
         self._cases = set(cases) if cases is not None else None
+        self._no_cache = no_cache
+        self._data_list_cache: list[Data] | None = None
         self._node_mode = node_mode
         self._node_features = tuple(node_features)
         self._id_column = id_column
@@ -195,12 +200,26 @@ class VanguardCenterlineDataset(InMemoryDataset):
     def download(self) -> None:
         """No-op: centerline outputs are produced upstream, never downloaded."""
 
+    def _process(self) -> None:
+        if self._no_cache:
+            self.process()
+        else:
+            super()._process()
+
     def _load_processed(self) -> None:
         """Restore the collated tensors."""
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        if self._no_cache:
+            if self._data_list_cache is None:
+                raise RuntimeError("no_cache=True but process() has not run yet")
+            self.data, self.slices = self.collate(self._data_list_cache)
+        else:
+            self.data, self.slices = torch.load(self.processed_paths[0])
 
     def _save_processed(self, data_list: list[Data]) -> None:
-        """Persist the collated dataset."""
+        """Persist the collated dataset, or keep in memory when no_cache=True."""
+        if self._no_cache:
+            self._data_list_cache = data_list
+            return
         data, slices = self.collate(data_list)
         torch.save((data, slices), self.processed_paths[0])
 
