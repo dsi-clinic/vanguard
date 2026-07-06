@@ -215,16 +215,30 @@ def evaluate(
     y_pred = (y_prob >= _DECISION_THRESHOLD).astype(int)
     metrics = compute_binary_metrics(y_true, y_pred.astype(int), y_prob)
     metrics["loss"] = total_loss / num_graphs
+    metrics["error_rate"] = float(np.mean(y_pred != y_true))
     return metrics
 
 
-def _plot_loss_history(loss_history_df: pd.DataFrame, output_path: Path) -> None:
+def _plot_loss_history(history_df: pd.DataFrame, output_path: Path) -> None:
     """Plot train and validation loss by epoch."""
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.plot(loss_history_df["epoch"], loss_history_df["train_loss"], label="train")
-    ax.plot(loss_history_df["epoch"], loss_history_df["val_loss"], label="val")
+    ax.plot(history_df["epoch"], history_df["train_loss"], label="train")
+    ax.plot(history_df["epoch"], history_df["val_loss"], label="val")
     ax.set_xlabel("epoch")
     ax.set_ylabel("loss")
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+
+def _plot_auc_history(history_df: pd.DataFrame, output_path: Path) -> None:
+    """Plot train and validation AUC by epoch (train/val gap = overfitting)."""
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(history_df["epoch"], history_df["train_auc"], label="train")
+    ax.plot(history_df["epoch"], history_df["val_auc"], label="val")
+    ax.set_xlabel("epoch")
+    ax.set_ylabel("AUC")
     ax.legend(frameon=False)
     fig.tight_layout()
     fig.savefig(output_path, dpi=200)
@@ -285,7 +299,7 @@ def write_readme(
         f"- Train / val split: {num_train} / {num_val} graphs "
         f"(val_frac={run_config.val_frac}, seed={run_config.seed})",
         "",
-        "## Final validation metrics",
+        "## Final epoch metrics",
         "",
         "```json",
         json.dumps(final_val_metrics, indent=2),
@@ -294,6 +308,10 @@ def write_readme(
         "## Train / val loss curve",
         "",
         "![loss curve](loss_by_epoch.png)",
+        "",
+        "## Train / val AUC curve",
+        "",
+        "![auc curve](auc_by_epoch.png)",
         "",
         "## Regenerate",
         "",
@@ -381,6 +399,9 @@ def main() -> None:
         graph.x = (graph.x - mean) / std
 
     train_loader = DataLoader(train_graphs, batch_size=args.batch_size, shuffle=True)
+    train_eval_loader = DataLoader(
+        train_graphs, batch_size=args.batch_size, shuffle=False
+    )
     val_loader = DataLoader(val_graphs, batch_size=args.batch_size, shuffle=False)
 
     input_dim = dataset[0].x.shape[1]
@@ -396,21 +417,29 @@ def main() -> None:
     history = []
     for epoch in range(1, args.epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
+        train_metrics = evaluate(model, train_eval_loader, criterion, device)
         val_metrics = evaluate(model, val_loader, criterion, device)
         history.append(
             {
                 "epoch": epoch,
                 "train_loss": train_loss,
+                "train_error_rate": train_metrics["error_rate"],
+                "train_auc": train_metrics.get("auc", float("nan")),
                 "val_loss": val_metrics["loss"],
-                **{k: v for k, v in val_metrics.items() if k != "loss"},
+                "val_error_rate": val_metrics["error_rate"],
+                "val_auc": val_metrics.get("auc", float("nan")),
             }
         )
         logging.info(
-            "epoch %d/%d train_loss=%.4f val_loss=%.4f val_auc=%.4f",
+            "epoch %d/%d train_loss=%.4f train_error=%.4f train_auc=%.4f "
+            "val_loss=%.4f val_error=%.4f val_auc=%.4f",
             epoch,
             args.epochs,
             train_loss,
+            train_metrics["error_rate"],
+            train_metrics.get("auc", float("nan")),
             val_metrics["loss"],
+            val_metrics["error_rate"],
             val_metrics.get("auc", float("nan")),
         )
 
@@ -421,8 +450,13 @@ def main() -> None:
     outdir.joinpath("metrics.json").write_text(
         json.dumps(history, indent=2), encoding="utf-8"
     )
-    loss_history_df = pd.DataFrame(history)[["epoch", "train_loss", "val_loss"]]
-    _plot_loss_history(loss_history_df, outdir / "loss_by_epoch.png")
+    history_df = pd.DataFrame(history)
+    _plot_loss_history(
+        history_df[["epoch", "train_loss", "val_loss"]], outdir / "loss_by_epoch.png"
+    )
+    _plot_auc_history(
+        history_df[["epoch", "train_auc", "val_auc"]], outdir / "auc_by_epoch.png"
+    )
     outdir.joinpath("config_used.json").write_text(
         json.dumps(asdict(run_config), indent=2), encoding="utf-8"
     )
