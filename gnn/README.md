@@ -101,6 +101,23 @@ The collated cache is written to `<cache_dir>/processed/data.pt`, plus a
 per-case `<case_id>_graph.pt` for debugging. Delete `<cache_dir>/processed/` to
 force a rebuild.
 
+### Feature summary
+
+Every time a new cache is actually built (not on a cache hit, and not with
+`no_cache=True`), the loader also writes
+`<cache_dir>/processed/feature_summary/`:
+
+- `<feature>_hist.png` — a histogram of that node feature over every node in
+  every graph in the build (e.g. `peak_time_hist.png`, `radius_hist.png`).
+- `feature_na_report.json` — per-feature `num_values` / `num_nan` / `num_inf`
+  / `min` / `max` / `mean`.
+- `README.md` — short auditing summary linking the histograms and embedding
+  the NaN/inf report.
+
+This is generated once per build (it's not cheap to recompute on every
+training run) and is meant to catch upstream data issues (missing values,
+degenerate ranges) before they reach modeling.
+
 ### Building the full dataset on the cluster
 
 `gnn/build_dataset.py` is a thin CLI wrapper: constructing

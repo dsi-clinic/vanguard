@@ -24,11 +24,16 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+import matplotlib
 import networkx as nx
 import numpy as np
+import pandas as pd
 import torch
 from torch_geometric.data import Data, InMemoryDataset
 from torch_geometric.utils import from_networkx
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from config import DEFAULT_CONFIG
 from graph_extraction.constants import NDIM_3D
@@ -52,6 +57,8 @@ _CENTERLINE_SUFFIX: str = _CENTERLINE_PATTERN.replace("{case_id}", "", 1)
 _RUN_SUMMARY_NAME = "run_summary.json"
 _SINGLE_TIMEPOINT = 1
 _DROPPED_MANIFEST_NAME = "dropped_cases.json"
+_FEATURE_SUMMARY_DIRNAME = "feature_summary"
+_HIST_BINS = 50
 
 # Maps a requested node-feature name to the per-node ``Data`` attribute used to
 # populate the corresponding column of ``data.x``.
@@ -332,6 +339,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 "No graphs were built; check the centerline tree and labels file."
             )
 
+        self._write_feature_summary(data_list)
         self._save_processed(data_list)
 
         logging.info(
@@ -355,6 +363,77 @@ class VanguardCenterlineDataset(InMemoryDataset):
         }
         manifest_path = Path(self.processed_dir) / _DROPPED_MANIFEST_NAME
         manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    def _write_feature_summary(self, data_list: list[Data]) -> None:
+        """Save per-feature histograms and a NaN/inf report for a fresh cache build.
+
+        Runs once per cache build (never on a cache hit), so these always
+        reflect the data that was actually collated -- not a stale snapshot
+        from an earlier build.
+        """
+        if self._no_cache:
+            return
+        feature_matrix = torch.cat([data.x for data in data_list], dim=0).numpy()
+        frame = pd.DataFrame(feature_matrix, columns=self._node_features)
+
+        summary_dir = Path(self.processed_dir) / _FEATURE_SUMMARY_DIRNAME
+        summary_dir.mkdir(exist_ok=True)
+
+        na_report: dict[str, dict[str, float]] = {}
+        for name in self._node_features:
+            column = frame[name]
+            na_report[name] = {
+                "num_values": int(column.shape[0]),
+                "num_nan": int(column.isna().sum()),
+                "num_inf": int(np.isinf(column.to_numpy()).sum()),
+                "min": float(column.min()),
+                "max": float(column.max()),
+                "mean": float(column.mean()),
+            }
+
+            fig, ax = plt.subplots(figsize=(6, 4))
+            column.plot.hist(ax=ax, bins=_HIST_BINS)
+            ax.set_xlabel(name)
+            ax.set_title(f"{name} ({len(data_list)} graphs, {len(column)} nodes)")
+            fig.tight_layout()
+            fig.savefig(summary_dir / f"{name}_hist.png", dpi=150)
+            plt.close(fig)
+
+        (summary_dir / "feature_na_report.json").write_text(
+            json.dumps(na_report, indent=2)
+        )
+        self._write_feature_summary_readme(summary_dir, na_report, len(data_list))
+
+    def _write_feature_summary_readme(
+        self,
+        summary_dir: Path,
+        na_report: dict[str, dict[str, float]],
+        num_graphs: int,
+    ) -> None:
+        """Write a short auditing README alongside the histograms/NaN report."""
+        lines = [
+            "# GNN node-feature summary",
+            "",
+            f"Per-feature histograms and NaN/inf counts over the "
+            f"`data.x` node features of the {num_graphs} graphs cached at "
+            f"`{self.processed_dir}` (built from node_features="
+            f"{self._node_features}). Regenerated automatically on every "
+            "cache build (not on a cache hit) by "
+            "`VanguardCenterlineDataset._write_feature_summary`.",
+            "",
+            "## NaN / inf report",
+            "",
+            "```json",
+            json.dumps(na_report, indent=2),
+            "```",
+            "",
+            "## Histograms",
+            "",
+        ]
+        for name in self._node_features:
+            lines.append(f"![{name} histogram]({name}_hist.png)")
+        lines.append("")
+        summary_dir.joinpath("README.md").write_text("\n".join(lines))
 
     def _load_label_map(self) -> dict[str, int]:
         """Load labels into a ``case_id -> {0, 1}`` mapping."""

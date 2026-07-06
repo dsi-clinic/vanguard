@@ -122,6 +122,18 @@ def test_builds_labeled_graph_and_skips_unlabeled(
     # Per-case graph artifact is emitted alongside the collated cache.
     assert (cache_dir / "processed" / "NACT_01_graph.pt").exists()
 
+    # A fresh build also writes a feature summary: histograms + NaN/inf report.
+    summary_dir = cache_dir / "processed" / "feature_summary"
+    assert (summary_dir / "peak_time_hist.png").exists()
+    assert (summary_dir / "radius_hist.png").exists()
+    assert (summary_dir / "README.md").exists()
+    na_report = json.loads((summary_dir / "feature_na_report.json").read_text())
+    assert set(na_report) == {"peak_time", "radius"}
+    for column_report in na_report.values():
+        assert column_report["num_values"] == len(SKELETON_XS)
+        assert column_report["num_nan"] == 0
+        assert column_report["num_inf"] == 0
+
 
 def test_missing_labels_path_raises(tmp_path: Path) -> None:
     """Labels are mandatory: a missing path fails fast."""
