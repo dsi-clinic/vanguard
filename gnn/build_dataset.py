@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -82,6 +83,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable per-stage timing logs (on by default for full builds).",
     )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=int(os.environ.get("GNN_BUILD_WORKERS", "1")),
+        help="Process-pool workers for building cases in parallel (each case "
+        "is built independently from its own files). Default 1 (sequential "
+        "-- safe on a login node); set to match --cpus-per-task for a full "
+        "Slurm build.",
+    )
     return parser
 
 
@@ -136,6 +146,7 @@ def main() -> None:
         label_column=args.label_column,
         max_missing_label_frac=args.max_missing_label_frac,
         profile=not args.no_profile,
+        num_workers=args.num_workers,
     )
     logging.info(
         "Dataset ready: %d graph(s) cached under %s (%d dropped for missing label)",

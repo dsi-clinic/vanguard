@@ -20,7 +20,10 @@
 #
 # All variables below default to the real cluster paths from CLAUDE.md and
 # can be overridden via environment (see gnn/build_dataset.py --help for
-# what each one maps to).
+# what each one maps to). NUM_WORKERS defaults to the job's allocated
+# --cpus-per-task (8) and fans the per-case build out across that many
+# worker processes, since each case is built independently from its own
+# files; set NUM_WORKERS=1 to force sequential building instead.
 
 set -euo pipefail
 
@@ -45,6 +48,7 @@ ID_COLUMN="${ID_COLUMN:-case_id}"
 LABEL_COLUMN="${LABEL_COLUMN:-pcr}"
 NODE_FEATURES="${NODE_FEATURES:-peak_time,radius}"
 MAX_MISSING_LABEL_FRAC="${MAX_MISSING_LABEL_FRAC:-0.1}"
+NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
 
 mkdir -p "${CACHE_DIR}"
 
@@ -57,6 +61,7 @@ ARGS=(
   --label-column "${LABEL_COLUMN}"
   --node-features "${NODE_FEATURES}"
   --max-missing-label-frac "${MAX_MISSING_LABEL_FRAC}"
+  --num-workers "${NUM_WORKERS}"
 )
 
 if [[ -n "${CASES:-}" ]]; then

@@ -21,6 +21,7 @@ import logging
 import statistics
 import time
 from collections.abc import Iterator, Sequence
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -90,15 +91,10 @@ class _StageTimings:
     def __init__(self) -> None:
         self._stages: dict[str, list[float]] = {}
 
-    @contextmanager
-    def measure(self, stage: str) -> Iterator[None]:
-        """Time a code block and record its elapsed seconds under ``stage``."""
-        started = time.perf_counter()
-        try:
-            yield
-        finally:
-            elapsed = time.perf_counter() - started
-            self._stages.setdefault(stage, []).append(elapsed)
+    def merge(self, stage_samples: dict[str, list[float]]) -> None:
+        """Fold per-case timing samples (e.g. from a worker process) into the running totals."""
+        for stage, samples in stage_samples.items():
+            self._stages.setdefault(stage, []).extend(samples)
 
     def log_summary(self) -> None:
         """Log mean / median / max seconds for every recorded stage."""
@@ -114,6 +110,152 @@ class _StageTimings:
                 statistics.median(samples),
                 max(samples),
             )
+
+
+@contextmanager
+def _stage_timer(stage_samples: dict[str, list[float]], stage: str) -> Iterator[None]:
+    """Time a code block and append its elapsed seconds under ``stage``."""
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        stage_samples.setdefault(stage, []).append(time.perf_counter() - started)
+
+
+def _resolve_timepoint_paths(case_id: str, study_dir: Path) -> list[Path]:
+    """Return timepoint paths from ``run_summary.json["study_files"]``.
+
+    Raises ``FileNotFoundError`` if the summary is missing, ``KeyError`` if
+    ``study_files`` is absent or empty, and propagates ``json.JSONDecodeError``
+    if the file is malformed.
+    """
+    summary_path = study_dir / _RUN_SUMMARY_NAME
+    if not summary_path.exists():
+        raise FileNotFoundError(
+            f"case={case_id}: {summary_path} not found; " "run_summary.json is required"
+        )
+    summary = json.loads(summary_path.read_text())
+    study_files = summary.get("study_files")
+    if not study_files:
+        raise KeyError(
+            f"case={case_id}: run_summary.json missing or empty 'study_files' key"
+        )
+    return [Path(p) for p in study_files]
+
+
+def _attach_node_features(
+    graph: nx.Graph,
+    radius_map: dict[tuple[int, int, int], float],
+    signal_4d: np.ndarray,
+    label: int,
+    node_features: tuple[str, ...],
+) -> None:
+    """Set ``radius``, ``peak_time`` and ``peak_time_norm`` on every node.
+
+    ``pcr_dummy`` (the label broadcast onto every node) is only computed and
+    attached when it is present in ``node_features`` -- it is a leakage
+    canary for pipeline sanity checks, not a default feature, so it must stay
+    opt-in rather than something every graph carries.
+    """
+    num_timepoints = int(signal_4d.shape[0])
+    denom = max(num_timepoints - 1, _SINGLE_TIMEPOINT)
+    baseline = signal_4d[0]
+    include_pcr_dummy = "pcr_dummy" in node_features
+    for node in graph.nodes():
+        x, y, z = int(node[0]), int(node[1]), int(node[2])
+        enhancement = signal_4d[:, z, y, x] - baseline[z, y, x]
+        peak_idx = int(np.argmax(enhancement))
+        attrs = graph.nodes[node]
+        attrs["radius"] = float(radius_map[node])
+        attrs["peak_time"] = peak_idx
+        attrs["peak_time_norm"] = float(peak_idx) / float(denom)
+        if include_pcr_dummy:
+            attrs["pcr_dummy"] = float(label)
+
+
+def _finalize_data(
+    data: Data,
+    case_id: str,
+    study_dir: Path,
+    label: int,
+    num_timepoints: int,
+    centerline_root: Path,
+    node_features: tuple[str, ...],
+) -> Data:
+    """Assemble ``data.x``, the label, and provenance metadata."""
+    columns = [data[_FEATURE_ATTR[name]] for name in node_features]
+    data.x = torch.stack([column.float() for column in columns], dim=1)
+    data.y = torch.tensor([int(label)], dtype=torch.long)
+    data.case_id = case_id
+    data.num_timepoints = num_timepoints
+
+    rel_parts = study_dir.relative_to(centerline_root).parts
+    dataset = rel_parts[0] if rel_parts else "unknown"
+    data.dataset = dataset
+    data.site = dataset
+    return data
+
+
+def _build_case(
+    case_id: str,
+    mask_path: Path,
+    label: int,
+    *,
+    centerline_root: Path,
+    node_features: tuple[str, ...],
+) -> tuple[Data, dict[str, list[float]]]:
+    """Build one labeled :class:`Data` graph for ``case_id``.
+
+    Standalone (no dataset instance state) so it can run, unmodified, inside a
+    worker process when the build is parallelized across cases -- each case's
+    graph depends only on its own files, so there is no cross-case state to
+    share.
+    """
+    stage_samples: dict[str, list[float]] = {}
+    study_dir = mask_path.parent
+
+    with _stage_timer(stage_samples, "mask_load"):
+        skeleton = np.load(mask_path).astype(bool, copy=False)
+        support_path = study_dir / _SUPPORT_PATTERN.format(case_id=case_id)
+        if not support_path.exists():
+            raise FileNotFoundError(
+                f"Support mask not found for {case_id}: {support_path}"
+            )
+        support = np.load(support_path).astype(bool, copy=False)
+
+    if skeleton.ndim != NDIM_3D or not skeleton.any():
+        raise ValueError(f"Empty or non-3D skeleton for {case_id}")
+    if skeleton.shape != support.shape:
+        raise ValueError(
+            f"Skeleton/support shape mismatch for {case_id}: "
+            f"{skeleton.shape} vs {support.shape}"
+        )
+
+    with _stage_timer(stage_samples, "graph_build"):
+        segments = edges_to_segments(mask_to_edges_bitmask(skeleton))
+        if segments.size == 0:
+            raise ValueError(f"Skeleton for {case_id} has zero segments")
+        graph = segments_to_graph(segments)
+    if graph.number_of_nodes() == 0:
+        raise ValueError(f"Graph for {case_id} has zero nodes")
+
+    radius_map = obtain_radius_map(support, graph)
+
+    paths = _resolve_timepoint_paths(case_id, study_dir)
+    with _stage_timer(stage_samples, "timeseries_load"):
+        signal_4d = load_time_series_from_files(paths)
+    num_timepoints = int(signal_4d.shape[0])
+
+    with _stage_timer(stage_samples, "peak_time"):
+        _attach_node_features(graph, radius_map, signal_4d, label, node_features)
+
+    with _stage_timer(stage_samples, "from_networkx"):
+        data = from_networkx(graph)
+
+    data = _finalize_data(
+        data, case_id, study_dir, label, num_timepoints, centerline_root, node_features
+    )
+    return data, stage_samples
 
 
 class VanguardCenterlineDataset(InMemoryDataset):
@@ -156,6 +298,11 @@ class VanguardCenterlineDataset(InMemoryDataset):
             logged regardless; exceeding this fraction raises ``RuntimeError``
             instead of building a silently-shrunken cohort. Default 0.1 (10%).
         profile: When true, accumulate and log per-stage timings.
+        num_workers: Number of process-pool workers used to build cases in
+            parallel (each case's graph depends only on its own files, so
+            cases are built independently). Default 1 (sequential -- safe to
+            run on a login node); pass more to match allocated Slurm CPUs for
+            a full cluster build.
     """
 
     def __init__(
@@ -172,6 +319,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         label_column: str = "pcr",
         max_missing_label_frac: float = 0.1,
         profile: bool = False,
+        num_workers: int = 1,
         transform: object = None,
         pre_transform: object = None,
     ) -> None:
@@ -190,6 +338,8 @@ class VanguardCenterlineDataset(InMemoryDataset):
             raise ValueError(
                 f"max_missing_label_frac must be in [0, 1], got {max_missing_label_frac}"
             )
+        if num_workers < 1:
+            raise ValueError(f"num_workers must be >= 1, got {num_workers}")
 
         self._centerline_root = Path(root)
         self._labels_path = Path(labels_path)
@@ -202,6 +352,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._label_column = label_column
         self._max_missing_label_frac = max_missing_label_frac
         self._profile = profile
+        self._num_workers = num_workers
         self._timings = _StageTimings()
         self.dropped_case_ids: list[str] = []
 
@@ -298,15 +449,17 @@ class VanguardCenterlineDataset(InMemoryDataset):
             self._centerline_root,
         )
 
-        data_list: list[Data] = []
         dropped: list[str] = []
-
+        tasks: list[tuple[str, Path, int]] = []
         for case_id, mask_path in discovered:
             label = labels.get(case_id)
             if label is None:
                 dropped.append(case_id)
                 continue
-            data = self._build_one_case(case_id, mask_path, label)
+            tasks.append((case_id, mask_path, label))
+
+        data_list: list[Data] = []
+        for case_id, data in self._build_cases(tasks):
             torch.save(data, Path(self.processed_dir) / f"{case_id}_graph.pt")
             data_list.append(data)
 
@@ -349,6 +502,58 @@ class VanguardCenterlineDataset(InMemoryDataset):
         )
         if self._profile:
             self._timings.log_summary()
+
+    def _build_cases(
+        self, tasks: list[tuple[str, Path, int]]
+    ) -> list[tuple[str, Data]]:
+        """Build every ``(case_id, mask_path, label)`` task, in discovery order.
+
+        Sequential when ``num_workers <= 1`` (the default -- safe on a login
+        node); otherwise fans the per-case builds out across a process pool,
+        submitting ``num_workers`` at a time, since each case is built
+        independently from its own files. Every stage-timing sample collected
+        in a worker is folded back into ``self._timings`` so profiling output
+        is identical either way.
+        """
+        if self._num_workers <= 1:
+            results: list[tuple[str, Data]] = []
+            for case_id, mask_path, label in tasks:
+                data, stage_samples = _build_case(
+                    case_id,
+                    mask_path,
+                    label,
+                    centerline_root=self._centerline_root,
+                    node_features=self._node_features,
+                )
+                self._timings.merge(stage_samples)
+                results.append((case_id, data))
+            return results
+
+        logging.info(
+            "GNN build: building %d case(s) across %d worker process(es)",
+            len(tasks),
+            self._num_workers,
+        )
+        results = []
+        with ProcessPoolExecutor(max_workers=self._num_workers) as executor:
+            for batch_start in range(0, len(tasks), self._num_workers):
+                batch = tasks[batch_start : batch_start + self._num_workers]
+                futures = [
+                    executor.submit(
+                        _build_case,
+                        case_id,
+                        mask_path,
+                        label,
+                        centerline_root=self._centerline_root,
+                        node_features=self._node_features,
+                    )
+                    for case_id, mask_path, label in batch
+                ]
+                for (case_id, _, _), future in zip(batch, futures, strict=True):
+                    data, stage_samples = future.result()
+                    self._timings.merge(stage_samples)
+                    results.append((case_id, data))
+        return results
 
     def _write_dropped_manifest(self, dropped: list[str], num_discovered: int) -> None:
         """Persist dropped-case bookkeeping so cache hits can re-surface it."""
@@ -452,122 +657,3 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 continue
             pairs.append((case_id, mask_path))
         return pairs
-
-    def _build_one_case(self, case_id: str, mask_path: Path, label: int) -> Data:
-        """Build one :class:`Data` graph for ``case_id``."""
-        study_dir = mask_path.parent
-
-        with self._timings.measure("mask_load"):
-            skeleton = np.load(mask_path).astype(bool, copy=False)
-            support_path = study_dir / _SUPPORT_PATTERN.format(case_id=case_id)
-            if not support_path.exists():
-                raise FileNotFoundError(
-                    f"Support mask not found for {case_id}: {support_path}"
-                )
-            support = np.load(support_path).astype(bool, copy=False)
-
-        if skeleton.ndim != NDIM_3D or not skeleton.any():
-            raise ValueError(f"Empty or non-3D skeleton for {case_id}")
-        if skeleton.shape != support.shape:
-            raise ValueError(
-                f"Skeleton/support shape mismatch for {case_id}: "
-                f"{skeleton.shape} vs {support.shape}"
-            )
-
-        with self._timings.measure("graph_build"):
-            segments = edges_to_segments(mask_to_edges_bitmask(skeleton))
-            if segments.size == 0:
-                raise ValueError(f"Skeleton for {case_id} has zero segments")
-            graph = segments_to_graph(segments)
-        if graph.number_of_nodes() == 0:
-            raise ValueError(f"Graph for {case_id} has zero nodes")
-
-        radius_map = obtain_radius_map(support, graph)
-
-        signal_4d = self._load_time_series(case_id, study_dir)
-        num_timepoints = int(signal_4d.shape[0])
-
-        with self._timings.measure("peak_time"):
-            self._attach_node_features(graph, radius_map, signal_4d, label)
-
-        with self._timings.measure("from_networkx"):
-            data = from_networkx(graph)
-
-        return self._finalize_data(data, case_id, study_dir, label, num_timepoints)
-
-    def _load_time_series(self, case_id: str, study_dir: Path) -> np.ndarray:
-        """Load the stacked 4D signal for a case."""
-        paths = self._resolve_timepoint_paths(case_id, study_dir)
-        with self._timings.measure("timeseries_load"):
-            return load_time_series_from_files(paths)
-
-    def _resolve_timepoint_paths(self, case_id: str, study_dir: Path) -> list[Path]:
-        """Return timepoint paths from ``run_summary.json["study_files"]``.
-
-        Raises ``FileNotFoundError`` if the summary is missing, ``KeyError`` if
-        ``study_files`` is absent or empty, and propagates ``json.JSONDecodeError``
-        if the file is malformed.
-        """
-        summary_path = study_dir / _RUN_SUMMARY_NAME
-        if not summary_path.exists():
-            raise FileNotFoundError(
-                f"case={case_id}: {summary_path} not found; "
-                "run_summary.json is required"
-            )
-        summary = json.loads(summary_path.read_text())
-        study_files = summary.get("study_files")
-        if not study_files:
-            raise KeyError(
-                f"case={case_id}: run_summary.json missing or empty 'study_files' key"
-            )
-        return [Path(p) for p in study_files]
-
-    def _attach_node_features(
-        self,
-        graph: nx.Graph,
-        radius_map: dict[tuple[int, int, int], float],
-        signal_4d: np.ndarray,
-        label: int,
-    ) -> None:
-        """Set ``radius``, ``peak_time`` and ``peak_time_norm`` on every node.
-
-        ``pcr_dummy`` (the label broadcast onto every node) is only computed
-        and attached when it is present in ``self._node_features`` -- it is a
-        leakage canary for pipeline sanity checks, not a default feature, so
-        it must stay opt-in rather than something every graph carries.
-        """
-        num_timepoints = int(signal_4d.shape[0])
-        denom = max(num_timepoints - 1, _SINGLE_TIMEPOINT)
-        baseline = signal_4d[0]
-        include_pcr_dummy = "pcr_dummy" in self._node_features
-        for node in graph.nodes():
-            x, y, z = int(node[0]), int(node[1]), int(node[2])
-            enhancement = signal_4d[:, z, y, x] - baseline[z, y, x]
-            peak_idx = int(np.argmax(enhancement))
-            attrs = graph.nodes[node]
-            attrs["radius"] = float(radius_map[node])
-            attrs["peak_time"] = peak_idx
-            attrs["peak_time_norm"] = float(peak_idx) / float(denom)
-            if include_pcr_dummy:
-                attrs["pcr_dummy"] = float(label)
-
-    def _finalize_data(
-        self,
-        data: Data,
-        case_id: str,
-        study_dir: Path,
-        label: int,
-        num_timepoints: int,
-    ) -> Data:
-        """Assemble ``data.x``, the label, and provenance metadata."""
-        columns = [data[_FEATURE_ATTR[name]] for name in self._node_features]
-        data.x = torch.stack([column.float() for column in columns], dim=1)
-        data.y = torch.tensor([int(label)], dtype=torch.long)
-        data.case_id = case_id
-        data.num_timepoints = num_timepoints
-
-        rel_parts = study_dir.relative_to(self._centerline_root).parts
-        dataset = rel_parts[0] if rel_parts else "unknown"
-        data.dataset = dataset
-        data.site = dataset
-        return data

@@ -144,6 +144,20 @@ case IDs) is handy for a smoke-test submission before committing to the full
 ~1500-case build. See `docs/slurm-site.md` for why the job targets `tier1q`
 rather than the `general` partition used by older scripts in this repo.
 
+#### Parallel build (`num_workers`)
+
+Each case's graph is built from its own files only, so the build fans out
+across a process pool via `--num-workers` / `NUM_WORKERS` (or the
+`GNN_BUILD_WORKERS` env var read by `build_dataset.py`'s CLI default).
+Cases are submitted in batches of `num_workers` and results are folded back
+in discovery order, so a parallel build produces byte-identical graphs to a
+sequential one -- only wall time changes. Default is `1` (sequential, safe
+to run directly on a login node for a small smoke test); the Slurm script
+defaults `NUM_WORKERS` to the job's `--cpus-per-task` (8) so a full build
+actually uses the CPUs it requests. Per-stage timings (`--profile`, on by
+default) are aggregated across all workers, so the profiling summary looks
+the same regardless of `num_workers`.
+
 ### Profiling
 
 With `profile=True` the loader accumulates wall time for each build stage
