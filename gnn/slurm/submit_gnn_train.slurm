@@ -66,6 +66,18 @@ fi
 if [[ -n "${DATASET_FILTER:-}" ]]; then
   ARGS+=(--dataset-filter "${DATASET_FILTER}")
 fi
+if [[ -n "${HIDDEN_DIM:-}" ]]; then
+  ARGS+=(--hidden-dim "${HIDDEN_DIM}")
+fi
+if [[ -n "${NUM_LAYERS:-}" ]]; then
+  ARGS+=(--num-layers "${NUM_LAYERS}")
+fi
+if [[ -n "${DROPOUT:-}" ]]; then
+  ARGS+=(--dropout "${DROPOUT}")
+fi
+if [[ -n "${LR:-}" ]]; then
+  ARGS+=(--lr "${LR}")
+fi
 if [[ -n "${OUTDIR:-}" ]]; then
   ARGS+=(--outdir "${OUTDIR}")
 fi
