@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from gnn.data_loader import VanguardCenterlineDataset
@@ -67,11 +69,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Always rebuild from source instead of reading an existing cache.",
     )
     parser.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="Archive any existing cache under --cache-dir (renames "
+        "processed/ to processed_archive_<timestamp>/) before building a "
+        "fresh one, so old cache versions are kept for the record instead "
+        "of being overwritten. Incompatible with --no-cache, which never "
+        "persists a cache to archive in the first place.",
+    )
+    parser.add_argument(
         "--no-profile",
         action="store_true",
         help="Disable per-stage timing logs (on by default for full builds).",
     )
     return parser
+
+
+def _archive_existing_cache(cache_dir: Path) -> Path | None:
+    """Rename ``<cache_dir>/processed`` aside so a rebuild doesn't destroy it.
+
+    Returns the archive path, or ``None`` if there was no existing cache.
+    """
+    processed_dir = cache_dir / "processed"
+    if not processed_dir.exists():
+        return None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_dir = cache_dir / f"processed_archive_{timestamp}"
+    shutil.move(str(processed_dir), str(archive_dir))
+    return archive_dir
 
 
 def main() -> None:
@@ -80,8 +105,25 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
     args = build_parser().parse_args()
+    if args.force_rebuild and args.no_cache:
+        raise ValueError(
+            "--force-rebuild and --no-cache are incompatible: --force-rebuild "
+            "archives the on-disk cache before building a fresh persisted one, "
+            "but --no-cache never writes a cache to disk, so there would be "
+            "nothing new to replace the archived cache with."
+        )
     node_features = tuple(args.node_features.split(","))
     cases = args.cases.split(",") if args.cases else None
+
+    if args.force_rebuild:
+        archived = _archive_existing_cache(args.cache_dir)
+        if archived is not None:
+            logging.info("Archived existing cache to %s", archived)
+        else:
+            logging.info(
+                "--force-rebuild set but no existing cache found at %s",
+                args.cache_dir,
+            )
 
     dataset = VanguardCenterlineDataset(
         root=args.root,

@@ -16,6 +16,7 @@
 # Usage:
 #   sbatch gnn/slurm/submit_gnn_build.slurm
 #   CACHE_DIR=/gpfs/.../my_cache sbatch gnn/slurm/submit_gnn_build.slurm
+#   FORCE_REBUILD=1 sbatch gnn/slurm/submit_gnn_build.slurm  # archive + rebuild
 #
 # All variables below default to the real cluster paths from CLAUDE.md and
 # can be overridden via environment (see gnn/build_dataset.py --help for
@@ -63,6 +64,9 @@ if [[ -n "${CASES:-}" ]]; then
 fi
 if [[ "${NO_CACHE:-0}" == "1" ]]; then
   ARGS+=(--no-cache)
+fi
+if [[ "${FORCE_REBUILD:-0}" == "1" ]]; then
+  ARGS+=(--force-rebuild)
 fi
 
 "${ARGS[@]}"

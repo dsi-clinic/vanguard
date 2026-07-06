@@ -98,8 +98,14 @@ data = dataset[0]                            # torch_geometric.data.Data
 ```
 
 The collated cache is written to `<cache_dir>/processed/data.pt`, plus a
-per-case `<case_id>_graph.pt` for debugging. Delete `<cache_dir>/processed/` to
-force a rebuild.
+per-case `<case_id>_graph.pt` for debugging. Constructing the dataset only
+rebuilds when `<cache_dir>/processed/data.pt` is missing, so to force a
+rebuild either delete `<cache_dir>/processed/` yourself, or pass
+`--force-rebuild` to `gnn/build_dataset.py` (`FORCE_REBUILD=1` for the Slurm
+job) to have it renamed aside to `processed_archive_<timestamp>/` first --
+keeping the old cache (including its `feature_summary/`) around for the
+record instead of overwriting it. `--force-rebuild` is incompatible with
+`--no-cache` (which never persists a cache to archive in the first place).
 
 ### Feature summary
 
