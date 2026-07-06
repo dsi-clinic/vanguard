@@ -31,6 +31,13 @@ It covers the full track end to end:
     `argmax_t(signal_4d[:, z, y, x] − signal_4d[0, z, y, x]) / (T − 1)`.
     The raw integer index is also kept on `data.peak_time`.
   - `radius` → local vessel radius from the support mask's distance transform.
+  - `pcr_dummy` (opt-in only) → the graph's own `pcr` label, broadcast onto
+    every node. A leakage-canary feature: it perfectly predicts `data.y` by
+    construction, so it exists purely to sanity-check that the training
+    pipeline (`data.x` → `GCNConv` stack → pooled logit → loss) can learn an
+    end-to-end trivial signal. It's computed only when `"pcr_dummy"` is
+    explicitly listed in `node_features` — never a hardcoded default, and
+    never valid for real modeling results.
 - **`data.y`:** the binary label (**required** — see below).
 - **Metadata:** `data.case_id`, `data.dataset`, `data.site`, `data.num_timepoints`.
 

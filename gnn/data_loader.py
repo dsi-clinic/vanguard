@@ -55,9 +55,18 @@ _DROPPED_MANIFEST_NAME = "dropped_cases.json"
 
 # Maps a requested node-feature name to the per-node ``Data`` attribute used to
 # populate the corresponding column of ``data.x``.
+#
+# ``pcr_dummy`` is a sanity-check / leakage-canary feature: every node in a
+# graph gets the graph's own ``pcr`` label broadcast onto it, making it a
+# perfect predictor of ``data.y`` by construction. It exists only to validate
+# that the GNN pipeline (data.x -> GCNConv stack -> pooled logit -> loss) can
+# learn an end-to-end trivial signal -- it is computed only when explicitly
+# requested via ``node_features`` (see ``_attach_node_features``), never as a
+# hardcoded default, and must never be used for real modeling.
 _FEATURE_ATTR: dict[str, str] = {
     "peak_time": "peak_time_norm",
     "radius": "radius",
+    "pcr_dummy": "pcr_dummy",
 }
 _DEFAULT_NODE_FEATURES: tuple[str, ...] = ("peak_time", "radius")
 
@@ -129,7 +138,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
         node_mode: Node granularity. Only ``"voxel"`` is implemented; ``"segment"``
             raises :class:`NotImplementedError` as an explicit extension point.
         node_features: Node-feature names, in ``data.x`` column order. Supported:
-            ``"peak_time"`` (normalized peak-contrast time) and ``"radius"``.
+            ``"peak_time"`` (normalized peak-contrast time), ``"radius"``, and
+            ``"pcr_dummy"`` (the graph's ``pcr`` label broadcast onto every
+            node -- a leakage-canary feature for pipeline sanity checks only;
+            opt-in, never included unless named explicitly here).
         id_column: Case-ID column in the labels file.
         label_column: Binary label column in the labels file.
         max_missing_label_frac: Maximum fraction of discovered cases allowed to
@@ -397,7 +409,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         num_timepoints = int(signal_4d.shape[0])
 
         with self._timings.measure("peak_time"):
-            self._attach_node_features(graph, radius_map, signal_4d)
+            self._attach_node_features(graph, radius_map, signal_4d, label)
 
         with self._timings.measure("from_networkx"):
             data = from_networkx(graph)
@@ -436,11 +448,19 @@ class VanguardCenterlineDataset(InMemoryDataset):
         graph: nx.Graph,
         radius_map: dict[tuple[int, int, int], float],
         signal_4d: np.ndarray,
+        label: int,
     ) -> None:
-        """Set ``radius``, ``peak_time`` and ``peak_time_norm`` on every node."""
+        """Set ``radius``, ``peak_time`` and ``peak_time_norm`` on every node.
+
+        ``pcr_dummy`` (the label broadcast onto every node) is only computed
+        and attached when it is present in ``self._node_features`` -- it is a
+        leakage canary for pipeline sanity checks, not a default feature, so
+        it must stay opt-in rather than something every graph carries.
+        """
         num_timepoints = int(signal_4d.shape[0])
         denom = max(num_timepoints - 1, _SINGLE_TIMEPOINT)
         baseline = signal_4d[0]
+        include_pcr_dummy = "pcr_dummy" in self._node_features
         for node in graph.nodes():
             x, y, z = int(node[0]), int(node[1]), int(node[2])
             enhancement = signal_4d[:, z, y, x] - baseline[z, y, x]
@@ -449,6 +469,8 @@ class VanguardCenterlineDataset(InMemoryDataset):
             attrs["radius"] = float(radius_map[node])
             attrs["peak_time"] = peak_idx
             attrs["peak_time_norm"] = float(peak_idx) / float(denom)
+            if include_pcr_dummy:
+                attrs["pcr_dummy"] = float(label)
 
     def _finalize_data(
         self,
