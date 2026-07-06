@@ -6,6 +6,7 @@ Each entry: what was tried, the result, and key findings.
 
 ---
 
+
 ## 2026-06-23 — Native-resolution QC visualization script
 
 **Goal:** Before resampling all cohorts to DUKE's voxel spacing, visually inspect
@@ -43,6 +44,315 @@ micromamba run -n vanguard python scripts/save_qc_pngs.py --cohort DUKE # one co
 ```
 
 ---
+
+
+## 2026-06-23 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-23 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-23 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-23 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-23 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-23 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-23 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-23 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
 
 ## 2026-06-24 — Voxel-spacing scattergram across MAMA-MIA cohorts
 
@@ -121,6 +431,161 @@ cohorts — the main domain-shift axis to watch.
 
 ---
 
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-24 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+
 ## 2026-06-25 — Voxel-spacing vs. vessel-segmentation experiment (DUKE_001)
 
 **Goal:** Test how through-plane (z) voxel spacing affects vessel segmentation
@@ -161,6 +626,104 @@ quality, using DUKE_001 as a single test case across four spacing "versions".
 
 ---
 
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
 ## 2026-06-25 — Voxel-spacing experiment RESULTS (DUKE_001)
 
 **Outcome:** All stages completed.
@@ -189,6 +752,20 @@ quality, using DUKE_001 as a single test case across four spacing "versions".
   2.0mm V1 still segments substantial vessel but at a coarser through-plane level.
 
 ---
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
 
 ## 2026-06-25 — Voxel-spacing experiment: revisions (subtraction tp, shared z, 3D skeletons)
 
@@ -220,6 +797,34 @@ post-contrast phase). If they meant 0001, trivially revert TP_SUB_POST.
 
 ---
 
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
 ## 2026-06-25 — Sagittal comparison figures + 3D skeleton results
 
 **Sagittal figures (subtraction = 0002 - 0000, confirmed by mentor):**
@@ -246,6 +851,175 @@ post-contrast phase). If they meant 0001, trivially revert TP_SUB_POST.
   anti-alias bottleneck destroys vessel detail that later upsampling cannot recover.
 
 ---
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
 
 ## 2026-06-25 — Resampling pipeline to bring all cohorts into DUKE spacing range
 
@@ -299,6 +1073,34 @@ bash scripts/slurm/submit_resample_array.sh
 
 ---
 
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
 ### Smoke-test result (2026-06-25)
 Ran one case (DUKE_002) via `srun` on the `express` partition (scheduler-allocated,
 not the login node). Verified the resampled output:
@@ -313,6 +1115,34 @@ Smoke test PASSED. Full 95-task array not yet launched (awaiting go-ahead).
 
 ---
 
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
 ### Full array run COMPLETE (2026-06-25) — job 12284276
 Submitted the 95-task array (`scripts/slurm/submit_resample_array.sh`, tier1q, 0-94%24).
 - **All 95 tasks COMPLETED**, zero FAILED/TIMEOUT/OOM, no errors in any task log.
@@ -325,6 +1155,300 @@ Submitted the 95-task array (`scripts/slurm/submit_resample_array.sh`, tier1q, 0
 Result: PASSED. Resampled dataset ready as input for vessel segmentation.
 
 ---
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-25 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
 
 ## 2026-06-25 — Resampled vessel segmentation: full array + ISPY1_1228 fix
 
@@ -424,6 +1548,525 @@ micromamba run -n vanguard python scripts/compare_seg_mips.py --seed 42
 
 ---
 
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
 ## 2026-06-26 — TC4D skeletonization over all resampled vessel segmentations
 
 **Goal:** Run TC4D centerline extraction on all 1,506 resampled-dataset cases, writing
@@ -469,6 +2112,76 @@ skipped gracefully, MIP still rendered from TC4D skeleton alone.
   (skeleton, morphometry) still produced correctly.
 
 ---
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
 
 ## 2026-06-26 — 3D vessel segmentation comparison: original vs. resampled
 
@@ -530,6 +2243,119 @@ bash QC/slurm/submit_compare_seg_3d.sh
   ISPY1_1193 (88 vs 324 pts) and NACT_49 (105 vs 431 pts).
 
 ---
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
 
 ## 2026-06-26 — Re-run previous group's pСR analysis on RESAMPLED segmentations (Stage 0 attempt + blocker found)
 
@@ -597,6 +2423,49 @@ rerun Stage 0 with `TUMOR_MASK_DIR` pointed at the resampled masks. Then Stage 1
 
 ---
 
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+
 ## 2026-06-26 — Fix: resample tumor masks onto the resampled grid (built + validated)
 
 **Goal:** Unblock the Stage 0 failure (815/980 ISPY2 cases hit "mask shape mismatch":
@@ -644,6 +2513,49 @@ rounding drift. Coverage confirmed: 980/980 ISPY2 resampled images + 980/980 exp
 
 ---
 
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+
 ## 2026-06-26 — Mask resample run + Stage 0 relaunch (process log)
 
 Continues the two prior entries (resampled-seg → pCR comparison; the tumor-mask
@@ -683,6 +2595,455 @@ resampled grid (NN), then rerun Stage 0.
 HEAD `9be7002` (Stage 0/1 scripts, configs, and mask-resample scripts all still UNCOMMITTED).
 
 ---
+
+## 2026-06-26 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
 
 ## 2026-06-29 — Resampled independent-signal matrix: end-to-end run and AUC comparison
 
@@ -781,6 +3142,188 @@ Full resampled results: `/ess/scratch/scratch1/t-9sbose/vanguard_experiments/ind
      `configs/independent_signal_randi_resampled.yaml` flags this explicitly.
 
 ---
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
 
 ## 2026-06-29 — Resampling investigation: feature diagnostics, spacing audit, near-tumor coverage
 
@@ -929,6 +3472,20 @@ dispersion) for those cases but is not a major effect.
 
 ---
 
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
 ## 2026-06-29 — Three-way AUC comparison: old-code-native vs new-code-native vs new-code-resampled
 
 **Goal:** Disentangle code-version effects from resampling effects by adding the
@@ -984,108 +3541,160 @@ coverage threshold before entering the model.
 
 ---
 
-## 2026-06-30 — Resampled vs Q3 baseline AUC overlay plot
+## 2026-06-29 — [Session title]
 
-**What I did:**
-Created `scripts/plot_resampled_overlay_auc.py` to overlay the resampled ISPY2 AUC results
-on the Q3 baseline summary. Each arm shown as a horizontal row: Q3 baseline (blue, mean ± 1 std)
-and resampled (orange diamond, mean ± 1 std). Output: `results/resampled_vs_q3_auc_overlay.png`.
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+## 2026-06-29 — [Session title]
+
+**What I did:
+[Describe what was attempted]
+
+**Results:
+[What happened]
+
+**Key findings:
+[Important discoveries or outcomes]
+
+---
+
+
+
+## 2026-07-02 — Batch-effect investigation: PCA, scanner detectability, signal preservation (ISPY2, native vs resampled)
+
+**Goal:** Anna suspected a batch effect in ISPY2. Motivating puzzle: resampling to a
+common voxel grid made vessel segmentations look *better* but made pCR modeling *worse*.
+Investigate whether acquisition (site / scanner / z-spacing) dominates the vessel features
+over the pCR signal, and whether resampling removes batch variance and/or damages real signal.
+
+**What I did (all via Slurm, express partition; scripts in `scripts/`):**
+- PCA batch-effect analysis on NATIVE ISPY2 vessel features (`scripts/pca_ispy2_batch_effect.py`,
+  job 12462953). 980 cases, 994 features (morph 50 + graph 49 + kinematic 895), median-imputed +
+  z-scored. z-spacing from `data_viz/spacing_by_hospital.csv` (header-derived); site + pcr already
+  in `tabular/all_datasets_run/features_full_labeled.csv`. Out: `/ess/scratch/scratch1/t-9sbose/ispy2_pca_batch_effect/`.
+- Confounding check: chi-square pCR ~ site.
+- Batch detectability (`scripts/batch_detectability_ispy2.py`): classifier predicts scanner
+  manufacturer / field strength from features; native vs resampled, matched cases + same folds;
+  macro one-vs-rest ROC AUC. Graph arm: jobs 12483786.
+- Signal preservation (`scripts/signal_preservation_ispy2.py`): per-feature |AUC-0.5| for pCR (+ MI)
+  and multivariate 5-fold CV pCR AUC; native vs resampled. Graph arm: job 12484030.
+- Ran both tests for morph, kinematic, vessel_all (`scripts/submit_batch_effect_arms_ispy2.sbatch`,
+  job 12484499). Scripts generalized with `--feature-prefixes`.
+
+**Data sources:**
+- Native (all 980 ISPY2): `tabular/all_datasets_run/features_full_labeled.csv` (from `centerlines_tc4d`, native).
+- Resampled (808 ISPY2): `/ess/scratch/scratch1/t-9sbose/vanguard_experiments/independent_signal_resampled_ispy2/features_full_labeled.csv`
+  (from `resamples_centerlines_tc4d` + `resampled-tumor-masks`). Full morph/graph/kinematic already
+  populated and genuinely differ from native (morph 85%, graph 80%, kinematic 53% of cells differ).
 
 **Results:**
-Resampled results mostly fall within the noise of the Q3 baseline. The two exceptions are
-clinical+tumor_size (a bit higher) and vessel_all (a bit lower), but with only 5 folds it's
-hard to read too much into either.
+- PCA: PC1 = 20% var. site R²(PC1) = 0.11 (p=2.7e-14) >> pCR R² = 0.003 (p=0.10). z-spacing
+  r(PC1) = 0.01 (NOT aligned) even though spacing is 98% determined by site. PC1 loadings dominated
+  by kinematic validity/has-signal fractions (feature *measurability*).
+- pCR ~ site: chi-square p = 0.81 -> site does NOT predict outcome.
+- Detectability (manufacturer, RF, native -> resampled AUC): morph 0.84->0.70, graph 0.83->0.73,
+  kinematic 0.90->0.83, vessel_all 0.92->0.84.
+- Signal preservation (multivariate pCR AUC, RF, native -> resampled): morph 0.48->0.45,
+  graph 0.54->0.56, kinematic 0.60->0.59, vessel_all 0.60->0.59. Univariate per-feature |AUC-0.5|
+  slightly UP after resampling (kinematic/vessel_all, p<1e-24) but tiny (~0.03). Vessel arms are
+  weak pCR predictors either way (<=0.60; morph at chance).
 
-**Key findings:**
-Visually confirms the three-way comparison: resampling doesn't dramatically shift AUC in
-either direction. Differences are visible but not alarming given the fold variance.
+**Key findings / conclusions:**
+- Batch effect is real, strong, and SCANNER-driven (manufacturer + field strength), NOT
+  z-spacing-driven. site nested within manufacturer (21/22 sites single vendor). [confidence: high]
+- Batch effect is nuisance variance, NOT an outcome confounder (site ⊥ pCR, p=0.81). [confidence: high]
+- Resampling partially removes scanner variance (detectability drops ~0.07–0.16) but does not
+  cleanly damage pCR signal; vessel arms weak in both, resampling effect on pCR signal is small and
+  within CV noise. Kinematic (contrast-driven) fingerprint least reduced. [confidence: medium]
+- So the "prettier masks, worse models" paradox is NOT well-explained by vessel-feature signal loss.
+  [confidence: medium]
+- Tension for Anna: the arm most useful for pCR (kinematic, RF 0.60) is also the most
+  scanner-contaminated (0.90) and least fixed by resampling -> ComBat-by-manufacturer is the
+  targeted next attempt (low risk since site ⊥ pCR).
 
----
+**IMPORTANT caveat — 808 vs 980:** The resampled feature matrix covers only 808 of 980 ISPY2 cases.
+This is NOT a resampling-coverage limit: all 980 resampled centerlines exist
+(`resamples_centerlines_tc4d/ISPY2` = 980 skeleton npy) and `resampled-tumor-masks` = 980. The 808 is
+a deliberate LOCKED SPLIT from the prior "independent_signal_resampled_ispy2" experiment
+(`/ess/scratch/scratch1/t-9sbose/vanguard_experiments/locked_split_resampled_ispy2.csv`, 808 cases
+with val_fold; features_full_raw has exactly 808 rows, all has_centerline_file=True). All
+native-vs-resampled tests here correctly intersect to the matched 808. Resampled features for all 980
+CAN be rebuilt from the existing resampled centerlines if full coverage is wanted.
 
-## 2026-06-30 — Locked-split native run: isolating resampling effect
+**Next steps:**
+- Rerun the original native-vs-resampled pCR comparison on the MATCHED 808 with identical folds —
+  the earlier "resampled worse" may be an 808-vs-980 cohort/fold mismatch artifact.
+- Test the full model (clinical + tumor_size + vessel) native vs resampled on matched cases.
+- Consider ComBat harmonization by manufacturer.
 
-**Goal:** Address mentor's concern that the resampled vs. Q3 baseline comparison
-confounds three variables: train/test split, code version, and resampling.
-Lock the split constant so the only variable between the two runs is the
-centerline source (resampled vs. native).
-
-**What I did:**
-
-1. Discovered that both native and resampled feature sets contain the exact same
-   808 patients in the same order — so the StratifiedKFold(random_state=42) split
-   was already identical. But made it explicit and documented by locking it.
-
-2. Built the following infrastructure:
-   - `scripts/extract_resampled_splits.py` — reads `predictions.csv` from the
-     resampled run's baseline arm, saves `case_id, val_fold` to a canonical CSV.
-   - `evaluation/build_splits.py` — added `_load_fixed_splits()` and a
-     `fixed_splits_csv` check in `create_splits_for_dataframe()`. When the config
-     sets `data_paths.fixed_splits_csv`, splits are loaded from that CSV instead
-     of being generated from scratch.
-   - `configs/native_locked_split_ispy2.yaml` — native centerlines config with
-     `fixed_splits_csv` set.
-   - `slurm/submit_native_locked_split.sh` — Slurm wrapper.
-   - `scripts/compare_locked_split_auc.py` — generates the three-way AUC table
-     and prints an interpretation.
-
-3. Extracted and saved the locked split:
-   ```
-   python scripts/extract_resampled_splits.py
-   # → /ess/scratch/scratch1/t-9sbose/vanguard_experiments/locked_split_resampled_ispy2.csv
-   # 808 patients, folds: {0:162, 1:162, 2:162, 3:161, 4:161}
-   ```
-
-4. Submitted the native locked-split ablation to Slurm:
-   ```
-   PARTITION=tier1q bash slurm/submit_native_locked_split.sh
-   ```
-
-**Slurm job IDs:**
-- Cache build : 12420112
-- Fold array  : 12420113 (30 tasks: 6 arms × 5 folds)
-- Merge       : 12420114
-
-**Monitor:**
-```bash
-squeue -j 12420112,12420113,12420114
-sacct -j 12420112,12420113,12420114 --format=JobIDRaw,State,Elapsed,ExitCode -n -P
-```
-
-**After completion:**
-```bash
-micromamba run -n vanguard python scripts/compare_locked_split_auc.py
-```
-Output: `results/locked_split_auc_comparison.csv`
-
-**Results (all 30/30 tasks completed, 0 failures):**
-
-| Arm | Q3 baseline | Resampled | Native locked | Δ (native−resamp) |
-|-----|-------------|-----------|---------------|-------------------|
-| clinical + tumor_size | 0.572 | 0.603 | 0.599 | −0.004 |
-| + morph | 0.591 | 0.589 | 0.603 | **+0.013** |
-| + graph | 0.588 | 0.581 | 0.606 | **+0.025** |
-| + kinematic | 0.594 | 0.588 | 0.596 | **+0.008** |
-| + graph + kinematic | 0.594 | 0.579 | 0.584 | **+0.005** |
-| + vessel_all | 0.596 | 0.561 | 0.577 | **+0.016** |
-
-**Finding: Resampling degrades vessel features.**
-Native locked > resampled for ALL 5 vessel arms (same split, same code).
-The spacing change (resampling to DUKE's 0.7×0.7×1.0 mm) distorts the
-vessel centerline geometry enough to reduce feature quality by 0.005–0.025 AUC.
-
-**Important nuance:** Even native locked vessel arms show negative deltas vs.
-their own clinical baseline (−0.003 to −0.022). Both factors compound:
-- Resampling degrades vessel geometry → worse features
-- `second_order.py` adds NaN-heavy features → noise in model
-
-**Output files:**
-- `results/locked_split_auc_comparison.csv` — full numeric table
-- `results/locked_split_auc_comparison.png` — three-way visual
-- `/ess/scratch/scratch1/t-9sbose/vanguard_experiments/independent_signal_native_locked_ispy2/ablation_summary.csv`
-
-**Visual generated with:**
-```bash
-micromamba run -n vanguard python scripts/plot_locked_split_comparison.py
-```
-
----
+**Artifacts:** `/ess/scratch/scratch1/t-9sbose/ispy2_pca_batch_effect/`,
+`ispy2_batch_detectability_{morph,kinematic,vessel_all}/`,
+`ispy2_signal_preservation_{morph,kinematic,vessel_all}/`, and `ispy2_batch_detectability/` +
+`ispy2_signal_preservation/` (graph). Scripts: `scripts/pca_ispy2_batch_effect.py`,
+`scripts/batch_detectability_ispy2.py`, `scripts/signal_preservation_ispy2.py`.
