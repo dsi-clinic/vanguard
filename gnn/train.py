@@ -367,22 +367,43 @@ def main() -> None:
     )
     logging.info("Loaded %d graph(s) from cache %s", len(dataset), args.cache_dir)
 
-    candidate_indices: list[int] | None = None
+    # `cases` only restricts a fresh build; on a cache hit the full cache is
+    # loaded regardless, so both filters are re-applied here post-load to
+    # behave consistently either way.
+    restrictions: list[set[int]] = []
+    if cases:
+        wanted_cases = set(cases)
+        case_indices = {
+            i for i in range(len(dataset)) if dataset[i].case_id in wanted_cases
+        }
+        if not case_indices:
+            raise ValueError(
+                f"--cases={args.cases!r} matched no graphs in {args.cache_dir}"
+            )
+        restrictions.append(case_indices)
     if args.dataset_filter:
         wanted = set(args.dataset_filter.split(","))
-        candidate_indices = [
+        dataset_indices = {
             i for i in range(len(dataset)) if dataset[i].dataset in wanted
-        ]
-        if not candidate_indices:
+        }
+        if not dataset_indices:
             raise ValueError(
                 f"--dataset-filter={args.dataset_filter!r} matched no graphs "
                 f"in {args.cache_dir}"
             )
+        restrictions.append(dataset_indices)
+
+    candidate_indices: list[int] | None = None
+    if restrictions:
+        candidate_indices = sorted(set.intersection(*restrictions))
+        if not candidate_indices:
+            raise ValueError(
+                "--cases and --dataset-filter matched no overlapping graphs"
+            )
         logging.info(
-            "Restricted to %d/%d graph(s) matching dataset_filter=%s",
+            "Restricted to %d/%d graph(s) matching cases/dataset_filter",
             len(candidate_indices),
             len(dataset),
-            args.dataset_filter,
         )
 
     train_idx, val_idx = split_dataset(
