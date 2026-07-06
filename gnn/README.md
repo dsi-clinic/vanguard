@@ -172,5 +172,8 @@ python -m gnn.train --cache-dir /path/to/gnn_cache_smoke --cases NACT_01,NACT_02
 
 Every run writes `README.md` + `metrics.json` + `config_used.json` to
 `experiments/gnn_mvp_<timestamp>/` (or `--outdir`) per the project's auditing
-convention. `gnn/slurm/submit_gnn_train.slurm` mirrors
-`submit_gnn_build.slurm` and defaults to the 8-case `gnn_cache_smoke`.
+convention. `metrics.json` holds the full per-epoch history (train/val loss +
+val metrics); that same history is also plotted to `loss_by_epoch.png`
+(mirrors `deepsets/train.py`'s `_plot_loss_history`), and the README embeds
+the plot. `gnn/slurm/submit_gnn_train.slurm` mirrors `submit_gnn_build.slurm`
+and defaults to the 8-case `gnn_cache_smoke`.

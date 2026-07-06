@@ -27,7 +27,9 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
+import matplotlib
 import numpy as np
+import pandas as pd
 import torch
 from sklearn.model_selection import train_test_split
 from torch import nn
@@ -36,6 +38,9 @@ from torch_geometric.loader import DataLoader
 from evaluation.metrics import compute_binary_metrics
 from gnn.data_loader import VanguardCenterlineDataset
 from gnn.model import GCNClassifier
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 _DEFAULT_ROOT = Path(
     "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
@@ -213,6 +218,19 @@ def evaluate(
     return metrics
 
 
+def _plot_loss_history(loss_history_df: pd.DataFrame, output_path: Path) -> None:
+    """Plot train and validation loss by epoch."""
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(loss_history_df["epoch"], loss_history_df["train_loss"], label="train")
+    ax.plot(loss_history_df["epoch"], loss_history_df["val_loss"], label="val")
+    ax.set_xlabel("epoch")
+    ax.set_ylabel("loss")
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+
 def _git_commit() -> str:
     """Return the current HEAD commit hash, or 'unknown' if git is unavailable."""
     result = subprocess.run(  # noqa: S603
@@ -273,11 +291,16 @@ def write_readme(
         json.dumps(final_val_metrics, indent=2),
         "```",
         "",
+        "## Train / val loss curve",
+        "",
+        "![loss curve](loss_by_epoch.png)",
+        "",
         "## Regenerate",
         "",
         "Rerun the exact command above from the repo root with the "
         "`vanguard` conda env active (`micromamba activate vanguard`). "
-        "Full metric history per epoch is in `metrics.json` in this directory.",
+        "Full metric history per epoch is in `metrics.json` in this directory; "
+        "the loss curve is `loss_by_epoch.png`.",
         "",
     ]
     outdir.joinpath("README.md").write_text("\n".join(lines), encoding="utf-8")
@@ -374,7 +397,14 @@ def main() -> None:
     for epoch in range(1, args.epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_metrics = evaluate(model, val_loader, criterion, device)
-        history.append({"epoch": epoch, "train_loss": train_loss, **val_metrics})
+        history.append(
+            {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_loss": val_metrics["loss"],
+                **{k: v for k, v in val_metrics.items() if k != "loss"},
+            }
+        )
         logging.info(
             "epoch %d/%d train_loss=%.4f val_loss=%.4f val_auc=%.4f",
             epoch,
@@ -391,11 +421,13 @@ def main() -> None:
     outdir.joinpath("metrics.json").write_text(
         json.dumps(history, indent=2), encoding="utf-8"
     )
+    loss_history_df = pd.DataFrame(history)[["epoch", "train_loss", "val_loss"]]
+    _plot_loss_history(loss_history_df, outdir / "loss_by_epoch.png")
     outdir.joinpath("config_used.json").write_text(
         json.dumps(asdict(run_config), indent=2), encoding="utf-8"
     )
     command = "python -m gnn.train " + " ".join(
-        f"{k}={v}" for k, v in vars(args).items() if v is not None
+        f"--{k.replace('_', '-')} {v}" for k, v in vars(args).items() if v is not None
     )
     write_readme(
         outdir=outdir,
