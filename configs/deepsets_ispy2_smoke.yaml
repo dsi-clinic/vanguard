@@ -37,7 +37,9 @@ data_paths:
   labels_csv: "configs/ispy2_smoke_labels.csv"
   label_column: "pcr"
   id_column: "case_id"
-  # Set by the interactive runner after the single-shard build writes it.
-  deepsets_manifest_csv: "/ess/home/home1/t-9svena/vanguard/experiments/deepsets_ispy2_smoke/deepsets_manifest.csv"
+  # The build step writes the manifest to OUT_ROOT/deepsets_manifest.csv (default
+  # experiments/deepsets_ispy2_smoke); train.py reads this path directly, so this
+  # repo-relative default must match the runner's OUT_ROOT. Resolved from the repo root.
+  deepsets_manifest_csv: "experiments/deepsets_ispy2_smoke/deepsets_manifest.csv"
   deepsets_label_column: "label"
   vessel_segmentation_root: ""
