@@ -285,7 +285,7 @@ def main() -> None:
 
     parser.add_argument(
         "--images-dir",
-        default="/net/projects2/vanguard/MAMA-MIA-syn60868042/images",
+        default="/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images",
         help="Directory containing case subdirectories with .nii.gz files",
     )
 

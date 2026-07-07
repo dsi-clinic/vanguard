@@ -6,7 +6,7 @@ Requires saved morphometry JSONs and case metadata JSONs.
 Usage:
     python graph_extraction/analysis/build_features_with_metadata.py \
         --morphometry-dir analysis/graph_extraction/4d_morphometry \
-        --patient-info-dir /net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files \
+        --patient-info-dir /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/patient_info_files \
         --output-dir analysis/graph_extraction
 """
 
@@ -23,7 +23,7 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EXCEL_METADATA = Path(
-    "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
+    "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
 )
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
@@ -167,7 +167,7 @@ def main() -> None:
     parser.add_argument(
         "--patient-info-dir",
         type=Path,
-        default=Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files"),
+        default=Path("/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/patient_info_files"),
         help="Directory with patient_info JSON files containing case metadata",
     )
     parser.add_argument(
