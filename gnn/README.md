@@ -2,9 +2,7 @@
 
 This package is the GNN counterpart to the tabular / Deep Sets pipelines: instead
 of consuming *summarized* morphometry + kinematic features, it operates on the
-**raw** vessel graph (nodes, edges, node features) as
-[`torch_geometric.data.Data`](https://pytorch-geometric.readthedocs.io/) objects.
-It covers the full track end to end:
+**raw** vessel graph. The main parts are:
 
 - **`gnn/data_loader.py`** — `VanguardCenterlineDataset`, an `InMemoryDataset`
   that builds one graph per case from saved centerline outputs.
@@ -20,33 +18,16 @@ It covers the full track end to end:
 
 ### What it builds
 
-- **Nodes:** one per skeleton voxel (voxel-level granularity), keyed by
-  `(x, y, z)`. A `segment` mode (one node per bifurcation/endpoint) is an
-  explicit, not-yet-implemented extension point (`node_mode="segment"` raises).
-- **Edges:** between 26-connected skeleton voxels (undirected → symmetric
-  `edge_index`).
+- **Nodes:** one per skeleton voxel, keyed by
+  `(x, y, z)`.
+    - `segment`, `node` modes are not-yet-implemented extension points.
+- **Edges:** between 26-connected skeleton voxels (8 corners, 12 *voxel* edges, 6 faces)
 - **`data.pos`:** `(num_nodes, 3)` voxel coordinates `(x, y, z)`.
-- **`data.x`:** node features stacked in the order given by `node_features`
-  (default `("peak_time", "radius")`):
-  - `peak_time` → normalized peak-contrast time,
-    `argmax_t(signal_4d[:, z, y, x] − signal_4d[0, z, y, x]) / (T − 1)`.
-    The raw integer index is also kept on `data.peak_time`.
-  - `radius` → local vessel radius from the support mask's distance transform.
-  - `pcr_dummy` (opt-in only) → the graph's own `pcr` label, broadcast onto
-    every node. A leakage-canary feature: it perfectly predicts `data.y` by
-    construction, so it exists purely to sanity-check that the training
-    pipeline (`data.x` → `GCNConv` stack → pooled logit → loss) can learn an
-    end-to-end trivial signal. It's computed only when `"pcr_dummy"` is
-    explicitly listed in `node_features` — never a hardcoded default, and
-    never valid for real modeling results.
-- **`data.y`:** the binary label (**required** — see below).
+- **`data.x`:** node features stacked in the order given by `node_features`, see [Modeling Features](#modeling-features)
+
+- **`data.y`:** the binary label (**required** — see [below](#labels-are-required)).
 - **Metadata:** `data.case_id`, `data.dataset`, `data.site`, `data.num_timepoints`.
 
-The mask → graph conversion reuses the existing `graph_extraction` primitives
-(`mask_to_edges_bitmask`, `edges_to_segments`, `segments_to_graph`,
-`obtain_radius_map`) so there is a single source of truth. Peak-contrast time is
-computed from the same `*_vessel_segmentation.npz` timepoints that
-`features/kinematic.py` samples via `signal_4d[:, z, y, x]`.
 
 ### Input tree
 
@@ -56,38 +37,44 @@ computed from the same `*_vessel_segmentation.npz` timepoints that
 <studies>/<dataset>/<case_id>/
   <case_id>_skeleton_4d_exam_mask.npy          # 3D (z,y,x) uint8 centerline
   <case_id>_skeleton_4d_exam_support_mask.npy  # 3D (z,y,x) uint8 vessel support
-  run_summary.json                             # study_files -> per-timepoint npz
+  run_summary.json                             # study_timepoints -> raw DCE phase indices
 ```
 
-The loader reads `run_summary.json["study_files"]` (absolute `*_vessel_segmentation.npz`
-paths) to load the 4D signal. `run_summary.json` and its `study_files` key are
-**required** — the loader raises immediately if either is absent or malformed.
+separately, under `dce_root`:
+
+```
+<dce_root>/<case_id>/<case_id>_NNNN.nii.gz   # one raw DCE-MRI phase per timepoint
+```
+
+The loader reads `run_summary.json["study_timepoints"]` (the integer `NNNN`
+phase indices) and resolves each one to `<dce_root>/<case_id>/<case_id>_NNNN.nii.gz`
+to load the raw 4D DCE signal (`gnn.raw_dce.discover_raw_dce_paths` /
+`load_raw_dce_series`). `run_summary.json` and its `study_timepoints` key are
+**required** — the loader raises immediately if either is absent or malformed,
+and raises `FileNotFoundError` immediately if any expected raw DCE phase file
+is missing.
 
 ### Labels are required
 
-Every graph must carry a label. Labels are loaded with
-`tabular.cohort.load_labels(labels_path, id_column, label_column)` (normalizes to
-`{0, 1}`, handles CSV/JSON and true/false). **Cases with no matching label are
-dropped** (not built) with a loud `logging.warning` and recorded in
-`dataset.dropped_case_ids` / `<cache_dir>/processed/dropped_cases.json`, so a
-built dataset is always training-ready and never carries unlabeled graphs. If
+ Labels are loaded with
+`tabular.cohort.load_labels(labels_path, id_column, label_column)`. **Cases with no matching label are dropped** (not built) with a loud `logging.warning` and recorded in
+`dataset.dropped_case_ids` / `<cache_dir>/processed/dropped_cases.json`. If
 the dropped fraction exceeds `max_missing_label_frac` (default `0.1`) the
 whole build raises `RuntimeError` instead of silently training on a shrunken
-cohort -- this guards against a labels file that's stale, mismatched, or
-pointed at the wrong cohort. On a cache hit (no rebuild), the manifest is
-reloaded and the drop warning is re-logged so missing labels stay visible
-without needing a fresh build. Degenerate geometry (empty skeleton, zero
-segments, shape mismatch) still raises immediately -- that's a data problem,
-not an expected missing-label case.
+cohort. When using the cache the manifest is
+reloaded and the drop warning is re-logged so missing labels stay visible.
 
 ### Usage
 
-```python
-from gnn.data_loader import VanguardCenterlineDataset
+Most users should build the dataset via Slurm (`gnn/build_dataset.py`, see
+[Building the full dataset on the cluster](#building-the-full-dataset-on-the-cluster) below) rather than instantiating
+the dataset directly. The CLI is a thin wrapper around this:
 
-dataset = VanguardCenterlineDataset(
+```python
+VanguardCenterlineDataset(
     root="/path/to/centerlines/studies",
     labels_path="/path/to/labels.csv",     # required
+    dce_root="/path/to/MAMA-MIA-syn60868042/images",  # required, raw DCE NIfTI tree
     id_column="case_id",
     label_column="pcr",
     node_features=("peak_time", "radius"),
@@ -95,10 +82,10 @@ dataset = VanguardCenterlineDataset(
     cases=["NACT_62", "NACT_63"],           # optional whitelist
     profile=True,                           # log per-stage timings
 )
-data = dataset[0]                            # torch_geometric.data.Data
 ```
+### Caching
 
-The collated cache is written to `<cache_dir>/processed/data.pt`, plus a
+The cache is written to `<cache_dir>/processed/data.pt`, plus a
 per-case `<case_id>_graph.pt` for debugging. Constructing the dataset only
 rebuilds when `<cache_dir>/processed/data.pt` is missing, so to force a
 rebuild either delete `<cache_dir>/processed/` yourself, or pass
@@ -108,7 +95,50 @@ keeping the old cache (including its `feature_summary/`) around for the
 record instead of overwriting it. `--force-rebuild` is incompatible with
 `--no-cache` (which never persists a cache to archive in the first place).
 
-### Feature summary
+Every fresh build also writes `<cache_dir>/processed/cache_manifest.json`,
+recording everything that determines what the cached graphs actually
+contain: `centerline_root`, `dce_root`, `labels_path`, `id_column`,
+`label_column`, `cases` (whitelist, if any), `node_mode`, `node_features`,
+`feature_source` (`"raw_dce"` today), plus provenance-only fields not used
+for comparison: `code_commit`, `num_graphs`, `label_counts`, `built_at`.
+
+Every later load of that cache (constructing `VanguardCenterlineDataset`
+against the same `cache_dir`, including via `gnn/train.py`) re-derives the
+same settings from what's requested and compares them against the manifest.
+A cache with no manifest (built before this check existed) or one whose
+manifest doesn't match raises `RuntimeError` immediately, rather than
+silently training on graphs built under a different root/label/feature
+config than the one you asked for. Pass `allow_manifest_mismatch=True`
+(`--allow-manifest-mismatch` / `ALLOW_MANIFEST_MISMATCH=1` for
+`gnn/build_dataset.py`) to explicitly bypass this once you've confirmed a
+mismatch is benign; otherwise rebuild the cache (`--force-rebuild`) so a
+fresh, matching manifest is written.
+
+### Modeling Features 
+ - `peak_time` → normalized time-to-peak enhancement,
+    `argmax_t(enhancement) / (T − 1)`. The raw integer index is also kept on
+    `data.peak_time`.
+  - `peak_enhancement` → `max(enhancement)`.
+  - `time_to_enhancement` → normalized arrival time, using
+    `graph_extraction.feature_stats._arrival_index_from_enhancement` (first
+    timepoint the curve reaches 20% of its own peak) -- the same helper
+    `features/kinematic.py` uses. `NaN` for nodes with no detected arrival (no
+    meaningful enhancement); the raw index (`-1` sentinel when undetected) is
+    kept on `data.time_to_enhancement`. `NaN`s are caught per-feature by the
+    `feature_summary/feature_na_report.json` audit rather than silently
+    defaulted -- see `_write_feature_summary`.
+  - `washin_slope` → `(enhancement[peak] − enhancement[arrival_or_0]) /
+    (time[peak] − time[arrival_or_0])`.
+  - `auc_positive` → `trapz(max(enhancement, 0))` over the study's time axis.
+  - `radius` → local vessel radius from the support mask's distance transform.
+  - `pcr_dummy` (opt-in only) → the graph's own `pcr` label, broadcast onto
+    every node. A leakage-canary feature: it perfectly predicts `data.y` by
+    construction, so it exists purely to sanity-check that the training
+    pipeline (`data.x` → `GCNConv` stack → pooled logit → loss) can learn an
+    end-to-end trivial signal. It's computed only when `"pcr_dummy"` is
+    explicitly listed in `node_features` — never a hardcoded default, and
+    never valid for real modeling results.
+#### Feature summary
 
 Every time a new cache is actually built (not on a cache hit, and not with
 `no_cache=True`), the loader also writes
@@ -127,37 +157,22 @@ degenerate ranges) before they reach modeling.
 
 ### Building the full dataset on the cluster
 
-`gnn/build_dataset.py` is a thin CLI wrapper: constructing
-`VanguardCenterlineDataset` triggers the build, so the script just parses args
-and instantiates it. Defaults point at the real cluster paths (see the
-project `CLAUDE.md`), with the cache written to Spencer's own workspace
-(`/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache`) rather than
-into `saritbose`'s centerline tree.
 
 ```bash
 sbatch gnn/slurm/submit_gnn_build.slurm
 ```
 
-Override any path via environment variables (`ROOT`, `LABELS_PATH`,
+Override any path via environment variables (`ROOT`, `DCE_ROOT`, `LABELS_PATH`,
 `CACHE_DIR`, `ID_COLUMN`, `LABEL_COLUMN`, `NODE_FEATURES`, `CASES`,
 `NO_CACHE=1`) -- see the script header for usage. `CASES` (comma-separated
 case IDs) is handy for a smoke-test submission before committing to the full
-~1500-case build. See `docs/slurm-site.md` for why the job targets `tier1q`
-rather than the `general` partition used by older scripts in this repo.
+~1500-case build. 
 
 #### Parallel build (`num_workers`)
 
-Each case's graph is built from its own files only, so the build fans out
+Because each case's graph is built from its own files only, it is possible to fan out
 across a process pool via `--num-workers` / `NUM_WORKERS` (or the
 `GNN_BUILD_WORKERS` env var read by `build_dataset.py`'s CLI default).
-Cases are submitted in batches of `num_workers` and results are folded back
-in discovery order, so a parallel build produces byte-identical graphs to a
-sequential one -- only wall time changes. Default is `1` (sequential, safe
-to run directly on a login node for a small smoke test); the Slurm script
-defaults `NUM_WORKERS` to the job's `--cpus-per-task` (8) so a full build
-actually uses the CPUs it requests. Per-stage timings (`--profile`, on by
-default) are aggregated across all workers, so the profiling summary looks
-the same regardless of `num_workers`.
 
 ### Profiling
 
@@ -171,32 +186,6 @@ each case has many timepoints.
 > cluster (login-node smoke set of 2–3 NACT cases, then the full cohort via
 > Slurm).
 
-### Data verification status
-
-- **Synthetic smoke test** (`tests/test_gnn_data_loader.py`): fabricates a tiny
-  centerline tree and asserts `num_nodes > 0`, symmetric `edge_index`,
-  `x.shape[1] == len(node_features)`, `pos.shape == (num_nodes, 3)`, `peak_time`
-  within `[0, T−1]`, `data.y` present, and that an unlabeled case is skipped.
-  Runs in CI (installs a CPU `torch` + `torch_geometric` from PyPI).
-- **Real data:** the public MAMA-MIA centerlines and private UChicago data live
-  on `/net/projects2/...` cluster paths, so real-data builds run in the cluster
-  conda env (pinned `torch` 1.11 / PyG 2.3.1), not in CI. The `from_networkx`,
-  `InMemoryDataset`, and `Data` APIs used here are stable across PyG 2.x.
-
-### Resolved data-loader design decisions
-
-Captured here because `$SV_DATA_DIR/gnn_data_loader_design_doc.md` was not
-reachable from this environment (`SV_DATA_DIR` unset); fold these back into that
-doc when it is available.
-
-- Node granularity: **voxel-level now**, `node_mode` flag reserved for `segment`.
-- Build path: reuse the NetworkX primitives → `from_networkx` (single source of
-  truth); profiling instrumentation built in.
-- Storage: `InMemoryDataset` (cohort n≈200 fits in memory).
-- Node feature v1: peak-contrast time (+ radius), computed from the raw 4D
-  timepoints.
-- Labels: **required**; unlabeled cases skipped.
-
 ## Model + training
 
 `gnn/model.py` provides `GCNClassifier`: a stack of `GCNConv` layers, a global
@@ -205,9 +194,7 @@ logit per graph. No edge features, attention, or segment-level pooling yet --
 those are deliberate next steps once this MVP is validated end-to-end, not
 omissions.
 
-`gnn/train.py` now reuses the shared `evaluation/` framework instead of
-growing its own split logic, the same way `tabular/train.py` and
-`deepsets/train.py` do:
+Outline of `gnn/train.py`:
 
 1. Load the cached `VanguardCenterlineDataset` (built ahead of time by
    `gnn/build_dataset.py`).
@@ -230,8 +217,7 @@ growing its own split logic, the same way `tabular/train.py` and
    save with `evaluator.save_results` -- the same `metrics.json` /
    `predictions.csv` / ROC-PR plots convention every other model family uses.
 
-Config-driven, like `tabular/train.py` and `deepsets/train.py` (no more
-per-flag CLI):
+Config-driven, like `tabular/train.py` and `deepsets/train.py`:
 
 ```bash
 python -m gnn.train --config configs/gnn_smoke.yaml
@@ -239,9 +225,34 @@ python -m gnn.train --config configs/gnn_smoke.yaml
 
 See `configs/gnn.yaml` (full cohort) and `configs/gnn_smoke.yaml` (8-case
 smoke test) for the `data_paths.gnn_*` / `model_params.gnn_node_features`
-schema. Every run writes `config_used.yaml` plus the evaluator's
-`<outdir>/<experiment_setup.name>/{metrics.json,predictions.csv,plots/}` to
-`experiments/<name>_<timestamp>/` (or `--outdir`); `gnn/train.py` additionally
-writes `loss_history.csv`, `loss_by_epoch.png`, and `auc_by_epoch.png`
-(train/val curves per fold) alongside it. `gnn/slurm/submit_gnn_train.slurm`
-mirrors `submit_gnn_build.slurm` and defaults to `configs/gnn_smoke.yaml`.
+schema. Every run writes `config_used.yaml` + `config_used.json` (the
+resolved config, for programmatic loading) directly under
+`experiments/<name>_<timestamp>/` (or `--outdir`), plus the evaluator's
+`<outdir>/<experiment_setup.name>/{split_manifest.csv,predictions.csv,metrics.json,plots/}`.
+`gnn/train.py` additionally writes `loss_history.csv`, `loss_by_epoch.png`,
+and `auc_by_epoch.png` (train/val curves per fold) alongside it.
+`gnn/slurm/submit_gnn_train.slurm` mirrors `submit_gnn_build.slurm` and
+defaults to `configs/gnn_smoke.yaml`.
+
+### Auditing outputs
+
+Every run writes enough to inspect what happened without reading the code:
+
+- **`split_manifest.csv`** (`evaluation.build_splits.build_split_manifest`,
+  the same central split-building module `create_splits_for_dataframe` lives
+  in, so other model families can reuse it): one row per `(case, fold)` --
+  `case_id`, `graph_index`, `dataset`, `site`, `pcr`, `fold`, `train_or_val`,
+  `num_nodes`, `num_edges`. Each case appears once per fold (`"val"` in the
+  fold it's held out on, `"train"` in every other fold), so you can check
+  whether folds are balanced by site/dataset/graph size before trusting a
+  metric.
+- **`predictions.csv`**: the evaluator's standard `case_id`, `y_true`,
+  `y_pred`, `y_prob`, `fold` columns, plus `dataset`, `site`, and `pcr`
+  (identical to `y_true`, named after the label itself) merged in from the
+  cohort table -- one row per validation case. Cross-referencing `y_prob`
+  against `dataset`/`site`/`num_nodes` (via `split_manifest.csv`) is how you
+  tell whether the model is learning biology, a site effect, or graph size.
+- **`metrics.json`** / **`metrics_per_fold.json`**: aggregated + per-fold
+  metrics, written by `evaluator.save_results`.
+- **`config_used.yaml`** / **`config_used.json`**: the exact resolved config
+  (including defaults) for the run, written by `load_cohort.write_config_snapshot`.
