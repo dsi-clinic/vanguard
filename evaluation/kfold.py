@@ -115,6 +115,33 @@ def create_kfold_splits(
     return splits
 
 
+def create_predefined_splits(
+    fold_values: np.ndarray,
+    case_ids: np.ndarray | None = None,
+) -> list[dict[str, np.ndarray | int]]:
+    """Build leave-one-fold-out CV splits from a predefined fold assignment.
+
+    One split per unique value in ``fold_values``: validation is every sample
+    carrying that value, training is everything else.
+    """
+    fold_values = np.asarray(fold_values)
+    all_indices = np.arange(len(fold_values))
+    splits = []
+    for fold_idx, fold_value in enumerate(np.unique(fold_values)):
+        val_idx = all_indices[fold_values == fold_value]
+        train_idx = all_indices[fold_values != fold_value]
+        splits.append(
+            {
+                "fold_idx": fold_idx,
+                "train_indices": train_idx,
+                "val_indices": val_idx,
+                "train_case_ids": case_ids[train_idx] if case_ids is not None else None,
+                "val_case_ids": case_ids[val_idx] if case_ids is not None else None,
+            }
+        )
+    return splits
+
+
 def build_composite_stratum_key(
     metadata_df: np.ndarray | None,
     stratify_cols: list[str] | None = None,

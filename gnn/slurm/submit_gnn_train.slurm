@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=gnn-train-mvp
+#SBATCH --job-name=gnn-train
 #SBATCH --partition=tier1q
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
@@ -7,15 +7,16 @@
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 
-# MVP training run for gnn/train.py: single train/val split, plain GCN, no
-# k-fold CV yet (see gnn/README.md). Defaults point at the 8-case smoke cache
-# built by gnn/build_dataset.py (see LAB_NOTEBOOK.md, job 12482766) so this
-# validates the loader -> model -> training wiring cheaply before a run
-# against the full ~1500-case cache.
+# K-fold training run for gnn/train.py: builds a per-graph cohort table from a
+# VanguardCenterlineDataset cache and hands it to the shared evaluation
+# framework (evaluation.build_splits.create_splits_for_dataframe), the same
+# way tabular/train.py and deepsets/train.py do (see gnn/README.md). Defaults
+# to the 8-case smoke config so this validates the loader -> model -> CV
+# wiring cheaply before a run against the full cache (configs/gnn.yaml).
 #
 # Usage:
 #   sbatch gnn/slurm/submit_gnn_train.slurm
-#   CACHE_DIR=/gpfs/.../gnn_cache sbatch gnn/slurm/submit_gnn_train.slurm
+#   CONFIG=configs/gnn.yaml sbatch gnn/slurm/submit_gnn_train.slurm
 
 set -euo pipefail
 
@@ -33,51 +34,9 @@ set -u
 
 export PYTHONUNBUFFERED=1
 
-ROOT="${ROOT:-/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies}"
-LABELS_PATH="${LABELS_PATH:-/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv}"
-CACHE_DIR="${CACHE_DIR:-/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_smoke}"
-ID_COLUMN="${ID_COLUMN:-case_id}"
-LABEL_COLUMN="${LABEL_COLUMN:-pcr}"
-NODE_FEATURES="${NODE_FEATURES:-peak_time,radius}"
-VAL_FRAC="${VAL_FRAC:-0.3}"
-SEED="${SEED:-0}"
-EPOCHS="${EPOCHS:-20}"
-BATCH_SIZE="${BATCH_SIZE:-4}"
-DEVICE="${DEVICE:-cpu}"
+CONFIG="${CONFIG:-configs/gnn_smoke.yaml}"
 
-ARGS=(
-  python -u -m gnn.train
-  --root "${ROOT}"
-  --labels-path "${LABELS_PATH}"
-  --cache-dir "${CACHE_DIR}"
-  --id-column "${ID_COLUMN}"
-  --label-column "${LABEL_COLUMN}"
-  --node-features "${NODE_FEATURES}"
-  --val-frac "${VAL_FRAC}"
-  --seed "${SEED}"
-  --epochs "${EPOCHS}"
-  --batch-size "${BATCH_SIZE}"
-  --device "${DEVICE}"
-)
-
-if [[ -n "${CASES:-}" ]]; then
-  ARGS+=(--cases "${CASES}")
-fi
-if [[ -n "${DATASET_FILTER:-}" ]]; then
-  ARGS+=(--dataset-filter "${DATASET_FILTER}")
-fi
-if [[ -n "${HIDDEN_DIM:-}" ]]; then
-  ARGS+=(--hidden-dim "${HIDDEN_DIM}")
-fi
-if [[ -n "${NUM_LAYERS:-}" ]]; then
-  ARGS+=(--num-layers "${NUM_LAYERS}")
-fi
-if [[ -n "${DROPOUT:-}" ]]; then
-  ARGS+=(--dropout "${DROPOUT}")
-fi
-if [[ -n "${LR:-}" ]]; then
-  ARGS+=(--lr "${LR}")
-fi
+ARGS=(python -u -m gnn.train --config "${CONFIG}")
 if [[ -n "${OUTDIR:-}" ]]; then
   ARGS+=(--outdir "${OUTDIR}")
 fi

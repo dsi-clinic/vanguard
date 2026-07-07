@@ -11,8 +11,9 @@ It covers the full track end to end:
 - **`gnn/build_dataset.py`** — CLI wrapper to build/cache the full dataset on
   the cluster.
 - **`gnn/model.py`** — `GCNClassifier`, the current MVP model.
-- **`gnn/train.py`** — minimal training script (single stratified split,
-  standardization, `BCEWithLogitsLoss`, shared metrics).
+- **`gnn/train.py`** — k-fold training script built on the shared
+  `evaluation/` framework (standardization, `BCEWithLogitsLoss`, shared
+  metrics/split/aggregation code).
 - **`gnn/slurm/`** — Slurm submission scripts for both build and train.
 
 ## Data pipeline
@@ -196,28 +197,51 @@ doc when it is available.
   timepoints.
 - Labels: **required**; unlabeled cases skipped.
 
-## Model + training (MVP)
+## Model + training
 
 `gnn/model.py` provides `GCNClassifier`: a stack of `GCNConv` layers, a global
 mean-pool readout to one embedding per graph, and a linear head producing one
 logit per graph. No edge features, attention, or segment-level pooling yet --
 those are deliberate next steps once this MVP is validated end-to-end, not
-omissions. `gnn/train.py` is a minimal training script: a single stratified
-train/val split over case indices (not k-fold CV), node-feature
-standardization fit on the train split only, plain `BCEWithLogitsLoss`, and
-metrics via the shared `evaluation.metrics.compute_binary_metrics` (so numbers
-stay comparable once this grows into a pipeline that mirrors
-`deepsets/train.py` -- YAML config, `evaluation/build_splits.py` k-fold CV,
-results-dir README convention -- which it intentionally does not attempt yet).
+omissions.
+
+`gnn/train.py` now reuses the shared `evaluation/` framework instead of
+growing its own split logic, the same way `tabular/train.py` and
+`deepsets/train.py` do:
+
+1. Load the cached `VanguardCenterlineDataset` (built ahead of time by
+   `gnn/build_dataset.py`).
+2. Build a one-row-per-graph cohort table (`build_graph_cohort`): `case_id`,
+   `y`, `dataset`, `site`, `graph_index` (the graph's position in the
+   dataset), plus a fold column (default name `"fold"`, from
+   `model_params.split_col`) merged in from the labels file *if* it has one.
+3. Hand that table to `evaluation.build_splits.create_splits_for_dataframe`,
+   which returns an `Evaluator` and a list of `FoldSplit`s -- standard
+   stratified/group k-fold by default (`model_params.n_splits`,
+   `use_group_split`, `group_col`, `stratum_col`), or, with
+   `model_params.split_mode: "predefined"`, leave-one-fold-out CV over the
+   fold column above. Predefined-fold support lives centrally in
+   `evaluation/kfold.py` (`create_predefined_splits`), so any model family can
+   opt into the same fold definition.
+4. Train a fresh `GCNClassifier` per fold (`fit_predict_one_fold`):
+   node-feature standardization fit on that fold's train split only, plain
+   `BCEWithLogitsLoss`, metrics via `evaluation.metrics.compute_binary_metrics`.
+5. Aggregate fold predictions with `evaluator.aggregate_kfold_results` and
+   save with `evaluator.save_results` -- the same `metrics.json` /
+   `predictions.csv` / ROC-PR plots convention every other model family uses.
+
+Config-driven, like `tabular/train.py` and `deepsets/train.py` (no more
+per-flag CLI):
 
 ```bash
-python -m gnn.train --cache-dir /path/to/gnn_cache_smoke --cases NACT_01,NACT_02
+python -m gnn.train --config configs/gnn_smoke.yaml
 ```
 
-Every run writes `README.md` + `metrics.json` + `config_used.json` to
-`experiments/gnn_mvp_<timestamp>/` (or `--outdir`) per the project's auditing
-convention. `metrics.json` holds the full per-epoch history (train/val loss +
-val metrics); that same history is also plotted to `loss_by_epoch.png`
-(mirrors `deepsets/train.py`'s `_plot_loss_history`), and the README embeds
-the plot. `gnn/slurm/submit_gnn_train.slurm` mirrors `submit_gnn_build.slurm`
-and defaults to the 8-case `gnn_cache_smoke`.
+See `configs/gnn.yaml` (full cohort) and `configs/gnn_smoke.yaml` (8-case
+smoke test) for the `data_paths.gnn_*` / `model_params.gnn_node_features`
+schema. Every run writes `config_used.yaml` plus the evaluator's
+`<outdir>/<experiment_setup.name>/{metrics.json,predictions.csv,plots/}` to
+`experiments/<name>_<timestamp>/` (or `--outdir`); `gnn/train.py` additionally
+writes `loss_history.csv`, `loss_by_epoch.png`, and `auc_by_epoch.png`
+(train/val curves per fold) alongside it. `gnn/slurm/submit_gnn_train.slurm`
+mirrors `submit_gnn_build.slurm` and defaults to `configs/gnn_smoke.yaml`.

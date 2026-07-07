@@ -154,6 +154,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_inclusion_rule": "local_radius_with_fallback",
         "deepsets_compare_inclusion_rules": [],
         "deepsets_point_feature_set": "baseline",
+        "gnn_node_features": ["peak_time", "radius"],
     },
     "data_paths": {
         "centerline_root": "",
@@ -167,6 +168,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_manifest_csv": "",
         "deepsets_label_column": "label",
         "vessel_segmentation_root": "",
+        "gnn_centerline_root": "",
+        "gnn_labels_path": "",
+        "gnn_cache_dir": "",
+        "gnn_id_column": "case_id",
+        "gnn_label_column": "pcr",
+        "gnn_cases": None,
+        "gnn_dataset_include": None,
     },
     "ablation_arms": deepcopy(DEFAULT_ABLATION_ARMS),
     # Optional multipliers for run_ablation_matrix (Issue #116 / #117 style experiments).
