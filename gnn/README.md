@@ -155,6 +155,64 @@ This is generated once per build (it's not cheap to recompute on every
 training run) and is meant to catch upstream data issues (missing values,
 degenerate ranges) before they reach modeling.
 
+#### Graph QC summary
+
+Every time a new cache is built (not on a cache hit, and not with
+`no_cache=True`), the loader also writes `<cache_dir>/processed/graph_qc.csv`,
+one row per graph. Graph size and feature ranges are possible confounders for
+this GNN, not side details -- e.g. a model could be learning tumor size or a
+site effect instead of enhancement kinetics -- so this file has what's needed
+to plot `num_nodes` vs `pcr`, `num_nodes` vs `dataset`, prediction vs
+`num_nodes` (join on `case_id` against `predictions.csv`), and feature
+distributions by `dataset` or `pcr`, without re-deriving anything from the
+cached graphs:
+
+- `case_id`, `dataset`, `pcr`, `num_nodes`.
+- `num_edges` -- matches the `data.num_edges` convention used in
+  `split_manifest.csv` (edges are stored in both directions, so this is 2x
+  the true undirected edge count).
+- `num_connected_components` -- from the pre-`from_networkx` `nx.Graph`;
+  disconnected skeleton branches show up as > 1.
+- `mean_degree` -- `num_edges / num_nodes`, the correct average node degree
+  under the doubled `num_edges` convention above.
+- `missing_feature_count` / `nan_feature_count` -- total non-finite
+  (NaN-or-inf) and NaN-only entries in `data.x` for that graph.
+- `<feature>_min` / `_max` / `_mean` / `_std` for every name in
+  `node_features`, computed over that graph's nodes only (NaN-aware).
+
+The same build also renders the confound plots directly, into
+`<cache_dir>/processed/graph_qc_plots/` (`gnn/graph_qc_plots.py`, called from
+`_write_graph_qc`):
+
+- `num_nodes_vs_pcr.png` / `num_nodes_vs_dataset.png` -- jittered scatter of
+  graph size against the other categorical variable, colored by
+  dataset/pcr respectively; legend and title state the exact `n` (graph
+  count) behind each category.
+- `feature_distributions_by_dataset.png` / `feature_distributions_by_pcr.png`
+  -- node-level density histograms (unfilled step outlines, independently
+  normalized per group) for every `node_features` entry; legend states both
+  the graph count and node count behind each group, since these pool nodes
+  across graphs and a "distribution" can otherwise silently mean n=1 graph.
+
+`prediction_vs_num_nodes.png` is **not** written at build time -- it needs a
+trained model's predictions, which don't exist yet. `gnn/train.py` writes it
+after every run instead, into both that run's own output directory (alongside
+`predictions.csv`) and back into this same `<cache_dir>/processed/graph_qc_plots/`
+directory, so the cache's plot folder always has all 5 plots, with the
+prediction one reflecting whichever training run against that cache is most
+recent (it's overwritten each run, not versioned per-run -- check the run's
+own `<outdir>/<experiment_setup.name>/prediction_vs_num_nodes.png` copy if you
+need the one from a specific past run).
+
+To regenerate these plots by hand (e.g. against an older cache, or a
+`predictions.csv` from a run that hasn't been retrained), use
+`gnn/plot_graph_qc.py`:
+
+```bash
+python -m gnn.plot_graph_qc --cache-dir <cache_dir> --out-dir <dir> \
+    [--predictions-csv path/to/predictions.csv]
+```
+
 ### Building the full dataset on the cluster
 
 
@@ -252,6 +310,9 @@ Every run writes enough to inspect what happened without reading the code:
   cohort table -- one row per validation case. Cross-referencing `y_prob`
   against `dataset`/`site`/`num_nodes` (via `split_manifest.csv`) is how you
   tell whether the model is learning biology, a site effect, or graph size.
+- **`prediction_vs_num_nodes.png`**: that same size-vs-prediction check,
+  plotted directly (see "Graph QC summary" above) -- also copied back into
+  the cache's `processed/graph_qc_plots/`.
 - **`metrics.json`** / **`metrics_per_fold.json`**: aggregated + per-fold
   metrics, written by `evaluator.save_results`.
 - **`config_used.yaml`** / **`config_used.json`**: the exact resolved config

@@ -45,6 +45,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from config import DEFAULT_CONFIG
+from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_build_time_plots
 from gnn.raw_dce import discover_raw_dce_paths, load_raw_dce_series
 from graph_extraction.constants import NDIM_3D
 from graph_extraction.feature_stats import (
@@ -71,6 +72,7 @@ _SINGLE_TIMEPOINT = 1
 _DROPPED_MANIFEST_NAME = "dropped_cases.json"
 _CACHE_MANIFEST_NAME = "cache_manifest.json"
 _FEATURE_SUMMARY_DIRNAME = "feature_summary"
+_GRAPH_QC_NAME = "graph_qc.csv"
 _HIST_BINS = 50
 
 # The only node-feature source implemented today (see module docstring): raw
@@ -283,6 +285,7 @@ def _finalize_data(
     num_timepoints: int,
     centerline_root: Path,
     node_features: tuple[str, ...],
+    num_connected_components: int,
 ) -> Data:
     """Assemble ``data.x``, the label, and provenance metadata."""
     columns = [data[_FEATURE_ATTR[name]] for name in node_features]
@@ -290,6 +293,7 @@ def _finalize_data(
     data.y = torch.tensor([int(label)], dtype=torch.long)
     data.case_id = case_id
     data.num_timepoints = num_timepoints
+    data.num_connected_components = num_connected_components
 
     rel_parts = study_dir.relative_to(centerline_root).parts
     dataset = rel_parts[0] if rel_parts else "unknown"
@@ -342,6 +346,11 @@ def _build_case(
     if graph.number_of_nodes() == 0:
         raise ValueError(f"Graph for {case_id} has zero nodes")
 
+    # Must be counted on the nx.Graph itself -- from_networkx() below discards
+    # it, and edge_index on the resulting Data is directed-both-ways, which is
+    # not a valid input to nx.connected_components without reconstruction.
+    num_connected_components = nx.number_connected_components(graph)
+
     radius_map = obtain_radius_map(support, graph)
 
     study_timepoints = _load_study_timepoints(case_id, study_dir)
@@ -365,7 +374,14 @@ def _build_case(
         data = from_networkx(graph)
 
     data = _finalize_data(
-        data, case_id, study_dir, label, num_timepoints, centerline_root, node_features
+        data,
+        case_id,
+        study_dir,
+        label,
+        num_timepoints,
+        centerline_root,
+        node_features,
+        num_connected_components,
     )
     return data, stage_samples
 
@@ -392,6 +408,13 @@ class VanguardCenterlineDataset(InMemoryDataset):
     settings against this manifest and raises ``RuntimeError`` on a mismatch
     (see ``allow_manifest_mismatch``), so a stale cache built under different
     settings can never be silently reused.
+
+    A fresh build also writes ``processed/graph_qc.csv``, one row per graph
+    (``case_id``, ``dataset``, ``pcr``, ``num_nodes``, ``num_edges``,
+    ``num_connected_components``, ``mean_degree``, missing/NaN feature
+    counts, and per-feature min/max/mean/std), plus the confound-audit plots
+    derivable from it under ``processed/graph_qc_plots/`` -- see
+    ``_write_graph_qc``.
 
     Args:
         root: The centerline ``studies`` tree containing per-case output
@@ -719,6 +742,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
             )
 
         self._write_feature_summary(data_list)
+        self._write_graph_qc(data_list)
         self._write_cache_manifest(data_list)
         self._save_processed(data_list)
 
@@ -878,6 +902,80 @@ class VanguardCenterlineDataset(InMemoryDataset):
             lines.append(f"![{name} histogram]({name}_hist.png)")
         lines.append("")
         summary_dir.joinpath("README.md").write_text("\n".join(lines))
+
+    def _write_graph_qc(self, data_list: list[Data]) -> None:
+        """Write one ``graph_qc.csv`` row per graph for confound auditing.
+
+        Graph size and per-feature ranges are possible confounders for this
+        GNN (e.g. larger tumors correlating with pCR, or a dataset/site with
+        systematically different feature ranges), not side details -- so
+        every fresh build (never a cache hit) writes a row per graph with
+        enough to plot ``num_nodes`` vs ``pcr``, ``num_nodes`` vs
+        ``dataset``, and per-dataset / per-``pcr`` feature distributions
+        directly from this one file.
+
+        ``num_edges`` matches the ``data.num_edges`` convention already used
+        in ``split_manifest.csv`` (``torch_geometric`` stores each undirected
+        edge in both directions, so this is 2x the true undirected edge
+        count). ``mean_degree`` (``num_edges / num_nodes``) is the correct
+        average node degree under that same doubled convention.
+        ``missing_feature_count`` counts every non-finite (NaN or inf) entry
+        in ``data.x``; ``nan_feature_count`` is the NaN-only subset of that,
+        distinguishing "no signal detected" (NaN, e.g. ``time_to_enhancement``
+        with no arrival) from a genuine inf.
+
+        Also writes ``processed/graph_qc_plots/`` (via
+        ``gnn.graph_qc_plots.write_build_time_plots``): num_nodes vs pcr,
+        num_nodes vs dataset, and feature distributions by dataset/pcr. The
+        fifth requested plot, prediction vs num_nodes, needs a trained
+        model's predictions, which don't exist at build time -- it's written
+        by ``gnn/train.py`` instead (into both the run's own output dir and
+        back into this cache's ``graph_qc_plots/``, see
+        ``run_gnn_pipeline``).
+        """
+        if self._no_cache:
+            return
+        rows: list[dict[str, object]] = []
+        node_rows: list[dict[str, object]] = []
+        for data in data_list:
+            x = data.x.numpy()
+            finite = np.isfinite(x)
+            row: dict[str, object] = {
+                "case_id": data.case_id,
+                "dataset": data.dataset,
+                "pcr": int(data.y.item()),
+                "num_nodes": int(data.num_nodes),
+                "num_edges": int(data.num_edges),
+                "num_connected_components": int(data.num_connected_components),
+                "mean_degree": float(data.num_edges) / float(data.num_nodes),
+                "missing_feature_count": int((~finite).sum()),
+                "nan_feature_count": int(np.isnan(x).sum()),
+            }
+            for i, name in enumerate(self._node_features):
+                column = x[:, i]
+                row[f"{name}_min"] = float(np.nanmin(column))
+                row[f"{name}_max"] = float(np.nanmax(column))
+                row[f"{name}_mean"] = float(np.nanmean(column))
+                row[f"{name}_std"] = float(np.nanstd(column))
+            rows.append(row)
+            for node_idx in range(x.shape[0]):
+                node_row = {
+                    "case_id": data.case_id,
+                    "dataset": data.dataset,
+                    "pcr": int(data.y.item()),
+                }
+                node_row.update(
+                    {name: x[node_idx, i] for i, name in enumerate(self._node_features)}
+                )
+                node_rows.append(node_row)
+
+        qc = pd.DataFrame(rows)
+        qc_path = Path(self.processed_dir) / _GRAPH_QC_NAME
+        qc.to_csv(qc_path, index=False)
+
+        node_df = pd.DataFrame(node_rows)
+        plots_dir = Path(self.processed_dir) / GRAPH_QC_PLOTS_DIRNAME
+        write_build_time_plots(qc, node_df, list(self._node_features), plots_dir)
 
     def _load_label_map(self) -> dict[str, int]:
         """Load labels into a ``case_id -> {0, 1}`` mapping."""

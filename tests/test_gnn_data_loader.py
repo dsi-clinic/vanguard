@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -32,6 +33,7 @@ SKELETON_XS = (1, 2, 3, 4, 5)  # 5 voxels -> 4 undirected edges
 # first crossed at idx 1.
 EXPECTED_PEAK_IDX = NUM_TIMEPOINTS - 1
 EXPECTED_TTE_IDX = 1
+EXPECTED_PEAK_ENHANCEMENT = 2.0
 
 
 def _write_case(
@@ -167,6 +169,47 @@ def test_builds_labeled_graph_and_skips_unlabeled(
     for column_report in na_report.values():
         assert column_report["num_values"] == len(SKELETON_XS)
 
+    # A fresh build also writes a per-graph QC summary for confound auditing.
+    qc_path = cache_dir / "processed" / "graph_qc.csv"
+    assert qc_path.exists()
+    qc = pd.read_csv(qc_path)
+    assert len(qc) == 1
+    row = qc.iloc[0]
+    assert row["case_id"] == "NACT_01"
+    assert row["dataset"] == "NACT"
+    assert row["pcr"] == 1
+    assert row["num_nodes"] == len(SKELETON_XS)
+    # 4 undirected edges -> 8 directed entries (matches data.num_edges).
+    assert row["num_edges"] == 2 * (len(SKELETON_XS) - 1)
+    assert row["num_connected_components"] == 1
+    assert row["mean_degree"] == row["num_edges"] / row["num_nodes"]
+    assert row["missing_feature_count"] == 0
+    assert row["nan_feature_count"] == 0
+    for name in node_features:
+        assert f"{name}_min" in qc.columns
+        assert f"{name}_max" in qc.columns
+        assert f"{name}_mean" in qc.columns
+        assert f"{name}_std" in qc.columns
+    # Every node has the identical synthetic curve -> zero spread.
+    assert row["peak_enhancement_std"] == 0.0
+    assert (
+        row["peak_enhancement_min"]
+        == row["peak_enhancement_max"]
+        == EXPECTED_PEAK_ENHANCEMENT
+    )
+
+    # The 4 build-time-derivable QC plots are rendered automatically too
+    # (prediction_vs_num_nodes.png needs a trained model and is written by
+    # gnn/train.py instead -- see gnn/graph_qc_plots.py).
+    plots_dir = cache_dir / "processed" / "graph_qc_plots"
+    for name in (
+        "num_nodes_vs_pcr.png",
+        "num_nodes_vs_dataset.png",
+        "feature_distributions_by_dataset.png",
+        "feature_distributions_by_pcr.png",
+    ):
+        assert (plots_dir / name).exists()
+
 
 def test_missing_dce_root_raises(
     centerline_tree: tuple[Path, Path, Path, Path],
@@ -277,6 +320,47 @@ def test_cache_manifest_mismatch_raises_unless_overridden(
     assert len(overridden) == 1
 
 
+def test_cache_manifest_cases_mismatch_raises_unless_overridden(
+    centerline_tree: tuple[Path, Path, Path, Path],
+) -> None:
+    """Changing the ``cases`` whitelist is also a manifest-tracked setting."""
+    studies, dce_root, labels_csv, cache_dir = centerline_tree
+
+    VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir,
+        cases=["NACT_01"],
+        node_features=("peak_time", "radius"),
+        max_missing_label_frac=0.5,
+    )
+
+    with pytest.raises(RuntimeError, match="different settings"):
+        VanguardCenterlineDataset(
+            studies,
+            labels_path=labels_csv,
+            dce_root=dce_root,
+            cache_dir=cache_dir,
+            cases=None,  # different from the cached ["NACT_01"]
+            node_features=("peak_time", "radius"),
+            max_missing_label_frac=0.5,
+        )
+
+    # allow_manifest_mismatch=True explicitly bypasses the check.
+    overridden = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir,
+        cases=None,
+        node_features=("peak_time", "radius"),
+        max_missing_label_frac=0.5,
+        allow_manifest_mismatch=True,
+    )
+    assert len(overridden) == 1
+
+
 def test_cache_manifest_missing_raises(
     centerline_tree: tuple[Path, Path, Path, Path],
 ) -> None:
@@ -338,3 +422,7 @@ def test_no_signal_voxel_reports_nan_time_to_enhancement(tmp_path: Path) -> None
         ).read_text()
     )
     assert na_report["time_to_enhancement"]["num_nan"] == 1
+
+    qc = pd.read_csv(tmp_path / "cache" / "processed" / "graph_qc.csv")
+    assert qc.iloc[0]["nan_feature_count"] == 1
+    assert qc.iloc[0]["missing_feature_count"] == 1

@@ -31,6 +31,7 @@ from evaluation.kfold import FoldSplit
 from evaluation.metrics import compute_binary_metrics
 from evaluation.utils import prepare_predictions_df
 from gnn.data_loader import VanguardCenterlineDataset
+from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_prediction_plot
 from gnn.model import GCNClassifier
 from load_cohort import load_config, resolve_run_output_dir, write_config_snapshot
 
@@ -421,6 +422,20 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
 
     kfold_results = evaluator.aggregate_kfold_results(fold_results)
     evaluator.save_results(kfold_results, outdir)
+
+    # prediction_vs_num_nodes.png needs a trained model's predictions, which
+    # don't exist at build time (see gnn/data_loader.py::_write_graph_qc for
+    # the other 4 graph_qc plots). Written into this run's own output dir
+    # (alongside predictions.csv) and back into the cache's graph_qc_plots/,
+    # so the cache always reflects whichever training run against it is most
+    # recent -- it is overwritten on every run, not accumulated per-run.
+    case_num_nodes = cohort_df[["case_id", "num_nodes"]]
+    write_prediction_plot(kfold_results.predictions, case_num_nodes, model_dir)
+    write_prediction_plot(
+        kfold_results.predictions,
+        case_num_nodes,
+        Path(dataset.processed_dir) / GRAPH_QC_PLOTS_DIRNAME,
+    )
 
     history_df = pd.DataFrame(all_history_rows)
     history_df.to_csv(model_dir / "loss_history.csv", index=False)
