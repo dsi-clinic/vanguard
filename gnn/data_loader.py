@@ -505,7 +505,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
 
     def _build_cases(
         self, tasks: list[tuple[str, Path, int]]
-    ) -> list[tuple[str, Data]]:
+    ) -> Iterator[tuple[str, Data]]:
         """Build every ``(case_id, mask_path, label)`` task, in discovery order.
 
         Sequential when ``num_workers <= 1`` (the default -- safe on a login
@@ -514,10 +514,18 @@ class VanguardCenterlineDataset(InMemoryDataset):
         independently from its own files. Every stage-timing sample collected
         in a worker is folded back into ``self._timings`` so profiling output
         is identical either way.
+
+        Yields each ``(case_id, data)`` as soon as it is ready rather than
+        collecting the full cohort into a list first -- ``process()`` saves
+        ``<case_id>_graph.pt`` off this generator immediately, so an
+        interrupted build (time limit, crash) keeps whatever it already
+        finished instead of losing the entire run, and the log shows genuine
+        per-case progress instead of going silent until the whole cohort is
+        done.
         """
+        total = len(tasks)
         if self._num_workers <= 1:
-            results: list[tuple[str, Data]] = []
-            for case_id, mask_path, label in tasks:
+            for done, (case_id, mask_path, label) in enumerate(tasks, start=1):
                 data, stage_samples = _build_case(
                     case_id,
                     mask_path,
@@ -526,17 +534,18 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     node_features=self._node_features,
                 )
                 self._timings.merge(stage_samples)
-                results.append((case_id, data))
-            return results
+                logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
+                yield case_id, data
+            return
 
         logging.info(
             "GNN build: building %d case(s) across %d worker process(es)",
-            len(tasks),
+            total,
             self._num_workers,
         )
-        results = []
+        done = 0
         with ProcessPoolExecutor(max_workers=self._num_workers) as executor:
-            for batch_start in range(0, len(tasks), self._num_workers):
+            for batch_start in range(0, total, self._num_workers):
                 batch = tasks[batch_start : batch_start + self._num_workers]
                 futures = [
                     executor.submit(
@@ -552,8 +561,9 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 for (case_id, _, _), future in zip(batch, futures, strict=True):
                     data, stage_samples = future.result()
                     self._timings.merge(stage_samples)
-                    results.append((case_id, data))
-        return results
+                    done += 1
+                    logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
+                    yield case_id, data
 
     def _write_dropped_manifest(self, dropped: list[str], num_discovered: int) -> None:
         """Persist dropped-case bookkeeping so cache hits can re-surface it."""
