@@ -52,9 +52,7 @@ def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
     nii_files = []
 
     # Get all case directories
-    patient_dirs = [
-        d for d in os.listdir(images_dir) if (Path(images_dir) / d).is_dir()
-    ]
+    patient_dirs = [d.name for d in Path(images_dir).iterdir() if d.is_dir()]
 
     for case_id in patient_dirs:
         patient_path = Path(images_dir) / case_id

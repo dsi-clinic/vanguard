@@ -197,6 +197,7 @@ DUKE_001_0001_with_mask.png
 .runtime/
 .claude/commands/
 .logs/
+agents.local.md
 
 # Local tooling / one-off venvs (issue #119)
 .venv_issue119/
@@ -207,3 +208,11 @@ _pip119/
 results/deepsets/
 analysis/deepsets_issue119/figures/
 analysis/issue121_figures/*.png
+sample_data/mri_images/
+sample_data/expert_tumors/
+repomix-output.xml
+gmon.out
+HANDOFF_2026-06-29.md
+.claude/
+CLAUDE.md
+/lab_notebook.md
