@@ -5,13 +5,18 @@ GNN track instead needs the **raw graph** -- one node per skeleton voxel, edges
 between 26-connected voxels -- delivered as :class:`torch_geometric.data.Data`
 objects. This module walks a saved centerline output tree, rebuilds each case's
 graph with the existing ``graph_extraction`` primitives, attaches node features
-(peak-contrast time, local radius), and collates everything into an
+(DCE enhancement kinetics, local radius), and collates everything into an
 :class:`~torch_geometric.data.InMemoryDataset`.
 
 The heavy graph-building work is deliberately shared with the rest of the repo:
 we reuse ``mask_to_edges_bitmask``, ``edges_to_segments``, ``segments_to_graph``
 and ``obtain_radius_map`` so there is a single source of truth for how a skeleton
-mask becomes a graph.
+mask becomes a graph. Kinetic node features are sampled from the raw DCE-MRI
+series (via ``gnn.raw_dce``) and derived using the same enhancement-curve
+conventions as ``features/kinematic.py`` (baseline = timepoint 0, arrival via
+``graph_extraction.feature_stats._arrival_index_from_enhancement``) -- not from
+the vessel-segmentation probability maps, which are a model output rather than
+measured signal.
 """
 
 from __future__ import annotations
@@ -19,10 +24,13 @@ from __future__ import annotations
 import json
 import logging
 import statistics
+import subprocess
 import time
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import matplotlib
@@ -37,9 +45,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from config import DEFAULT_CONFIG
+from gnn.raw_dce import discover_raw_dce_paths, load_raw_dce_series
 from graph_extraction.constants import NDIM_3D
-from graph_extraction.core4d import load_time_series_from_files
-from graph_extraction.feature_stats import mask_to_edges_bitmask
+from graph_extraction.feature_stats import (
+    _arrival_index_from_enhancement,
+    mask_to_edges_bitmask,
+)
 from graph_extraction.skeleton_to_graph_primitives import (
     edges_to_segments,
     obtain_radius_map,
@@ -58,8 +69,16 @@ _CENTERLINE_SUFFIX: str = _CENTERLINE_PATTERN.replace("{case_id}", "", 1)
 _RUN_SUMMARY_NAME = "run_summary.json"
 _SINGLE_TIMEPOINT = 1
 _DROPPED_MANIFEST_NAME = "dropped_cases.json"
+_CACHE_MANIFEST_NAME = "cache_manifest.json"
 _FEATURE_SUMMARY_DIRNAME = "feature_summary"
 _HIST_BINS = 50
+
+# The only node-feature source implemented today (see module docstring): raw
+# DCE-MRI signal, not the vessel-segmentation probability maps. Recorded in
+# every cache_manifest.json so a manifest from before this migration -- or a
+# hypothetical future vessel_segmentation-sourced build -- is never silently
+# treated as compatible with the current code.
+_FEATURE_SOURCE = "raw_dce"
 
 # Maps a requested node-feature name to the per-node ``Data`` attribute used to
 # populate the corresponding column of ``data.x``.
@@ -73,6 +92,10 @@ _HIST_BINS = 50
 # hardcoded default, and must never be used for real modeling.
 _FEATURE_ATTR: dict[str, str] = {
     "peak_time": "peak_time_norm",
+    "peak_enhancement": "peak_enhancement",
+    "time_to_enhancement": "time_to_enhancement_norm",
+    "washin_slope": "washin_slope",
+    "auc_positive": "auc_positive",
     "radius": "radius",
     "pcr_dummy": "pcr_dummy",
 }
@@ -122,53 +145,132 @@ def _stage_timer(stage_samples: dict[str, list[float]], stage: str) -> Iterator[
         stage_samples.setdefault(stage, []).append(time.perf_counter() - started)
 
 
-def _resolve_timepoint_paths(case_id: str, study_dir: Path) -> list[Path]:
-    """Return timepoint paths from ``run_summary.json["study_files"]``.
+def _git_commit() -> str:
+    """Return the current HEAD commit hash, for cache-manifest provenance."""
+    result = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", "HEAD"],  # noqa: S607
+        cwd=Path(__file__).resolve().parent.parent,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _load_study_timepoints(case_id: str, study_dir: Path) -> list[int]:
+    """Return the timepoint indices from ``run_summary.json["study_timepoints"]``.
+
+    These are the ``NNNN`` indices used to name both the vessel-segmentation
+    NPZ files and the raw DCE NIfTI phases (``<case_id>_NNNN.nii.gz``), so they
+    are what resolves the raw DCE series for this case.
 
     Raises ``FileNotFoundError`` if the summary is missing, ``KeyError`` if
-    ``study_files`` is absent or empty, and propagates ``json.JSONDecodeError``
-    if the file is malformed.
+    ``study_timepoints`` is absent or empty, and propagates
+    ``json.JSONDecodeError`` if the file is malformed.
     """
     summary_path = study_dir / _RUN_SUMMARY_NAME
     if not summary_path.exists():
         raise FileNotFoundError(
-            f"case={case_id}: {summary_path} not found; " "run_summary.json is required"
+            f"case={case_id}: {summary_path} not found; run_summary.json is required"
         )
     summary = json.loads(summary_path.read_text())
-    study_files = summary.get("study_files")
-    if not study_files:
+    study_timepoints = summary.get("study_timepoints")
+    if not study_timepoints:
         raise KeyError(
-            f"case={case_id}: run_summary.json missing or empty 'study_files' key"
+            f"case={case_id}: run_summary.json missing or empty 'study_timepoints' key"
         )
-    return [Path(p) for p in study_files]
+    return [int(t) for t in study_timepoints]
+
+
+def _time_axis_from_study_timepoints(study_timepoints: list[int]) -> np.ndarray:
+    """Build a strictly increasing time axis, mirroring ``features.kinematic``.
+
+    Falls back to plain timepoint indices (``0..T-1``) if the recorded
+    timepoints are not finite and strictly increasing.
+    """
+    time_axis = np.asarray(study_timepoints, dtype=float)
+    if not np.all(np.isfinite(time_axis)) or np.any(np.diff(time_axis) <= 0.0):
+        return np.arange(len(study_timepoints), dtype=float)
+    return time_axis
+
+
+def _node_kinetic_features(
+    curve: np.ndarray, time_axis: np.ndarray
+) -> dict[str, object]:
+    """Derive enhancement-curve features for one node's raw DCE signal.
+
+    Mirrors the per-segment convention in
+    ``features.kinematic.compute_tumor_kinematic_feature_payload``: baseline is
+    the timepoint-0 value (no per-timepoint normalization, which would destroy
+    the kinetic meaning of the curve), arrival is estimated with
+    ``graph_extraction.feature_stats._arrival_index_from_enhancement``, and
+    washin/AUC use the same formulas.
+
+    ``tte_idx`` is ``None`` when the node shows no meaningful enhancement
+    (peak <= 0) -- a real "no signal" voxel, not a bug -- and the caller is
+    responsible for choosing a sentinel for the tensor-facing feature.
+    """
+    baseline = float(curve[0])
+    enh = np.asarray(curve, dtype=float) - baseline
+    peak_idx = int(np.argmax(enh))
+    peak_enhancement = float(enh[peak_idx])
+    tte_idx = _arrival_index_from_enhancement(enh)
+    start_idx = 0 if tte_idx is None else int(tte_idx)
+    washin_den = float(time_axis[peak_idx] - time_axis[start_idx])
+    washin_slope = (
+        float((enh[peak_idx] - enh[start_idx]) / washin_den)
+        if washin_den > 0.0
+        else 0.0
+    )
+    auc_positive = float(np.trapz(np.maximum(enh, 0.0), x=time_axis))
+    return {
+        "peak_idx": peak_idx,
+        "peak_enhancement": peak_enhancement,
+        "tte_idx": tte_idx,
+        "washin_slope": washin_slope,
+        "auc_positive": auc_positive,
+    }
 
 
 def _attach_node_features(
     graph: nx.Graph,
     radius_map: dict[tuple[int, int, int], float],
-    signal_4d: np.ndarray,
+    dce_4d: np.ndarray,
+    time_axis: np.ndarray,
     label: int,
     node_features: tuple[str, ...],
 ) -> None:
-    """Set ``radius``, ``peak_time`` and ``peak_time_norm`` on every node.
+    """Set ``radius`` and the DCE-derived kinetic features on every node.
+
+    ``time_to_enhancement_norm`` is ``NaN`` for nodes with no detected arrival
+    (no meaningful enhancement) -- this is caught and reported per-feature by
+    ``_write_feature_summary``'s NaN/inf audit rather than silently defaulted.
 
     ``pcr_dummy`` (the label broadcast onto every node) is only computed and
     attached when it is present in ``node_features`` -- it is a leakage
     canary for pipeline sanity checks, not a default feature, so it must stay
     opt-in rather than something every graph carries.
     """
-    num_timepoints = int(signal_4d.shape[0])
+    num_timepoints = int(dce_4d.shape[0])
     denom = max(num_timepoints - 1, _SINGLE_TIMEPOINT)
-    baseline = signal_4d[0]
     include_pcr_dummy = "pcr_dummy" in node_features
     for node in graph.nodes():
         x, y, z = int(node[0]), int(node[1]), int(node[2])
-        enhancement = signal_4d[:, z, y, x] - baseline[z, y, x]
-        peak_idx = int(np.argmax(enhancement))
+        curve = dce_4d[:, z, y, x]
+        kinetic = _node_kinetic_features(curve, time_axis)
+        tte_idx = kinetic["tte_idx"]
+
         attrs = graph.nodes[node]
         attrs["radius"] = float(radius_map[node])
-        attrs["peak_time"] = peak_idx
-        attrs["peak_time_norm"] = float(peak_idx) / float(denom)
+        attrs["peak_time"] = int(kinetic["peak_idx"])
+        attrs["peak_time_norm"] = float(kinetic["peak_idx"]) / float(denom)
+        attrs["peak_enhancement"] = float(kinetic["peak_enhancement"])
+        attrs["time_to_enhancement"] = -1 if tte_idx is None else int(tte_idx)
+        attrs["time_to_enhancement_norm"] = (
+            float("nan") if tte_idx is None else float(tte_idx) / float(denom)
+        )
+        attrs["washin_slope"] = float(kinetic["washin_slope"])
+        attrs["auc_positive"] = float(kinetic["auc_positive"])
         if include_pcr_dummy:
             attrs["pcr_dummy"] = float(label)
 
@@ -202,6 +304,7 @@ def _build_case(
     label: int,
     *,
     centerline_root: Path,
+    dce_root: Path,
     node_features: tuple[str, ...],
 ) -> tuple[Data, dict[str, list[float]]]:
     """Build one labeled :class:`Data` graph for ``case_id``.
@@ -241,13 +344,22 @@ def _build_case(
 
     radius_map = obtain_radius_map(support, graph)
 
-    paths = _resolve_timepoint_paths(case_id, study_dir)
+    study_timepoints = _load_study_timepoints(case_id, study_dir)
     with _stage_timer(stage_samples, "timeseries_load"):
-        signal_4d = load_time_series_from_files(paths)
-    num_timepoints = int(signal_4d.shape[0])
+        dce_paths = discover_raw_dce_paths(dce_root, case_id, study_timepoints)
+        dce_4d = load_raw_dce_series(dce_paths, expected_shape_zyx=support.shape)
+    if dce_4d.shape[1:] != support.shape:
+        raise ValueError(
+            f"Aligned raw DCE shape for {case_id} {dce_4d.shape[1:]} does not "
+            f"match support mask shape {support.shape}"
+        )
+    num_timepoints = int(dce_4d.shape[0])
+    time_axis = _time_axis_from_study_timepoints(study_timepoints)
 
     with _stage_timer(stage_samples, "peak_time"):
-        _attach_node_features(graph, radius_map, signal_4d, label, node_features)
+        _attach_node_features(
+            graph, radius_map, dce_4d, time_axis, label, node_features
+        )
 
     with _stage_timer(stage_samples, "from_networkx"):
         data = from_networkx(graph)
@@ -273,11 +385,22 @@ class VanguardCenterlineDataset(InMemoryDataset):
     segments, shape mismatch, ...) still raises immediately -- that is a data
     problem, not an expected missing-label case.
 
+    A fresh build also writes ``processed/cache_manifest.json`` recording the
+    settings that determine the cached graphs' content (roots, labels, node
+    features, feature source, ...), plus the code commit, graph count, label
+    counts, and build timestamp. Every later load compares the requested
+    settings against this manifest and raises ``RuntimeError`` on a mismatch
+    (see ``allow_manifest_mismatch``), so a stale cache built under different
+    settings can never be silently reused.
+
     Args:
         root: The centerline ``studies`` tree containing per-case output
             directories with ``*_skeleton_4d_exam_mask.npy`` files.
         labels_path: CSV/JSON labels file passed to
             :func:`tabular.cohort.load_labels`.
+        dce_root: Root of the raw DCE-MRI NIfTI tree
+            (``<dce_root>/<case_id>/<case_id>_NNNN.nii.gz``), used to compute the
+            DCE-derived kinetic node features (see ``gnn.raw_dce``).
         cache_dir: Where the collated ``processed/`` cache is written. Defaults
             to ``<root>/gnn_cache`` so the source tree can stay read-only when an
             explicit path is given.
@@ -287,10 +410,16 @@ class VanguardCenterlineDataset(InMemoryDataset):
         node_mode: Node granularity. Only ``"voxel"`` is implemented; ``"segment"``
             raises :class:`NotImplementedError` as an explicit extension point.
         node_features: Node-feature names, in ``data.x`` column order. Supported:
-            ``"peak_time"`` (normalized peak-contrast time), ``"radius"``, and
-            ``"pcr_dummy"`` (the graph's ``pcr`` label broadcast onto every
-            node -- a leakage-canary feature for pipeline sanity checks only;
-            opt-in, never included unless named explicitly here).
+            ``"peak_time"`` (normalized time-to-peak enhancement),
+            ``"peak_enhancement"``, ``"time_to_enhancement"`` (normalized arrival
+            time; ``NaN`` for nodes with no detected enhancement), ``"washin_slope"``,
+            ``"auc_positive"``, ``"radius"``, and ``"pcr_dummy"`` (the graph's ``pcr``
+            label broadcast onto every node -- a leakage-canary feature for pipeline
+            sanity checks only; opt-in, never included unless named explicitly here).
+            The kinetic features are all sampled from the raw DCE enhancement curve
+            (``curve = dce_4d[:, z, y, x]``, ``enhancement = curve - curve[0]``), using
+            the same conventions as ``features/kinematic.py`` -- see
+            ``_node_kinetic_features``.
         id_column: Case-ID column in the labels file.
         label_column: Binary label column in the labels file.
         max_missing_label_frac: Maximum fraction of discovered cases allowed to
@@ -303,6 +432,15 @@ class VanguardCenterlineDataset(InMemoryDataset):
             cases are built independently). Default 1 (sequential -- safe to
             run on a login node); pass more to match allocated Slurm CPUs for
             a full cluster build.
+        allow_manifest_mismatch: A fresh build always writes
+            ``processed/cache_manifest.json`` recording the settings that
+            determine the cached graphs' content (roots, labels, node
+            features, ...); every later load compares the requested settings
+            against it and raises ``RuntimeError`` on a mismatch, so a config
+            change can never be silently served from a stale cache built
+            under different settings. Set this to ``True`` to explicitly
+            override that check (e.g. you know the mismatch is benign) --
+            never use it to paper over an unexplained mismatch.
     """
 
     def __init__(
@@ -310,6 +448,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         root: str | Path,
         *,
         labels_path: str | Path,
+        dce_root: str | Path,
         cache_dir: str | Path | None = None,
         cases: Sequence[str] | None = None,
         no_cache: bool = False,
@@ -320,11 +459,17 @@ class VanguardCenterlineDataset(InMemoryDataset):
         max_missing_label_frac: float = 0.1,
         profile: bool = False,
         num_workers: int = 1,
+        allow_manifest_mismatch: bool = False,
         transform: object = None,
         pre_transform: object = None,
     ) -> None:
         if labels_path is None:
             raise ValueError("labels_path is required; every graph must carry a label.")
+        if dce_root is None:
+            raise ValueError(
+                "dce_root is required; kinetic node features are sampled from the "
+                "raw DCE series, not the vessel-segmentation NPZ timepoints."
+            )
         if node_mode != "voxel":
             raise NotImplementedError(
                 f"node_mode={node_mode!r} is not implemented yet; use 'voxel'."
@@ -343,6 +488,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
 
         self._centerline_root = Path(root)
         self._labels_path = Path(labels_path)
+        self._dce_root = Path(dce_root)
         self._cases = set(cases) if cases is not None else None
         self._no_cache = no_cache
         self._data_list_cache: list[Data] | None = None
@@ -353,6 +499,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._max_missing_label_frac = max_missing_label_frac
         self._profile = profile
         self._num_workers = num_workers
+        self._allow_manifest_mismatch = allow_manifest_mismatch
         self._timings = _StageTimings()
         self.dropped_case_ids: list[str] = []
 
@@ -401,6 +548,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 raise RuntimeError("no_cache=True but process() has not run yet")
             self.data, self.slices = self.collate(self._data_list_cache)
         else:
+            self._check_cache_manifest()
             self.data, self.slices = torch.load(self.processed_paths[0])
             self._reload_dropped_manifest()
 
@@ -428,6 +576,85 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 manifest["labels_path"],
                 self.dropped_case_ids,
             )
+
+    def _manifest_settings(self) -> dict[str, object]:
+        """Settings that determine what the cached graphs actually contain.
+
+        This is the single source of truth for both writing
+        ``cache_manifest.json`` on a fresh build and validating it on every
+        later load -- see ``_write_cache_manifest`` / ``_check_cache_manifest``.
+        Execution-only knobs (``num_workers``, ``profile``,
+        ``max_missing_label_frac``) are deliberately excluded: they don't
+        change what ends up in the cache, only how it's built.
+        """
+        return {
+            "centerline_root": str(self._centerline_root),
+            "dce_root": str(self._dce_root),
+            "labels_path": str(self._labels_path),
+            "id_column": self._id_column,
+            "label_column": self._label_column,
+            "cases": sorted(self._cases) if self._cases is not None else None,
+            "node_mode": self._node_mode,
+            "node_features": list(self._node_features),
+            "feature_source": _FEATURE_SOURCE,
+        }
+
+    def _check_cache_manifest(self) -> None:
+        """Fail loudly if an on-disk cache was built under different settings.
+
+        Without this, a stale cache (different centerline root, labels,
+        node features, ...) could be silently reused just because
+        ``processed/data.pt`` happens to exist at ``cache_dir`` -- see the
+        code-review item this implements. Raises if the manifest is missing
+        (a cache built before this check existed) or if any recorded setting
+        differs from what's currently requested, unless
+        ``allow_manifest_mismatch=True`` was passed.
+        """
+        manifest_path = Path(self.processed_dir) / _CACHE_MANIFEST_NAME
+        if not manifest_path.exists():
+            raise RuntimeError(
+                f"Cache at {self.processed_dir} has no {_CACHE_MANIFEST_NAME} "
+                "(built before cache-manifest tracking was added). Its "
+                "settings can't be verified. Rebuild the cache (e.g. "
+                "--force-rebuild in gnn/build_dataset.py) so a manifest is "
+                "recorded, or pass allow_manifest_mismatch=True to bypass "
+                "this check."
+            )
+        manifest = json.loads(manifest_path.read_text())
+        requested = self._manifest_settings()
+        mismatched = {
+            key: {"cached": manifest.get(key), "requested": value}
+            for key, value in requested.items()
+            if manifest.get(key) != value
+        }
+        if mismatched and not self._allow_manifest_mismatch:
+            raise RuntimeError(
+                f"Cache at {self.processed_dir} was built with different "
+                f"settings than requested, so it may not reflect the data/"
+                f"features you asked for: {json.dumps(mismatched, indent=2)}. "
+                "Point at a different cache_dir, rebuild (--force-rebuild), "
+                "or pass allow_manifest_mismatch=True to explicitly override."
+            )
+
+    def _write_cache_manifest(self, data_list: list[Data]) -> None:
+        """Persist the settings, code commit, and summary stats for a fresh build.
+
+        Written once per cache build (never on a cache hit) so every later
+        load of this cache has something to validate itself against -- see
+        ``_check_cache_manifest``.
+        """
+        if self._no_cache:
+            return
+        label_counts = Counter(int(data.y.item()) for data in data_list)
+        manifest = {
+            **self._manifest_settings(),
+            "code_commit": _git_commit(),
+            "num_graphs": len(data_list),
+            "label_counts": {str(k): v for k, v in sorted(label_counts.items())},
+            "built_at": datetime.now(timezone.utc).isoformat(),
+        }
+        manifest_path = Path(self.processed_dir) / _CACHE_MANIFEST_NAME
+        manifest_path.write_text(json.dumps(manifest, indent=2))
 
     def _save_processed(self, data_list: list[Data]) -> None:
         """Persist the collated dataset, or keep in memory when no_cache=True."""
@@ -468,8 +695,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         if dropped:
             dropped_frac = len(dropped) / len(discovered)
             logging.warning(
-                "GNN build: dropped %d/%d case(s) (%.1f%%) with no %r label in "
-                "%s: %s",
+                "GNN build: dropped %d/%d case(s) (%.1f%%) with no %r label in %s: %s",
                 len(dropped),
                 len(discovered),
                 dropped_frac * 100,
@@ -493,6 +719,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
             )
 
         self._write_feature_summary(data_list)
+        self._write_cache_manifest(data_list)
         self._save_processed(data_list)
 
         logging.info(
@@ -531,6 +758,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     mask_path,
                     label,
                     centerline_root=self._centerline_root,
+                    dce_root=self._dce_root,
                     node_features=self._node_features,
                 )
                 self._timings.merge(stage_samples)
@@ -554,6 +782,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                         mask_path,
                         label,
                         centerline_root=self._centerline_root,
+                        dce_root=self._dce_root,
                         node_features=self._node_features,
                     )
                     for case_id, mask_path, label in batch

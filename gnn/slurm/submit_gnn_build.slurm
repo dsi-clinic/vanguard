@@ -17,6 +17,7 @@
 #   sbatch gnn/slurm/submit_gnn_build.slurm
 #   CACHE_DIR=/gpfs/.../my_cache sbatch gnn/slurm/submit_gnn_build.slurm
 #   FORCE_REBUILD=1 sbatch gnn/slurm/submit_gnn_build.slurm  # archive + rebuild
+#   ALLOW_MANIFEST_MISMATCH=1 sbatch gnn/slurm/submit_gnn_build.slurm  # bypass cache_manifest.json check
 #
 # All variables below default to the real cluster paths from CLAUDE.md and
 # can be overridden via environment (see gnn/build_dataset.py --help for
@@ -42,6 +43,7 @@ set -u
 export PYTHONUNBUFFERED=1
 
 ROOT="${ROOT:-/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies}"
+DCE_ROOT="${DCE_ROOT:-/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images}"
 LABELS_PATH="${LABELS_PATH:-/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv}"
 CACHE_DIR="${CACHE_DIR:-/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache}"
 ID_COLUMN="${ID_COLUMN:-case_id}"
@@ -55,6 +57,7 @@ mkdir -p "${CACHE_DIR}"
 ARGS=(
   python -u gnn/build_dataset.py
   --root "${ROOT}"
+  --dce-root "${DCE_ROOT}"
   --labels-path "${LABELS_PATH}"
   --cache-dir "${CACHE_DIR}"
   --id-column "${ID_COLUMN}"
@@ -72,6 +75,9 @@ if [[ "${NO_CACHE:-0}" == "1" ]]; then
 fi
 if [[ "${FORCE_REBUILD:-0}" == "1" ]]; then
   ARGS+=(--force-rebuild)
+fi
+if [[ "${ALLOW_MANIFEST_MISMATCH:-0}" == "1" ]]; then
+  ARGS+=(--allow-manifest-mismatch)
 fi
 
 "${ARGS[@]}"

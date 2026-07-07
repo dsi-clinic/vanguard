@@ -1,13 +1,10 @@
-"""K-fold training script for the GNN centerline classifier.
+"""Training script for the GNN centerline classifier.
 
 Builds one row per graph (case_id, label, dataset, site, graph_index, and an
 optional predefined fold column) from a cached ``VanguardCenterlineDataset``,
 then hands that cohort table to the shared ``evaluation`` framework
 (``evaluation.build_splits.create_splits_for_dataframe``) for splitting,
-metric aggregation, and output saving -- the same machinery ``tabular/train.py``
-and ``deepsets/train.py`` use, so results stay comparable across model
-families. This mirrors ``deepsets/train.py``'s per-fold training loop; see
-``gnn/README.md`` for the config schema and cohort-table contract.
+metric aggregation, and output saving. See ``gnn/README.md``.
 
 Usage::
 
@@ -323,6 +320,7 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
     dataset = VanguardCenterlineDataset(
         root=data_paths.gnn_centerline_root,
         labels_path=data_paths.gnn_labels_path,
+        dce_root=data_paths.gnn_dce_root,
         cache_dir=data_paths.gnn_cache_dir,
         cases=list(data_paths.gnn_cases) if data_paths.gnn_cases else None,
         node_features=tuple(params.gnn_node_features),

@@ -169,6 +169,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_label_column": "label",
         "vessel_segmentation_root": "",
         "gnn_centerline_root": "",
+        "gnn_dce_root": "",
         "gnn_labels_path": "",
         "gnn_cache_dir": "",
         "gnn_id_column": "case_id",

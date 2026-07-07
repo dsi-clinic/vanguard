@@ -24,6 +24,7 @@ _DEFAULT_ROOT = Path(
 _DEFAULT_LABELS_PATH = Path(
     "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
 )
+_DEFAULT_DCE_ROOT = Path("/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images")
 _DEFAULT_CACHE_DIR = Path(
     "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache"
 )
@@ -35,6 +36,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=_DEFAULT_ROOT)
     parser.add_argument("--labels-path", type=Path, default=_DEFAULT_LABELS_PATH)
+    parser.add_argument(
+        "--dce-root",
+        type=Path,
+        default=_DEFAULT_DCE_ROOT,
+        help="Root of the raw DCE-MRI NIfTI tree "
+        "(<dce-root>/<case_id>/<case_id>_NNNN.nii.gz), used for the kinetic "
+        "node features.",
+    )
     parser.add_argument(
         "--cache-dir",
         type=Path,
@@ -82,6 +91,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-profile",
         action="store_true",
         help="Disable per-stage timing logs (on by default for full builds).",
+    )
+    parser.add_argument(
+        "--allow-manifest-mismatch",
+        action="store_true",
+        help="Load an existing cache even if its cache_manifest.json records "
+        "different settings (root, labels, node features, ...) than "
+        "requested here, instead of failing loudly. Only use this once "
+        "you've confirmed the mismatch is benign.",
     )
     parser.add_argument(
         "--num-workers",
@@ -138,6 +155,7 @@ def main() -> None:
     dataset = VanguardCenterlineDataset(
         root=args.root,
         labels_path=args.labels_path,
+        dce_root=args.dce_root,
         cache_dir=args.cache_dir,
         cases=cases,
         no_cache=args.no_cache,
@@ -147,6 +165,7 @@ def main() -> None:
         max_missing_label_frac=args.max_missing_label_frac,
         profile=not args.no_profile,
         num_workers=args.num_workers,
+        allow_manifest_mismatch=args.allow_manifest_mismatch,
     )
     logging.info(
         "Dataset ready: %d graph(s) cached under %s (%d dropped for missing label)",
