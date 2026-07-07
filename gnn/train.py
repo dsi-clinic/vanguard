@@ -26,7 +26,7 @@ from torch import nn
 from torch_geometric.loader import DataLoader
 
 from evaluation import FoldResults
-from evaluation.build_splits import create_splits_for_dataframe
+from evaluation.build_splits import build_split_manifest, create_splits_for_dataframe
 from evaluation.kfold import FoldSplit
 from evaluation.metrics import compute_binary_metrics
 from evaluation.utils import prepare_predictions_df
@@ -70,7 +70,7 @@ def build_graph_cohort(
     id_column: str,
     fold_column: str,
 ) -> pd.DataFrame:
-    """One row per built graph: case_id, y, dataset, site, graph_index.
+    """One row per built graph: case_id, y, dataset, site, graph_index, num_nodes, num_edges.
 
     ``graph_index`` is the position of the graph in ``dataset`` -- splits
     computed over this dataframe's row order are translated back to actual
@@ -83,16 +83,20 @@ def build_graph_cohort(
     fold column that doesn't cover every case is a stale/mismatched labels
     file, not something to silently drop rows for.
     """
-    rows = [
-        {
-            "case_id": str(dataset[i].case_id),
-            "y": int(dataset[i].y.item()),
-            "dataset": dataset[i].dataset,
-            "site": dataset[i].site,
-            "graph_index": i,
-        }
-        for i in range(len(dataset))
-    ]
+    rows = []
+    for i in range(len(dataset)):
+        graph = dataset[i]
+        rows.append(
+            {
+                "case_id": str(graph.case_id),
+                "y": int(graph.y.item()),
+                "dataset": graph.dataset,
+                "site": graph.site,
+                "graph_index": i,
+                "num_nodes": int(graph.num_nodes),
+                "num_edges": int(graph.num_edges),
+            }
+        )
     cohort_df = pd.DataFrame(rows)
 
     if Path(labels_path).suffix.lower() == ".csv":
@@ -204,7 +208,16 @@ def build_fold_prediction_table(
     cohort_df: pd.DataFrame,
     stratum_col: str | None,
 ) -> pd.DataFrame:
-    """Build the evaluator-ready prediction table for one fold."""
+    """Build the evaluator-ready prediction table for one fold.
+
+    Adds dataset/site/pcr alongside the evaluator's standard case_id/y_true/
+    y_pred/y_prob/fold columns, so predictions.csv is enough on its own to
+    check whether the model is tracking biology (pcr), site effects, or
+    dataset effects without cross-referencing the cohort table. ``pcr`` is a
+    duplicate of ``y_true`` under the label's own name -- kept because
+    downstream evaluator code (metrics, plots) requires the "y_true" column
+    name, so it can't just be renamed.
+    """
     pred_df = prepare_predictions_df(
         case_ids=val_case_ids,
         y_true=y_true,
@@ -212,12 +225,14 @@ def build_fold_prediction_table(
         y_prob=y_prob,
         fold=fold_idx,
     )
+    cohort_by_case = cohort_df.set_index("case_id")
+    case_ids_str = pred_df["case_id"].astype(str)
+    pred_df["dataset"] = cohort_by_case.loc[case_ids_str, "dataset"].to_numpy()
+    pred_df["site"] = cohort_by_case.loc[case_ids_str, "site"].to_numpy()
+    pred_df["pcr"] = pred_df["y_true"]
     if stratum_col and stratum_col in cohort_df.columns:
         pred_df["stratum"] = (
-            cohort_df.set_index("case_id")
-            .loc[pred_df["case_id"].astype(str), stratum_col]
-            .astype(str)
-            .to_numpy()
+            cohort_by_case.loc[case_ids_str, stratum_col].astype(str).to_numpy()
         )
     return pred_df
 
@@ -365,6 +380,27 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
         model_name=config.experiment_setup.name,
     )
 
+    model_dir = outdir / config.experiment_setup.name
+    model_dir.mkdir(parents=True, exist_ok=True)
+    manifest_columns = ["graph_index", "dataset", "site", "y", "num_nodes", "num_edges"]
+    split_manifest_df = build_split_manifest(
+        cohort_df, splits, columns=manifest_columns
+    )
+    split_manifest_df = split_manifest_df.rename(columns={"y": "pcr"})[
+        [
+            "case_id",
+            "graph_index",
+            "dataset",
+            "site",
+            "pcr",
+            "fold",
+            "train_or_val",
+            "num_nodes",
+            "num_edges",
+        ]
+    ]
+    split_manifest_df.to_csv(model_dir / "split_manifest.csv", index=False)
+
     fold_results: list[FoldResults] = []
     all_history_rows: list[dict[str, float]] = []
     for split in splits:
@@ -386,8 +422,6 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
     kfold_results = evaluator.aggregate_kfold_results(fold_results)
     evaluator.save_results(kfold_results, outdir)
 
-    model_dir = outdir / config.experiment_setup.name
-    model_dir.mkdir(parents=True, exist_ok=True)
     history_df = pd.DataFrame(all_history_rows)
     history_df.to_csv(model_dir / "loss_history.csv", index=False)
     _plot_metric_history(history_df, "loss", model_dir / "loss_by_epoch.png")

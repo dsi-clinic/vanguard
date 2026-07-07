@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -99,3 +100,33 @@ def create_splits_for_dataframe(
             )
 
     return evaluator, splits, str(stratum_col) if stratum_col else None
+
+
+def build_split_manifest(
+    cohort_df: pd.DataFrame,
+    splits: list[FoldSplit],
+    *,
+    id_col: str = "case_id",
+    columns: Sequence[str] = (),
+) -> pd.DataFrame:
+    """One row per (case, fold): case_id + selected cohort_df columns, fold, train_or_val.
+
+    ``columns`` lets each model family choose which cohort_df columns to carry
+    through (e.g. dataset, site, pcr, num_nodes, num_edges for the GNN track)
+    so the manifest stays generic across model families while still recording
+    per-track detail. Every case appears once per fold: "val" in the fold
+    where it's held out, "train" in every other fold -- so this intentionally
+    records more than predictions.csv (which is val-only).
+    """
+    keep_cols = [id_col, *columns]
+    parts = []
+    for split in splits:
+        train_rows = cohort_df.iloc[split.train_indices][keep_cols].copy()
+        train_rows["fold"] = split.fold_idx
+        train_rows["train_or_val"] = "train"
+        val_rows = cohort_df.iloc[split.val_indices][keep_cols].copy()
+        val_rows["fold"] = split.fold_idx
+        val_rows["train_or_val"] = "val"
+        parts.append(train_rows)
+        parts.append(val_rows)
+    return pd.concat(parts, ignore_index=True)
