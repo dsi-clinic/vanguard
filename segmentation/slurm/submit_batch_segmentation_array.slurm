@@ -35,7 +35,13 @@ export CUDA_VISIBLE_DEVICES=0
 export PYTHONUNBUFFERED=1
 
 # --- Configuration ---
-PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+# PROJECT_ROOT must be passed in explicitly (submit_batch_segmentation_array.sh
+# does this). It is NOT derived from $SLURM_SUBMIT_DIR (that's the caller's cwd
+# at submission time, not this script's location -- wrong if you `cd
+# segmentation/slurm` first, per the documented entry point) or from
+# ${BASH_SOURCE[0]} (sbatch may run a spooled copy of this script, so its path
+# is not reliably this repo checkout).
+PROJECT_ROOT="${PROJECT_ROOT:?PROJECT_ROOT must be set (submit via submit_batch_segmentation_array.sh, or pass PROJECT_ROOT=/path/to/vanguard explicitly)}"
 IMAGES_DIR="${IMAGES_DIR:-/net/projects2/vanguard/MAMA-MIA-syn60868042/images}"
 OUTPUT_DIR="${OUTPUT_DIR:-/net/projects2/vanguard/vessel_segmentations}"
 BREAST_MODEL="${BREAST_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/breast_model.pth}"
