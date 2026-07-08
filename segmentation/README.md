@@ -4,12 +4,41 @@ This directory contains the vessel-segmentation stage that runs before graph ext
 
 The goal of this stage is simple: starting from breast MRI volumes, produce vessel segmentation masks that can be passed to the graph-extraction pipeline.
 
+Inference itself (the model forward passes) lives in the pinned
+`vanguard-blood-vessel-segmentation` submodule and is not modified here. This
+directory is the wrapper/orchestration layer: file discovery, preprocessing,
+batching, output layout, and Slurm submission.
+
+`batch_segmentation.py` runs breast (STEP-2) and vessel (STEP-3) inference
+**in-process** (each model loaded once, kept on the GPU) with **batched**,
+**AMP** inference and **parallel** STEP-1 preprocessing. It replaced an earlier
+subprocess-per-file implementation that shelled out to the submodule's
+`predict.py` twice per file; that implementation was validated against this
+one (16.15x mean speedup, Dice 0.9998-1.0 on a 7-file sample — see
+`validation_results.md`) before being removed.
+
 ## Contents
 
 - `batch_segmentation.py`
-  - batch wrapper around the segmentation models
+  - the batch-segmentation driver: discovery, parallel preprocessing,
+    in-process batched inference, output layout
+- `predict_fast.py`
+  - batched + AMP inference functions used by `batch_segmentation.py`
 - `qa_pipeline_status.py`
   - lightweight status utility for checking progress
+- `validate_outputs.py`
+  - ongoing QC: compares pipeline outputs against a ground-truth run (Dice,
+    probability diffs)
+- `validate_speed_and_accuracy.py`
+  - **frozen/historical** — produced the numbers in `validation_results.md` by
+    comparing this pipeline against the now-removed old subprocess pipeline;
+    kept as a record of methodology, not expected to run
+- `validation_results.md`
+  - the recorded speedup/accuracy validation (16.15x, Dice 0.9998-1.0)
+- `tests/`
+  - CPU-safe correctness tests (`test_batching_equiv.py`,
+    `test_preprocess_parallel.py`) proving the batched/parallel paths are
+    bit-identical to naive reference implementations
 - `slurm/`
   - colocated Slurm scripts for cohort submission
 

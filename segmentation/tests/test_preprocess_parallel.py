@@ -1,11 +1,11 @@
 """CPU test: parallel STEP-1 preprocessing == serial preprocessing.
 
-Creates tiny synthetic .nii.gz inputs, runs `batch_segmentation_fast.preprocess_parallel`
+Creates tiny synthetic .nii.gz inputs, runs `batch_segmentation.preprocess_parallel`
 across a thread pool, and checks every output .npy is bit-identical to a serial
 `preprocess_image` run. Verifies the ThreadPoolExecutor wiring is correct and
 order-independent. Tiny data, CPU only — safe for the login node.
 
-Run:  python faster-segmentation-test/tests/test_preprocess_parallel.py
+Run:  python segmentation/tests/test_preprocess_parallel.py
 """
 
 import sys
@@ -18,8 +18,11 @@ import SimpleITK as sitk
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-import batch_segmentation_fast as bsf  # noqa: E402
-from batch_segmentation import find_nii_files, preprocess_image  # noqa: E402
+from batch_segmentation import (  # noqa: E402
+    find_nii_files,
+    preprocess_image,
+    preprocess_parallel,
+)
 
 
 def main() -> int:
@@ -47,7 +50,7 @@ def main() -> int:
         # Parallel (the feature under test)
         par_dir = tmp / "par"
         par_dir.mkdir()
-        base_to_case, failed = bsf.preprocess_parallel(files, par_dir, workers=3)
+        base_to_case, failed = preprocess_parallel(files, par_dir, workers=3)
 
         # Serial reference
         ser_dir = tmp / "ser"
