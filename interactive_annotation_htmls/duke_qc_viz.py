@@ -29,6 +29,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 os.environ["MPLBACKEND"] = "Agg"  # matplotlib without any display
 import matplotlib.pyplot as plt
@@ -38,41 +39,48 @@ import SimpleITK as sitk
 from scipy.spatial import cKDTree
 
 # ---- configurable locations ------------------------------------------------
-# Every path below can be overridden with an environment variable, so anyone who
-# pulls this repo can point the scripts at their own data/output locations
-# WITHOUT editing code. The defaults target the karczmar-lab cluster layout.
-# See this directory's README.md for how to download the Duke annotation data
-# and which variables to set.
+# No data path is hardcoded to a personal workspace. Inputs that live only on
+# our private cluster (and differ per user) are REQUIRED environment variables:
+# the scripts fail fast with a clear message if one is unset, instead of silently
+# pointing at a directory that does not exist for whoever cloned the repo. Shared
+# data and output locations keep sensible defaults. Copy duke_qc.env.example to
+# duke_qc.env, fill it in, and `source` it. See this directory's README.md.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _expand(value):
+    """Expand ~ and $VARS in a path string."""
+    return os.path.expandvars(os.path.expanduser(value))
+
+
 def _env_path(var, default):
-    """Return $var if set (with ~ and $VARS expanded), else the given default."""
-    return os.path.expandvars(os.path.expanduser(os.environ.get(var, default)))
+    """Return $var if set (expanded), else the given default (also expanded)."""
+    return _expand(os.environ.get(var, default))
 
 
-# Radiologist vessel annotations (Duke supplement NRRDs, downloaded from TCIA -- see README).
-ANN_ROOT = _env_path(
-    "DUKE_ANN_ROOT",
-    os.path.join(
-        REPO_ROOT,
-        "data",
-        "duke_vessel_annotations",
-        "PKG - Duke-Breast-Cancer-MRI-Supplement-v3",
-        "Duke-Breast-Cancer-MRI-Supplement-v3",
-        "Segmentation_Masks_NRRD",
-    ),
+def _require_env(var, hint):
+    """Return $var (expanded), or exit with a clear message if it is not set."""
+    value = os.environ.get(var)
+    if not value:
+        raise SystemExit(
+            f"[config] Environment variable ${var} is not set — {hint}.\n"
+            f"          Set it (or copy duke_qc.env.example -> duke_qc.env, fill it "
+            f"in, and `source` it). See interactive_annotation_htmls/README.md."
+        )
+    return _expand(value)
+
+
+# --- required inputs (private to our cluster, differ per user) ---
+# Radiologist vessel annotations (Duke supplement NRRDs, downloaded from TCIA).
+ANN_ROOT = _require_env(
+    "DUKE_ANN_ROOT", "the Duke supplement Segmentation_Masks_NRRD directory"
 )
 # Our vessel-probability segmentations (pipeline output).
-SEG_ROOT = _env_path(
-    "DUKE_SEG_ROOT",
-    "/gpfs/data/karczmar-lab/workspaces/saritbose/vessel_segmentations/DUKE",
-)
+SEG_ROOT = _require_env("DUKE_SEG_ROOT", "your vessel-segmentation output directory")
 # Our extracted centerlines / skeletons (pipeline output).
-CL_ROOT = _env_path(
-    "DUKE_CL_ROOT",
-    "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies/DUKE",
-)
+CL_ROOT = _require_env("DUKE_CL_ROOT", "your centerline/skeleton output directory")
+
+# --- shared / output locations (sensible defaults, still overridable) ---
 # MAMA-MIA source NIfTI images (shared team data; supplies the physical grid).
 NII_ROOT = _env_path(
     "MAMA_MIA_IMAGES", "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
@@ -141,11 +149,11 @@ def load_vessel_gt(case_id, ref):
 
 def load_seg_max(case_id):
     """Max vessel probability across the 4 DCE timepoints. Returns raw (512,512,142)."""
-    imdir = os.path.join(SEG_ROOT, case_id, "images")
-    tps = sorted(f for f in os.listdir(imdir) if f.endswith("_vessel_segmentation.npz"))
+    imdir = Path(SEG_ROOT) / case_id / "images"
+    tps = sorted(imdir.glob("*_vessel_segmentation.npz"))
     acc = None
     for f in tps:
-        v = np.load(os.path.join(imdir, f))["vessel"].astype(np.float32)
+        v = np.load(f)["vessel"].astype(np.float32)
         acc = v if acc is None else np.maximum(acc, v)
     return acc
 

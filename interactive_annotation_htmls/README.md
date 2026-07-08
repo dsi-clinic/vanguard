@@ -24,22 +24,33 @@ any browser with no server (plotly.js is embedded).
 
 ## Inputs and how to configure them
 
-Nothing is hardcoded to a personal directory — every path is read from an
-environment variable, with cluster defaults. Override any of them by exporting
-the variable before running.
+Every path is read from an environment variable; none is hardcoded to a personal
+workspace.
 
-| Variable | Default | What it points to |
-| --- | --- | --- |
-| `DUKE_ANN_ROOT` | `<repo>/data/duke_vessel_annotations/PKG - Duke-Breast-Cancer-MRI-Supplement-v3/Duke-Breast-Cancer-MRI-Supplement-v3/Segmentation_Masks_NRRD` | Radiologist annotation NRRDs (download — see below). |
-| `MAMA_MIA_IMAGES` | `/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images` | MAMA-MIA source NIfTIs — supply the physical grid. |
-| `DUKE_SEG_ROOT` | `/gpfs/data/karczmar-lab/workspaces/saritbose/vessel_segmentations/DUKE` | Our vessel-probability segmentations (pipeline output). |
-| `DUKE_CL_ROOT` | `/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies/DUKE` | Our extracted skeletons (pipeline output). |
-| `DUKE_QC_INTERACTIVE_OUT` | this directory | Where the interactive HTMLs are written. |
-| `DUKE_QC_OUT` | `<repo>/interactive_annotation_htmls/phaseA_qc` | Phase-A output (distance arrays, histograms). |
+The three **required** inputs live only on our private cluster and differ per
+user, so there is no safe default — if one is unset the scripts exit immediately
+with a message naming the variable, rather than silently reading a directory that
+does not exist for whoever cloned the repo. Shared data and outputs keep defaults.
 
-> The `DUKE_SEG_ROOT` and `DUKE_CL_ROOT` defaults are one workspace's pipeline
-> outputs. On the cluster point them at your own workspace's segmentation and
-> centerline directories.
+| Variable | Required? | Default | What it points to |
+| --- | --- | --- | --- |
+| `DUKE_ANN_ROOT` | **yes** | — | Radiologist annotation NRRDs (download — see below). |
+| `DUKE_SEG_ROOT` | **yes** | — | Our vessel-probability segmentations (your pipeline output). |
+| `DUKE_CL_ROOT` | **yes** | — | Our extracted skeletons (your pipeline output). |
+| `MAMA_MIA_IMAGES` | no | `/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images` | MAMA-MIA source NIfTIs — supply the physical grid. |
+| `DUKE_QC_INTERACTIVE_OUT` | no | this directory | Where the interactive HTMLs are written. |
+| `DUKE_QC_OUT` | no | `<repo>/interactive_annotation_htmls/phaseA_qc` | Phase-A output (distance arrays, histograms). |
+
+The easiest way to set the required ones is the provided template:
+
+```bash
+cp interactive_annotation_htmls/duke_qc.env.example interactive_annotation_htmls/duke_qc.env
+# edit duke_qc.env with your paths, then:
+source interactive_annotation_htmls/duke_qc.env
+```
+
+`duke_qc.env` is gitignored (never commit real paths); `run_interactive.sbatch`
+sources it automatically if present.
 
 ## Downloading the Duke vessel annotations
 
@@ -69,7 +80,7 @@ on The Cancer Imaging Archive (TCIA), which ships per-case Slicer labelmaps
    export DUKE_ANN_ROOT="/path/to/PKG - Duke-Breast-Cancer-MRI-Supplement-v3/Duke-Breast-Cancer-MRI-Supplement-v3/Segmentation_Masks_NRRD"
    ```
 
-   or extract it into `<repo>/data/duke_vessel_annotations/` to match the default.
+   (or put it in your `duke_qc.env`).
 
 This download is large imaging data — keep it outside git (do **not** commit it).
 
