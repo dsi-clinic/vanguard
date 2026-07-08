@@ -208,7 +208,6 @@ _pip119/
 results/deepsets/
 analysis/deepsets_issue119/figures/
 analysis/issue121_figures/*.png
-<<<<<<< HEAD
 
 # Notes/Notebooks
 NOTES.md
@@ -227,3 +226,4 @@ repomix-output.xml
 gmon.out
 HANDOFF_2026-06-29.md
 
+/LAB_NOTEBOOK.md
