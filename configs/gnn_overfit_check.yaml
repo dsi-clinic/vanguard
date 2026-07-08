@@ -1,0 +1,38 @@
+# Overfit-capacity check for the GNN pipeline: same 8-case gnn_cache_smoke
+# cache as configs/gnn_smoke.yaml, but with dropout disabled, more capacity,
+# and enough epochs to see whether GCNClassifier can drive train error to ~0
+# on tiny data. This is a capacity/wiring sanity check (train_auc -> 1.0 is
+# the pass condition), not a generalization result -- val AUC on 8 cases is
+# not meaningful. See gnn/README.md and LAB_NOTEBOOK.md (2026-07-06 entries)
+# for the convention this follows.
+
+experiment_setup:
+  name: "gnn_overfit_check"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 2
+  random_state: 0
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "random"
+  split_col: "fold"
+  batch_size: 4
+  epochs: 200
+  hidden_dim: 64
+  num_layers: 3
+  dropout: 0.0
+  learning_rate: 0.01
+  gnn_node_features: ["peak_time", "radius"]
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_smoke"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: ["DUKE_001", "DUKE_002", "ISPY1_1001", "ISPY1_1002", "ISPY2_100899", "ISPY2_102011", "NACT_01", "NACT_02"]
+  gnn_dataset_include: null
