@@ -5,20 +5,23 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=02:00:00
-#SBATCH --output=/ess/home/home1/t-9sbose/vanguard/logs/validate-speed-acc-%j.out
-#SBATCH --error=/ess/home/home1/t-9sbose/vanguard/logs/validate-speed-acc-%j.err
+#SBATCH --output=logs/validate-speed-acc-%j.out
+#SBATCH --error=logs/validate-speed-acc-%j.err
 set -eo pipefail
 
-# Runs validate_speed_and_accuracy.py: old vs. fast pipeline, same sample files.
-# Writes to a SEPARATE output dir; does not touch the live segmentation run.
+# FROZEN / historical: validate_speed_and_accuracy.py compared the old
+# subprocess-based pipeline against the new in-process pipeline. The old
+# pipeline's CLI was removed in the segmentation-folder consolidation cleanup,
+# so this script can no longer run an actual old-vs-fast comparison -- kept
+# only as a record of how validation_results.md was produced.
 
 source ~/.bashrc || true
 eval "$(micromamba shell hook -s bash)"
 micromamba activate vanguard
 export xml_catalog_files_libxml2=""
 
-PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-mkdir -p /ess/home/home1/t-9sbose/vanguard/logs
+PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+mkdir -p logs
 
 export OMP_NUM_THREADS=2
 export MKL_NUM_THREADS=2
@@ -35,7 +38,7 @@ echo "Files: ${FILE_START}-${FILE_END}"
 echo "Output root: ${OUTPUT_ROOT}"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 
-python -u "${PROJECT_ROOT}/faster-segmentation-test/validate_speed_and_accuracy.py" \
+python -u "${PROJECT_ROOT}/segmentation/validate_speed_and_accuracy.py" \
   --images-dir   "${IMAGES_DIR}" \
   --file-start   "${FILE_START}" \
   --file-end     "${FILE_END}" \

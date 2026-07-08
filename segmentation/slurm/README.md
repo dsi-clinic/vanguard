@@ -8,6 +8,13 @@ These scripts submit the vessel-segmentation stage to compute nodes.
   - preferred wrapper for cohort submission; computes array ranges automatically
 - `submit_batch_segmentation_array.slurm`
   - array-task implementation used by the wrapper
+- `submit_batch_segmentation_smoke.slurm`
+  - single-job GPU smoke test on a couple of files, writing to a separate
+    output dir; validate afterwards with `../validate_outputs.py`
+- `submit_validate_speed_and_accuracy.slurm`
+  - frozen/historical; submitted `../validate_speed_and_accuracy.py`, which
+    depended on the now-removed old pipeline's CLI and is kept only as a
+    record of how `../validation_results.md` was produced
 
 ## Recommended Entry Point
 

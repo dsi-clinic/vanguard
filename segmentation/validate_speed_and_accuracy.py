@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-r"""Validate the fast pipeline against the old pipeline: speed AND accuracy.
+r"""FROZEN / historical validation script; not expected to run anymore.
+
+It produced ``validation_results.md`` (16.15x mean speedup, Dice 0.9998-1.0)
+by comparing the old subprocess-based pipeline against the new in-process
+batched pipeline. The old pipeline's ``--file-index``
+CLI was removed in the segmentation-folder consolidation cleanup, so
+``OLD_SCRIPT``/``FAST_SCRIPT`` below now point at the same consolidated
+``batch_segmentation.py`` and this script can no longer actually run an
+old-vs-fast comparison. It is kept, unexecuted, purely as a record of the
+methodology behind the numbers in ``validation_results.md``. If old-vs-fast
+re-validation is ever needed again (e.g. after another rewrite), reintroduce a
+comparison baseline rather than trying to run this file as-is.
+
+Original docstring follows for reference:
 
 Runs ``segmentation/batch_segmentation.py`` (old) and
 ``faster-segmentation-test/batch_segmentation_fast.py`` (fast) on the *same* N
@@ -18,10 +31,10 @@ Both pipelines call into PyTorch models, so this must run where the ``vanguard``
 environment + a GPU are available (i.e. via ``srun``/``sbatch`` on randi) -- it
 will not work on a CPU-only login node.
 
-Example (5 files, GPU node):
+Example (5 files, GPU node) -- as originally run, no longer reproducible:
 
     micromamba activate vanguard
-    python faster-segmentation-test/validate_speed_and_accuracy.py \\
+    python segmentation/validate_speed_and_accuracy.py \\
         --images-dir /ess/scratch/scratch1/annawoodard/MAMA-MIA-syn60868042/images \\
         --file-start 0 --file-end 4 \\
         --output-root /ess/scratch/scratch1/t-9sbose/validate_speed_and_accuracy
@@ -41,7 +54,7 @@ import numpy as np
 
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent
-_SEG_DIR = _PROJECT_ROOT / "segmentation"
+_SEG_DIR = _HERE  # this script now lives in segmentation/ itself
 if str(_SEG_DIR) not in sys.path:
     sys.path.insert(0, str(_SEG_DIR))
 
@@ -49,8 +62,10 @@ if str(_SEG_DIR) not in sys.path:
 # indexed identically -- no new sampling approach is introduced here.
 from batch_segmentation import build_output_path, find_nii_files  # noqa: E402
 
+# NOTE: post-consolidation these both resolve to the same file -- see the
+# FROZEN notice above. Kept only so the rest of this script still parses.
 OLD_SCRIPT = _SEG_DIR / "batch_segmentation.py"
-FAST_SCRIPT = _HERE / "batch_segmentation_fast.py"
+FAST_SCRIPT = _SEG_DIR / "batch_segmentation.py"
 _SUBMODULE = _PROJECT_ROOT / "vanguard-blood-vessel-segmentation"
 DEFAULT_BREAST_MODEL = _SUBMODULE / "trained_models" / "breast_model.pth"
 DEFAULT_VESSEL_MODEL = _SUBMODULE / "trained_models" / "dv_model.pth"

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=batch-seg-array
-#SBATCH --partition=general
+#SBATCH --partition=gpuq
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/batch-seg-array-%A-%a.out
 #SBATCH --error=logs/batch-seg-array-%A-%a.err
