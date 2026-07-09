@@ -43,6 +43,7 @@ Example (5 files, GPU node) -- as originally run, no longer reproducible:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import statistics
 import subprocess
@@ -158,7 +159,9 @@ def main() -> int:
     )
     ap.add_argument(
         "--images-dir",
-        default="/ess/scratch/scratch1/annawoodard/MAMA-MIA-syn60868042/images",
+        default=os.environ.get(
+            "IMAGES_DIR", "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+        ),
         help="Directory of case subdirectories with .nii.gz files (same source for both pipelines)",
     )
     ap.add_argument(

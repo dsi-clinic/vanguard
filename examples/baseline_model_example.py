@@ -56,7 +56,7 @@ Usage:
 Examples:
     python examples/baseline_model_example.py \
         --model random \
-        --excel-metadata /net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
+        --excel-metadata /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
         --output results/baseline_example_excel
 """
 

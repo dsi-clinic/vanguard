@@ -34,7 +34,8 @@ export OMP_NUM_THREADS=2
 export MKL_NUM_THREADS=2
 export PYTHONUNBUFFERED=1
 
-IMAGES_DIR="${IMAGES_DIR:-/ess/scratch/scratch1/annawoodard/MAMA-MIA-syn60868042/images}"
+MAMAMIA_ROOT="${MAMAMIA_ROOT:-/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042}"
+IMAGES_DIR="${IMAGES_DIR:-${MAMAMIA_ROOT}/images}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/ess/scratch/scratch1/t-9sbose/validate_speed_and_accuracy}"
 FILE_START="${FILE_START:-0}"
 FILE_END="${FILE_END:-6}"

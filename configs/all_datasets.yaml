@@ -80,10 +80,10 @@ model_params:
 
 data_paths:
   centerline_root: "/net/projects2/vanguard/centerlines_tc4d/studies"
-  tumor_mask_root: "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
-  patient_info_dir: "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files"
-  clinical_excel: "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
-  labels_csv: "/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv"
+  tumor_mask_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/segmentations/expert"
+  patient_info_dir: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/patient_info_files"
+  clinical_excel: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
+  labels_csv: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/pcr_labels.csv"
   label_column: "pcr"
   id_column: "case_id"
   radiomics_csv: ""

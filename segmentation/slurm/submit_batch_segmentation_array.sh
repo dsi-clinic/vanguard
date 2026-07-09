@@ -2,7 +2,8 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-IMAGES_DIR="${IMAGES_DIR:-/net/projects2/vanguard/MAMA-MIA-syn60868042/images}"
+MAMAMIA_ROOT="${MAMAMIA_ROOT:-/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042}"
+IMAGES_DIR="${IMAGES_DIR:-${MAMAMIA_ROOT}/images}"
 OUTPUT_DIR="${OUTPUT_DIR:-/net/projects2/vanguard/vessel_segmentations}"
 BREAST_MODEL="${BREAST_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/breast_model.pth}"
 VESSEL_MODEL="${VESSEL_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/dv_model.pth}"
@@ -11,10 +12,10 @@ CHUNK_SIZE="${CHUNK_SIZE:-100}"
 START_INDEX="${START_INDEX:-}"
 END_INDEX="${END_INDEX:-}"
 
-COUNT=$(python - <<'PY'
+COUNT=$(IMAGES_DIR="${IMAGES_DIR}" python - <<'PY'
 from pathlib import Path
 import os
-images_dir = os.environ.get("IMAGES_DIR", "/net/projects2/vanguard/MAMA-MIA-syn60868042/images")
+images_dir = os.environ.get("IMAGES_DIR", "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images")
 count = sum(1 for _ in Path(images_dir).glob("*/*.nii.gz"))
 print(count)
 PY
