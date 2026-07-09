@@ -141,6 +141,9 @@ bin/
 # data files
 *.avro
 
+# Local env config for the Duke QC scripts (keep the .example, not the real one)
+interactive_annotation_htmls/duke_qc.env
+
 
 out_pcr_jose/model_rf.pkl
 out_pcr_jose/features.csv
