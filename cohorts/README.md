@@ -56,24 +56,32 @@ cohort label.
 ### `UChicagoDataset(root, manifest_csv=None)` — `uchicago.py`
 Genuinely different, so it overrides the handful of methods that differ:
 `discover_cases()`, `case_dataset_name()`, `group_key()`, `load_timepoints()`,
-and `load_labels()` are all **manifest-driven** (read from a CSV, including a
-`phase_files` list per row); it sets `default_split_policy = "provided"` (ships
-patient-grouped folds) and `report_by = "dataset"` (sub-source breakdown).
-`preprocess()` currently **raises `NotImplementedError`** on purpose — the real
-ultrafast preprocessing is a frozen-copy port that hasn't landed yet, and we'd
-rather fail loudly than silently apply the wrong (MAMA-MIA) transform.
+`load_labels()`, and `load_folds()` are all **manifest-driven** (read from a CSV,
+including a `phase_files` list per row); it sets `default_split_policy =
+"provided"` (ships patient-grouped folds) and `report_by = "dataset"`
+(sub-source breakdown). `preprocess()` is a **documented pass-through** — the
+manifest's phase files are already preprocessed upstream (`policy_name =
+hfdp_t1_v1`), so no repo-side transform is applied (and, importantly, the base
+MAMA-MIA orientation transform is *not* used, which would be wrong here). The
+181-exam student manifest lives at
+`/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/`; select it
+with `configs/uchicago.yaml`.
 
 ---
 
 ## Selecting a dataset from run config — `factory.py`
 
-Two functions are the only seams that read run config:
+These functions are the only seams that read run config:
 
 - `build_adapter_from_config(config)` reads the `dataset:` block and returns the
   right adapter, or **`None`** when no dataset is configured (so callers fall
   back to today's behavior).
 - `resolve_split_policy(config, adapter)` applies the run-config `split_policy`
   knob (`auto`/`compute`/`provided`) on top of the adapter's default.
+- `resolve_folds(config, adapter)` ties the two together for the caller: it
+  returns the `(case_id, fold)` table to use when the policy resolves to
+  `provided`, or `None` when the run should compute its own splits (raising if
+  `provided` is asked of a dataset that ships no folds).
 
 The `dataset:` block in run config (`config.py` `DEFAULT_CONFIG`):
 

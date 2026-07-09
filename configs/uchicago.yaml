@@ -1,0 +1,16 @@
+# UChicago internal ultrafast DCE dataset (181 labeled exams).
+#
+# Step 3 of the multi-dataset migration: this config defines the dataset so the
+# adapter factory (cohorts.build_adapter_from_config) builds a UChicagoDataset.
+# It exercises the manifest-driven adapter path — case discovery, labels,
+# provided CV folds, and sub-source reporting — none of which needs the vessel
+# pipeline. The imaging pipeline (segmentation -> graph -> features) is not wired
+# for UChicago yet, so this config is not a full training run.
+#
+# See cohorts/README.md for the adapter contract and how stages consume it.
+
+dataset:
+  name: uchicago
+  cohort: null   # UChicago is not cohort-partitioned like MAMA-MIA
+  root: /gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest
+  split_policy: auto   # -> "provided": use the manifest's patient-grouped fold column

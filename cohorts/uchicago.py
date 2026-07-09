@@ -1,9 +1,10 @@
-"""UChicago ultrafast DCE dataset adapter (scaffold).
+"""UChicago ultrafast DCE dataset adapter.
 
 Overrides the base MAMA-MIA behavior for the differences identified in
-``cohorts/README.md``. The real ultrafast preprocessing is a
-frozen-copy port (see cohorts/README.md — Design decisions) that is **not implemented yet**; ``preprocess``
-raises ``NotImplementedError`` so nothing silently applies the wrong transform.
+``cohorts/README.md``: manifest-driven discovery/identity/timepoints/labels,
+provided CV folds, and sub-source reporting. ``preprocess`` is a pass-through
+because the manifest ships already-preprocessed volumes (``policy_name =
+hfdp_t1_v1``); see the method docstring for the note on design decision 4.
 """
 
 from __future__ import annotations
@@ -79,16 +80,34 @@ class UChicagoDataset(DatasetAdapter):
         return labels
 
     def preprocess(self, volume: np.ndarray) -> np.ndarray:
-        """Ultrafast-specific preprocessing — frozen-copy port, not done yet.
+        """Return the volume unchanged — UChicago data is already preprocessed.
 
-        See ``cohorts/README.md``. Until the
-        frozen copy is brought into the repo this raises, rather than falling
-        back to the MAMA-MIA transform, which would be wrong for ultrafast data.
+        The manifest's ``phase_files`` are preprocessed upstream by Anna's HFDP
+        pipeline (``policy_name = hfdp_t1_v1``) and copied into ``images/``, so no
+        repo-side preprocessing is applied here. Crucially this must NOT fall back
+        to the base MAMA-MIA orientation transform, which would be wrong for this
+        already-oriented ultrafast data.
+
+        Note for Anna: this makes design decision 4 (port a frozen copy of the
+        UChicago preprocessing into the repo) unnecessary for the student
+        manifest, since the shipped data is already preprocessed. Revisit only if
+        we ever need to preprocess *raw* UChicago exams inside this pipeline.
         """
-        raise NotImplementedError(
-            "UChicago preprocessing is not ported yet (frozen-copy port pending; "
-            "see cohorts/README.md)."
-        )
+        return volume
+
+    def load_folds(self) -> pd.DataFrame:
+        """Return the manifest's patient-grouped CV folds as ``(case_id, fold)``.
+
+        UChicago ships its own folds (``default_split_policy = "provided"``),
+        patient-grouped by ``patient_key`` and stratified by ``pcr``. Keyed by
+        ``exam_id`` (renamed to ``case_id`` for consistency with the rest of the
+        pipeline).
+        """
+        folds = self._manifest()[["exam_id", "fold"]].copy()
+        folds = folds.rename(columns={"exam_id": "case_id"})
+        folds = folds.dropna(subset=["fold"])
+        folds["fold"] = folds["fold"].astype(int)
+        return folds
 
     # -- internal helpers --
 

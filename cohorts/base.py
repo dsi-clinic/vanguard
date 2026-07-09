@@ -196,6 +196,16 @@ class DatasetAdapter:
 
         return _load_labels(self.labels_csv, id_col="case_id", label_col="pcr")
 
+    def load_folds(self) -> pd.DataFrame | None:
+        """Return provided cross-validation folds as ``(case_id, fold)``, or ``None``.
+
+        Base datasets compute their own splits (``default_split_policy ==
+        "compute"``), so they ship no folds and this returns ``None``. A dataset
+        that ships its own folds (``default_split_policy == "provided"``)
+        overrides this to surface them.
+        """
+        return None
+
     # -- file-naming rules (current config patterns) --
 
     def tumor_mask_filename(self, case_id: str) -> str:
