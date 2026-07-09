@@ -154,6 +154,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_inclusion_rule": "local_radius_with_fallback",
         "deepsets_compare_inclusion_rules": [],
         "deepsets_point_feature_set": "baseline",
+        # Node granularity for the GNN graph. "voxel" = one node per skeleton
+        # voxel; "segment" = one node per vessel segment (line graph). Must
+        # match the node_mode the target gnn_cache_dir was built with (the
+        # cache manifest check enforces this), and gnn_node_features must use
+        # the matching vocabulary (voxel names vs seg_* names). See
+        # gnn/DESIGN_segment_graph.md.
+        "gnn_node_mode": "voxel",
         "gnn_node_features": ["peak_time", "radius"],
         # Class-conditional Gaussian noise layered onto the "pcr_dummy"
         # leakage-canary feature at train time (gnn/train.py), never at cache

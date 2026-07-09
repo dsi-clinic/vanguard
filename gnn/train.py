@@ -430,6 +430,7 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
         dce_root=data_paths.gnn_dce_root,
         cache_dir=data_paths.gnn_cache_dir,
         cases=list(data_paths.gnn_cases) if data_paths.gnn_cases else None,
+        node_mode=str(params.gnn_node_mode),
         node_features=tuple(params.gnn_node_features),
         id_column=data_paths.gnn_id_column,
         label_column=data_paths.gnn_label_column,

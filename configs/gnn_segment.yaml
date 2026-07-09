@@ -1,0 +1,49 @@
+# Full-cohort config for the GNN centerline pipeline in SEGMENT mode
+# (node_mode="segment": one node per vessel segment / line graph -- Option B in
+# gnn/DESIGN_segment_graph.md). Mirrors configs/gnn.yaml but points at a
+# segment-built cache and uses the seg_* feature vocabulary.
+#
+# Build the matching cache first (the manifest check enforces node_mode/features
+# agreement):
+#   python -m gnn.build_dataset --node-mode segment \
+#       --cache-dir /gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_segment \
+#       --node-features seg_length,seg_tortuosity,seg_radius_mean,seg_peak_time_mean,seg_peak_enhancement_mean,seg_washin_slope_mean,seg_auc_positive_mean
+
+experiment_setup:
+  name: "gnn_segment"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "random" # or "predefined" to honor split_col from the labels file
+  split_col: "fold"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "segment"
+  gnn_node_features:
+    - "seg_length"
+    - "seg_tortuosity"
+    - "seg_radius_mean"
+    - "seg_peak_time_mean"
+    - "seg_peak_enhancement_mean"
+    - "seg_washin_slope_mean"
+    - "seg_auc_positive_mean"
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_segment"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
