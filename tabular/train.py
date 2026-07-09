@@ -15,6 +15,7 @@ from typing import Any
 
 import pandas as pd
 
+from cohorts.factory import build_adapter_from_config
 from evaluation import FoldResults
 from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.kfold import FoldSplit
@@ -291,8 +292,16 @@ def run_pipeline_from_config(
     """Run the full feature-build + evaluation pipeline for a loaded config."""
     write_config_snapshot(config=config, outdir=outdir, config_source=config_source)
 
+    # Build the dataset adapter from run config (Step 2 of the multi-dataset
+    # migration). Returns None for every config without a `dataset:` block, so
+    # existing runs are unchanged; a configured dataset routes cohort identity
+    # through the adapter. See docs/modularization-design.md §9.
+    adapter = build_adapter_from_config(config)
+    if adapter is not None:
+        logging.info("Using dataset adapter: %s", type(adapter).__name__)
+
     try:
-        merged_data = prepare_data(config, outdir)
+        merged_data = prepare_data(config, outdir, adapter=adapter)
         run_evaluation_pipeline(merged_data, config, outdir)
     except Exception as exc:  # noqa: BLE001
         logging.error("Pipeline failed: %s", exc, exc_info=True)
