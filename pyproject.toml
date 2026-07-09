@@ -15,7 +15,7 @@ py-modules = ["clinic_metadata", "clinical_features", "config", "load_cohort"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["deepsets*", "tabular*", "evaluation*", "graph_extraction*", "modeling*", "features*", "analysis*", "cohorts*"]
+include = ["deepsets*", "gnn*", "tabular*", "evaluation*", "graph_extraction*", "modeling*", "features*", "analysis*", "cohorts*"]
 
 [tool.ruff.lint]
 extend-select = [
@@ -56,3 +56,17 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "radiomics/scripts/radiomics_train.py" = ["ANN101", "D107"]
+# Standalone Duke QC / visualization scripts: validated research code kept in a
+# compact, plotly-idiomatic style. Relax the purely-stylistic rules (type hints,
+# os.path vs pathlib, dict() literals, single-letter matrix names) here rather
+# than rewrite numerically-validated code.
+"interactive_annotation_htmls/*.py" = [
+  "ANN001", "ANN201", "ANN202",  # type annotations not required for these scripts
+  "C408",                         # plotly convention uses dict(...) not {...}
+  "D103", "D205",                 # relaxed docstring requirements
+  "E741",                         # allow M, O affine matrix/origin names
+  "PLR2004",                      # allow inline magic numbers in viz sizing
+  "PTH100", "PTH103", "PTH111", "PTH118", "PTH120", "PTH123",  # os.path ok here
+  "S112",                         # intentional try/except/continue over transforms
+  "UP031",                        # legacy %-format string left as-is
+]

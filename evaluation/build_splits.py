@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from evaluation.evaluator import Evaluator
-from evaluation.kfold import FoldSplit
+from evaluation.kfold import FoldSplit, create_predefined_splits
 
 
 def create_splits_for_dataframe(
@@ -24,12 +25,14 @@ def create_splits_for_dataframe(
     """Create an evaluator and configured splits from a cohort dataframe.
 
     ``cohort_df`` should contain any group or stratum columns referenced by the
-    config, such as ``site`` or ``tumor_subtype``.
+    config, such as ``site`` or ``tumor_subtype``. When
+    ``model_params.split_mode == "predefined"``, splits instead come from a
+    fixed fold column (``model_params.split_col``) already present on
+    ``cohort_df`` -- one fold per unique value, leave-one-fold-out -- so every
+    model family can share the same fold definition.
     """
     model_params = config.model_params
     random_state = int(model_params.random_state)
-    use_group_split = bool(model_params.use_group_split)
-    group_col = str(model_params.group_col)
     stratum_col = model_params.stratum_col
 
     evaluator = Evaluator(
@@ -40,6 +43,34 @@ def create_splits_for_dataframe(
         random_state=random_state,
     )
 
+    if str(model_params.split_mode) == "predefined":
+        split_col = str(model_params.split_col)
+        if split_col not in cohort_df.columns:
+            raise ValueError(
+                f"split_mode='predefined' requires column {split_col!r} in "
+                f"cohort_df; available columns: {sorted(cohort_df.columns)}"
+            )
+        split_dicts = create_predefined_splits(
+            cohort_df[split_col].to_numpy(),
+            case_ids=np.asarray(case_ids),
+        )
+        splits = [
+            FoldSplit(
+                fold_idx=d["fold_idx"],
+                train_indices=d["train_indices"],
+                val_indices=d["val_indices"],
+                train_case_ids=d["train_case_ids"],
+                val_case_ids=d["val_case_ids"],
+            )
+            for d in split_dicts
+        ]
+        logging.info(
+            "Using predefined fold column '%s' (%d folds).", split_col, len(splits)
+        )
+        return evaluator, splits, str(stratum_col) if stratum_col else None
+
+    use_group_split = bool(model_params.use_group_split)
+    group_col = str(model_params.group_col)
     n_splits = int(model_params.n_splits)
     if use_group_split and group_col in cohort_df.columns:
         groups = cohort_df[group_col].fillna("UNKNOWN").astype(str).to_numpy()
@@ -69,3 +100,33 @@ def create_splits_for_dataframe(
             )
 
     return evaluator, splits, str(stratum_col) if stratum_col else None
+
+
+def build_split_manifest(
+    cohort_df: pd.DataFrame,
+    splits: list[FoldSplit],
+    *,
+    id_col: str = "case_id",
+    columns: Sequence[str] = (),
+) -> pd.DataFrame:
+    """One row per (case, fold): case_id + selected cohort_df columns, fold, train_or_val.
+
+    ``columns`` lets each model family choose which cohort_df columns to carry
+    through (e.g. dataset, site, pcr, num_nodes, num_edges for the GNN track)
+    so the manifest stays generic across model families while still recording
+    per-track detail. Every case appears once per fold: "val" in the fold
+    where it's held out, "train" in every other fold -- so this intentionally
+    records more than predictions.csv (which is val-only).
+    """
+    keep_cols = [id_col, *columns]
+    parts = []
+    for split in splits:
+        train_rows = cohort_df.iloc[split.train_indices][keep_cols].copy()
+        train_rows["fold"] = split.fold_idx
+        train_rows["train_or_val"] = "train"
+        val_rows = cohort_df.iloc[split.val_indices][keep_cols].copy()
+        val_rows["fold"] = split.fold_idx
+        val_rows["train_or_val"] = "val"
+        parts.append(train_rows)
+        parts.append(val_rows)
+    return pd.concat(parts, ignore_index=True)
