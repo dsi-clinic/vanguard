@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,14 +40,22 @@ def write_config_snapshot(
     outdir: Path,
     config_source: Path | None = None,
 ) -> None:
-    """Write the config used for a run to the output directory."""
+    """Write the config used for a run to the output directory.
+
+    Writes both ``config_used.yaml`` (the human-readable form -- a verbatim
+    copy of ``config_source`` when given, else a dump of the resolved config)
+    and ``config_used.json`` (always the resolved config, including defaults,
+    for programmatic loading alongside ``metrics.json``).
+    """
     outdir.mkdir(parents=True, exist_ok=True)
     if config_source is not None:
         outdir.joinpath("config_used.yaml").write_text(
             Path(config_source).read_text(encoding="utf-8"),
             encoding="utf-8",
         )
-        return
+    else:
+        with outdir.joinpath("config_used.yaml").open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(to_plain_data(config), handle, sort_keys=False)
 
-    with outdir.joinpath("config_used.yaml").open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(to_plain_data(config), handle, sort_keys=False)
+    with outdir.joinpath("config_used.json").open("w", encoding="utf-8") as handle:
+        json.dump(to_plain_data(config), handle, indent=2, sort_keys=False)

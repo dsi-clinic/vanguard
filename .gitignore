@@ -211,9 +211,20 @@ _pip119/
 results/deepsets/
 analysis/deepsets_issue119/figures/
 analysis/issue121_figures/*.png
+
+# Notes/Notebooks
+NOTES.md
+notebooks/
+LAB_NOTEBOOK.md
+
+# Local AI Agent Config 
+agents.local.md
+
+# Output
 sample_data/mri_images/
 sample_data/expert_tumors/
 repomix-output.xml
 gmon.out
 HANDOFF_2026-06-29.md
+
 /LAB_NOTEBOOK.md
