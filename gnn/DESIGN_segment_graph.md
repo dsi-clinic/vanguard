@@ -140,7 +140,7 @@ target and comes second. The three modes, named by *what a node is*:
 | `node_mode` | node = | status |
 |---|---|---|
 | `"voxel"` | one skeleton voxel | **done** (current pipeline) |
-| `"segment"` | one whole segment (line graph, **B**) | **next** |
+| `"segment"` | one whole segment (line graph, **B**) | **built into the dataset** (`gnn/segment_graph.py`, wired through `VanguardCenterlineDataset` + `build_dataset.py --node-mode`); train/config wiring for the B-vs-voxel run is next |
 | `"junction"` | a junction/endpoint voxel; segment = edge (**A**) | after B |
 
 `"segment"` (B) matches the branch name `feature/segment-as-node`. All three must stay

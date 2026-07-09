@@ -18,9 +18,14 @@ of consuming *summarized* morphometry + kinematic features, it operates on the
 
 ### What it builds
 
-- **Nodes:** one per skeleton voxel, keyed by
+- **Nodes** (`node_mode`, default `"voxel"`): one per skeleton voxel, keyed by
   `(x, y, z)`.
-    - `segment`, `node` modes are not-yet-implemented extension points.
+    - `"segment"` contracts each vessel segment to a single node (line graph);
+      see `gnn/segment_graph.py` and `gnn/DESIGN_segment_graph.md`. It uses a
+      different node-feature vocabulary (`seg_*`), so build it with matching
+      `--node-features` (or omit them for the mode default).
+    - `"junction"` (segment-as-edge, Option A) is the planned next mode and
+      still raises `NotImplementedError`.
 - **Edges:** between 26-connected skeleton voxels (8 corners, 12 *voxel* edges, 6 faces)
 - **`data.pos`:** `(num_nodes, 3)` voxel coordinates `(x, y, z)`.
 - **`data.x`:** node features stacked in the order given by `node_features`, see [Modeling Features](#modeling-features)

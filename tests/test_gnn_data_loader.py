@@ -228,13 +228,99 @@ def test_missing_labels_path_raises(tmp_path: Path) -> None:
         VanguardCenterlineDataset(tmp_path, labels_path=None, dce_root=tmp_path)
 
 
-def test_segment_mode_not_implemented(tmp_path: Path) -> None:
-    """The ``segment`` node mode is an explicit, unimplemented extension point."""
+def test_junction_mode_not_implemented(tmp_path: Path) -> None:
+    """The ``junction`` node mode (segment-as-edge, Option A) is not implemented yet."""
     labels_csv = tmp_path / "labels.csv"
     labels_csv.write_text("case_id,pcr\nNACT_01,1\n")
     with pytest.raises(NotImplementedError):
         VanguardCenterlineDataset(
-            tmp_path, labels_path=labels_csv, dce_root=tmp_path, node_mode="segment"
+            tmp_path, labels_path=labels_csv, dce_root=tmp_path, node_mode="junction"
+        )
+
+
+def test_builds_segment_line_graph(
+    centerline_tree: tuple[Path, Path, Path, Path],
+) -> None:
+    """node_mode='segment' contracts each vessel to one segment-node.
+
+    The fixture skeletons are single unbranched vessels, so each collapses to
+    exactly one segment-node (0 edges). This checks the segment-mode wiring end
+    to end: the segment feature vocabulary backs data.x, and the cache manifest,
+    feature summary, and graph QC are all written under node_mode='segment'.
+    Exact line-graph topology (junctions -> adjacency) is covered separately by
+    tests/test_gnn_segment_graph.py on hand-built graphs.
+    """
+    studies, dce_root, labels_csv, cache_dir = centerline_tree
+
+    node_features = (
+        "seg_length",
+        "seg_num_voxels",
+        "seg_radius_mean",
+        "seg_peak_time_mean",
+        "seg_peak_enhancement_mean",
+    )
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir,
+        node_mode="segment",
+        node_features=node_features,
+        max_missing_label_frac=0.5,
+    )
+
+    assert len(dataset) == 1
+    data = dataset[0]
+
+    # One unbranched vessel -> one segment-node, no edges.
+    assert data.num_nodes == 1
+    assert data.num_edges == 0
+    assert data.x.shape == (1, len(node_features))
+    assert data.pos.shape == (1, 3)
+
+    # Segment features summarize the whole 5-voxel line: 4 unit steps long,
+    # every voxel shares enhancement = [0, 1, 2] (peak idx 2 -> norm 1.0, peak
+    # enhancement 2.0).
+    seg = {name: float(data.x[0, i]) for i, name in enumerate(node_features)}
+    assert seg["seg_num_voxels"] == len(SKELETON_XS)
+    assert seg["seg_length"] == pytest.approx(len(SKELETON_XS) - 1)
+    assert seg["seg_peak_time_mean"] == pytest.approx(1.0)
+    assert seg["seg_peak_enhancement_mean"] == pytest.approx(EXPECTED_PEAK_ENHANCEMENT)
+    assert seg["seg_radius_mean"] > 0.0
+
+    assert data.y.tolist() == [1]
+    assert data.case_id == "NACT_01"
+
+    # Manifest records the mode, so a segment cache and a voxel cache built at
+    # the same cache_dir can never be confused for one another.
+    manifest = json.loads((cache_dir / "processed" / "cache_manifest.json").read_text())
+    assert manifest["node_mode"] == "segment"
+    assert manifest["node_features"] == list(node_features)
+
+    # Feature summary + QC are written under the segment vocabulary.
+    summary_dir = cache_dir / "processed" / "feature_summary"
+    for name in node_features:
+        assert (summary_dir / f"{name}_hist.png").exists()
+    qc = pd.read_csv(cache_dir / "processed" / "graph_qc.csv")
+    assert qc.iloc[0]["num_nodes"] == 1
+    for name in node_features:
+        assert f"{name}_mean" in qc.columns
+
+
+def test_segment_mode_rejects_voxel_features(
+    centerline_tree: tuple[Path, Path, Path, Path],
+) -> None:
+    """Voxel-vocabulary features are not valid segment features (fail loud)."""
+    studies, dce_root, labels_csv, cache_dir = centerline_tree
+    with pytest.raises(ValueError, match="Unknown node_features"):
+        VanguardCenterlineDataset(
+            studies,
+            labels_path=labels_csv,
+            dce_root=dce_root,
+            cache_dir=cache_dir,
+            node_mode="segment",
+            node_features=("peak_time", "radius"),  # voxel names
+            max_missing_label_frac=0.5,
         )
 
 

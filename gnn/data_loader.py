@@ -48,6 +48,7 @@ from config import DEFAULT_CONFIG
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_build_time_plots
 from gnn.kinetics import node_kinetic_features, time_axis_from_study_timepoints
 from gnn.raw_dce import discover_raw_dce_paths, load_raw_dce_series
+from gnn.segment_graph import SEGMENT_FEATURE_ATTR, build_segment_line_graph
 from graph_extraction.constants import NDIM_3D
 from graph_extraction.feature_stats import mask_to_edges_bitmask
 from graph_extraction.skeleton_to_graph_primitives import (
@@ -100,6 +101,34 @@ _FEATURE_ATTR: dict[str, str] = {
     "pcr_dummy": "pcr_dummy",
 }
 _DEFAULT_NODE_FEATURES: tuple[str, ...] = ("peak_time", "radius")
+
+# Node-granularity modes. ``"voxel"`` keeps one node per skeleton voxel;
+# ``"segment"`` contracts each vessel segment to a single node (line graph, see
+# ``gnn.segment_graph``). ``"junction"`` (segment-as-edge, Option A) is the next
+# planned mode -- see ``gnn/DESIGN_segment_graph.md``.
+_VOXEL_MODE = "voxel"
+_SEGMENT_MODE = "segment"
+_IMPLEMENTED_NODE_MODES = (_VOXEL_MODE, _SEGMENT_MODE)
+
+# Default segment-mode features mirror the voxel default (one kinetic + one
+# geometry feature), expressed in the segment vocabulary.
+_DEFAULT_SEGMENT_NODE_FEATURES: tuple[str, ...] = (
+    "seg_peak_time_mean",
+    "seg_radius_mean",
+)
+
+# Per-mode feature vocabulary (name -> ``Data`` attribute backing that column of
+# ``data.x``) and default feature set. This is the single place node modes
+# declare which features they support, so ``__init__`` validation, defaults,
+# and ``_finalize_data``'s column stacking all stay consistent.
+_MODE_FEATURE_ATTR: dict[str, dict[str, str]] = {
+    _VOXEL_MODE: _FEATURE_ATTR,
+    _SEGMENT_MODE: SEGMENT_FEATURE_ATTR,
+}
+_MODE_DEFAULT_FEATURES: dict[str, tuple[str, ...]] = {
+    _VOXEL_MODE: _DEFAULT_NODE_FEATURES,
+    _SEGMENT_MODE: _DEFAULT_SEGMENT_NODE_FEATURES,
+}
 
 
 class _StageTimings:
@@ -234,9 +263,15 @@ def _finalize_data(
     centerline_root: Path,
     node_features: tuple[str, ...],
     num_connected_components: int,
+    feature_attr: dict[str, str],
 ) -> Data:
-    """Assemble ``data.x``, the label, and provenance metadata."""
-    columns = [data[_FEATURE_ATTR[name]] for name in node_features]
+    """Assemble ``data.x``, the label, and provenance metadata.
+
+    ``feature_attr`` maps each requested feature name to the ``Data`` attribute
+    backing its column -- ``_FEATURE_ATTR`` in voxel mode, ``SEGMENT_FEATURE_ATTR``
+    in segment mode -- so the stacking is identical across node modes.
+    """
+    columns = [data[feature_attr[name]] for name in node_features]
     data.x = torch.stack([column.float() for column in columns], dim=1)
     data.y = torch.tensor([int(label)], dtype=torch.long)
     data.case_id = case_id
@@ -258,13 +293,21 @@ def _build_case(
     centerline_root: Path,
     dce_root: Path,
     node_features: tuple[str, ...],
+    node_mode: str,
 ) -> tuple[Data, dict[str, list[float]]]:
-    """Build one labeled :class:`Data` graph for ``case_id``.
+    """Build one labeled :class:`Data` graph for ``case_id`` in ``node_mode``.
 
     Standalone (no dataset instance state) so it can run, unmodified, inside a
     worker process when the build is parallelized across cases -- each case's
     graph depends only on its own files, so there is no cross-case state to
     share.
+
+    ``node_mode="voxel"`` keeps one node per skeleton voxel with per-voxel
+    features; ``node_mode="segment"`` contracts each vessel segment to a single
+    node via ``gnn.segment_graph.build_segment_line_graph`` (Option B, line
+    graph). Both converge on the same ``from_networkx -> _finalize_data`` path,
+    differing only in which ``nx.Graph`` is finalized and which feature
+    vocabulary backs ``data.x``.
     """
     stage_samples: dict[str, list[float]] = {}
     study_dir = mask_path.parent
@@ -290,16 +333,11 @@ def _build_case(
         segments = edges_to_segments(mask_to_edges_bitmask(skeleton))
         if segments.size == 0:
             raise ValueError(f"Skeleton for {case_id} has zero segments")
-        graph = segments_to_graph(segments)
-    if graph.number_of_nodes() == 0:
+        voxel_graph = segments_to_graph(segments)
+    if voxel_graph.number_of_nodes() == 0:
         raise ValueError(f"Graph for {case_id} has zero nodes")
 
-    # Must be counted on the nx.Graph itself -- from_networkx() below discards
-    # it, and edge_index on the resulting Data is directed-both-ways, which is
-    # not a valid input to nx.connected_components without reconstruction.
-    num_connected_components = nx.number_connected_components(graph)
-
-    radius_map = obtain_radius_map(support, graph)
+    radius_map = obtain_radius_map(support, voxel_graph)
 
     study_timepoints = _load_study_timepoints(case_id, study_dir)
     with _stage_timer(stage_samples, "timeseries_load"):
@@ -313,10 +351,22 @@ def _build_case(
     num_timepoints = int(dce_4d.shape[0])
     time_axis = time_axis_from_study_timepoints(study_timepoints)
 
-    with _stage_timer(stage_samples, "peak_time"):
-        _attach_node_features(
-            graph, radius_map, dce_4d, time_axis, label, node_features
-        )
+    if node_mode == _SEGMENT_MODE:
+        with _stage_timer(stage_samples, "segment_build"):
+            graph = build_segment_line_graph(voxel_graph, radius_map, dce_4d, time_axis)
+    else:
+        with _stage_timer(stage_samples, "peak_time"):
+            _attach_node_features(
+                voxel_graph, radius_map, dce_4d, time_axis, label, node_features
+            )
+        graph = voxel_graph
+
+    # Must be counted on the (modeled) nx.Graph itself -- from_networkx() below
+    # discards it, and edge_index on the resulting Data is directed-both-ways,
+    # which is not a valid input to nx.connected_components without
+    # reconstruction. Counted on ``graph`` (voxel or line graph) so it stays
+    # consistent with the num_nodes/num_edges QC reports for the same object.
+    num_connected_components = nx.number_connected_components(graph)
 
     with _stage_timer(stage_samples, "from_networkx"):
         data = from_networkx(graph)
@@ -330,6 +380,7 @@ def _build_case(
         centerline_root,
         node_features,
         num_connected_components,
+        feature_attr=_MODE_FEATURE_ATTR[node_mode],
     )
     return data, stage_samples
 
@@ -378,19 +429,35 @@ class VanguardCenterlineDataset(InMemoryDataset):
         cases: Optional whitelist of case IDs to include.
         no_cache: Skip reading and writing the on-disk cache; always rebuild from
             source. Useful during development to avoid stale-cache surprises.
-        node_mode: Node granularity. Only ``"voxel"`` is implemented; ``"segment"``
-            raises :class:`NotImplementedError` as an explicit extension point.
-        node_features: Node-feature names, in ``data.x`` column order. Supported:
-            ``"peak_time"`` (normalized time-to-peak enhancement),
-            ``"peak_enhancement"``, ``"time_to_enhancement"`` (normalized arrival
-            time; ``NaN`` for nodes with no detected enhancement), ``"washin_slope"``,
-            ``"auc_positive"``, ``"radius"``, and ``"pcr_dummy"`` (the graph's ``pcr``
-            label broadcast onto every node -- a leakage-canary feature for pipeline
-            sanity checks only; opt-in, never included unless named explicitly here).
-            The kinetic features are all sampled from the raw DCE enhancement curve
-            (``curve = dce_4d[:, z, y, x]``, ``enhancement = curve - curve[0]``), using
-            the same conventions as ``features/kinematic.py`` -- see
-            ``gnn.kinetics.node_kinetic_features``.
+        node_mode: Node granularity. ``"voxel"`` (default) keeps one node per
+            skeleton voxel; ``"segment"`` contracts each vessel segment to a single
+            node (line graph, see ``gnn.segment_graph``). ``"junction"``
+            (segment-as-edge, Option A) is planned next and still raises
+            :class:`NotImplementedError` -- see ``gnn/DESIGN_segment_graph.md``.
+            The mode selects both the feature vocabulary and the default features.
+        node_features: Node-feature names, in ``data.x`` column order. ``None``
+            (default) resolves to the mode's default feature set. Supported names
+            depend on ``node_mode``:
+
+            - **voxel:** ``"peak_time"`` (normalized time-to-peak enhancement),
+              ``"peak_enhancement"``, ``"time_to_enhancement"`` (normalized arrival
+              time; ``NaN`` for nodes with no detected enhancement),
+              ``"washin_slope"``, ``"auc_positive"``, ``"radius"``, and
+              ``"pcr_dummy"`` (the graph's ``pcr`` label broadcast onto every node
+              -- a leakage-canary feature for pipeline sanity checks only; opt-in,
+              never included unless named explicitly). The kinetic features are
+              sampled from the raw DCE enhancement curve (``curve =
+              dce_4d[:, z, y, x]``, ``enhancement = curve - curve[0]``), using the
+              same conventions as ``features/kinematic.py`` -- see
+              ``gnn.kinetics.node_kinetic_features``.
+            - **segment:** geometry (``"seg_length"``, ``"seg_tortuosity"``,
+              ``"seg_volume"``, ``"seg_radius_{mean,std,median,min,max}"``,
+              ``"seg_curvature_{mean,std,max}"``), the same per-voxel kinetics
+              summarized (mean/std) along the segment
+              (``"seg_{peak_time,peak_enhancement,time_to_enhancement,washin_slope,
+              auc_positive}_{mean,std}"``), and ``"seg_num_voxels"``. See
+              ``gnn.segment_graph.SEGMENT_FEATURE_ATTR``. (``"pcr_dummy"`` is
+              voxel-only for now.)
         id_column: Case-ID column in the labels file.
         label_column: Binary label column in the labels file.
         max_missing_label_frac: Maximum fraction of discovered cases allowed to
@@ -423,8 +490,8 @@ class VanguardCenterlineDataset(InMemoryDataset):
         cache_dir: str | Path | None = None,
         cases: Sequence[str] | None = None,
         no_cache: bool = False,
-        node_mode: str = "voxel",
-        node_features: Sequence[str] = _DEFAULT_NODE_FEATURES,
+        node_mode: str = _VOXEL_MODE,
+        node_features: Sequence[str] | None = None,
         id_column: str = "case_id",
         label_column: str = "pcr",
         max_missing_label_frac: float = 0.1,
@@ -441,14 +508,23 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 "dce_root is required; kinetic node features are sampled from the "
                 "raw DCE series, not the vessel-segmentation NPZ timepoints."
             )
-        if node_mode != "voxel":
+        if node_mode not in _IMPLEMENTED_NODE_MODES:
             raise NotImplementedError(
-                f"node_mode={node_mode!r} is not implemented yet; use 'voxel'."
+                f"node_mode={node_mode!r} is not implemented; use one of "
+                f"{list(_IMPLEMENTED_NODE_MODES)}. ('junction' / segment-as-edge "
+                "is planned next -- see gnn/DESIGN_segment_graph.md.)"
             )
-        unknown = [f for f in node_features if f not in _FEATURE_ATTR]
+        feature_attr = _MODE_FEATURE_ATTR[node_mode]
+        # Each mode has its own default and vocabulary: voxel-mode features are
+        # not valid segment-mode features and vice versa, so a None here resolves
+        # to the *mode's* default rather than a single global one.
+        if node_features is None:
+            node_features = _MODE_DEFAULT_FEATURES[node_mode]
+        unknown = [f for f in node_features if f not in feature_attr]
         if unknown:
             raise ValueError(
-                f"Unknown node_features {unknown}; supported: {sorted(_FEATURE_ATTR)}"
+                f"Unknown node_features {unknown} for node_mode={node_mode!r}; "
+                f"supported: {sorted(feature_attr)}"
             )
         if not 0.0 <= max_missing_label_frac <= 1.0:
             raise ValueError(
@@ -734,6 +810,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     centerline_root=self._centerline_root,
                     dce_root=self._dce_root,
                     node_features=self._node_features,
+                    node_mode=self._node_mode,
                 )
                 self._timings.merge(stage_samples)
                 logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
@@ -758,6 +835,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                         centerline_root=self._centerline_root,
                         dce_root=self._dce_root,
                         node_features=self._node_features,
+                        node_mode=self._node_mode,
                     )
                     for case_id, mask_path, label in batch
                 ]

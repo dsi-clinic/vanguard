@@ -28,7 +28,6 @@ _DEFAULT_DCE_ROOT = Path("/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images")
 _DEFAULT_CACHE_DIR = Path(
     "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache"
 )
-_DEFAULT_NODE_FEATURES = "peak_time,radius"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,10 +54,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--id-column", type=str, default="case_id")
     parser.add_argument("--label-column", type=str, default="pcr")
     parser.add_argument(
+        "--node-mode",
+        type=str,
+        default="voxel",
+        help="Node granularity: 'voxel' (one node per skeleton voxel) or "
+        "'segment' (one node per vessel segment / line graph). See "
+        "gnn/DESIGN_segment_graph.md. Note the two modes have different "
+        "node-feature vocabularies, so pass a matching --node-features.",
+    )
+    parser.add_argument(
         "--node-features",
         type=str,
-        default=_DEFAULT_NODE_FEATURES,
-        help="Comma-separated node feature names (see VanguardCenterlineDataset).",
+        default=None,
+        help="Comma-separated node feature names (see VanguardCenterlineDataset). "
+        "Defaults to the node mode's own default feature set when omitted.",
     )
     parser.add_argument(
         "--cases",
@@ -139,7 +148,8 @@ def main() -> None:
             "but --no-cache never writes a cache to disk, so there would be "
             "nothing new to replace the archived cache with."
         )
-    node_features = tuple(args.node_features.split(","))
+    # None -> let the dataset resolve the node mode's own default feature set.
+    node_features = tuple(args.node_features.split(",")) if args.node_features else None
     cases = args.cases.split(",") if args.cases else None
 
     if args.force_rebuild:
@@ -159,6 +169,7 @@ def main() -> None:
         cache_dir=args.cache_dir,
         cases=cases,
         no_cache=args.no_cache,
+        node_mode=args.node_mode,
         node_features=node_features,
         id_column=args.id_column,
         label_column=args.label_column,
