@@ -7,7 +7,7 @@ using the same float16 accumulator and the same weights.
 Tiny synthetic data + a deterministic Conv3d model — runs in a few seconds on
 CPU, safe for the login node. No GPU, no real data, no large memory.
 
-Run:  python faster-segmentation-test/tests/test_batching_equiv.py
+Run:  python segmentation/tests/test_batching_equiv.py
 """
 
 import sys
@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))  # faster-segmentation-test/
+sys.path.insert(0, str(HERE.parent))  # segmentation/
 
 import predict_fast  # noqa: E402  (also puts the submodule on sys.path)
 import torchio as tio  # noqa: E402
