@@ -155,6 +155,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_compare_inclusion_rules": [],
         "deepsets_point_feature_set": "baseline",
         "gnn_node_features": ["peak_time", "radius"],
+        # Class-conditional Gaussian noise layered onto the "pcr_dummy"
+        # leakage-canary feature at train time (gnn/train.py), never at cache
+        # -build time -- see _apply_pcr_dummy_noise. Defaults (0.0, 1.0, 0.0)
+        # exactly reproduce the original deterministic 0/1 broadcast.
+        "gnn_pcr_dummy_class0_mean": 0.0,
+        "gnn_pcr_dummy_class1_mean": 1.0,
+        "gnn_pcr_dummy_noise_std": 0.0,
+        "gnn_pcr_dummy_noise_seed": 0,
     },
     "data_paths": {
         "centerline_root": "",
@@ -176,6 +184,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "gnn_label_column": "pcr",
         "gnn_cases": None,
         "gnn_dataset_include": None,
+        "gnn_allow_manifest_mismatch": False,
     },
     "ablation_arms": deepcopy(DEFAULT_ABLATION_ARMS),
     # Optional multipliers for run_ablation_matrix (Issue #116 / #117 style experiments).

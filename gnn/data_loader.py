@@ -634,7 +634,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         ``allow_manifest_mismatch=True`` was passed.
         """
         manifest_path = Path(self.processed_dir) / _CACHE_MANIFEST_NAME
-        if not manifest_path.exists():
+        if not manifest_path.exists() and not self._allow_manifest_mismatch:
             raise RuntimeError(
                 f"Cache at {self.processed_dir} has no {_CACHE_MANIFEST_NAME} "
                 "(built before cache-manifest tracking was added). Its "
@@ -643,6 +643,8 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 "recorded, or pass allow_manifest_mismatch=True to bypass "
                 "this check."
             )
+        if not manifest_path.exists():
+            return
         manifest = json.loads(manifest_path.read_text())
         requested = self._manifest_settings()
         mismatched = {

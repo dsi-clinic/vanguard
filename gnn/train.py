@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch import nn
+from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
 from evaluation import FoldResults
@@ -47,6 +48,30 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("configs/gnn.yaml"))
     parser.add_argument("--outdir", type=Path, help="Override output directory")
+    parser.add_argument(
+        "--pcr-dummy-class1-mean",
+        type=float,
+        default=None,
+        help=(
+            "Override model_params.gnn_pcr_dummy_class1_mean "
+            "(pcr_dummy Gaussian-noise sweep; see _apply_pcr_dummy_noise)"
+        ),
+    )
+    parser.add_argument(
+        "--pcr-dummy-noise-std",
+        type=float,
+        default=None,
+        help=(
+            "Override model_params.gnn_pcr_dummy_noise_std "
+            "(pcr_dummy Gaussian-noise sweep; see _apply_pcr_dummy_noise)"
+        ),
+    )
+    parser.add_argument(
+        "--pcr-dummy-noise-seed",
+        type=int,
+        default=None,
+        help="Override model_params.gnn_pcr_dummy_noise_seed",
+    )
     return parser.parse_args()
 
 
@@ -119,15 +144,75 @@ def build_graph_cohort(
     return cohort_df
 
 
-def fit_node_standardizer(
-    dataset: VanguardCenterlineDataset, graph_indices: list[int]
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compute per-feature mean/std over training-split node features."""
-    feature_matrix = torch.cat([dataset[i].x for i in graph_indices], dim=0)
+def fit_node_standardizer(graphs: list[Data]) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute per-feature mean/std over training-split node features.
+
+    Takes already-cloned graphs (post noise-injection, if configured -- see
+    ``_apply_pcr_dummy_noise``) rather than indexing into the cached dataset
+    directly, so standardization reflects whatever the model actually trains
+    on.
+    """
+    feature_matrix = torch.cat([graph.x for graph in graphs], dim=0)
     mean = feature_matrix.mean(dim=0)
     std = feature_matrix.std(dim=0, unbiased=False)
     std = torch.where(std < _MIN_STD, torch.ones_like(std), std)
     return mean, std
+
+
+def _apply_pcr_dummy_noise(
+    graphs: list[Data],
+    graph_indices: list[int],
+    node_features: tuple[str, ...],
+    params: Any,
+) -> None:
+    """In place: redraw the ``pcr_dummy`` column as class-conditional Gaussian noise.
+
+    ``pcr_dummy`` is cached (``gnn.data_loader``) as the graph's own label
+    broadcast onto every node -- a deterministic 0/1 leakage canary. This
+    layers a *train-time* Gaussian noise model on top of that cached column,
+    without ever rebuilding the (expensive, raw-DCE-derived) dataset cache:
+    label 0 -> ``class0_mean``, label 1 -> ``class1_mean``, both plus
+    ``Normal(0, noise_std)``. Defaults (0.0, 1.0, 0.0) exactly reproduce the
+    original deterministic broadcast, so this is a no-op unless at least one
+    of the three params is explicitly overridden away from its default.
+
+    Note ``gnn/train.py`` standardizes every node feature per-fold as
+    ``(x - train_mean) / train_std`` (see ``fit_node_standardizer``), which
+    exactly cancels any constant offset added to this column -- so
+    ``class0_mean``/``class1_mean`` only matter through their *difference*
+    relative to ``noise_std`` (a Cohen's-d / SNR quantity), not their
+    absolute values.
+
+    Noise is drawn once per *graph* (not per node) and broadcast across all
+    of that graph's nodes, matching how the clean dummy is already broadcast
+    -- this experiment tests whether the model can extract a graded per-case
+    signal, not whether GCNConv's mean-pool averages out per-node iid noise
+    on its own. The draw is keyed by ``graph_index`` (the graph's position in
+    the cached dataset) rather than fold/loader order, so the same case gets
+    the same noisy value across folds, seeds, and reruns that share
+    ``gnn_pcr_dummy_noise_seed``.
+    """
+    class0_mean = float(params.gnn_pcr_dummy_class0_mean)
+    class1_mean = float(params.gnn_pcr_dummy_class1_mean)
+    noise_std = float(params.gnn_pcr_dummy_noise_std)
+    if class0_mean == 0.0 and class1_mean == 1.0 and noise_std == 0.0:
+        return
+    if "pcr_dummy" not in node_features:
+        raise ValueError(
+            "gnn_pcr_dummy_{class0_mean,class1_mean,noise_std} were set away "
+            "from their defaults, but 'pcr_dummy' is not in gnn_node_features "
+            "-- there is no column for this noise to apply to."
+        )
+    if noise_std < 0.0:
+        raise ValueError(f"gnn_pcr_dummy_noise_std must be >= 0, got {noise_std}")
+    col = node_features.index("pcr_dummy")
+    generator = torch.Generator().manual_seed(int(params.gnn_pcr_dummy_noise_seed))
+    noise_by_index = (
+        torch.randn(max(graph_indices) + 1, generator=generator) * noise_std
+    )
+    for graph, index in zip(graphs, graph_indices, strict=True):
+        class_mean = class1_mean if int(graph.y.item()) == 1 else class0_mean
+        graph.x[:, col] = class_mean + noise_by_index[index]
 
 
 def train_one_epoch(
@@ -253,9 +338,15 @@ def fit_predict_one_fold(
     train_graph_idx = cohort_df.iloc[split.train_indices]["graph_index"].tolist()
     val_graph_idx = cohort_df.iloc[split.val_indices]["graph_index"].tolist()
 
-    mean, std = fit_node_standardizer(dataset, train_graph_idx)
     train_graphs = [dataset[i].clone() for i in train_graph_idx]
     val_graphs = [dataset[i].clone() for i in val_graph_idx]
+    _apply_pcr_dummy_noise(
+        train_graphs + val_graphs,
+        train_graph_idx + val_graph_idx,
+        node_features=tuple(params.gnn_node_features),
+        params=params,
+    )
+    mean, std = fit_node_standardizer(train_graphs)
     for graph in train_graphs + val_graphs:
         graph.x = (graph.x - mean) / std
 
@@ -342,6 +433,7 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
         node_features=tuple(params.gnn_node_features),
         id_column=data_paths.gnn_id_column,
         label_column=data_paths.gnn_label_column,
+        allow_manifest_mismatch=bool(data_paths.gnn_allow_manifest_mismatch),
     )
     logging.info(
         "Loaded %d graph(s) from cache %s", len(dataset), data_paths.gnn_cache_dir
@@ -452,6 +544,12 @@ def main() -> None:
     )
     args = parse_args()
     config = load_config(args.config)
+    if args.pcr_dummy_class1_mean is not None:
+        config.model_params.gnn_pcr_dummy_class1_mean = args.pcr_dummy_class1_mean
+    if args.pcr_dummy_noise_std is not None:
+        config.model_params.gnn_pcr_dummy_noise_std = args.pcr_dummy_noise_std
+    if args.pcr_dummy_noise_seed is not None:
+        config.model_params.gnn_pcr_dummy_noise_seed = args.pcr_dummy_noise_seed
     outdir = resolve_run_output_dir(config=config, outdir_override=args.outdir)
     write_config_snapshot(config=config, outdir=outdir, config_source=args.config)
     run_gnn_pipeline(config, outdir)

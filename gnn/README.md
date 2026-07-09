@@ -137,7 +137,11 @@ fresh, matching manifest is written.
     pipeline (`data.x` → `GCNConv` stack → pooled logit → loss) can learn an
     end-to-end trivial signal. It's computed only when `"pcr_dummy"` is
     explicitly listed in `node_features` — never a hardcoded default, and
-    never valid for real modeling results.
+    never valid for real modeling results. `gnn/train.py` can optionally
+    redraw this column at train time as class-conditional Gaussian noise
+    instead of the clean 0/1 broadcast — see
+    [pCR-as-Gaussian learnability sweep](#pcr-as-gaussian-learnability-sweep)
+    below — without ever rebuilding this cache.
 #### Feature summary
 
 Every time a new cache is actually built (not on a cache hit, and not with
@@ -291,6 +295,45 @@ resolved config, for programmatic loading) directly under
 and `auc_by_epoch.png` (train/val curves per fold) alongside it.
 `gnn/slurm/submit_gnn_train.slurm` mirrors `submit_gnn_build.slurm` and
 defaults to `configs/gnn_smoke.yaml`.
+
+### pCR-as-Gaussian learnability sweep
+
+Extends the `gnn_pcr_dummy_check` leakage-canary experiment (perfect 0/1
+signal, AUC=1.0 by construction) into a graded-difficulty sweep: instead of a
+clean binary broadcast, `pcr_dummy` is redrawn at train time as
+class-conditional Gaussian noise — label 0 → `N(gnn_pcr_dummy_class0_mean,
+sigma^2)`, label 1 → `N(gnn_pcr_dummy_class1_mean, sigma^2)` — so val AUC can
+be traced from ~1.0 (clean signal) down to ~0.5 (pure noise) as a function of
+signal-to-noise ratio. Implemented in `gnn.train._apply_pcr_dummy_noise`,
+called from `fit_predict_one_fold` **after** cloning graphs out of the cached
+dataset and **before** node standardization — the noise is a train-time
+transform layered on top of the existing cache, never a reason to rebuild it
+(see `configs/gnn_pcr_gaussian.yaml`, which points at the same
+`gnn_cache_pcr_dummy` cache the original dummy-check run built).
+
+Key facts:
+
+- Defaults (`class0_mean=0.0`, `class1_mean=1.0`, `noise_std=0.0`) exactly
+  reproduce the original deterministic 0/1 broadcast — this is a no-op unless
+  at least one is explicitly overridden, and raises if overridden while
+  `"pcr_dummy"` isn't in `gnn_node_features` (no silent no-op).
+- `gnn/train.py` standardizes every node feature per-fold as
+  `(x - train_mean) / train_std`, which exactly cancels a constant offset —
+  so **only the ratio of class separation to noise_std matters** (a
+  Cohen's-d / SNR quantity), not the raw magnitude of either mean.
+- Noise is drawn once per **graph** (not per node), broadcast across all of
+  that graph's nodes — matching how the clean dummy is already broadcast —
+  and keyed by `graph_index` (the graph's position in the cached dataset) so
+  the same case gets the same draw across folds/seeds/reruns that share
+  `gnn_pcr_dummy_noise_seed`.
+
+Sweep a grid without regenerating YAML files, via CLI overrides:
+
+```bash
+python -m gnn.train --config configs/gnn_pcr_gaussian.yaml \
+    --pcr-dummy-class1-mean 1.0 --pcr-dummy-noise-std 1.0 --pcr-dummy-noise-seed 0 \
+    --outdir experiments/gnn_pcr_gaussian_grid/d1.0_seed0
+```
 
 ### Auditing outputs
 
