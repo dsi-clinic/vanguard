@@ -15,7 +15,7 @@ Writes a summary to ``validation_report.txt`` in the output dir of this script.
 This is lightweight (loads two float16 volumes at a time) and safe on the login
 node. Run:
 
-    python faster-segmentation-test/validate_outputs.py \\
+    python segmentation/validate_outputs.py \\
         --fast-dir  /ess/scratch/scratch1/t-9sbose/vessel_segmentations_fast_smoke \\
         --truth-dir /ess/scratch/scratch1/t-9sbose/vessel_segmentations
 """

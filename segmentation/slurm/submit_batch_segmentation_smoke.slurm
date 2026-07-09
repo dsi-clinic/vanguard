@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=fast-seg-smoke
+#SBATCH --job-name=batch-seg-smoke
 #SBATCH --partition=gpuq
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=01:00:00
-#SBATCH --output=logs/fast-seg-smoke-%j.out
-#SBATCH --error=logs/fast-seg-smoke-%j.err
+#SBATCH --output=logs/batch-seg-smoke-%j.out
+#SBATCH --error=logs/batch-seg-smoke-%j.err
 set -eo pipefail
 
-# Small GPU smoke test for the fast pipeline. Processes a few files (that already
-# have ground truth) into a SEPARATE output dir, so it cannot disturb the live
-# segmentation run. Validate afterwards with validate_outputs.py.
+# Small GPU smoke test for the batch segmentation pipeline. Processes a few
+# files (that already have ground truth) into a SEPARATE output dir, so it
+# cannot disturb the live segmentation run. Validate afterwards with
+# validate_outputs.py.
+#
+# No .sh wrapper for this one -- submit with PROJECT_ROOT set explicitly, e.g.
+# from the repo root:
+#   PROJECT_ROOT="$(pwd)" sbatch segmentation/slurm/submit_batch_segmentation_smoke.slurm
 
 source ~/.bashrc || true
 eval "$(micromamba shell hook -s bash)"
 micromamba activate vanguard
 export xml_catalog_files_libxml2=""
 
-PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Not derived from $SLURM_SUBMIT_DIR (caller's cwd at submission, not this
+# script's location) or ${BASH_SOURCE[0]} (sbatch may run a spooled copy) --
+# see submit_batch_segmentation_array.slurm for the full rationale.
+PROJECT_ROOT="${PROJECT_ROOT:?PROJECT_ROOT must be set, e.g. PROJECT_ROOT=\$(pwd) sbatch ... from the repo root}"
 mkdir -p logs
 
 export OMP_NUM_THREADS=2
@@ -37,13 +45,13 @@ TMPDIR="/tmp/fast_seg_smoke_${SLURM_JOB_ID:-local}"
 mkdir -p "${TMPDIR}"
 trap 'rm -rf "${TMPDIR}" || true' EXIT
 
-echo "=== Fast Segmentation Smoke Test ==="
+echo "=== Batch Segmentation Smoke Test ==="
 echo "Node: $(hostname)  GPU: ${CUDA_VISIBLE_DEVICES:-?}  Date: $(date)"
 echo "Files: ${FILE_START}-${FILE_END}  batch_size=${BATCH_SIZE}"
 echo "Output: ${OUTPUT_DIR}"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 
-python -u "${PROJECT_ROOT}/faster-segmentation-test/batch_segmentation_fast.py" \
+python -u "${PROJECT_ROOT}/segmentation/batch_segmentation.py" \
   --images-dir        "${IMAGES_DIR}" \
   --output-dir        "${OUTPUT_DIR}" \
   --temp-dir          "${TMPDIR}" \

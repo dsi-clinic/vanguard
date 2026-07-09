@@ -1,34 +1,44 @@
 #!/usr/bin/env python3
-"""Batch segmentation script for processing all .nii.gz files in /images directory
+"""Batch segmentation driver: in-process, batched, AMP inference.
 
-and extracting STEP-2 breast mask segmentations (.npy files).
+For the vessel-segmentation stage (breast mask STEP-2 -> vessel STEP-3):
 
-This script:
-1. Finds all .nii.gz files in the images directory
-2. Processes each file through the breast segmentation pipeline (STEP-1 → STEP-2)
-3. Collects all STEP-2 .npy files (breast masks) for further processing
-4. Provides options for parallel processing and progress tracking
+1. STEP-1 preprocessing runs in parallel (``ThreadPoolExecutor``).
+2. STEP-2 (breast) and STEP-3 (vessel) run **in-process** -- no subprocess,
+   each model is loaded exactly once and kept on the GPU (no Python restart,
+   no reload).
+3. Inference is **batched** (``predict_fast``) and uses **AMP** on the GPU.
+
+This replaced an earlier subprocess-per-stage implementation that shelled out
+to the submodule's ``predict.py`` twice per file. That implementation was
+validated against this one (16.15x mean speedup, Dice 0.9998-1.0 on a 7-file
+sample) before removal -- see ``validation_results.md``.
 """
+
+from __future__ import annotations
 
 import argparse
 import os
 import shutil
-import subprocess
 import sys
-import tempfile
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 import SimpleITK as sitk
+import torch
+
+_HERE = Path(__file__).resolve().parent
+_PROJECT_ROOT = _HERE.parent
+_SUBMODULE = _PROJECT_ROOT / "vanguard-blood-vessel-segmentation"
+for _p in (str(_HERE), str(_SUBMODULE)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 # FIXME: this is cobbling together an installation process in the script itself
 # packages must be installed in an environment
 try:
-    SCRIPT_DIR = Path(__file__).parent
-    sys.path.insert(0, str(SCRIPT_DIR.parent / "vanguard-blood-vessel-segmentation"))
-
     from preprocessing import normalize_image, zscore_image  # noqa: E402
 
 except ImportError:
@@ -38,6 +48,9 @@ except ImportError:
 
     def zscore_image(*args, **_kwargs):  # noqa: ANN201, D103
         raise ImportError("Required preprocessing function not found")  # noqa: F821
+
+
+import predict_fast  # noqa: E402
 
 
 def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
@@ -94,150 +107,6 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
         return False
 
 
-def run_vessel_segmentation(
-    step1_dir: str,
-    step2_dir: str,
-    step3_dir: str,
-    breast_model_path: str,
-    vessel_model_path: str,
-) -> bool:
-    """Run complete segmentation pipeline: breast mask (STEP-2) then vessel segmentation (STEP-3).
-
-    Args:
-        step1_dir: Directory containing STEP-1 preprocessed files
-        step2_dir: Directory to save STEP-2 breast masks
-        step3_dir: Directory to save STEP-3 vessel segmentations
-        breast_model_path: Path to the breast segmentation model
-        vessel_model_path: Path to the vessel segmentation model
-
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        # Change to the segmentation project directory
-        original_cwd = Path.cwd()
-        script_dir = Path(__file__).parent
-        os.chdir(script_dir.parent / "vanguard-blood-vessel-segmentation")
-
-        # STEP-2: Run breast segmentation
-        print("  Running breast segmentation (STEP-2)...")
-        cmd_breast = [
-            "python",
-            "predict.py",
-            "--target-tissue",
-            "breast",
-            "--image",
-            step1_dir,
-            "--save-masks-dir",
-            step2_dir,
-            "--model-save-path",
-            breast_model_path,
-        ]
-
-        result_breast = subprocess.run(  # noqa: S603
-            cmd_breast, capture_output=True, text=True, shell=False
-        )
-
-        if result_breast.returncode != 0:
-            print(f"Breast segmentation failed: {result_breast.stderr}")
-            os.chdir(original_cwd)
-            return False
-
-        # STEP-3: Run vessel segmentation
-        print("  Running vessel segmentation (STEP-3)...")
-        cmd_vessel = [
-            "python",
-            "predict.py",
-            "--target-tissue",
-            "dv",
-            "--image",
-            step1_dir,
-            "--input-mask",
-            step2_dir,
-            "--save-masks-dir",
-            step3_dir,
-            "--model-save-path",
-            vessel_model_path,
-        ]
-
-        result_vessel = subprocess.run(  # noqa: S603
-            cmd_vessel, capture_output=True, text=True, shell=False
-        )
-
-        # Restore original working directory
-        os.chdir(original_cwd)
-
-        if result_vessel.returncode == 0:
-            return True
-        else:
-            print(f"Vessel segmentation failed: {result_vessel.stderr}")
-            return False
-
-    except Exception as e:
-        print(f"Error running segmentation: {e}")
-        return False
-
-
-def process_single_file(
-    args: tuple[str, str, str, str, str, str],
-) -> tuple[str, bool, str]:
-    """Process a single .nii.gz file through the complete pipeline.
-
-    Args:
-        args: Tuple containing (case_id, file_path, temp_dir, output_dir, breast_model_path, vessel_model_path)
-
-    Returns:
-        Tuple of (case_id, success, output_path)
-    """
-    (
-        case_id,
-        file_path,
-        temp_dir,
-        output_dir,
-        breast_model_path,
-        vessel_model_path,
-    ) = args
-
-    try:
-        # Create temporary directories for this file
-        step1_dir = Path(temp_dir) / f"{case_id}_step1"
-        step2_dir = Path(temp_dir) / f"{case_id}_step2"
-        step3_dir = Path(temp_dir) / f"{case_id}_step3"
-
-        step1_dir.mkdir(parents=True, exist_ok=True)
-        step2_dir.mkdir(parents=True, exist_ok=True)
-        step3_dir.mkdir(parents=True, exist_ok=True)
-
-        # Extract filename without extension
-        filename = Path(file_path).name
-        base_name = filename.replace(".nii.gz", "")
-
-        # STEP-1: Preprocess
-        step1_file = step1_dir / f"{base_name}.npy"
-        if not preprocess_image(file_path, step1_file):
-            return case_id, False, ""
-
-        # STEP-2 & STEP-3: Complete segmentation pipeline
-        if not run_vessel_segmentation(
-            step1_dir, step2_dir, step3_dir, breast_model_path, vessel_model_path
-        ):
-            return case_id, False, ""
-
-        # Move the STEP-3 result to output directory
-        step3_file = step3_dir / f"{base_name}.npz"
-        output_file = build_output_path(Path(output_dir), case_id, base_name)
-
-        if step3_file.exists():
-            shutil.move(step3_file, output_file)
-            return case_id, True, output_file
-        else:
-            return case_id, False, ""
-
-    except Exception as e:
-        print(f"Error processing {case_id}: {e}")
-        return case_id, False, ""
-
-
 def build_output_path(output_dir: Path, case_id: str, base_name: str) -> Path:
     """Build output path in a source/case/images layout."""
     source = case_id.split("_")[0]
@@ -273,264 +142,223 @@ def collect_all_step3_files(output_dir: str) -> list[str]:
     return npy_files
 
 
-def main() -> None:
-    """Main function to run batch segmentation processing."""
-    # Get script directory for relative paths
-    script_dir = Path(__file__).parent
+def preprocess_parallel(
+    file_list: list[tuple[str, str]], step1_dir: Path, workers: int
+) -> tuple[dict[str, str], list[str]]:
+    """Run STEP-1 preprocessing across a thread pool. Returns base_name->case_id."""
+    base_name_to_case = {}
+    failed = []
 
-    parser = argparse.ArgumentParser(
-        description="Batch process all .nii.gz files and extract vessel segmentations (STEP-3)",
+    def _work(item: tuple[str, str]) -> tuple[str, str, bool]:
+        case_id, file_path = item
+        base_name = Path(file_path).name.replace(".nii.gz", "")
+        step1_file = step1_dir / f"{base_name}.npy"
+        ok = preprocess_image(file_path, step1_file)
+        return case_id, base_name, ok
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for case_id, base_name, ok in ex.map(_work, file_list):
+            if ok:
+                base_name_to_case[base_name] = case_id
+            else:
+                failed.append(case_id)
+                print(f"  ✗ preprocessing failed: {case_id}")
+    return base_name_to_case, failed
+
+
+def run_inference_in_process(
+    step1_dir: Path,
+    step2_dir: Path,
+    step3_dir: Path,
+    breast_model_path: str,
+    vessel_model_path: str,
+    batch_size: int,
+    num_workers: int,
+    use_amp: bool,
+) -> None:
+    """Load each model once and run breast then vessel inference in-process."""
+    import torchio as tio
+    from dataset_3d import Dataset3DDivided, Dataset3DSimple
+
+    predict_fast.apply_shape_patch()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # ── STEP-2: breast ────────────────────────────────────────────────────
+    breast_unet, _, _ = predict_fast.build_unet("breast")
+    breast_unet = predict_fast.load_model(breast_unet, breast_model_path, device)
+    breast_ds = Dataset3DSimple(
+        image_dir=str(step1_dir),
+        mask_dir=None,
+        transforms=tio.Compose([tio.Resize((144, 144, 96))]),
+        image_only=True,
+    )
+    predict_fast.predict_breast_batched(
+        breast_unet,
+        breast_ds,
+        str(step2_dir),
+        device=device,
+        batch_size=max(2, batch_size // 2),
+        num_workers=num_workers,
+        use_amp=use_amp,
+    )
+    del breast_unet
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    # ── STEP-3: vessel ────────────────────────────────────────────────────
+    vessel_unet, _, n_classes = predict_fast.build_unet("dv")
+    vessel_unet = predict_fast.load_model(vessel_unet, vessel_model_path, device)
+    vessel_ds = Dataset3DDivided(
+        image_dir=str(step1_dir),
+        mask_dir=None,
+        additional_input_dir=str(step2_dir),
+        input_dim=96,
+        x_y_divisions=8,
+        z_division=3,
+        transforms=tio.Compose([]),
+        one_hot_mask=True,
+        image_only=True,
+    )
+    predict_fast.predict_vessel_batched(
+        vessel_unet,
+        vessel_ds,
+        n_classes=n_classes,
+        save_masks_dir=str(step3_dir),
+        device=device,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        use_amp=use_amp,
+    )
+
+
+def main() -> None:
+    """Run the batch-segmentation CLI."""
+    p = argparse.ArgumentParser(
+        description="In-process batched vessel segmentation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-
-    parser.add_argument(
+    p.add_argument(
         "--images-dir",
-        default="/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images",
+        default=os.environ.get(
+            "IMAGES_DIR", "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+        ),
         help="Directory containing case subdirectories with .nii.gz files",
     )
-
-    parser.add_argument(
-        "--output-dir",
-        default=str(script_dir.parent / "vessel_segmentations"),
-        help="Directory to save all STEP-3 vessel segmentation .npz files",
+    p.add_argument("--output-dir", default=str(_PROJECT_ROOT / "vessel_segmentations"))
+    p.add_argument(
+        "--temp-dir", required=True, help="Scratch dir for STEP-1/2/3 intermediates"
     )
-
-    parser.add_argument(
-        "--temp-dir",
-        default=tempfile.mkdtemp(prefix="batch_segmentation_"),
-        help="Temporary directory for intermediate processing",
-    )
-
-    parser.add_argument(
+    p.add_argument(
         "--breast-model-path",
-        default=str(
-            Path(__file__).parent.parent
-            / "vanguard-blood-vessel-segmentation"
-            / "trained_models"
-            / "breast_model.pth"
-        ),
-        help="Path to the breast segmentation model (STEP-2)",
+        default=str(_SUBMODULE / "trained_models" / "breast_model.pth"),
     )
-
-    parser.add_argument(
+    p.add_argument(
         "--vessel-model-path",
-        default=str(
-            Path(__file__).parent.parent
-            / "vanguard-blood-vessel-segmentation"
-            / "trained_models"
-            / "dv_model.pth"
-        ),
-        help="Path to the vessel segmentation model (STEP-3)",
+        default=str(_SUBMODULE / "trained_models" / "dv_model.pth"),
     )
+    p.add_argument("--patient-limit", type=int, default=None)
+    p.add_argument("--file-start", type=int, default=None)
+    p.add_argument("--file-end", type=int, default=None)
+    p.add_argument("--batch-size", type=int, default=16)
+    p.add_argument("--num-workers", type=int, default=3)
+    p.add_argument("--preprocess-workers", type=int, default=4)
+    p.add_argument("--no-amp", action="store_true", help="Disable mixed precision")
+    p.add_argument("--resume", action="store_true")
+    p.add_argument("--cleanup", action="store_true")
+    args = p.parse_args()
 
-    parser.add_argument(
-        "--max-workers", type=int, default=4, help="Maximum number of parallel workers"
+    out_dir = Path(args.output_dir)
+    temp_dir = Path(args.temp_dir)
+    step1_dir, step2_dir, step3_dir = (
+        temp_dir / "step1",
+        temp_dir / "step2",
+        temp_dir / "step3",
     )
-
-    parser.add_argument(
-        "--patient-limit",
-        type=int,
-        default=None,
-        help="Limit processing to first N cases (for testing)",
-    )
-
-    parser.add_argument(
-        "--cleanup",
-        action="store_true",
-        help="Clean up temporary files after processing",
-    )
-
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume processing, skip already processed files",
-    )
-
-    parser.add_argument(
-        "--file-index",
-        type=int,
-        default=None,
-        help="Process only the file at this index in the sorted list (for SLURM array jobs)",
-    )
-
-    parser.add_argument(
-        "--file-start",
-        type=int,
-        default=None,
-        help="Process files from this start index (inclusive) in the sorted list",
-    )
-
-    parser.add_argument(
-        "--file-end",
-        type=int,
-        default=None,
-        help="Process files up to this end index (inclusive) in the sorted list",
-    )
-
-    args = parser.parse_args()
-
-    # Create output directory
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    Path(args.temp_dir).mkdir(parents=True, exist_ok=True)
+    for d in (out_dir, step1_dir, step2_dir, step3_dir):
+        d.mkdir(parents=True, exist_ok=True)
 
     print(f"Finding .nii.gz files in {args.images_dir}...")
-    nii_files = find_nii_files(args.images_dir)
+    nii_files = sorted(find_nii_files(args.images_dir), key=lambda x: (x[0], str(x[1])))
+    print(f"Found {len(nii_files)} .nii.gz files")
 
-    # Sort files for reproducible ordering
-    nii_files = sorted(nii_files, key=lambda x: (x[0], str(x[1])))
-
+    if args.file_start is not None:
+        end = args.file_end if args.file_end is not None else args.file_start
+        end = min(end, len(nii_files) - 1)
+        nii_files = nii_files[args.file_start : end + 1]
+        print(f"Range {args.file_start}-{end}: {len(nii_files)} files")
     if args.patient_limit:
         nii_files = nii_files[: args.patient_limit]
-        print(f"Limited to first {args.patient_limit} files for testing")
 
-    print(f"Found {len(nii_files)} .nii.gz files to process")
-
-    # If file-index is specified, process only that file (for SLURM array jobs)
-    # Do this BEFORE resume filtering so we can check if the specific file was already processed
-    if args.file_index is not None:
-        if args.file_index < 0 or args.file_index >= len(nii_files):
-            print(
-                f"Error: file-index {args.file_index} is out of range (0-{len(nii_files)-1})"
-            )
-            return [], []
-
-        nii_files = [nii_files[args.file_index]]
-        print(f"Processing single file at index {args.file_index}: {nii_files[0][0]}")
-    elif args.file_start is not None or args.file_end is not None:
-        if args.file_start is None:
-            print("Error: file-start is required when using file-end")
-            return [], []
-
-        file_start = args.file_start
-        file_end = args.file_end if args.file_end is not None else args.file_start
-
-        if file_start < 0 or file_start >= len(nii_files):
-            print(
-                f"Error: file-start {file_start} is out of range (0-{len(nii_files)-1})"
-            )
-            return [], []
-
-        if file_end < file_start:
-            print("Error: file-end must be >= file-start")
-            return [], []
-
-        if file_end >= len(nii_files):
-            file_end = len(nii_files) - 1
-            print(f"file-end exceeds max index, clamping to {file_end}")
-
-        nii_files = nii_files[file_start : file_end + 1]
-        print(f"Processing file range {file_start}-{file_end} ({len(nii_files)} files)")
-
-    # Filter out already processed files if resuming
     if args.resume:
-        original_count = len(nii_files)
+        before = len(nii_files)
         nii_files = [
-            (case_id, file_path)
-            for case_id, file_path in nii_files
+            (cid, fp)
+            for cid, fp in nii_files
             if not build_output_path(
-                Path(args.output_dir),
-                case_id,
-                Path(file_path).name.replace(".nii.gz", ""),
+                out_dir, cid, Path(fp).name.replace(".nii.gz", "")
             ).exists()
         ]
-        skipped_count = original_count - len(nii_files)
-        if skipped_count > 0:
-            print(
-                f"Resuming: {len(nii_files)} files remaining (skipped {skipped_count} already processed)"
-            )
-        if len(nii_files) == 0:
-            print("All files already processed, exiting")
-            return [], []
+        print(f"Resume: {len(nii_files)} remaining (skipped {before - len(nii_files)})")
+    if not nii_files:
+        print("Nothing to do, exiting.")
+        return
 
-    # Prepare arguments for processing
-    process_args = [
-        (
-            case_id,
-            file_path,
-            args.temp_dir,
-            args.output_dir,
-            args.breast_model_path,
-            args.vessel_model_path,
-        )
-        for case_id, file_path in nii_files
-    ]
-
-    # Process files
-    successful_files = []
-    failed_files = []
-
-    start_time = time.time()
-
-    # If processing a single file (SLURM array job), don't use ProcessPoolExecutor
-    if args.file_index is not None:
-        # Process single file directly
-        (
-            case_id,
-            file_path,
-            temp_dir,
-            output_dir,
-            breast_model_path,
-            vessel_model_path,
-        ) = process_args[0]
-        result = process_single_file(process_args[0])
-        case_id, success, output_path = result
-
-        if success:
-            successful_files.append(output_path)
-            print(f"✓ {case_id}: {output_path}")
-        else:
-            failed_files.append(case_id)
-            print(f"✗ {case_id}: Failed")
-    else:
-        # Process multiple files in parallel
-        with ProcessPoolExecutor(max_workers=args.max_workers) as executor:
-            # Submit all tasks
-            future_to_patient = {
-                executor.submit(process_single_file, arg): arg[0]
-                for arg in process_args
-            }
-
-            # Process completed tasks
-            for i, future in enumerate(as_completed(future_to_patient), 1):
-                case_id, success, output_path = future.result()
-
-                if success:
-                    successful_files.append(output_path)
-                    print(f"[{i}/{len(nii_files)}] ✓ {case_id}: {output_path}")
-                else:
-                    failed_files.append(case_id)
-                    print(f"[{i}/{len(nii_files)}] ✗ {case_id}: Failed")
-
-    end_time = time.time()
-
-    # Summary
-    print(f"\n{'='*60}")
-    print("BATCH PROCESSING COMPLETE")
-    print(f"{'='*60}")
-    print(f"Total files processed: {len(nii_files)}")
-    print(f"Successful: {len(successful_files)}")
-    print(f"Failed: {len(failed_files)}")
-    print(f"Processing time: {end_time - start_time:.2f} seconds")
+    t0 = time.time()
+    use_amp = not args.no_amp
     print(
-        f"Average time per file: {(end_time - start_time) / len(nii_files):.2f} seconds"
+        f"Preprocessing {len(nii_files)} file(s) with {args.preprocess_workers} workers..."
     )
+    base_name_to_case, failed = preprocess_parallel(
+        nii_files, step1_dir, args.preprocess_workers
+    )
+    t_pre = time.time()
+    print(
+        f"Preprocessing done in {t_pre - t0:.1f}s ({len(base_name_to_case)} ok, {len(failed)} failed)"
+    )
+    if not base_name_to_case:
+        print("All files failed preprocessing — skipping inference.")
+        return
 
-    if failed_files:
-        print("\nFailed files:")
-        for case_id in failed_files:
-            print(f"  - {case_id}")
+    print(
+        f"Inference (batch_size={args.batch_size}, num_workers={args.num_workers}, amp={use_amp})..."
+    )
+    run_inference_in_process(
+        step1_dir,
+        step2_dir,
+        step3_dir,
+        args.breast_model_path,
+        args.vessel_model_path,
+        args.batch_size,
+        args.num_workers,
+        use_amp,
+    )
+    t_inf = time.time()
+    print(f"Inference done in {t_inf - t_pre:.1f}s")
 
-    # Collect all STEP-3 vessel segmentation files
-    all_npy_files = collect_all_step3_files(args.output_dir)
-    print(f"\nAll STEP-3 vessel segmentation .npz files saved to: {args.output_dir}")
-    print(f"Total vessel segmentation files: {len(all_npy_files)}")
+    # ── Move STEP-3 outputs to final layout ───────────────────────────────
+    successful, failed_cases = [], list(failed)
+    for base_name, case_id in base_name_to_case.items():
+        step3_file = step3_dir / f"{base_name}.npz"
+        if step3_file.exists():
+            dst = build_output_path(out_dir, case_id, base_name)
+            shutil.move(str(step3_file), str(dst))
+            successful.append(str(dst))
+            print(f"  ✓ {case_id}: {dst}")
+        else:
+            failed_cases.append(case_id)
+            print(f"  ✗ vessel output missing: {case_id} ({base_name}.npz)")
 
-    # Cleanup
+    total = time.time() - t0
+    print(f"\n{'='*60}\nBATCH SEGMENTATION COMPLETE")
+    print(
+        f"Files: {len(nii_files)}  Successful: {len(successful)}  Failed: {len(failed_cases)}"
+    )
+    print(f"Total: {total:.1f}s  ({total/len(nii_files):.1f}s/file)")
+    print(f"  preprocess: {t_pre - t0:.1f}s  inference: {t_inf - t_pre:.1f}s")
+    print(f"Outputs collected: {len(collect_all_step3_files(str(out_dir)))}")
+
     if args.cleanup:
-        print(f"\nCleaning up temporary directory: {args.temp_dir}")
-        shutil.rmtree(args.temp_dir, ignore_errors=True)
-
-    return successful_files, failed_files
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
