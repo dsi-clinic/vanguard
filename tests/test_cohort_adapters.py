@@ -1,9 +1,16 @@
-"""Unit tests for the dataset-adapter scaffold (Step 1).
+"""Unit tests for the cohort-adapter scaffold (Step 1).
 
-These exercise the adapters in isolation — construction, the design-doc claim
-that ``MamaMiaDataset`` needs no method overrides (§6.5), the ``UChicagoDataset``
-override set, the factory, and split-policy resolution — without touching any
-real data on disk.
+These exercise the adapters in isolation — construction, documented base
+behavior, class-attribute defaults, the factory, and split-policy resolution —
+without touching any real data on disk.
+
+Deliberately not tested here: the exact set of methods each subclass
+overrides. That's an implementation-shape detail that will keep shifting as
+the design evolves (e.g. once UChicago preprocessing is actually implemented);
+pinning it in a test would make routine changes fail for no functional
+reason. What's tested instead is the *behavior* those overrides are
+responsible for (identity parsing, preprocessing raising until implemented,
+split-policy defaults, etc.).
 """
 
 from __future__ import annotations
@@ -13,28 +20,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from config import ConfigNode
-from datasets import (
+from cohorts import (
     DatasetAdapter,
     MamaMiaDataset,
     UChicagoDataset,
     build_adapter_from_config,
     resolve_split_policy,
 )
-
-
-def _overridden_methods(subclass: type, base: type) -> set[str]:
-    """Return names of base methods the subclass redefines (excluding dunders)."""
-    overridden: set[str] = set()
-    for name in dir(base):
-        if name.startswith("__"):
-            continue
-        base_attr = getattr(base, name)
-        if not callable(base_attr):
-            continue
-        if getattr(subclass, name) is not base_attr:
-            overridden.add(name)
-    return overridden
+from config import ConfigNode
 
 
 def _dataset_config(dataset: dict) -> ConfigNode:
@@ -71,27 +64,6 @@ def test_uchicago_constructs_with_default_manifest() -> None:
     assert adapter.manifest_csv == Path(
         "/data/uchicago/dce2d_internal_ultrafast_manifest.csv"
     )
-
-
-# -- the §6.5 claim: MamaMiaDataset overrides no methods --
-
-
-def test_mamamia_overrides_no_methods() -> None:
-    """MamaMiaDataset relies entirely on base behavior (design doc §6.5)."""
-    assert _overridden_methods(MamaMiaDataset, DatasetAdapter) == set()
-
-
-def test_uchicago_overrides_exactly_the_expected_methods() -> None:
-    """UChicago overrides only the methods identified in §6.5."""
-    expected = {
-        "discover_cases",
-        "load_timepoints",
-        "preprocess",
-        "case_dataset_name",
-        "group_key",
-        "load_labels",
-    }
-    assert _overridden_methods(UChicagoDataset, DatasetAdapter) == expected
 
 
 # -- class-attribute defaults --

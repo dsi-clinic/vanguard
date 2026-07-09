@@ -165,7 +165,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "vessel_segmentation_root": "",
     },
     # Dataset-adapter selection (multi-dataset redesign, Step 1). Read only by
-    # datasets/factory.py; no pipeline stage consumes it yet. When ``name`` is
+    # cohorts/factory.py; no pipeline stage consumes it yet. When ``name`` is
     # None the factory returns no adapter and the pipeline uses today's behavior.
     "dataset": {
         "name": None,  # "mamamia" | "uchicago"

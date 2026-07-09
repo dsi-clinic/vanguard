@@ -11,9 +11,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from datasets.base import DatasetAdapter
-from datasets.mamamia import MamaMiaDataset
-from datasets.uchicago import UChicagoDataset
+from cohorts.base import DatasetAdapter
+from cohorts.mamamia import MamaMiaDataset
+from cohorts.uchicago import UChicagoDataset
 
 if TYPE_CHECKING:
     from config import ConfigNode

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
-from datasets.base import DatasetAdapter
+from cohorts.base import DatasetAdapter
 
 MAMAMIA_COHORTS: frozenset[str] = frozenset({"duke", "ispy1", "ispy2", "nact"})
 

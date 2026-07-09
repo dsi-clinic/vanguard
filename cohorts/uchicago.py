@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 
-from datasets.base import DatasetAdapter
+from cohorts.base import DatasetAdapter
 
 if TYPE_CHECKING:
     import pandas as pd
