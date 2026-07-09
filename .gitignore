@@ -219,8 +219,6 @@ LAB_NOTEBOOK.md
 
 # Local AI Agent Config 
 agents.local.md
-.claude/
-CLAUDE.md
 
 # Output
 sample_data/mri_images/
