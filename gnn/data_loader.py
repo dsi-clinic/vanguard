@@ -46,12 +46,10 @@ import matplotlib.pyplot as plt
 
 from config import DEFAULT_CONFIG
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_build_time_plots
+from gnn.kinetics import node_kinetic_features, time_axis_from_study_timepoints
 from gnn.raw_dce import discover_raw_dce_paths, load_raw_dce_series
 from graph_extraction.constants import NDIM_3D
-from graph_extraction.feature_stats import (
-    _arrival_index_from_enhancement,
-    mask_to_edges_bitmask,
-)
+from graph_extraction.feature_stats import mask_to_edges_bitmask
 from graph_extraction.skeleton_to_graph_primitives import (
     edges_to_segments,
     obtain_radius_map,
@@ -184,56 +182,6 @@ def _load_study_timepoints(case_id: str, study_dir: Path) -> list[int]:
     return [int(t) for t in study_timepoints]
 
 
-def _time_axis_from_study_timepoints(study_timepoints: list[int]) -> np.ndarray:
-    """Build a strictly increasing time axis, mirroring ``features.kinematic``.
-
-    Falls back to plain timepoint indices (``0..T-1``) if the recorded
-    timepoints are not finite and strictly increasing.
-    """
-    time_axis = np.asarray(study_timepoints, dtype=float)
-    if not np.all(np.isfinite(time_axis)) or np.any(np.diff(time_axis) <= 0.0):
-        return np.arange(len(study_timepoints), dtype=float)
-    return time_axis
-
-
-def _node_kinetic_features(
-    curve: np.ndarray, time_axis: np.ndarray
-) -> dict[str, object]:
-    """Derive enhancement-curve features for one node's raw DCE signal.
-
-    Mirrors the per-segment convention in
-    ``features.kinematic.compute_tumor_kinematic_feature_payload``: baseline is
-    the timepoint-0 value (no per-timepoint normalization, which would destroy
-    the kinetic meaning of the curve), arrival is estimated with
-    ``graph_extraction.feature_stats._arrival_index_from_enhancement``, and
-    washin/AUC use the same formulas.
-
-    ``tte_idx`` is ``None`` when the node shows no meaningful enhancement
-    (peak <= 0) -- a real "no signal" voxel, not a bug -- and the caller is
-    responsible for choosing a sentinel for the tensor-facing feature.
-    """
-    baseline = float(curve[0])
-    enh = np.asarray(curve, dtype=float) - baseline
-    peak_idx = int(np.argmax(enh))
-    peak_enhancement = float(enh[peak_idx])
-    tte_idx = _arrival_index_from_enhancement(enh)
-    start_idx = 0 if tte_idx is None else int(tte_idx)
-    washin_den = float(time_axis[peak_idx] - time_axis[start_idx])
-    washin_slope = (
-        float((enh[peak_idx] - enh[start_idx]) / washin_den)
-        if washin_den > 0.0
-        else 0.0
-    )
-    auc_positive = float(np.trapz(np.maximum(enh, 0.0), x=time_axis))
-    return {
-        "peak_idx": peak_idx,
-        "peak_enhancement": peak_enhancement,
-        "tte_idx": tte_idx,
-        "washin_slope": washin_slope,
-        "auc_positive": auc_positive,
-    }
-
-
 def _attach_node_features(
     graph: nx.Graph,
     radius_map: dict[tuple[int, int, int], float],
@@ -259,7 +207,7 @@ def _attach_node_features(
     for node in graph.nodes():
         x, y, z = int(node[0]), int(node[1]), int(node[2])
         curve = dce_4d[:, z, y, x]
-        kinetic = _node_kinetic_features(curve, time_axis)
+        kinetic = node_kinetic_features(curve, time_axis)
         tte_idx = kinetic["tte_idx"]
 
         attrs = graph.nodes[node]
@@ -363,7 +311,7 @@ def _build_case(
             f"match support mask shape {support.shape}"
         )
     num_timepoints = int(dce_4d.shape[0])
-    time_axis = _time_axis_from_study_timepoints(study_timepoints)
+    time_axis = time_axis_from_study_timepoints(study_timepoints)
 
     with _stage_timer(stage_samples, "peak_time"):
         _attach_node_features(
@@ -442,7 +390,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
             The kinetic features are all sampled from the raw DCE enhancement curve
             (``curve = dce_4d[:, z, y, x]``, ``enhancement = curve - curve[0]``), using
             the same conventions as ``features/kinematic.py`` -- see
-            ``_node_kinetic_features``.
+            ``gnn.kinetics.node_kinetic_features``.
         id_column: Case-ID column in the labels file.
         label_column: Binary label column in the labels file.
         max_missing_label_frac: Maximum fraction of discovered cases allowed to
