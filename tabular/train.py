@@ -295,7 +295,7 @@ def run_pipeline_from_config(
     # Build the dataset adapter from run config (Step 2 of the multi-dataset
     # migration). Returns None for every config without a `dataset:` block, so
     # existing runs are unchanged; a configured dataset routes cohort identity
-    # through the adapter. See docs/modularization-design.md §9.
+    # through the adapter. See cohorts/README.md.
     adapter = build_adapter_from_config(config)
     if adapter is not None:
         logging.info("Using dataset adapter: %s", type(adapter).__name__)

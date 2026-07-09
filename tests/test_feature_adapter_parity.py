@@ -7,7 +7,7 @@ centerline tree (no real data needed) and check two things:
 1. On a MAMA-MIA-shaped tree (each study's parent directory equals its case-id
    prefix), ``build_centerline_features`` produces the *identical* table with
    and without a ``MamaMiaDataset`` adapter — the invariant Step 2 must hold
-   (design doc §9).
+   (see cohorts/README.md).
 2. On a deliberately mismatched tree (directory name != id prefix), the adapter
    result follows ``case_dataset_name(case_id)`` rather than the directory name,
    proving the identity seam is actually live and not dead code.
@@ -92,6 +92,6 @@ def test_adapter_seam_is_live_when_dir_disagrees_with_prefix(tmp_path: Path) -> 
     )
 
     # Fallback trusts the directory; the adapter trusts the id prefix. This is
-    # exactly the three-way disagreement Step 2 exists to collapse (§2.1).
+    # exactly the three-way disagreement Step 2 exists to collapse (see cohorts/README.md).
     assert without["dataset"].tolist() == ["MISLABELED"]
     assert with_adapter["dataset"].tolist() == ["DUKE"]

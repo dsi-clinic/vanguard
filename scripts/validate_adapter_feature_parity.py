@@ -5,7 +5,7 @@ dataset adapter (today's behavior) and once with the ``MamaMiaDataset`` adapter
 selected through the real run-config factory (the same seam ``tabular/train.py``
 uses) — then asserts the two ``features_engineered_labeled.csv`` files are
 byte-identical. This is the merge gate for Step 2 of the multi-dataset migration
-(``docs/modularization-design.md`` §9).
+(see ``cohorts/README.md``).
 
 Data paths are injected at runtime rather than committed, because the centerline
 outputs currently live only in per-user workspaces (there is no canonical shared

@@ -75,8 +75,8 @@ def build_centerline_features(
 
     When ``adapter`` is provided, each case's cohort identity (the ``dataset``
     column) is resolved via ``adapter.case_dataset_name(case_id)`` instead of the
-    parent directory name — the first step of collapsing the three-way identity
-    derivation described in ``docs/modularization-design.md`` §2.1 (Step 2).
+    parent directory name — routing cohort identity through the adapter (Step 2
+    of the multi-dataset migration; see ``cohorts/README.md``).
     When ``adapter`` is ``None`` the behavior is byte-for-byte unchanged.
     """
     data_paths = config.data_paths
@@ -163,7 +163,7 @@ def build_centerline_features(
         case_id = study_dir.name
 
         # Cohort identity: from the adapter when provided (one authoritative
-        # answer, design doc §2.1), else the parent directory name (today's
+        # answer, see cohorts/README.md), else the parent directory name (today's
         # behavior). For MAMA-MIA these agree, which the Step 2 parity gate
         # verifies (scripts/validate_adapter_feature_parity.py).
         dataset_name = (
