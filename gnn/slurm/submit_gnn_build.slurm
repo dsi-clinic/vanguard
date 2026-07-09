@@ -48,6 +48,11 @@ LABELS_PATH="${LABELS_PATH:-/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_lab
 CACHE_DIR="${CACHE_DIR:-/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache}"
 ID_COLUMN="${ID_COLUMN:-case_id}"
 LABEL_COLUMN="${LABEL_COLUMN:-pcr}"
+# Node granularity: "voxel" (one node per skeleton voxel) or "segment" (one
+# node per vessel segment / line graph -- see gnn/DESIGN_segment_graph.md).
+# NODE_FEATURES must use the matching vocabulary; leave it empty to let the
+# build fall back to the mode's own default feature set.
+NODE_MODE="${NODE_MODE:-voxel}"
 NODE_FEATURES="${NODE_FEATURES:-peak_time,radius}"
 MAX_MISSING_LABEL_FRAC="${MAX_MISSING_LABEL_FRAC:-0.1}"
 NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
@@ -62,10 +67,14 @@ ARGS=(
   --cache-dir "${CACHE_DIR}"
   --id-column "${ID_COLUMN}"
   --label-column "${LABEL_COLUMN}"
-  --node-features "${NODE_FEATURES}"
+  --node-mode "${NODE_MODE}"
   --max-missing-label-frac "${MAX_MISSING_LABEL_FRAC}"
   --num-workers "${NUM_WORKERS}"
 )
+
+if [[ -n "${NODE_FEATURES:-}" ]]; then
+  ARGS+=(--node-features "${NODE_FEATURES}")
+fi
 
 if [[ -n "${CASES:-}" ]]; then
   ARGS+=(--cases "${CASES}")
