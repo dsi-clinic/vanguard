@@ -1,0 +1,57 @@
+# pCR-as-Gaussian learnability sweep (gnn/train.py).
+#
+# Extends the gnn_pcr_dummy_check leakage-canary experiment: instead of a
+# clean deterministic 0/1 "pcr_dummy" feature (perfect leakage, AUC=1.0), the
+# feature is redrawn at train time as class-conditional Gaussian noise
+# (label 0 -> N(gnn_pcr_dummy_class0_mean, sigma^2), label 1 ->
+# N(gnn_pcr_dummy_class1_mean, sigma^2)) -- see
+# gnn.train._apply_pcr_dummy_noise. Sweep gnn_pcr_dummy_class1_mean /
+# gnn_pcr_dummy_noise_std / gnn_pcr_dummy_noise_seed via the matching
+# --pcr-dummy-class1-mean / --pcr-dummy-noise-std / --pcr-dummy-noise-seed CLI
+# flags so a grid of runs never rebuilds the dataset cache.
+#
+# Points at the SAME cache the original gnn_pcr_dummy_check run built
+# (/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_pcr_dummy,
+# 1491 graphs, node_features=[peak_time, radius, pcr_dummy]) -- verified by
+# loading its processed/data.pt directly (x.shape=(4034235, 3), third column
+# in {0.0, 1.0}). That cache predates cache_manifest.json tracking, so
+# gnn_allow_manifest_mismatch=true is required to load it without triggering
+# a rebuild; this was a deliberate, verified bypass, not a blind one.
+
+experiment_setup:
+  name: "gnn_pcr_gaussian"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "random"
+  split_col: "fold"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features: ["peak_time", "radius", "pcr_dummy"]
+  # Defaults reproduce the original clean 0/1 dummy exactly (no noise). Every
+  # grid point overrides class1_mean / noise_std / noise_seed via CLI flags.
+  gnn_pcr_dummy_class0_mean: 0.0
+  gnn_pcr_dummy_class1_mean: 1.0
+  gnn_pcr_dummy_noise_std: 0.0
+  gnn_pcr_dummy_noise_seed: 0
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_pcr_dummy"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
+  gnn_allow_manifest_mismatch: true

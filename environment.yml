@@ -7,6 +7,8 @@ dependencies:
   - pip=26.0
   - pytorch-gpu=1.11.0
   - torchvision=0.12.0
+  - torch-scatter=2.0.9
+  - pytorch_geometric=2.4.0
   - cuda-version=11.8
   - numpy=1.26.4
   - vmtk=1.5.0

@@ -109,7 +109,7 @@ def run_study_pipeline(
         priority_4d = load_time_series_from_files(
             discovered_files,
         )
-        priority_4d_for_kinetics = np.asarray(priority_4d, dtype=np.float32, copy=False)
+        priority_4d_for_kinetics = np.asarray(priority_4d, dtype=np.float32)
         tc4d_result, tc4d_params, tc4d_diagnostics = run_tc4d_from_priority(
             priority_4d,
         )
