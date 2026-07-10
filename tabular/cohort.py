@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
 from clinical_features import get_clinical_features
+
+if TYPE_CHECKING:
+    from cohorts.base import DatasetAdapter
 from features import (
     ANNOTATION_COLUMNS,
     FEATURE_BLOCK_DESCRIPTIONS,
@@ -65,8 +68,17 @@ def build_features_from_feature_jsons(morphometry_dir: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
-    """Build study-level vascular feature rows from saved centerline outputs."""
+def build_centerline_features(
+    config: dict[str, Any], adapter: DatasetAdapter | None = None
+) -> pd.DataFrame:
+    """Build study-level vascular feature rows from saved centerline outputs.
+
+    When ``adapter`` is provided, each case's cohort identity (the ``dataset``
+    column) is resolved via ``adapter.case_dataset_name(case_id)`` instead of the
+    parent directory name — routing cohort identity through the adapter (Step 2
+    of the multi-dataset migration; see ``cohorts/README.md``).
+    When ``adapter`` is ``None`` the behavior is byte-for-byte unchanged.
+    """
     data_paths = config.data_paths
     toggles = config.feature_toggles
 
@@ -147,11 +159,21 @@ def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
         if study_dir.is_dir()
     ]
 
-    for idx, (dataset_name, study_dir) in enumerate(study_dirs, start=1):
+    for idx, (dir_dataset_name, study_dir) in enumerate(study_dirs, start=1):
+        case_id = study_dir.name
+
+        # Cohort identity: from the adapter when provided (one authoritative
+        # answer, see cohorts/README.md), else the parent directory name (today's
+        # behavior). For MAMA-MIA these agree, which the Step 2 parity gate
+        # verifies (scripts/validate_adapter_feature_parity.py).
+        dataset_name = (
+            adapter.case_dataset_name(case_id)
+            if adapter is not None
+            else dir_dataset_name
+        )
+
         if dataset_allow is not None and str(dataset_name) not in dataset_allow:
             continue
-
-        case_id = study_dir.name
 
         if bilateral_filter is not None:
             case_bilateral = bilateral_lookup.get(str(case_id))
@@ -318,8 +340,14 @@ def build_centerline_features(config: dict[str, Any]) -> pd.DataFrame:
     return centerline_df
 
 
-def build_modular_features(config: dict[str, Any]) -> pd.DataFrame:
-    """Build and merge the requested feature blocks into one case-level table."""
+def build_modular_features(
+    config: dict[str, Any], adapter: DatasetAdapter | None = None
+) -> pd.DataFrame:
+    """Build and merge the requested feature blocks into one case-level table.
+
+    ``adapter`` is threaded to :func:`build_centerline_features` for cohort
+    identity (Step 2); ``None`` preserves today's behavior exactly.
+    """
     toggles = config.feature_toggles
 
     use_vascular = bool(toggles.use_vascular)
@@ -331,7 +359,7 @@ def build_modular_features(config: dict[str, Any]) -> pd.DataFrame:
 
     if use_vascular:
         logging.info("Loading vascular centerline features...")
-        merged_df = build_centerline_features(config)
+        merged_df = build_centerline_features(config, adapter=adapter)
     elif use_clinical:
         clinical_df = get_clinical_features(config).rename(
             columns={"case_id": "case_id"}
@@ -550,9 +578,16 @@ def select_features(
     return df[keep_columns + selected_feature_columns].copy()
 
 
-def prepare_data(config: dict[str, Any], outdir: Path) -> pd.DataFrame:
-    """Load feature blocks, merge labels, and write the final labeled table."""
-    feats_df = build_modular_features(config)
+def prepare_data(
+    config: dict[str, Any], outdir: Path, adapter: DatasetAdapter | None = None
+) -> pd.DataFrame:
+    """Load feature blocks, merge labels, and write the final labeled table.
+
+    ``adapter`` is optional (Step 2 of the multi-dataset migration): when given,
+    cohort identity flows through it; when ``None`` the output is identical to
+    the pre-adapter pipeline.
+    """
+    feats_df = build_modular_features(config, adapter=adapter)
     feats_df.to_csv(outdir / "features_raw.csv", index=False)
 
     labels_path = config.data_paths.labels_csv
