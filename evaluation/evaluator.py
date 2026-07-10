@@ -39,8 +39,18 @@ from evaluation.visualizations import (
 STRATUM_COLUMN_ALIASES = ("stratum", "subtype")
 
 
-def _stratum_column(predictions: pd.DataFrame) -> str | None:
-    """Return the first stratum column name present in predictions, or None."""
+def _stratum_column(
+    predictions: pd.DataFrame, report_by: str | None = None
+) -> str | None:
+    """Return the column to break QC metrics down by, or None.
+
+    ``report_by`` (a dataset adapter's ``report_by``, e.g. UChicago's ``dataset``
+    sub-source) takes precedence when present in ``predictions`` (Step 4 of the
+    multi-dataset migration, see cohorts/README.md). When it is ``None`` -- every
+    caller today -- selection is byte-for-byte the old alias behavior.
+    """
+    if report_by is not None and report_by in predictions.columns:
+        return report_by
     for col in STRATUM_COLUMN_ALIASES:
         if col in predictions.columns:
             return col
@@ -352,6 +362,7 @@ class Evaluator:
         run_name: str | None = None,
         random_baseline_distribution: dict | None = None,
         run_aucs: list[float] | None = None,
+        report_by: str | None = None,
     ) -> None:
         """Save results to output directory, organized by model name and run name.
 
@@ -470,7 +481,7 @@ class Evaluator:
                 metrics_dict["run_auc_std"] = float(np.std(arr))
 
         # Subgroup (stratum) metrics: compute, add to dict, and print summary
-        stratum_col = _stratum_column(results.predictions)
+        stratum_col = _stratum_column(results.predictions, report_by=report_by)
         if stratum_col is not None:
             validation_summary = compute_metrics_by_group(
                 results.predictions, stratum_col

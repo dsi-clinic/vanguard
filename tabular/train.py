@@ -54,9 +54,14 @@ def run_evaluation_pipeline(
     df: pd.DataFrame,
     config: dict[str, Any],
     outdir: Path,
+    report_by: str | None = None,
     group_col_from_adapter: bool = False,
 ) -> None:
     """Run evaluator-based cross-validation over configured model/features.
+
+    ``report_by`` (a dataset adapter's ``report_by`` column, e.g. UChicago's
+    ``dataset`` sub-source) drives the per-subgroup QC breakdown (Step 4); when
+    ``None`` -- every non-adapter run -- behavior is unchanged.
 
     ``group_col_from_adapter`` must be ``True`` only when the caller actually
     populated ``model_params.group_col`` from an adapter identity key (via
@@ -65,7 +70,10 @@ def run_evaluation_pipeline(
     ``config`` alone.
     """
     context = prepare_evaluation_context(
-        df, config, group_col_from_adapter=group_col_from_adapter
+        df,
+        config,
+        report_by=report_by,
+        group_col_from_adapter=group_col_from_adapter,
     )
     fold_results_list, nested_rows = run_cross_validation_from_context(context)
 
@@ -99,7 +107,9 @@ def run_evaluation_pipeline(
     kfold_results = context["evaluator"].aggregate_kfold_results(fold_results_list)
 
     logging.info("Saving evaluator outputs to: %s", outdir)
-    context["evaluator"].save_results(kfold_results, outdir)
+    context["evaluator"].save_results(
+        kfold_results, outdir, report_by=context.get("report_by")
+    )
 
     print("\n" + "=" * 48)
     print(f"Plots saved in: {outdir / context['evaluator'].model_name / 'plots'}")
@@ -109,9 +119,14 @@ def run_evaluation_pipeline(
 def prepare_evaluation_context(
     df: pd.DataFrame,
     config: dict[str, Any],
+    report_by: str | None = None,
     group_col_from_adapter: bool = False,
 ) -> dict[str, Any]:
     """Prepare evaluator inputs and deterministic fold splits for a config.
+
+    ``report_by`` names an optional per-case subgroup column (a dataset adapter's
+    ``report_by``, Step 4) attached to each fold's predictions for the QC
+    breakdown; ``None`` (every non-adapter run) leaves predictions unchanged.
 
     ``group_col_from_adapter`` must be ``True`` only when the caller populated
     ``model_params.group_col`` from an adapter identity key (``_apply_group_keys``
@@ -204,6 +219,7 @@ def prepare_evaluation_context(
         "feature_select_enabled": feature_select_enabled,
         "nested_tune_enabled": nested_tune_enabled,
         "stratum_col": stratum_col,
+        "report_by": report_by,
         "X": X,
         "y": y,
         "case_ids": case_ids,
@@ -231,6 +247,7 @@ def run_single_fold_from_context(
     nested_tune_enabled = context["nested_tune_enabled"]
     feature_select_enabled = context["feature_select_enabled"]
     stratum_col = context["stratum_col"]
+    report_by = context.get("report_by")
 
     logging.info("Processing fold %d", split.fold_idx)
     train_idx = split.train_indices
@@ -289,6 +306,15 @@ def run_single_fold_from_context(
     )
     if stratum_col and stratum_col in cohort_df.columns:
         pred_df["stratum"] = cohort_df.iloc[val_idx][stratum_col].astype(str).to_numpy()
+    # QC subgroup column from the dataset adapter's report_by (Step 4): attach it
+    # so save_results can break metrics down by sub-source. None for non-adapter
+    # runs, so predictions are unchanged.
+    if (
+        report_by
+        and report_by in cohort_df.columns
+        and report_by not in pred_df.columns
+    ):
+        pred_df[report_by] = cohort_df.iloc[val_idx][report_by].astype(str).to_numpy()
 
     return (
         FoldResults(fold_idx=split.fold_idx, predictions=pred_df),
@@ -474,6 +500,7 @@ def run_pipeline_from_config(
     if adapter is not None:
         logging.info("Using dataset adapter: %s", type(adapter).__name__)
 
+    report_by = adapter.report_by if adapter is not None else None
     group_col_from_adapter = False
     try:
         merged_data = prepare_data(config, outdir, adapter=adapter)
@@ -489,7 +516,11 @@ def run_pipeline_from_config(
             if group_col_from_adapter:
                 merged_data = _apply_group_keys(merged_data, config, adapter)
         run_evaluation_pipeline(
-            merged_data, config, outdir, group_col_from_adapter=group_col_from_adapter
+            merged_data,
+            config,
+            outdir,
+            report_by=report_by,
+            group_col_from_adapter=group_col_from_adapter,
         )
     except Exception as exc:  # noqa: BLE001
         logging.error("Pipeline failed: %s", exc, exc_info=True)
