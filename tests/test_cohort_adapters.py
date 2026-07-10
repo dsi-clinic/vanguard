@@ -277,3 +277,93 @@ def test_resolve_folds_raises_when_provided_but_none_shipped() -> None:
     )
     with pytest.raises(ValueError, match="ships no folds"):
         resolve_folds(config, adapter)
+
+
+# -- load_timepoints root rebasing --
+
+
+def _write_manifest_with_preproc_root(tmp_path: Path, preproc_root: Path) -> Path:
+    """Write a manifest whose phase_files are anchored under ``preproc_root``."""
+    manifest_root = tmp_path / "uc"
+    manifest_root.mkdir()
+    csv_path = manifest_root / "dce2d_internal_ultrafast_manifest.csv"
+    phase_path = preproc_root / "simbiosys" / "e1" / "phase_0000.nii.gz"
+    csv_path.write_text(
+        "exam_id,dataset,patient_key,fold,pcr,phase_files,preproc_root\n"
+        f'e1,simbiosys,p1,0,1.0,"[""{phase_path.as_posix()}""]",{preproc_root.as_posix()}\n'
+    )
+    return manifest_root
+
+
+def test_uchicago_load_timepoints_rebases_onto_injected_root(tmp_path: Path) -> None:
+    """Phase paths follow the injected root, not the manifest's recorded location.
+
+    Design decision 5 says the pipeline must survive the data moving on disk
+    because the root is injected at construction time, not hardcoded. Without
+    rebasing, moving the manifest directory would silently leave
+    load_timepoints() pointing at the old (possibly gone) location.
+    """
+    old_preproc_root = tmp_path / "old_location" / "images"
+    manifest_root = _write_manifest_with_preproc_root(tmp_path, old_preproc_root)
+    adapter = UChicagoDataset(root=manifest_root)
+
+    timepoints = adapter.load_timepoints("e1")
+
+    assert timepoints == [
+        manifest_root / "images" / "simbiosys" / "e1" / "phase_0000.nii.gz"
+    ]
+
+
+def test_uchicago_load_timepoints_without_preproc_root_returns_raw_paths(
+    tmp_path: Path,
+) -> None:
+    """A manifest with no preproc_root column falls back to the raw paths."""
+    adapter = UChicagoDataset(root=_write_manifest(tmp_path))
+
+    timepoints = adapter.load_timepoints("e1")
+
+    assert timepoints == [Path("/a/p0.nii.gz")]
+
+
+# -- coverage gaps: missing values in an otherwise-clean manifest --
+
+
+def _write_manifest_with_gap(tmp_path: Path) -> Path:
+    """Write a manifest where one exam has no pcr label and no fold assignment."""
+    root = tmp_path / "uc"
+    root.mkdir()
+    csv_path = root / "dce2d_internal_ultrafast_manifest.csv"
+    csv_path.write_text(
+        "exam_id,dataset,patient_key,fold,pcr,phase_files\n"
+        'e1,simbiosys,p1,0,1.0,"[""/a/p0.nii.gz""]"\n'
+        'e2,uch_nac,p2,,,"[""/b/p0.nii.gz""]"\n'
+    )
+    return root
+
+
+def test_uchicago_discover_cases_and_load_labels_diverge_on_unlabeled_exam(
+    tmp_path: Path,
+) -> None:
+    """An unlabeled exam is discovered but excluded from load_labels.
+
+    Today's real manifest has zero NaNs (181/181 labeled), so this branch is
+    otherwise never exercised.
+    """
+    adapter = UChicagoDataset(root=_write_manifest_with_gap(tmp_path))
+
+    cases = adapter.discover_cases()
+    labels = adapter.load_labels()
+
+    assert cases == ["e1", "e2"]
+    assert list(labels["case_id"]) == ["e1"]
+
+
+def test_uchicago_load_folds_drops_exams_with_no_fold_assignment(
+    tmp_path: Path,
+) -> None:
+    """An exam with a blank fold value is excluded from load_folds."""
+    adapter = UChicagoDataset(root=_write_manifest_with_gap(tmp_path))
+
+    folds = adapter.load_folds()
+
+    assert list(folds["case_id"]) == ["e1"]

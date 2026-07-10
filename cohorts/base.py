@@ -106,7 +106,9 @@ class DatasetAdapter:
 
         MAMA-MIA encodes this as the case-id prefix, e.g. ``"ISPY2_045" ->
         "ISPY2"`` (``segmentation/batch_segmentation.py:243``,
-        ``case_id.split("_")[0]``).
+        ``case_id.split("_")[0]``). Note this is cohort granularity; some
+        subclasses (e.g. ``UChicagoDataset``) return a finer sub-source instead
+        — see that override's docstring before combining tables across adapters.
         """
         return case_id.split("_")[0]
 

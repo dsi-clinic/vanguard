@@ -14,3 +14,12 @@ dataset:
   cohort: null   # UChicago is not cohort-partitioned like MAMA-MIA
   root: /gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest
   split_policy: auto   # -> "provided": use the manifest's patient-grouped fold column
+
+# split_policy: provided only resolves *which* folds exist; a run must also opt
+# in to actually using them (tabular/train.py merges the provided fold column
+# onto the feature table either way, per design decision 3 -- see
+# cohorts/README.md). These two lines are that opt-in and pair with split_col
+# "fold", the name tabular/train.py merges the provided folds under by default.
+model_params:
+  split_mode: predefined
+  split_col: fold

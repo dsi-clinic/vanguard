@@ -67,6 +67,23 @@ MAMA-MIA orientation transform is *not* used, which would be wrong here). The
 `/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/`; select it
 with `configs/uchicago.yaml`.
 
+> **Open item, needs Anna's sign-off:** the pass-through assumes the manifest's
+> `hfdp_t1_v1` volumes are already in the orientation the downstream vessel/graph
+> stages expect. That assumption isn't checked in code and isn't exercised
+> end-to-end yet (no UChicago imaging flows exist until Step 4) — if it's wrong,
+> it will silently feed mis-oriented volumes into Step 4 rather than failing
+> loudly. Flagging it here so it isn't mistaken for a verified fact.
+
+> Note: `case_dataset_name()` here returns a manifest **sub-source**
+> (`simbiosys`/`uch_nac`/`her2_naclike`), a finer granularity than
+> `MamaMiaDataset`'s cohort (`"ISPY2"`). The `dataset` column means different
+> things across adapters — fine while runs stay separate, but flag it before
+> building a combined MAMA-MIA+UChicago table keyed on `dataset`.
+
+`load_timepoints()` rebases each `phase_files` path from the manifest's recorded
+`preproc_root` onto the injected `root / "images"`, so moving the manifest
+directory (decision 5) doesn't leave it pointing at a stale location.
+
 ---
 
 ## Selecting a dataset from run config — `factory.py`
@@ -81,7 +98,8 @@ These functions are the only seams that read run config:
 - `resolve_folds(config, adapter)` ties the two together for the caller: it
   returns the `(case_id, fold)` table to use when the policy resolves to
   `provided`, or `None` when the run should compute its own splits (raising if
-  `provided` is asked of a dataset that ships no folds).
+  `provided` is asked of a dataset that ships no folds). This is parsing and
+  validation only — see below for how (and whether) a run actually consumes it.
 
 The `dataset:` block in run config (`config.py` `DEFAULT_CONFIG`):
 
@@ -117,6 +135,20 @@ points wire it the same way: `tabular/train.py` (`run_pipeline_from_config`) and
 `scripts/validate_adapter_feature_parity.py` (byte-identical MAMA-MIA output with
 vs. without the adapter). Other stages still run the pre-adapter way and are
 migrated one at a time.
+
+**Adopted so far — provided CV folds.** `tabular/train.py`'s
+`run_pipeline_from_config` calls `resolve_folds(config, adapter)` and, when it
+returns a fold table, merges it onto the feature table as the
+`model_params.split_col` column (`_apply_provided_folds`). This makes the folds
+*available*; it does not by itself change which splits a run trains on. A run
+opts in separately by setting `model_params.split_mode: predefined` (existing
+infra in `evaluation/build_splits.py`, previously used for hardcoded fold
+columns) with `split_col` matching the merged name — see `configs/uchicago.yaml`
+for the pairing. Split *policy* (does the dataset have folds to offer) and split
+*mode* (does this run use them) are deliberately separate knobs, per decision 3.
+`prepare_evaluation_context` excludes `split_col` from the model's input
+features unconditionally, so the fold assignment itself can never leak in as a
+predictor.
 
 ---
 

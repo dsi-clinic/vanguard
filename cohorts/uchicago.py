@@ -53,13 +53,23 @@ class UChicagoDataset(DatasetAdapter):
             else self.root / DEFAULT_MANIFEST_NAME
         )
         self._manifest_cache: pd.DataFrame | None = None
+        self._manifest_indexed_cache: pd.DataFrame | None = None
 
     def discover_cases(self) -> list[str]:
         """Enumerate exam ids from the manifest (not a directory glob)."""
         return [str(exam_id) for exam_id in self._manifest()["exam_id"].tolist()]
 
     def case_dataset_name(self, case_id: str) -> str:
-        """Return a case's sub-source (manifest ``dataset`` column)."""
+        """Return a case's sub-source (manifest ``dataset`` column).
+
+        Note: this is a finer granularity than ``MamaMiaDataset.case_dataset_name``
+        (which returns a cohort like ``"ISPY2"``) — here it's a manifest
+        sub-source (``simbiosys``/``uch_nac``/``her2_naclike``). The ``dataset``
+        column therefore means different things at different granularities across
+        adapters. That's fine while UChicago and MAMA-MIA runs stay separate;
+        flag it before anyone builds a combined table that groups by ``dataset``
+        across both.
+        """
         return str(self._manifest_row(case_id)["dataset"])
 
     def group_key(self, case_id: str) -> str:
@@ -67,9 +77,34 @@ class UChicagoDataset(DatasetAdapter):
         return str(self._manifest_row(case_id)["patient_key"])
 
     def load_timepoints(self, case_id: str) -> list[Path]:
-        """Return ordered DCE phase files from the manifest ``phase_files`` list."""
-        phase_files = json.loads(self._manifest_row(case_id)["phase_files"])
-        return [Path(p) for p in phase_files]
+        """Return ordered DCE phase files from the manifest ``phase_files`` list.
+
+        The manifest's ``phase_files`` paths are absolute and anchored under its
+        own ``preproc_root`` column (today, ``<manifest_root>/images``). To honor
+        the injected :attr:`root` (design decision 5 — the pipeline must survive
+        the data moving on disk), each path is rebased from the manifest's
+        recorded ``preproc_root`` onto ``self.root / "images"``. When a row lacks
+        ``preproc_root`` (e.g. an older/synthetic manifest), paths are returned
+        as-is rather than guessing.
+        """
+        import pandas as pd
+
+        row = self._manifest_row(case_id)
+        phase_files = [Path(p) for p in json.loads(row["phase_files"])]
+        manifest = self._manifest()
+        if "preproc_root" not in manifest.columns or pd.isna(row["preproc_root"]):
+            return phase_files
+        preproc_root = Path(row["preproc_root"])
+        images_root = self.root / "images"
+        rebased = []
+        for phase_file in phase_files:
+            try:
+                rel = phase_file.relative_to(preproc_root)
+            except ValueError:
+                rebased.append(phase_file)
+            else:
+                rebased.append(images_root / rel)
+        return rebased
 
     def load_labels(self) -> pd.DataFrame:
         """Return pCR labels straight from the manifest (``exam_id`` -> ``pcr``)."""
@@ -120,9 +155,18 @@ class UChicagoDataset(DatasetAdapter):
         return self._manifest_cache
 
     def _manifest_row(self, case_id: str) -> pd.Series:
-        """Return the single manifest row for an exam id."""
-        manifest = self._manifest()
-        rows = manifest[manifest["exam_id"].astype(str) == str(case_id)]
-        if rows.empty:
+        """Return the single manifest row for an exam id (O(1), indexed once)."""
+        indexed = self._manifest_indexed()
+        key = str(case_id)
+        if key not in indexed.index:
             raise KeyError(f"exam_id not in manifest: {case_id}")
-        return rows.iloc[0]
+        return indexed.loc[key]
+
+    def _manifest_indexed(self) -> pd.DataFrame:
+        """Manifest indexed by (string) ``exam_id``, cached for repeated row lookups."""
+        if self._manifest_indexed_cache is None:
+            manifest = self._manifest()
+            indexed = manifest.copy()
+            indexed.index = manifest["exam_id"].astype(str)
+            self._manifest_indexed_cache = indexed
+        return self._manifest_indexed_cache

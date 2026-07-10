@@ -15,7 +15,8 @@ from typing import Any
 
 import pandas as pd
 
-from cohorts.factory import build_adapter_from_config
+from cohorts.base import DatasetAdapter
+from cohorts.factory import build_adapter_from_config, resolve_folds
 from evaluation import FoldResults
 from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.kfold import FoldSplit
@@ -135,6 +136,9 @@ def prepare_evaluation_context(
     stratum_col = model_params.stratum_col
     if stratum_col:
         drop_cols.add(str(stratum_col))
+    # Eval bookkeeping, not a feature -- must not leak into X even when unset
+    # (harmless to drop a column that isn't present).
+    drop_cols.add(str(model_params.split_col))
 
     X = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
     if X.empty:
@@ -283,6 +287,36 @@ def run_cross_validation_from_context(
     return fold_results_list, nested_rows
 
 
+def _apply_provided_folds(
+    feats_df: pd.DataFrame, config: dict[str, Any], adapter: DatasetAdapter
+) -> pd.DataFrame:
+    """Merge the adapter's provided CV folds onto the feature table, if any.
+
+    ``resolve_folds`` returns a ``(case_id, fold)`` table when the resolved
+    split policy is "provided", or ``None`` when it's "compute" -- in which
+    case ``feats_df`` is returned unchanged. The merged column is named after
+    ``model_params.split_col`` (default ``"fold"``), so a run that separately
+    sets ``model_params.split_mode: predefined`` consumes it through the
+    existing predefined-fold path in ``create_splits_for_dataframe``.
+
+    Split *policy* (whether the dataset has folds to offer) and split *mode*
+    (whether a run chooses to use them) stay separate run-config knobs, per
+    design decision 3 (see cohorts/README.md): merging the column here makes it
+    available, it does not force its use. Unmatched rows (e.g. exams with a
+    fold but no label, so absent from the labeled feature table) are dropped by
+    the left merge; rows with no assigned fold get ``NaN`` and will fail loudly
+    in ``create_predefined_splits`` if the run actually selects predefined mode.
+    """
+    folds = resolve_folds(config, adapter)
+    if folds is None:
+        return feats_df
+    split_col = str(config.model_params.split_col)
+    folds = folds.rename(columns={"fold": split_col})
+    if split_col in feats_df.columns:
+        feats_df = feats_df.drop(columns=[split_col])
+    return feats_df.merge(folds, on="case_id", how="left")
+
+
 def run_pipeline_from_config(
     config: dict[str, Any],
     outdir: Path,
@@ -302,6 +336,8 @@ def run_pipeline_from_config(
 
     try:
         merged_data = prepare_data(config, outdir, adapter=adapter)
+        if adapter is not None:
+            merged_data = _apply_provided_folds(merged_data, config, adapter)
         run_evaluation_pipeline(merged_data, config, outdir)
     except Exception as exc:  # noqa: BLE001
         logging.error("Pipeline failed: %s", exc, exc_info=True)
