@@ -120,7 +120,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--images-dir",
         type=Path,
-        default=Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/images"),
+        default=Path("/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"),
         help="Root directory of raw images (*.nii.gz).",
     )
     parser.add_argument(
@@ -146,7 +146,7 @@ def parse_args() -> argparse.Namespace:
         "--id-table",
         type=Path,
         default=Path(
-            "/net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
+            "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx"
         ),
         help=(
             "Optional CSV/Excel file listing expected case IDs and timepoints "

@@ -8,8 +8,8 @@ in the experiment YAML config.
 Usage
 -----
     python generate_kinetic_maps.py \
-        --images /net/projects2/vanguard/MAMA-MIA-syn60868042/images \
-        --masks  /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert \
+        --images /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images \
+        --masks  /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/segmentations/expert \
         --splits splits_train_test_ready.csv \
         --output-dir kinetic_maps \
         --mask-pattern "{pid}.nii.gz" \

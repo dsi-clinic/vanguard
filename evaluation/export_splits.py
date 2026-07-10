@@ -23,20 +23,20 @@ Usage:
 Examples:
     # Basic usage
     python export_splits.py \
-        --excel /net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
+        --excel /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
         --output splits.csv \
         --n-splits 5
 
     # With composite stratum keys
     python export_splits.py \
-        --excel /net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
+        --excel /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
         --output splits.csv \
         --stratify-cols dataset tumor_subtype \
         --random-state 42
 
     # Custom configuration
     python export_splits.py \
-        --excel /net/projects2/vanguard/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
+        --excel /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \
         --output splits.csv \
         --n-splits 3 \
         --group-col site \

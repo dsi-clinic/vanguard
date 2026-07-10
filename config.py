@@ -166,7 +166,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "data_paths": {
         "centerline_root": "",
-        "tumor_mask_root": "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert",
+        "tumor_mask_root": "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/segmentations/expert",
         "patient_info_dir": "",
         "clinical_excel": "",
         "labels_csv": "",

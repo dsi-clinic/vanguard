@@ -33,11 +33,11 @@ import pandas as pd
 
 DEFAULT_CENTERLINE_ROOT = Path("/net/projects2/vanguard/centerlines_tc4d/studies")
 DEFAULT_TUMOR_MASK_ROOT = Path(
-    "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
+    "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/segmentations/expert"
 )
-DEFAULT_LABELS_CSV = Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/pcr_labels.csv")
+DEFAULT_LABELS_CSV = Path("/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/pcr_labels.csv")
 DEFAULT_PATIENT_INFO_DIR = Path(
-    "/net/projects2/vanguard/MAMA-MIA-syn60868042/patient_info_files"
+    "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/patient_info_files"
 )
 DEFAULT_RADIOMICS_LABELS_CSV = Path("radiomics/labels.csv")
 

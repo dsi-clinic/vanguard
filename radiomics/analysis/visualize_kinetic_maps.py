@@ -10,8 +10,8 @@ Both rows are cropped to an expanded tumor bounding box on the max-area z-slice.
 Usage
 -----
     python visualize_kinetic_maps.py \
-        --images-dir /net/projects2/vanguard/MAMA-MIA-syn60868042/images \
-        --masks-dir  /net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert \
+        --images-dir /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images \
+        --masks-dir  /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/segmentations/expert \
         --pid DUKE_001 \
         --outdir radiomics/figures
 """
