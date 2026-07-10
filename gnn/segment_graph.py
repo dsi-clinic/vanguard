@@ -127,7 +127,7 @@ def _segment_kinetic_summary(
     return summary
 
 
-def _segment_node_attributes(
+def segment_summary_features(
     path: list[Point3D],
     radius_map: dict[Point3D, float],
     dce_4d: np.ndarray,
@@ -138,6 +138,11 @@ def _segment_node_attributes(
     Combines geometry (``compute_segment_metrics``), kinetics
     (``_segment_kinetic_summary``), and the segment's voxel count. Keys are the
     ``SEGMENT_FEATURE_ATTR`` feature names.
+
+    This is the mode-neutral segment summary: ``node_mode="segment"`` (Option B)
+    attaches it to the segment's *node*, while ``node_mode="junction"``
+    (Option A, ``gnn.junction_graph``) attaches the same vector to the segment's
+    *edge* -- the two representations are line-graph duals sharing this summary.
     """
     metrics = compute_segment_metrics(path, radius_map)
     attrs: dict[str, float] = {}
@@ -188,7 +193,7 @@ def build_segment_line_graph(
     line = nx.Graph()
     junction_to_segments: dict[Point3D, list[int]] = defaultdict(list)
     for seg_id, path in enumerate(segments):
-        attrs = _segment_node_attributes(path, radius_map, dce_4d, time_axis)
+        attrs = segment_summary_features(path, radius_map, dce_4d, time_axis)
         midpoint = np.mean(np.asarray(path, dtype=float), axis=0)
         line.add_node(seg_id, pos=midpoint, **attrs)
         # A segment is anchored at both its endpoints (a self-loop segment has
