@@ -19,8 +19,10 @@ import pytest
 from cohorts import MamaMiaDataset, UChicagoDataset
 from config import DEFAULT_CONFIG, ConfigNode, _deep_merge
 from tabular.train import (
+    _adapter_populates_group_col,
     _apply_group_keys,
     _apply_provided_folds,
+    _needs_group_keys,
     prepare_evaluation_context,
 )
 
@@ -294,13 +296,31 @@ def test_predefined_split_col_excluded_from_model_features() -> None:
     assert len(context["splits"]) == expected_n_folds
 
 
-def test_group_col_excluded_from_model_features_when_adapter_configured() -> None:
-    """The adapter grouping key (patient_key) must not leak into X as a feature.
+def _group_config(group_col: str, use_clinical: bool = False) -> ConfigNode:
+    return ConfigNode._wrap(
+        _deep_merge(
+            DEFAULT_CONFIG,
+            {
+                "dataset": {"name": "uchicago", "cohort": None, "root": "/x"},
+                "model_params": {
+                    "split_mode": "random",
+                    "use_group_split": True,
+                    "group_col": group_col,
+                    "n_splits": 2,
+                },
+                "feature_toggles": {"use_clinical": use_clinical},
+            },
+        )
+    )
 
-    With a dataset configured and use_group_split on, group_col holds an identity
-    (patient_key); prepare_evaluation_context must drop it from the model inputs
-    even though use_group_split would otherwise keep the group column as a
-    feature for legacy (non-adapter) runs.
+
+def test_group_col_excluded_from_model_features_when_adapter_populated_it() -> None:
+    """An adapter-populated identity key (patient_key) must not leak into X.
+
+    With ``group_col_from_adapter=True`` (the caller's signal that
+    _apply_group_keys populated group_col from the adapter's identity key),
+    prepare_evaluation_context drops it even though use_group_split would
+    otherwise keep the group column as a feature for legacy runs.
     """
     feats_df = pd.DataFrame(
         {
@@ -311,23 +331,82 @@ def test_group_col_excluded_from_model_features_when_adapter_configured() -> Non
             "patient_key": ["p1", "p1", "p2", "p2"],
         }
     )
-    config = ConfigNode._wrap(
-        _deep_merge(
-            DEFAULT_CONFIG,
-            {
-                "dataset": {"name": "uchicago", "cohort": None, "root": "/x"},
-                "model_params": {
-                    "split_mode": "random",
-                    "use_group_split": True,
-                    "group_col": "patient_key",
-                    "n_splits": 2,
-                },
-                "feature_toggles": {"use_clinical": False},
-            },
-        )
-    )
 
-    context = prepare_evaluation_context(feats_df, config)
+    context = prepare_evaluation_context(
+        feats_df, _group_config("patient_key"), group_col_from_adapter=True
+    )
 
     assert "patient_key" not in context["X"].columns
     assert set(context["X"].columns) == {"feature_a"}
+
+
+def test_group_col_kept_as_feature_when_adapter_did_not_populate_it() -> None:
+    """A configured dataset must not, by itself, strip group_col from features.
+
+    modeling/ablation.py builds an adapter for feature extraction but never calls
+    _apply_group_keys, so group_col_from_adapter stays False even though a dataset
+    is configured. There group_col can be a genuine feature (MAMA-MIA's clinical
+    ``site``) supplied by an earlier stage -- it must be treated like a legacy
+    use_group_split run and kept in X, matching pre-Step-4 behavior.
+    """
+    feats_df = pd.DataFrame(
+        {
+            "case_id": ["c1", "c2", "c3", "c4"],
+            "pcr": [1, 0, 1, 0],
+            "dataset": ["mamamia"] * 4,
+            "feature_a": [0.1, 0.2, 0.3, 0.4],
+            "site": ["A", "A", "B", "B"],
+        }
+    )
+
+    # group_col_from_adapter omitted (defaults False), mirroring ablation.py.
+    context = prepare_evaluation_context(
+        feats_df, _group_config("site", use_clinical=True)
+    )
+
+    assert "site" in context["X"].columns
+    assert set(context["X"].columns) == {"feature_a", "site"}
+
+
+def test_needs_group_keys_false_for_provided_policy(tmp_path: Path) -> None:
+    """UChicago's default (provided) must not trigger group-key population/I/O."""
+    adapter = UChicagoDataset(root=_write_manifest(tmp_path))
+    config = _config(
+        {"name": "uchicago", "cohort": None, "root": "/x", "split_policy": "auto"}
+    )
+    config.model_params.use_group_split = True
+    assert _needs_group_keys(config, adapter) is False
+
+
+def test_needs_group_keys_true_for_compute_with_group_split() -> None:
+    """MAMA-MIA's default (compute) with use_group_split on does need group keys."""
+    adapter = MamaMiaDataset(cohort="duke", root=Path("/x"))
+    config = _config(
+        {"name": "mamamia", "cohort": "duke", "root": "/x", "split_policy": "auto"}
+    )
+    config.model_params.use_group_split = True
+    assert _needs_group_keys(config, adapter) is True
+    config.model_params.use_group_split = False
+    assert _needs_group_keys(config, adapter) is False
+
+
+def test_adapter_populates_group_col_false_when_column_preexists() -> None:
+    """Residual-fix regression: a pre-existing genuine group_col is not claimed.
+
+    When group_col is already present (e.g. MAMA-MIA's clinical ``site``),
+    _apply_group_keys would no-op -- so _adapter_populates_group_col must return
+    False, otherwise run_pipeline_from_config would set group_col_from_adapter
+    and prepare_evaluation_context would drop that genuine feature.
+    """
+    adapter = MamaMiaDataset(cohort="duke", root=Path("/x"))
+    config = _config(
+        {"name": "mamamia", "cohort": "duke", "root": "/x", "split_policy": "auto"}
+    )
+    config.model_params.use_group_split = True
+    config.model_params.group_col = "site"
+
+    absent = pd.DataFrame({"case_id": ["DUKE_1"], "feature_a": [0.1]})
+    present = pd.DataFrame({"case_id": ["DUKE_1"], "feature_a": [0.1], "site": ["A"]})
+
+    assert _adapter_populates_group_col(absent, config, adapter) is True
+    assert _adapter_populates_group_col(present, config, adapter) is False
