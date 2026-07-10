@@ -426,10 +426,104 @@ def test_cache_manifest_written_and_validated_on_reload(
     assert len(reloaded) == 1
 
 
-def test_cache_manifest_mismatch_raises_unless_overridden(
+def test_cache_subset_node_features_reslices_without_override(
     centerline_tree: tuple[Path, Path, Path, Path],
 ) -> None:
-    """Loading a cache with different settings than it was built with fails loudly."""
+    """A node_features request that's a genuine subset of the cache succeeds.
+
+    This is the core mechanism LOCO relies on (see evaluation/loco_gnn.py): a
+    cache built once with a feature superset can serve any narrower
+    node_features request without allow_manifest_mismatch and without a
+    rebuild -- see _check_cache_manifest / _reslice_for_requested_features.
+    """
+    studies, dce_root, labels_csv, cache_dir = centerline_tree
+
+    VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir,
+        node_features=("peak_time", "radius"),
+        max_missing_label_frac=0.5,
+    )
+
+    # Subset request succeeds with no allow_manifest_mismatch override.
+    subset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir,
+        node_features=("radius",),  # subset of the cached ("peak_time", "radius")
+        max_missing_label_frac=0.5,
+    )
+    assert len(subset) == 1
+    assert subset[0].x.shape == (len(SKELETON_XS), 1)
+
+    # Parity, not just shape: the reslice must match a fresh direct build
+    # with the same narrower feature list.
+    direct = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir / "direct",
+        node_features=("radius",),
+        max_missing_label_frac=0.5,
+    )
+    assert torch.allclose(subset[0].x, direct[0].x)
+
+
+def test_cache_subset_edge_features_reslices_without_override(
+    centerline_tree: tuple[Path, Path, Path, Path],
+) -> None:
+    """The same subset-reslice mechanism applies to junction-mode edge_features."""
+    studies, dce_root, labels_csv, cache_dir = centerline_tree
+    node_features = ("peak_time", "radius", "degree")
+    full_edge_features = ("seg_length", "seg_radius_mean", "seg_peak_time_mean")
+
+    VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir,
+        node_mode="junction",
+        node_features=node_features,
+        edge_features=full_edge_features,
+        max_missing_label_frac=0.5,
+    )
+
+    subset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir,
+        node_mode="junction",
+        node_features=node_features,
+        edge_features=("seg_radius_mean",),  # subset of full_edge_features
+        max_missing_label_frac=0.5,
+    )
+    assert subset[0].edge_attr.shape[1] == 1
+
+    direct = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir / "direct",
+        node_mode="junction",
+        node_features=node_features,
+        edge_features=("seg_radius_mean",),
+        max_missing_label_frac=0.5,
+    )
+    assert torch.allclose(subset[0].edge_attr, direct[0].edge_attr)
+
+
+def test_cache_non_subset_node_features_still_raises(
+    centerline_tree: tuple[Path, Path, Path, Path],
+) -> None:
+    """A node_features request that is NOT a subset of the cache still raises.
+
+    Confirms the subset-select fix only relaxes genuine subset requests, not
+    arbitrary mismatches -- a name the cache never built is still an error.
+    """
     studies, dce_root, labels_csv, cache_dir = centerline_tree
 
     VanguardCenterlineDataset(
@@ -447,23 +541,42 @@ def test_cache_manifest_mismatch_raises_unless_overridden(
             labels_path=labels_csv,
             dce_root=dce_root,
             cache_dir=cache_dir,
-            node_features=(
-                "radius",
-            ),  # different from the cached ("peak_time", "radius")
+            node_features=("peak_time", "washin_slope"),  # washin_slope never cached
             max_missing_label_frac=0.5,
         )
 
-    # allow_manifest_mismatch=True explicitly bypasses the check.
-    overridden = VanguardCenterlineDataset(
+
+def test_cache_manifest_override_with_truly_missing_feature_raises(
+    centerline_tree: tuple[Path, Path, Path, Path],
+) -> None:
+    """allow_manifest_mismatch=True cannot conjure an uncached feature.
+
+    It bypasses the manifest *equality* check, but the reslice step (see
+    _reslice_for_requested_features) still fails loud if a requested feature
+    was genuinely never cached -- overriding must never silently serve
+    mismatched-width data, which is the exact bug this mechanism replaces.
+    """
+    studies, dce_root, labels_csv, cache_dir = centerline_tree
+
+    VanguardCenterlineDataset(
         studies,
         labels_path=labels_csv,
         dce_root=dce_root,
         cache_dir=cache_dir,
-        node_features=("radius",),
+        node_features=("peak_time", "radius"),
         max_missing_label_frac=0.5,
-        allow_manifest_mismatch=True,
     )
-    assert len(overridden) == 1
+
+    with pytest.raises(ValueError, match="washin_slope"):
+        VanguardCenterlineDataset(
+            studies,
+            labels_path=labels_csv,
+            dce_root=dce_root,
+            cache_dir=cache_dir,
+            node_features=("peak_time", "washin_slope"),
+            max_missing_label_frac=0.5,
+            allow_manifest_mismatch=True,
+        )
 
 
 def test_cache_manifest_cases_mismatch_raises_unless_overridden(

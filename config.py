@@ -207,6 +207,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "export_subtype_summary": False,
     # Issue #151 driver block (see run_top_features_eval.py, configs/top_features_eval.yaml).
     "top_features_eval": None,
+    # LOCO (Leave-One-Covariate-Out) driver block -- see evaluation/loco.py and
+    # docs/loco_feature_importance.md for the expected schema.
+    "loco": None,
 }
 
 

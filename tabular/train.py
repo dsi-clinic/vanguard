@@ -15,7 +15,7 @@ from typing import Any
 
 import pandas as pd
 
-from evaluation import FoldResults
+from evaluation import FoldResults, KFoldResults
 from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.kfold import FoldSplit
 from load_cohort import (
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
 
 def run_evaluation_pipeline(
     df: pd.DataFrame, config: dict[str, Any], outdir: Path
-) -> None:
+) -> KFoldResults:
     """Run evaluator-based cross-validation over configured model/features."""
     context = prepare_evaluation_context(df, config)
     fold_results_list, nested_rows = run_cross_validation_from_context(context)
@@ -86,6 +86,7 @@ def run_evaluation_pipeline(
     print("\n" + "=" * 48)
     print(f"Plots saved in: {outdir / context['evaluator'].model_name / 'plots'}")
     print("=" * 48 + "\n")
+    return kfold_results
 
 
 def prepare_evaluation_context(

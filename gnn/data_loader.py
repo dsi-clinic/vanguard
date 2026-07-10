@@ -705,6 +705,11 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._allow_manifest_mismatch = allow_manifest_mismatch
         self._timings = _StageTimings()
         self.dropped_case_ids: list[str] = []
+        # Populated by _check_cache_manifest() from cache_manifest.json; used by
+        # _reslice_for_requested_features() to narrow a cached feature superset
+        # down to what was actually requested (see both methods' docstrings).
+        self._cached_node_features: list[str] | None = None
+        self._cached_edge_features: list[str] | None = None
 
         resolved_cache = (
             Path(cache_dir)
@@ -753,7 +758,30 @@ class VanguardCenterlineDataset(InMemoryDataset):
         else:
             self._check_cache_manifest()
             self.data, self.slices = torch.load(self.processed_paths[0])
+            self._reslice_for_requested_features()
             self._reload_dropped_manifest()
+
+    def _reslice_for_requested_features(self) -> None:
+        """Narrow ``data.x``/``data.edge_attr`` to the requested feature subset.
+
+        ``_check_cache_manifest`` allows ``node_features``/``edge_features`` to
+        be any *subset* of what the cache was built with (see its docstring),
+        so a cache built once with a feature superset can serve any narrower
+        request without a rebuild -- this is the other half of that contract:
+        the tensors loaded from disk still have every cached column, so a
+        genuine subset request needs an explicit column-index reslice here.
+        No-op when the request matches the cache exactly (the common case), or
+        when no cached feature list is known (e.g. a pre-manifest cache loaded
+        via ``allow_manifest_mismatch``).
+        """
+        cached_nf = self._cached_node_features
+        if cached_nf is not None and list(self._node_features) != cached_nf:
+            keep_idx = [cached_nf.index(name) for name in self._node_features]
+            self.data.x = self.data.x[:, keep_idx]
+        cached_ef = self._cached_edge_features
+        if cached_ef and list(self._edge_features) != cached_ef:
+            keep_idx = [cached_ef.index(name) for name in self._edge_features]
+            self.data.edge_attr = self.data.edge_attr[:, keep_idx]
 
     def _reload_dropped_manifest(self) -> None:
         """Restore and re-log dropped-case bookkeeping on a cache hit.
@@ -819,6 +847,15 @@ class VanguardCenterlineDataset(InMemoryDataset):
         (a cache built before this check existed) or if any recorded setting
         differs from what's currently requested, unless
         ``allow_manifest_mismatch=True`` was passed.
+
+        ``node_features``/``edge_features`` are the one exception to "differs
+        means raise": a request for a *subset* of the cached feature list is
+        allowed even without ``allow_manifest_mismatch``, since
+        ``_reslice_for_requested_features`` narrows the loaded tensors down to
+        exactly that subset afterwards. This lets a cache built once with a
+        feature superset serve any narrower request (e.g. leave-one-covariate
+        LOCO sweeps) without a rebuild. Every other setting (roots, labels,
+        node_mode, ...) still requires exact equality.
         """
         manifest_path = Path(self.processed_dir) / _CACHE_MANIFEST_NAME
         if not manifest_path.exists() and not self._allow_manifest_mismatch:
@@ -834,11 +871,17 @@ class VanguardCenterlineDataset(InMemoryDataset):
             return
         manifest = json.loads(manifest_path.read_text())
         requested = self._manifest_settings()
-        mismatched = {
-            key: {"cached": manifest.get(key), "requested": value}
-            for key, value in requested.items()
-            if manifest.get(key) != value
-        }
+        self._cached_node_features = list(manifest.get("node_features") or [])
+        self._cached_edge_features = list(manifest.get("edge_features") or [])
+        subset_keys = {"node_features", "edge_features"}
+        mismatched: dict[str, object] = {}
+        for key, value in requested.items():
+            cached_value = manifest.get(key)
+            if key in subset_keys:
+                if not set(value) <= set(cached_value or []):
+                    mismatched[key] = {"cached": cached_value, "requested": value}
+            elif cached_value != value:
+                mismatched[key] = {"cached": cached_value, "requested": value}
         if mismatched and not self._allow_manifest_mismatch:
             raise RuntimeError(
                 f"Cache at {self.processed_dir} was built with different "

@@ -26,7 +26,7 @@ from torch import nn
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
-from evaluation import FoldResults
+from evaluation import FoldResults, KFoldResults
 from evaluation.build_splits import build_split_manifest, create_splits_for_dataframe
 from evaluation.kfold import FoldSplit
 from evaluation.metrics import compute_binary_metrics
@@ -462,7 +462,7 @@ def _plot_metric_history(
     plt.close(fig)
 
 
-def run_gnn_pipeline(config: Any, outdir: Path) -> None:
+def run_gnn_pipeline(config: Any, outdir: Path) -> KFoldResults:
     """Build the dataset cohort table, run k-fold CV, and save evaluator outputs."""
     params = config.model_params
     data_paths = config.data_paths
@@ -582,6 +582,7 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
     _plot_metric_history(history_df, "auc", model_dir / "auc_by_epoch.png")
 
     logging.info("Wrote GNN run outputs to %s", outdir)
+    return kfold_results
 
 
 def main() -> None:
