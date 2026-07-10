@@ -150,6 +150,23 @@ for the pairing. Split *policy* (does the dataset have folds to offer) and split
 features unconditionally, so the fold assignment itself can never leak in as a
 predictor.
 
+Fold attachment is **fail-closed**: `_apply_provided_folds` rejects a `split_col`
+that collides with `case_id` or the label column, rejects a provided-fold table
+that maps a case more than once, merges `validate="one_to_one"` (so a duplicate
+`case_id` on either side is an error, not a case fanned across folds), and
+requires every modeled case to receive exactly one non-null fold. Any of these
+raises rather than silently corrupting cross-validation.
+
+**Adopted so far — patient grouping for computed folds.** When a run instead
+*computes* folds (`split_policy: compute`), `_apply_group_keys` fills
+`model_params.group_col` from `adapter.group_key(case_id)` (unless that column is
+already present), so `create_splits_for_dataframe` does grouped CV that keeps a
+case's group together — for UChicago, all exams of one patient (`patient_key`;
+181 exams from 143 patients). When a dataset adapter is configured,
+`prepare_evaluation_context` drops `group_col` from the model features, so an
+identity-like grouping key can never leak in as a predictor. See
+`configs/uchicago.yaml`.
+
 ---
 
 ## How to add a new dataset

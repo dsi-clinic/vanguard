@@ -131,7 +131,12 @@ def prepare_evaluation_context(
             }
         )
     group_col = str(model_params.group_col)
-    if bool(model_params.use_group_split):
+    if bool(config.dataset.name):
+        # A dataset adapter is configured: group_col holds its grouping key
+        # (e.g. UChicago's patient_key), populated by _apply_group_keys. That is
+        # an identity, not a feature -- always drop it so it can't leak into X.
+        drop_cols.add(group_col)
+    elif bool(model_params.use_group_split):
         drop_cols.discard(group_col)
     stratum_col = model_params.stratum_col
     if stratum_col:
@@ -287,52 +292,103 @@ def run_cross_validation_from_context(
     return fold_results_list, nested_rows
 
 
-#: Cap on how many case ids to list in the missing-fold error before truncating.
+#: Cap on how many case ids to list in a fail-closed fold error before truncating.
 _MAX_MISSING_CASES_SHOWN = 10
+
+
+def _preview(case_ids: list[str]) -> str:
+    """Format a truncated ``case_id`` list for error messages."""
+    head = case_ids[:_MAX_MISSING_CASES_SHOWN]
+    return f"{head}{' ...' if len(case_ids) > _MAX_MISSING_CASES_SHOWN else ''}"
 
 
 def _apply_provided_folds(
     feats_df: pd.DataFrame, config: dict[str, Any], adapter: DatasetAdapter
 ) -> pd.DataFrame:
-    """Merge the adapter's provided CV folds onto the feature table, if any.
+    """Attach the adapter's provided CV folds onto the feature table, fail-closed.
 
-    ``resolve_folds`` returns a ``(case_id, fold)`` table when the resolved
-    split policy is "provided", or ``None`` when it's "compute" -- in which
-    case ``feats_df`` is returned unchanged. The merged column is named after
-    ``model_params.split_col`` (default ``"fold"``), so a run that separately
-    sets ``model_params.split_mode: predefined`` consumes it through the
-    existing predefined-fold path in ``create_splits_for_dataframe``.
+    ``resolve_folds`` returns a ``(case_id, fold)`` table when the resolved split
+    policy is "provided", or ``None`` when it's "compute" -- in which case
+    ``feats_df`` is returned unchanged. Otherwise the folds are attached under
+    ``model_params.split_col`` (default ``"fold"``), consumed downstream by the
+    predefined-fold path in ``create_splits_for_dataframe``.
 
-    Split *policy* (whether the dataset has folds to offer) and split *mode*
-    (whether a run chooses to use them) stay separate run-config knobs, per
-    design decision 3 (see cohorts/README.md): merging the column here makes it
-    available, it does not force its use. A labeled feature row with no matching
-    fold gets ``NaN`` from the left merge; that would silently become a spurious
-    empty-validation fold in ``create_predefined_splits`` (``np.unique`` treats
-    ``NaN`` as its own value, leaking those rows into every fold's train set), so
-    when the run actually selects predefined mode we raise instead.
+    Because a bad fold attachment silently corrupts cross-validation (a missing
+    fold becomes an empty validation split; a duplicate mapping puts one case in
+    both train and validation), this validates rather than trusts, and raises on
+    anything unsafe:
+
+    - ``split_col`` must not collide with ``case_id`` or the configured label
+      column (it would overwrite real data);
+    - the provided folds must map each ``case_id`` at most once, and the merge is
+      ``validate="one_to_one"`` so a duplicate on either side is an error, not a
+      row-exploding leak;
+    - every modeled case must receive exactly one non-null fold.
 
     Raises:
-        ValueError: If ``split_mode`` is ``"predefined"`` and some feature row
-            has no assigned fold.
+        ValueError: On a ``split_col`` collision, a duplicate fold mapping, a
+            non-unique feature-table ``case_id``, or any modeled case left
+            without a fold.
     """
     folds = resolve_folds(config, adapter)
     if folds is None:
         return feats_df
+
     split_col = str(config.model_params.split_col)
+    label_col = str(config.data_paths.label_column)
+    if split_col in {"case_id", label_col}:
+        raise ValueError(
+            f"model_params.split_col={split_col!r} collides with a reserved column "
+            f"('case_id' or the label column {label_col!r}); choose another name."
+        )
+
+    dup_folds = folds["case_id"][folds["case_id"].duplicated()].unique().tolist()
+    if dup_folds:
+        raise ValueError(
+            "Provided folds map these case ids more than once: "
+            f"{_preview([str(c) for c in dup_folds])}"
+        )
+
     folds = folds.rename(columns={"fold": split_col})
     if split_col in feats_df.columns:
         feats_df = feats_df.drop(columns=[split_col])
-    feats_df = feats_df.merge(folds, on="case_id", how="left")
-    predefined = str(config.model_params.split_mode) == "predefined"
-    if predefined and feats_df[split_col].isna().any():
-        missing = feats_df.loc[feats_df[split_col].isna(), "case_id"].tolist()
-        preview = missing[:_MAX_MISSING_CASES_SHOWN]
-        suffix = " ..." if len(missing) > _MAX_MISSING_CASES_SHOWN else ""
+    # validate="one_to_one": a duplicate case_id on either side raises MergeError
+    # rather than fanning a case across folds.
+    feats_df = feats_df.merge(folds, on="case_id", how="left", validate="one_to_one")
+
+    missing = feats_df.loc[feats_df[split_col].isna(), "case_id"].tolist()
+    if missing:
         raise ValueError(
-            f"split_mode='predefined' but {len(missing)} case(s) have no provided "
-            f"fold: {preview}{suffix}"
+            f"{len(missing)} modeled case(s) have no provided fold: "
+            f"{_preview([str(c) for c in missing])}. Provided folds must cover every "
+            "modeled case; use split_policy: compute to build splits instead."
         )
+    return feats_df
+
+
+def _apply_group_keys(
+    feats_df: pd.DataFrame, config: dict[str, Any], adapter: DatasetAdapter
+) -> pd.DataFrame:
+    """Populate the split grouping column from the adapter, so computed CV groups.
+
+    When splits are *computed* (``split_policy: compute``), the pipeline must
+    keep a case's group together across folds -- for UChicago that is the patient
+    (multiple exams per patient), via ``adapter.group_key``. Without this the
+    grouping column is absent and ``create_splits_for_dataframe`` silently falls
+    back to case-level CV, leaking same-patient exams across train/validation.
+
+    Writes ``model_params.group_col`` from ``adapter.group_key(case_id)`` only
+    when that column is not already present, so a dataset whose group column is
+    supplied by an earlier stage (e.g. MAMA-MIA's clinical ``site``) is left
+    untouched. The column is excluded from model features in
+    :func:`prepare_evaluation_context` whenever a dataset adapter is configured,
+    so an identity-like key (``patient_key``) can never leak in as a predictor.
+    """
+    group_col = str(config.model_params.group_col)
+    if group_col in feats_df.columns:
+        return feats_df
+    feats_df = feats_df.copy()
+    feats_df[group_col] = feats_df["case_id"].map(adapter.group_key)
     return feats_df
 
 
@@ -357,6 +413,7 @@ def run_pipeline_from_config(
         merged_data = prepare_data(config, outdir, adapter=adapter)
         if adapter is not None:
             merged_data = _apply_provided_folds(merged_data, config, adapter)
+            merged_data = _apply_group_keys(merged_data, config, adapter)
         run_evaluation_pipeline(merged_data, config, outdir)
     except Exception as exc:  # noqa: BLE001
         logging.error("Pipeline failed: %s", exc, exc_info=True)

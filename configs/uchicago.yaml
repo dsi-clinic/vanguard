@@ -23,3 +23,12 @@ dataset:
 model_params:
   split_mode: predefined
   split_col: fold
+  # If a run overrides to split_policy: compute (recompute folds instead of using
+  # the shipped ones), keep same-patient exams together: the manifest has 181
+  # exams from 143 patients (36 patients with >1 exam). _apply_group_keys fills
+  # patient_key from UChicagoDataset.group_key(); group_col names it here so
+  # create_splits_for_dataframe does patient-grouped, pcr-stratified CV rather
+  # than leaking a patient across train/validation. patient_key is dropped from
+  # model features (it is an identity, not a predictor).
+  use_group_split: true
+  group_col: patient_key
