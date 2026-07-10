@@ -239,7 +239,10 @@ def main() -> None:
     )
     p.add_argument(
         "--images-dir",
-        default="/ess/scratch/scratch1/annawoodard/MAMA-MIA-syn60868042/images",
+        default=os.environ.get(
+            "IMAGES_DIR", "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+        ),
+        help="Directory containing case subdirectories with .nii.gz files",
     )
     p.add_argument("--output-dir", default=str(_PROJECT_ROOT / "vessel_segmentations"))
     p.add_argument(
@@ -346,11 +349,11 @@ def main() -> None:
             print(f"  ✗ vessel output missing: {case_id} ({base_name}.npz)")
 
     total = time.time() - t0
-    print(f"\n{'='*60}\nBATCH SEGMENTATION COMPLETE")
+    print(f"\n{'=' * 60}\nBATCH SEGMENTATION COMPLETE")
     print(
         f"Files: {len(nii_files)}  Successful: {len(successful)}  Failed: {len(failed_cases)}"
     )
-    print(f"Total: {total:.1f}s  ({total/len(nii_files):.1f}s/file)")
+    print(f"Total: {total:.1f}s  ({total / len(nii_files):.1f}s/file)")
     print(f"  preprocess: {t_pre - t0:.1f}s  inference: {t_inf - t_pre:.1f}s")
     print(f"Outputs collected: {len(collect_all_step3_files(str(out_dir)))}")
 

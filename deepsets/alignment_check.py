@@ -12,7 +12,7 @@ Example::
 
 Clinical DCE (default)::
 
-    --dce-root /net/projects2/vanguard/MAMA-MIA-syn60868042/images
+    --dce-root /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images
 
 Vessel segmentation phases (same grid lineage as tc4d)::
 
@@ -313,7 +313,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dce-root",
         type=Path,
-        default=Path("/net/projects2/vanguard/MAMA-MIA-syn60868042/images"),
+        default=Path("/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"),
         help="Parent of per-case dirs for clinical phase NIfTIs.",
     )
     parser.add_argument(

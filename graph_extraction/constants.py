@@ -8,7 +8,7 @@ DEFAULT_RADIOLOGIST_ANNOTATIONS_DIR = Path(
     "/net/projects2/vanguard/Duke-Breast-Cancer-MRI-Supplement-v3"
 )
 DEFAULT_TUMOR_MASK_DIR = Path(
-    "/net/projects2/vanguard/MAMA-MIA-syn60868042/segmentations/expert"
+    "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/segmentations/expert"
 )
 PROCESSING_VIZ_FLIP_SPEC = "z"
 VIZ_FLIP_SPECS = ("none", "z", "y", "x", "zy", "zx", "yx", "zyx")
