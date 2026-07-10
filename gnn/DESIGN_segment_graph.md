@@ -113,6 +113,18 @@ future result suggests within-segment gradients matter, the mitigation is a smal
 set of extra features (e.g. endpoint-vs-midpoint kinetic delta), not reverting to
 voxels.
 
+### 4.4 `time_to_enhancement` no-arrival sentinel
+
+`time_to_enhancement` (and `seg_time_to_enhancement_mean/std`) is `NaN` for any
+voxel/segment/edge with no detected arrival (peak enhancement ≤ 0). A raw `NaN`
+can't enter the model, so when the feature is used it is replaced at finalize
+time with `TTE_NO_ARRIVAL_SENTINEL = -1.0` (out-of-range in normalized `[0, 1]`
+time), applied identically across voxel nodes, segment nodes, and junction
+nodes/edges. This is a distinct, learnable "non-enhancing" value, **not**
+imputation to a plausible time — `_sentinel_fill_tte` raises on any NaN outside
+a TTE column, and the per-graph count is audited via `graph_qc.csv`'s
+`tte_no_arrival_count`. See `AUDITING_RESULTS.md`.
+
 ## 5. Model changes
 
 `GCNConv` **ignores edge features** — using it here would discard everything in §4.
@@ -237,6 +249,35 @@ above — and the manifest records the kinetics-reduction choice (§4.2).
   awkward in B).
 - Directionality: vessels have flow direction; do we keep the graph undirected (current)
   or attempt a root/flow orientation later? Defer — out of scope for this migration.
+
+## 10. Matched representation experiment (voxel vs. segment vs. junction)
+
+With all three `node_mode`s implemented, the point is a **matched** head-to-head:
+identical cohort, identical folds, identical underlying signals, so any AUC
+difference is the representation, not the inputs. Machinery (see
+`experiments/graph_repr_compare_v1/README.md`):
+
+- **Matched features (v1, 6 shared signals):** `peak_time`, `peak_enhancement`,
+  `time_to_enhancement`, `washin_slope`, `auc_positive`, `radius` — on each
+  representation's natural carrier: voxel/junction **nodes** carry the per-voxel
+  names; segment **nodes** and junction **edges** carry the `seg_*_mean`
+  summaries. Configs: `configs/gnn_{voxel,segment,junction}_compare.yaml`.
+- **Matched folds:** `gnn/make_fold_assignments.py` freezes the evaluation
+  framework's `StratifiedKFold(random_state=42)` split to a shared
+  `pcr_labels_folded.csv`; all three arms consume it via `split_mode: predefined`
+  (`split_col: fold`), so each case keeps the same fold even if an arm drops a
+  case. Both build **and** train must point at that folded labels file (the cache
+  manifest records `labels_path`).
+- **Run it:** `gnn/slurm/submit_gnn_graph_compare_{build,train}.slurm`
+  (`--array=0-2`, one arm each), then `analysis/gnn_graph_compare_plot.py` — which
+  also **asserts** the three `split_manifest.csv` files agree per case (verifying
+  the match rather than assuming it).
+- **Extending to v2 (more features):** copy the three configs, add features
+  (e.g. `degree`, segment geometry `seg_length/tortuosity/curvature`, `_std`
+  summaries) to `gnn_node_features`/`gnn_edge_features`, point them at new
+  `..._v2` cache dirs, set `CAMPAIGN=graph_repr_compare_v2`, and rerun the same
+  build/train arrays + aggregator. The Slurm drivers read mode/features/paths
+  from the configs, so **no script changes** are needed — only new configs.
 
 ## Summary of tradeoffs (concise)
 

@@ -72,8 +72,11 @@ def _junction_node_features(
     Samples the raw DCE curve at the junction voxel (``dce_4d[:, z, y, x]``,
     matching voxel mode) and normalizes ``peak_time`` / ``time_to_enhancement``
     by ``T - 1`` the same way. ``time_to_enhancement`` is NaN when the voxel
-    shows no detected arrival -- surfaced by the feature-NaN audit, not
-    defaulted.
+    shows no detected arrival; that NaN is replaced with
+    ``TTE_NO_ARRIVAL_SENTINEL`` when stacked into ``data.x`` in
+    ``gnn.data_loader._finalize_data`` (same policy as voxel/segment modes and
+    as the segment-summary ``edge_attr``), and the count is audited via
+    ``graph_qc.csv``'s ``tte_no_arrival_count`` -- never silently defaulted.
     """
     denom = float(max(int(dce_4d.shape[0]) - 1, _SINGLE_TIMEPOINT))
     x, y, z = node

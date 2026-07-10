@@ -107,6 +107,29 @@ _FEATURE_ATTR: dict[str, str] = {
 }
 _DEFAULT_NODE_FEATURES: tuple[str, ...] = ("peak_time", "radius")
 
+# "Time to enhancement" is NaN for any voxel / segment / edge with no detected
+# arrival (peak enhancement <= 0, i.e. non-enhancing tissue). A raw NaN cannot
+# enter the model -- it propagates to a NaN loss -- so at build time
+# ``_finalize_data`` replaces these NaNs with a fixed out-of-range sentinel in
+# the normalized [0, 1] TTE space. ``-1.0`` reads as a distinct, learnable "no
+# detectable arrival" value rather than being imputed to a plausible arrival
+# time, and is applied identically to voxel nodes, segment nodes, and junction
+# nodes/edges so the three representations agree. Every no-arrival cell is
+# counted per graph (``tte_no_arrival_count`` in ``graph_qc.csv``) so the fill
+# stays audited rather than silent. See ``AUDITING_RESULTS.md`` and
+# ``gnn/DESIGN_segment_graph.md``.
+TTE_NO_ARRIVAL_SENTINEL: float = -1.0
+# The feature names (across all three modes) whose column may legitimately be
+# NaN and therefore gets the sentinel. Any NaN outside these columns is a bug we
+# surface loudly rather than fill.
+_TTE_FEATURE_NAMES: frozenset[str] = frozenset(
+    {
+        "time_to_enhancement",
+        "seg_time_to_enhancement_mean",
+        "seg_time_to_enhancement_std",
+    }
+)
+
 # Node-granularity modes. ``"voxel"`` keeps one node per skeleton voxel;
 # ``"segment"`` contracts each vessel segment to a single node (line graph, see
 # ``gnn.segment_graph``); ``"junction"`` keeps junction/endpoint voxels as nodes
@@ -255,8 +278,11 @@ def _attach_node_features(
     """Set ``radius`` and the DCE-derived kinetic features on every node.
 
     ``time_to_enhancement_norm`` is ``NaN`` for nodes with no detected arrival
-    (no meaningful enhancement) -- this is caught and reported per-feature by
-    ``_write_feature_summary``'s NaN/inf audit rather than silently defaulted.
+    (no meaningful enhancement). That NaN is later replaced with
+    ``TTE_NO_ARRIVAL_SENTINEL`` when the feature is stacked into ``data.x`` /
+    ``data.edge_attr`` (see ``_sentinel_fill_tte`` / ``_finalize_data``), so a
+    raw NaN never reaches the model; the per-graph no-arrival count is audited
+    via ``graph_qc.csv``'s ``tte_no_arrival_count``.
 
     ``pcr_dummy`` (the label broadcast onto every node) is only computed and
     attached when it is present in ``node_features`` -- it is a leakage
@@ -287,6 +313,29 @@ def _attach_node_features(
             attrs["pcr_dummy"] = float(label)
 
 
+def _sentinel_fill_tte(matrix: torch.Tensor, feature_names: tuple[str, ...]) -> int:
+    """Replace NaN with ``TTE_NO_ARRIVAL_SENTINEL`` in TTE columns, in place.
+
+    Returns the number of cells filled (no-arrival entries). ``time_to_enhancement``
+    (and its segment ``_mean``/``_std`` summaries) is the only feature that
+    legitimately produces NaN -- "no detected arrival" -- so a NaN in any other
+    column is a bug, and this raises loudly rather than filling it (fail-fast).
+    """
+    filled = 0
+    for col, name in enumerate(feature_names):
+        if name in _TTE_FEATURE_NAMES:
+            column = matrix[:, col]
+            mask = torch.isnan(column)
+            filled += int(mask.sum().item())
+            column[mask] = TTE_NO_ARRIVAL_SENTINEL
+    if bool(torch.isnan(matrix).any()):
+        raise ValueError(
+            "Unexpected NaN in a non-time-to-enhancement feature column after "
+            "sentinel fill; only TTE features may be NaN (no detected arrival)."
+        )
+    return filled
+
+
 def _finalize_data(
     data: Data,
     case_id: str,
@@ -311,12 +360,21 @@ def _finalize_data(
     those columns are stacked into ``data.edge_attr`` from ``edge_feature_attr``
     (``JUNCTION_EDGE_FEATURE_ATTR``), aligned with ``data.edge_index``. Voxel and
     segment modes pass no edge features, so ``data.edge_attr`` is never set.
+
+    Any no-arrival NaN in a time-to-enhancement column of ``data.x`` /
+    ``data.edge_attr`` is replaced with ``TTE_NO_ARRIVAL_SENTINEL`` (see that
+    constant); the count of filled cells is recorded on
+    ``data.tte_no_arrival_count`` for the QC audit, and a NaN in any non-TTE
+    column raises.
     """
     columns = [data[feature_attr[name]] for name in node_features]
     data.x = torch.stack([column.float() for column in columns], dim=1)
+    no_arrival = _sentinel_fill_tte(data.x, node_features)
     if edge_features:
         edge_columns = [data[edge_feature_attr[name]] for name in edge_features]
         data.edge_attr = torch.stack([col.float() for col in edge_columns], dim=1)
+        no_arrival += _sentinel_fill_tte(data.edge_attr, edge_features)
+    data.tte_no_arrival_count = no_arrival
     data.y = torch.tensor([int(label)], dtype=torch.long)
     data.case_id = case_id
     data.num_timepoints = num_timepoints
@@ -1055,9 +1113,13 @@ class VanguardCenterlineDataset(InMemoryDataset):
         count). ``mean_degree`` (``num_edges / num_nodes``) is the correct
         average node degree under that same doubled convention.
         ``missing_feature_count`` counts every non-finite (NaN or inf) entry
-        in ``data.x``; ``nan_feature_count`` is the NaN-only subset of that,
-        distinguishing "no signal detected" (NaN, e.g. ``time_to_enhancement``
-        with no arrival) from a genuine inf.
+        in ``data.x``; ``nan_feature_count`` is the NaN-only subset of that.
+        Because time-to-enhancement no-arrival NaNs are sentinel-filled before
+        ``data.x`` is finalized (see ``_sentinel_fill_tte``), both are normally
+        ``0``; the "no signal detected" count is instead carried explicitly by
+        ``tte_no_arrival_count`` (no-arrival cells across ``data.x`` and, in
+        junction mode, ``data.edge_attr``). A non-zero ``nan_feature_count``
+        here therefore signals an unexpected NaN, not a missing arrival.
 
         Also writes ``processed/graph_qc_plots/`` (via
         ``gnn.graph_qc_plots.write_build_time_plots``): num_nodes vs pcr,
@@ -1085,6 +1147,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 "mean_degree": float(data.num_edges) / float(data.num_nodes),
                 "missing_feature_count": int((~finite).sum()),
                 "nan_feature_count": int(np.isnan(x).sum()),
+                "tte_no_arrival_count": int(getattr(data, "tte_no_arrival_count", 0)),
             }
             for i, name in enumerate(self._node_features):
                 column = x[:, i]

@@ -20,8 +20,11 @@ within-segment heterogeneity. Kinetics are summarized as the mean and std of
 the per-voxel scalars along the segment. ``time_to_enhancement`` is NaN-aware
 (``nanmean``/``nanstd``): voxels with no detected arrival are excluded from the
 segment's arrival mean, and a segment whose voxels *all* lack arrival gets a
-NaN -- surfaced by the same feature-NaN audit voxel mode uses, never silently
-defaulted.
+NaN. That NaN is not silently defaulted here: it is replaced with
+``TTE_NO_ARRIVAL_SENTINEL`` (a distinct "no detectable arrival" value) only when
+the feature is stacked into ``data.x`` / ``data.edge_attr`` in
+``gnn.data_loader._finalize_data``, and the no-arrival count is audited via
+``graph_qc.csv``'s ``tte_no_arrival_count``.
 """
 
 from __future__ import annotations

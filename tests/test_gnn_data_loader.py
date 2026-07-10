@@ -20,7 +20,11 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("torch_geometric")
 sitk = pytest.importorskip("SimpleITK")
 
-from gnn.data_loader import VanguardCenterlineDataset  # noqa: E402
+from gnn.data_loader import (  # noqa: E402
+    TTE_NO_ARRIVAL_SENTINEL,
+    VanguardCenterlineDataset,
+    _sentinel_fill_tte,
+)
 
 VOLUME_SHAPE = (4, 8, 8)  # (z, y, x)
 NUM_TIMEPOINTS = 3
@@ -530,8 +534,15 @@ def test_cache_manifest_missing_raises(
         )
 
 
-def test_no_signal_voxel_reports_nan_time_to_enhancement(tmp_path: Path) -> None:
-    """A voxel with no measurable enhancement gets a NaN time_to_enhancement, caught by the feature_na_report audit rather than a silent fallback value."""
+def test_no_signal_voxel_gets_tte_sentinel(tmp_path: Path) -> None:
+    """A voxel with no measurable enhancement gets the TTE sentinel in data.x.
+
+    The no-arrival case is not silently defaulted to a plausible time: it is
+    replaced with ``TTE_NO_ARRIVAL_SENTINEL`` (a distinct out-of-range value)
+    so ``data.x`` carries no NaN (which would break training), and the count is
+    surfaced by ``graph_qc.csv``'s ``tte_no_arrival_count`` rather than the
+    generic NaN audit.
+    """
     studies = tmp_path / "studies"
     dce_root = tmp_path / "images"
     flat_x = SKELETON_XS[-1]
@@ -549,10 +560,13 @@ def test_no_signal_voxel_reports_nan_time_to_enhancement(tmp_path: Path) -> None
     )
     data = dataset[0]
 
-    # The flat voxel has no detected arrival -> sentinel -1 on the raw index,
-    # NaN on the normalized feature actually fed into data.x.
+    # The flat voxel has no detected arrival -> raw index keeps its -1 sentinel,
+    # and the normalized TTE feature in data.x is the sentinel (not NaN).
     assert int(data.time_to_enhancement.min()) == -1
-    assert torch.isnan(data.x[:, 0]).sum().item() == 1
+    assert not torch.isnan(data.x).any()
+    tte_column = data.x[:, 0]
+    assert (tte_column == TTE_NO_ARRIVAL_SENTINEL).sum().item() == 1
+    assert int(data.tte_no_arrival_count) == 1
 
     na_report = json.loads(
         (
@@ -563,8 +577,42 @@ def test_no_signal_voxel_reports_nan_time_to_enhancement(tmp_path: Path) -> None
             / "feature_na_report.json"
         ).read_text()
     )
-    assert na_report["time_to_enhancement"]["num_nan"] == 1
+    # No-arrival is sentinel-filled before the feature summary, so the NaN audit
+    # is clean; the "no signal" count lives in graph_qc's tte_no_arrival_count.
+    assert na_report["time_to_enhancement"]["num_nan"] == 0
 
     qc = pd.read_csv(tmp_path / "cache" / "processed" / "graph_qc.csv")
-    assert qc.iloc[0]["nan_feature_count"] == 1
-    assert qc.iloc[0]["missing_feature_count"] == 1
+    assert qc.iloc[0]["nan_feature_count"] == 0
+    assert qc.iloc[0]["missing_feature_count"] == 0
+    assert qc.iloc[0]["tte_no_arrival_count"] == 1
+
+
+def test_sentinel_fill_tte_fills_tte_columns_and_counts() -> None:
+    """NaN in a TTE column is replaced with the sentinel; the count is returned."""
+    real_arrival = 0.5
+    expected_filled = 2
+    matrix = torch.tensor(
+        [[float("nan"), 1.0], [real_arrival, 2.0], [float("nan"), 3.0]]
+    )
+    filled = _sentinel_fill_tte(matrix, ("time_to_enhancement", "radius"))
+    assert filled == expected_filled
+    assert matrix[0, 0].item() == TTE_NO_ARRIVAL_SENTINEL
+    assert matrix[2, 0].item() == TTE_NO_ARRIVAL_SENTINEL
+    assert matrix[1, 0].item() == real_arrival  # a real arrival is left untouched
+    assert not torch.isnan(matrix).any()
+
+
+def test_sentinel_fill_tte_handles_segment_summary_column() -> None:
+    """The segment/edge ``seg_time_to_enhancement_mean`` column is also filled."""
+    matrix = torch.tensor([[float("nan")], [0.2]])
+    filled = _sentinel_fill_tte(matrix, ("seg_time_to_enhancement_mean",))
+    assert filled == 1
+    assert matrix[0, 0].item() == TTE_NO_ARRIVAL_SENTINEL
+    assert matrix[1, 0].item() == pytest.approx(0.2)
+
+
+def test_sentinel_fill_tte_raises_on_non_tte_nan() -> None:
+    """A NaN outside a TTE column is a bug and must raise, not be filled."""
+    matrix = torch.tensor([[0.5, float("nan")]])  # NaN in the radius column
+    with pytest.raises(ValueError, match="Unexpected NaN"):
+        _sentinel_fill_tte(matrix, ("time_to_enhancement", "radius"))

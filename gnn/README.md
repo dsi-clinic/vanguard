@@ -189,9 +189,19 @@ cached graphs:
 - `mean_degree` -- `num_edges / num_nodes`, the correct average node degree
   under the doubled `num_edges` convention above.
 - `missing_feature_count` / `nan_feature_count` -- total non-finite
-  (NaN-or-inf) and NaN-only entries in `data.x` for that graph.
+  (NaN-or-inf) and NaN-only entries in `data.x` for that graph. These are
+  normally `0`: `time_to_enhancement` (the only feature that can be "missing",
+  i.e. no detected arrival) is sentinel-filled before `data.x` is finalized, so
+  a non-zero value here signals an *unexpected* NaN/inf, not a missing arrival.
+- `tte_no_arrival_count` -- number of no-arrival cells that were replaced with
+  `TTE_NO_ARRIVAL_SENTINEL` (`-1.0`, normalized space) across `data.x` and, in
+  junction mode, `data.edge_attr`. A raw NaN cannot enter the model, so
+  no-arrival time-to-enhancement is encoded as a distinct out-of-range sentinel
+  (a learnable "non-enhancing" value) rather than imputed to a plausible time;
+  this column keeps that fill audited per graph. See `AUDITING_RESULTS.md`.
 - `<feature>_min` / `_max` / `_mean` / `_std` for every name in
-  `node_features`, computed over that graph's nodes only (NaN-aware).
+  `node_features`, computed over that graph's nodes only (NaN-aware). For a
+  `time_to_enhancement` feature these now include the `-1.0` sentinel.
 
 The same build also renders the confound plots directly, into
 `<cache_dir>/processed/graph_qc_plots/` (`gnn/graph_qc_plots.py`, called from
