@@ -287,6 +287,10 @@ def run_cross_validation_from_context(
     return fold_results_list, nested_rows
 
 
+#: Cap on how many case ids to list in the missing-fold error before truncating.
+_MAX_MISSING_CASES_SHOWN = 10
+
+
 def _apply_provided_folds(
     feats_df: pd.DataFrame, config: dict[str, Any], adapter: DatasetAdapter
 ) -> pd.DataFrame:
@@ -302,10 +306,15 @@ def _apply_provided_folds(
     Split *policy* (whether the dataset has folds to offer) and split *mode*
     (whether a run chooses to use them) stay separate run-config knobs, per
     design decision 3 (see cohorts/README.md): merging the column here makes it
-    available, it does not force its use. Unmatched rows (e.g. exams with a
-    fold but no label, so absent from the labeled feature table) are dropped by
-    the left merge; rows with no assigned fold get ``NaN`` and will fail loudly
-    in ``create_predefined_splits`` if the run actually selects predefined mode.
+    available, it does not force its use. A labeled feature row with no matching
+    fold gets ``NaN`` from the left merge; that would silently become a spurious
+    empty-validation fold in ``create_predefined_splits`` (``np.unique`` treats
+    ``NaN`` as its own value, leaking those rows into every fold's train set), so
+    when the run actually selects predefined mode we raise instead.
+
+    Raises:
+        ValueError: If ``split_mode`` is ``"predefined"`` and some feature row
+            has no assigned fold.
     """
     folds = resolve_folds(config, adapter)
     if folds is None:
@@ -314,7 +323,17 @@ def _apply_provided_folds(
     folds = folds.rename(columns={"fold": split_col})
     if split_col in feats_df.columns:
         feats_df = feats_df.drop(columns=[split_col])
-    return feats_df.merge(folds, on="case_id", how="left")
+    feats_df = feats_df.merge(folds, on="case_id", how="left")
+    predefined = str(config.model_params.split_mode) == "predefined"
+    if predefined and feats_df[split_col].isna().any():
+        missing = feats_df.loc[feats_df[split_col].isna(), "case_id"].tolist()
+        preview = missing[:_MAX_MISSING_CASES_SHOWN]
+        suffix = " ..." if len(missing) > _MAX_MISSING_CASES_SHOWN else ""
+        raise ValueError(
+            f"split_mode='predefined' but {len(missing)} case(s) have no provided "
+            f"fold: {preview}{suffix}"
+        )
+    return feats_df
 
 
 def run_pipeline_from_config(

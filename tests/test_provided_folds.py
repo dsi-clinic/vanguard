@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from cohorts import MamaMiaDataset, UChicagoDataset
 from config import DEFAULT_CONFIG, ConfigNode, _deep_merge
@@ -105,6 +106,56 @@ def test_apply_provided_folds_noop_for_mamamia_default_compute() -> None:
     merged = _apply_provided_folds(feats_df, config, adapter)
 
     pd.testing.assert_frame_equal(merged, feats_df)
+
+
+def test_apply_provided_folds_raises_on_missing_fold_in_predefined_mode(
+    tmp_path: Path,
+) -> None:
+    """A labeled row with no provided fold must fail loudly, not split silently.
+
+    Without the guard, the left-merge NaN would become a spurious
+    empty-validation fold in create_predefined_splits and leak those rows into
+    every fold's training set. 'e4' is in the feature table but absent from the
+    manifest, so it has no fold.
+    """
+    adapter = UChicagoDataset(root=_write_manifest(tmp_path))
+    config = ConfigNode._wrap(
+        _deep_merge(
+            DEFAULT_CONFIG,
+            {
+                "dataset": {
+                    "name": "uchicago",
+                    "cohort": None,
+                    "root": "/x",
+                    "split_policy": "auto",
+                },
+                "model_params": {"split_mode": "predefined", "split_col": "fold"},
+            },
+        )
+    )
+    feats_df = pd.DataFrame({"case_id": ["e1", "e2", "e3", "e4"], "pcr": [1, 0, 1, 0]})
+
+    with pytest.raises(ValueError, match="no provided fold"):
+        _apply_provided_folds(feats_df, config, adapter)
+
+
+def test_apply_provided_folds_allows_missing_fold_when_not_predefined(
+    tmp_path: Path,
+) -> None:
+    """Outside predefined mode a missing fold is harmless: merge, don't raise.
+
+    The fold column is just made available (design decision 3); a run using
+    'random' splits never consults it, so an unmatched row's NaN is fine.
+    """
+    adapter = UChicagoDataset(root=_write_manifest(tmp_path))
+    config = _config(
+        {"name": "uchicago", "cohort": None, "root": "/x", "split_policy": "auto"}
+    )  # model_params.split_mode defaults to "random"
+    feats_df = pd.DataFrame({"case_id": ["e1", "e2", "e3", "e4"], "pcr": [1, 0, 1, 0]})
+
+    merged = _apply_provided_folds(feats_df, config, adapter)
+
+    assert merged.loc[merged["case_id"] == "e4", "fold"].isna().all()
 
 
 def test_predefined_split_col_excluded_from_model_features() -> None:
