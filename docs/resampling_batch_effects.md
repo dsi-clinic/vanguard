@@ -29,11 +29,16 @@ the biological outcome (pCR), that is a batch effect that modeling has to reckon
 
 ## Data sources
 
+All inputs (except scanner metadata, already on shared storage) have been copied to
+`/gpfs/data/karczmar-lab/vanguard/batch_effect_inputs/` (md5-verified against the
+originals; see the README there) so this is reproducible off personal/scratch storage.
+The default paths baked into `scripts/submit_*_ispy2.sbatch` already point here.
+
 | Thing | Path | ISPY2 n |
 |---|---|---|
-| Native feature matrix | `tabular/all_datasets_run/features_full_labeled.csv` | 980 |
-| Resampled feature matrix | `/ess/scratch/scratch1/t-9sbose/vanguard_experiments/independent_signal_resampled_ispy2/features_full_labeled.csv` | 808 |
-| Per-case z-spacing (native headers) | `data_viz/spacing_by_hospital.csv` (`z_spacing_mm`) | 980 |
+| Native feature matrix | `/gpfs/data/karczmar-lab/vanguard/batch_effect_inputs/features_full_labeled_native.csv` | 980 |
+| Resampled feature matrix | `/gpfs/data/karczmar-lab/vanguard/batch_effect_inputs/features_full_labeled_resampled_808.csv` | 808 |
+| Per-case z-spacing (native headers) | `/gpfs/data/karczmar-lab/vanguard/batch_effect_inputs/spacing_by_hospital.csv` (`z_spacing_mm`) | 980 |
 | Scanner metadata | `/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx` (`dataset_info`) | 980 |
 
 Feature arms: **morph (50) + graph (49) + kinematic (895)** = "vessel_all" (994).
