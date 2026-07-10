@@ -24,12 +24,16 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import SimpleITK as sitk
 import torch
 
 from preprocessing.model import frozen_model_intensity_preprocess
+
+if TYPE_CHECKING:
+    from cohorts.base import DatasetAdapter
 
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent
@@ -67,12 +71,24 @@ def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
     return nii_files
 
 
-def preprocess_image(input_path: str, output_path: str) -> bool:
+def preprocess_image(
+    input_path: str, output_path: str, adapter: DatasetAdapter | None = None
+) -> bool:
     """Preprocess a single .nii.gz file (STEP-1).
 
     Args:
         input_path: Path to input .nii.gz file
         output_path: Path to save preprocessed .npy file
+        adapter: Optional dataset adapter (Step 4 of the multi-dataset
+            migration, see cohorts/README.md). When given, the geometry
+            reorientation is taken from ``adapter.preprocess`` instead of the
+            hardcoded MAMA-MIA axis transform -- e.g. UChicago ships
+            already-oriented data and overrides this to a pass-through. When
+            ``None`` (every caller today) the transform is byte-for-byte
+            unchanged. Intensity normalization is *not* the adapter's job: this
+            stage always applies the shared
+            ``preprocessing.model.frozen_model_intensity_preprocess`` contract,
+            matching cohorts/base.py.
 
     Returns:
         True if successful, False otherwise
@@ -81,11 +97,18 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
         # Load the image
         original_array = sitk.GetArrayFromImage(sitk.ReadImage(str(input_path)))
 
-        # Preserve the existing NIfTI orientation adapter, then apply the exact
-        # frozen-model intensity contract implemented and tested in Vanguard.
-        preprocessed_array = frozen_model_intensity_preprocess(
-            np.swapaxes(np.swapaxes(original_array, 0, 2), 0, 1)[::-1]
+        # Two separable jobs, kept separate: the adapter owns the *spatial*
+        # reorientation (falling back to the historical MAMA-MIA axis transform
+        # when there is no adapter), and the *intensity* contract is always the
+        # shared frozen-model one from preprocessing.model -- never a local
+        # re-implementation, so segmentation can't drift from what the pinned
+        # model was trained against.
+        reoriented = (
+            adapter.preprocess(original_array)
+            if adapter is not None
+            else np.swapaxes(np.swapaxes(original_array, 0, 2), 0, 1)[::-1]
         )
+        preprocessed_array = frozen_model_intensity_preprocess(reoriented)
 
         # Save as .npy
         np.save(output_path, preprocessed_array)
@@ -96,9 +119,25 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
         return False
 
 
-def build_output_path(output_dir: Path, case_id: str, base_name: str) -> Path:
-    """Build output path in a source/case/images layout."""
-    source = case_id.split("_")[0]
+def build_output_path(
+    output_dir: Path,
+    case_id: str,
+    base_name: str,
+    adapter: DatasetAdapter | None = None,
+) -> Path:
+    """Build output path in a source/case/images layout.
+
+    The top-level ``source`` directory is the case's dataset identity. With an
+    ``adapter`` (Step 4) it comes from ``adapter.case_dataset_name`` (one
+    authoritative answer -- e.g. UChicago's manifest sub-source); without one it
+    is the case-id prefix ``case_id.split("_")[0]``, today's behavior. For
+    MAMA-MIA these agree, so the ``None`` path is byte-for-byte unchanged.
+    """
+    source = (
+        adapter.case_dataset_name(case_id)
+        if adapter is not None
+        else case_id.split("_")[0]
+    )
     timepoint = (
         base_name[len(case_id) + 1 :]
         if base_name.startswith(f"{case_id}_")
@@ -132,9 +171,16 @@ def collect_all_step3_files(output_dir: str) -> list[str]:
 
 
 def preprocess_parallel(
-    file_list: list[tuple[str, str]], step1_dir: Path, workers: int
+    file_list: list[tuple[str, str]],
+    step1_dir: Path,
+    workers: int,
+    adapter: DatasetAdapter | None = None,
 ) -> tuple[dict[str, str], list[str]]:
-    """Run STEP-1 preprocessing across a thread pool. Returns base_name->case_id."""
+    """Run STEP-1 preprocessing across a thread pool. Returns base_name->case_id.
+
+    ``adapter`` is threaded to :func:`preprocess_image` (Step 4); ``None``
+    preserves today's behavior exactly.
+    """
     base_name_to_case = {}
     failed = []
 
@@ -142,7 +188,7 @@ def preprocess_parallel(
         case_id, file_path = item
         base_name = Path(file_path).name.replace(".nii.gz", "")
         step1_file = step1_dir / f"{base_name}.npy"
-        ok = preprocess_image(file_path, step1_file)
+        ok = preprocess_image(file_path, step1_file, adapter=adapter)
         return case_id, base_name, ok
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
