@@ -33,7 +33,7 @@ from evaluation.metrics import compute_binary_metrics
 from evaluation.utils import prepare_predictions_df
 from gnn.data_loader import VanguardCenterlineDataset
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_prediction_plot
-from gnn.model import GCNClassifier
+from gnn.model import EdgeGNNClassifier, GCNClassifier
 from load_cohort import load_config, resolve_run_output_dir, write_config_snapshot
 
 matplotlib.use("Agg")
@@ -144,6 +144,14 @@ def build_graph_cohort(
     return cohort_df
 
 
+def _fit_standardizer(matrix: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-column mean/std, with near-constant columns left unscaled (std->1)."""
+    mean = matrix.mean(dim=0)
+    std = matrix.std(dim=0, unbiased=False)
+    std = torch.where(std < _MIN_STD, torch.ones_like(std), std)
+    return mean, std
+
+
 def fit_node_standardizer(graphs: list[Data]) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute per-feature mean/std over training-split node features.
 
@@ -152,11 +160,27 @@ def fit_node_standardizer(graphs: list[Data]) -> tuple[torch.Tensor, torch.Tenso
     directly, so standardization reflects whatever the model actually trains
     on.
     """
-    feature_matrix = torch.cat([graph.x for graph in graphs], dim=0)
-    mean = feature_matrix.mean(dim=0)
-    std = feature_matrix.std(dim=0, unbiased=False)
-    std = torch.where(std < _MIN_STD, torch.ones_like(std), std)
-    return mean, std
+    return _fit_standardizer(torch.cat([graph.x for graph in graphs], dim=0))
+
+
+def fit_edge_standardizer(graphs: list[Data]) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute per-feature mean/std over training-split edge features.
+
+    Junction mode (segment-as-edge) only: the segment summary lives on
+    ``edge_attr``, so it needs the same per-fold standardization ``data.x`` gets.
+    """
+    return _fit_standardizer(torch.cat([graph.edge_attr for graph in graphs], dim=0))
+
+
+def _model_forward(model: nn.Module, batch: Data) -> torch.Tensor:
+    """Call ``model`` with the right signature for its representation.
+
+    ``EdgeGNNClassifier`` (junction mode) consumes ``edge_attr``; the plain
+    ``GCNClassifier`` (voxel/segment) does not.
+    """
+    if isinstance(model, EdgeGNNClassifier):
+        return model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+    return model(batch.x, batch.edge_index, batch.batch)
 
 
 def _apply_pcr_dummy_noise(
@@ -229,7 +253,7 @@ def train_one_epoch(
     for batch in loader:
         batch = batch.to(device)
         optimizer.zero_grad()
-        logits = model(batch.x, batch.edge_index, batch.batch)
+        logits = _model_forward(model, batch)
         loss = criterion(logits, batch.y.float())
         loss.backward()
         optimizer.step()
@@ -253,7 +277,7 @@ def evaluate(
     y_prob_parts: list[np.ndarray] = []
     for batch in loader:
         batch = batch.to(device)
-        logits = model(batch.x, batch.edge_index, batch.batch)
+        logits = _model_forward(model, batch)
         loss = criterion(logits, batch.y.float())
         total_loss += loss.item() * batch.num_graphs
         num_graphs += batch.num_graphs
@@ -278,7 +302,7 @@ def _predict_loader(
     y_prob_parts: list[np.ndarray] = []
     for batch in loader:
         batch = batch.to(device)
-        logits = model(batch.x, batch.edge_index, batch.batch)
+        logits = _model_forward(model, batch)
         y_true_parts.append(batch.y.cpu().numpy())
         y_prob_parts.append(torch.sigmoid(logits).cpu().numpy())
     return np.concatenate(y_true_parts), np.concatenate(y_prob_parts)
@@ -350,17 +374,36 @@ def fit_predict_one_fold(
     for graph in train_graphs + val_graphs:
         graph.x = (graph.x - mean) / std
 
+    # Junction mode (segment-as-edge) carries the segment summary on edge_attr,
+    # which needs the same per-fold standardization -- fit on the train split
+    # only, then apply to both splits. Detected off the graphs themselves so
+    # this branch is inert for voxel/segment mode (no edge_attr).
+    is_edge_mode = getattr(train_graphs[0], "edge_attr", None) is not None
+    if is_edge_mode:
+        edge_mean, edge_std = fit_edge_standardizer(train_graphs)
+        for graph in train_graphs + val_graphs:
+            graph.edge_attr = (graph.edge_attr - edge_mean) / edge_std
+
     batch_size = int(params.batch_size)
     train_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=True)
     train_eval_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=False)
     val_loader = DataLoader(val_graphs, batch_size=batch_size, shuffle=False)
 
-    model = GCNClassifier(
-        input_dim=train_graphs[0].x.shape[1],
-        hidden_dim=int(params.hidden_dim),
-        num_layers=int(params.num_layers),
-        dropout=float(params.dropout),
-    ).to(device)
+    if is_edge_mode:
+        model: nn.Module = EdgeGNNClassifier(
+            input_dim=train_graphs[0].x.shape[1],
+            edge_dim=train_graphs[0].edge_attr.shape[1],
+            hidden_dim=int(params.hidden_dim),
+            num_layers=int(params.num_layers),
+            dropout=float(params.dropout),
+        ).to(device)
+    else:
+        model = GCNClassifier(
+            input_dim=train_graphs[0].x.shape[1],
+            hidden_dim=int(params.hidden_dim),
+            num_layers=int(params.num_layers),
+            dropout=float(params.dropout),
+        ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(params.learning_rate))
     criterion = nn.BCEWithLogitsLoss()
 
@@ -432,6 +475,9 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
         cases=list(data_paths.gnn_cases) if data_paths.gnn_cases else None,
         node_mode=str(params.gnn_node_mode),
         node_features=tuple(params.gnn_node_features),
+        edge_features=(
+            tuple(params.gnn_edge_features) if params.gnn_edge_features else None
+        ),
         id_column=data_paths.gnn_id_column,
         label_column=data_paths.gnn_label_column,
         allow_manifest_mismatch=bool(data_paths.gnn_allow_manifest_mismatch),

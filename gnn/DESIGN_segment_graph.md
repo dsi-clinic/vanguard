@@ -140,8 +140,11 @@ target and comes second. The three modes, named by *what a node is*:
 | `node_mode` | node = | status |
 |---|---|---|
 | `"voxel"` | one skeleton voxel | **done** (current pipeline) |
-| `"segment"` | one whole segment (line graph, **B**) | **built into the dataset** (`gnn/segment_graph.py`, wired through `VanguardCenterlineDataset` + `build_dataset.py --node-mode`); train/config wiring for the B-vs-voxel run is next |
-| `"junction"` | a junction/endpoint voxel; segment = edge (**A**) | after B |
+| `"segment"` | one whole segment (line graph, **B**) | **done** — `gnn/segment_graph.py`, wired through dataset + `build_dataset.py --node-mode` + `train.py` + `configs/gnn_segment*.yaml`; validated on the full 1491-case cohort |
+| `"junction"` | a junction/endpoint voxel; segment = edge (**A**) | **done** — `gnn/junction_graph.py` + `EdgeGNNClassifier`, wired through dataset (`--node-mode junction --edge-features`) + `train.py` + `configs/gnn_junction*.yaml`; edge features standardized per-fold |
+
+All three modes are now selectable end to end and ready for the matched
+A-vs-B-vs-voxel experiment.
 
 `"segment"` (B) matches the branch name `feature/segment-as-node`. All three must stay
 selectable so a voxel-vs-segment-vs-junction comparison runs on identical folds.

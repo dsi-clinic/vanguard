@@ -1,0 +1,54 @@
+# Full-cohort config for the GNN centerline pipeline in JUNCTION mode
+# (node_mode="junction": junction/endpoint voxels are nodes, each vessel segment
+# is an edge carrying the segment summary as edge_attr -- Option A in
+# gnn/DESIGN_segment_graph.md). Trained with the edge-aware EdgeGNNClassifier.
+#
+# Build the matching cache first (the manifest check enforces mode/feature
+# agreement, incl. edge_features):
+#   python -m gnn.build_dataset --node-mode junction \
+#       --cache-dir /gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_junction \
+#       --node-features peak_time,radius,degree \
+#       --edge-features seg_length,seg_tortuosity,seg_radius_mean,seg_peak_time_mean,seg_peak_enhancement_mean,seg_washin_slope_mean,seg_auc_positive_mean
+
+experiment_setup:
+  name: "gnn_junction"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "random" # or "predefined" to honor split_col from the labels file
+  split_col: "fold"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "junction"
+  gnn_node_features:
+    - "peak_time"
+    - "radius"
+    - "degree"
+  gnn_edge_features:
+    - "seg_length"
+    - "seg_tortuosity"
+    - "seg_radius_mean"
+    - "seg_peak_time_mean"
+    - "seg_peak_enhancement_mean"
+    - "seg_washin_slope_mean"
+    - "seg_auc_positive_mean"
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_junction"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null

@@ -70,6 +70,14 @@ def build_parser() -> argparse.ArgumentParser:
         "Defaults to the node mode's own default feature set when omitted.",
     )
     parser.add_argument(
+        "--edge-features",
+        type=str,
+        default=None,
+        help="Comma-separated edge feature names, only for --node-mode junction "
+        "(the segment summary rides on the edges there). Defaults to the "
+        "junction mode's own default edge feature set when omitted.",
+    )
+    parser.add_argument(
         "--cases",
         type=str,
         default=None,
@@ -150,6 +158,7 @@ def main() -> None:
         )
     # None -> let the dataset resolve the node mode's own default feature set.
     node_features = tuple(args.node_features.split(",")) if args.node_features else None
+    edge_features = tuple(args.edge_features.split(",")) if args.edge_features else None
     cases = args.cases.split(",") if args.cases else None
 
     if args.force_rebuild:
@@ -171,6 +180,7 @@ def main() -> None:
         no_cache=args.no_cache,
         node_mode=args.node_mode,
         node_features=node_features,
+        edge_features=edge_features,
         id_column=args.id_column,
         label_column=args.label_column,
         max_missing_label_frac=args.max_missing_label_frac,

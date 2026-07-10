@@ -54,6 +54,9 @@ LABEL_COLUMN="${LABEL_COLUMN:-pcr}"
 # build fall back to the mode's own default feature set.
 NODE_MODE="${NODE_MODE:-voxel}"
 NODE_FEATURES="${NODE_FEATURES:-peak_time,radius}"
+# Only used by --node-mode junction (segment-as-edge): the segment summary rides
+# on the edges there. Empty for voxel/segment mode.
+EDGE_FEATURES="${EDGE_FEATURES:-}"
 MAX_MISSING_LABEL_FRAC="${MAX_MISSING_LABEL_FRAC:-0.1}"
 NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
 
@@ -74,6 +77,9 @@ ARGS=(
 
 if [[ -n "${NODE_FEATURES:-}" ]]; then
   ARGS+=(--node-features "${NODE_FEATURES}")
+fi
+if [[ -n "${EDGE_FEATURES:-}" ]]; then
+  ARGS+=(--edge-features "${EDGE_FEATURES}")
 fi
 
 if [[ -n "${CASES:-}" ]]; then

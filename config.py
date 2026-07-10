@@ -162,6 +162,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # gnn/DESIGN_segment_graph.md.
         "gnn_node_mode": "voxel",
         "gnn_node_features": ["peak_time", "radius"],
+        # Edge features for node_mode="junction" (segment-as-edge, Option A):
+        # the segment summary rides on the edges there. Empty for voxel/segment
+        # mode, which carry no edge features. Uses the seg_* vocabulary (see
+        # gnn.segment_graph / gnn.junction_graph).
+        "gnn_edge_features": [],
         # Class-conditional Gaussian noise layered onto the "pcr_dummy"
         # leakage-canary feature at train time (gnn/train.py), never at cache
         # -build time -- see _apply_pcr_dummy_noise. Defaults (0.0, 1.0, 0.0)

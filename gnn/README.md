@@ -24,8 +24,12 @@ of consuming *summarized* morphometry + kinematic features, it operates on the
       see `gnn/segment_graph.py` and `gnn/DESIGN_segment_graph.md`. It uses a
       different node-feature vocabulary (`seg_*`), so build it with matching
       `--node-features` (or omit them for the mode default).
-    - `"junction"` (segment-as-edge, Option A) is the planned next mode and
-      still raises `NotImplementedError`.
+    - `"junction"` keeps junction/endpoint voxels as nodes and each vessel
+      segment as an **edge** carrying the segment summary as `edge_attr`
+      (segment-as-edge, Option A; `gnn/junction_graph.py`). Node features are
+      per-voxel signal + `degree`; edge features are the `seg_*` summary, passed
+      via `--edge-features`. Trained with the edge-aware `EdgeGNNClassifier`
+      (`gnn/model.py`) since `GCNConv` ignores edge features.
 - **Edges:** between 26-connected skeleton voxels (8 corners, 12 *voxel* edges, 6 faces)
 - **`data.pos`:** `(num_nodes, 3)` voxel coordinates `(x, y, z)`.
 - **`data.x`:** node features stacked in the order given by `node_features`, see [Modeling Features](#modeling-features)

@@ -228,13 +228,69 @@ def test_missing_labels_path_raises(tmp_path: Path) -> None:
         VanguardCenterlineDataset(tmp_path, labels_path=None, dce_root=tmp_path)
 
 
-def test_junction_mode_not_implemented(tmp_path: Path) -> None:
-    """The ``junction`` node mode (segment-as-edge, Option A) is not implemented yet."""
-    labels_csv = tmp_path / "labels.csv"
-    labels_csv.write_text("case_id,pcr\nNACT_01,1\n")
-    with pytest.raises(NotImplementedError):
+def test_builds_junction_graph_with_edge_features(
+    centerline_tree: tuple[Path, Path, Path, Path],
+) -> None:
+    """node_mode='junction' keeps junctions as nodes and segments as edges.
+
+    The fixture skeletons are single unbranched vessels, so each becomes 2
+    endpoint nodes joined by one segment (both directions -> 2 edges). This
+    checks the junction-mode wiring end to end: junction per-voxel features back
+    data.x, the segment summary backs data.edge_attr, and the cache manifest
+    records node_mode + edge_features. Topology is covered separately by
+    tests/test_gnn_junction_graph.py.
+    """
+    studies, dce_root, labels_csv, cache_dir = centerline_tree
+
+    node_features = ("peak_time", "radius", "degree")
+    edge_features = ("seg_length", "seg_radius_mean", "seg_peak_time_mean")
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir,
+        node_mode="junction",
+        node_features=node_features,
+        edge_features=edge_features,
+        max_missing_label_frac=0.5,
+    )
+
+    assert len(dataset) == 1
+    data = dataset[0]
+
+    # Straight vessel -> 2 endpoint nodes, 1 segment -> 2 directed edges.
+    n_endpoints, n_dir_edges, degree_col, straight_len = 2, 2, 2, 4.0
+    assert data.num_nodes == n_endpoints
+    assert data.x.shape == (n_endpoints, len(node_features))
+    assert data.edge_index.shape == (2, n_dir_edges)
+    assert data.edge_attr.shape == (n_dir_edges, len(edge_features))
+    # Both endpoints are degree 1 (degree is the 3rd node feature).
+    assert torch.allclose(data.x[:, degree_col], torch.ones(n_endpoints))
+    # The segment summary on the edges: 5-voxel line is 4 units long.
+    assert torch.allclose(
+        data.edge_attr[:, 0], torch.full((n_dir_edges,), straight_len)
+    )
+
+    manifest = json.loads((cache_dir / "processed" / "cache_manifest.json").read_text())
+    assert manifest["node_mode"] == "junction"
+    assert manifest["node_features"] == list(node_features)
+    assert manifest["edge_features"] == list(edge_features)
+
+
+def test_edge_features_rejected_for_non_junction_modes(
+    centerline_tree: tuple[Path, Path, Path, Path],
+) -> None:
+    """edge_features only make sense for junction mode; else fail loud."""
+    studies, dce_root, labels_csv, cache_dir = centerline_tree
+    with pytest.raises(ValueError, match="only supported for node_mode='junction'"):
         VanguardCenterlineDataset(
-            tmp_path, labels_path=labels_csv, dce_root=tmp_path, node_mode="junction"
+            studies,
+            labels_path=labels_csv,
+            dce_root=dce_root,
+            cache_dir=cache_dir,
+            node_mode="voxel",
+            edge_features=("seg_length",),
+            max_missing_label_frac=0.5,
         )
 
 

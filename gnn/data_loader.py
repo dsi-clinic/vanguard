@@ -46,6 +46,11 @@ import matplotlib.pyplot as plt
 
 from config import DEFAULT_CONFIG
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_build_time_plots
+from gnn.junction_graph import (
+    JUNCTION_EDGE_FEATURE_ATTR,
+    JUNCTION_NODE_FEATURE_ATTR,
+    build_junction_graph,
+)
 from gnn.kinetics import node_kinetic_features, time_axis_from_study_timepoints
 from gnn.raw_dce import discover_raw_dce_paths, load_raw_dce_series
 from gnn.segment_graph import SEGMENT_FEATURE_ATTR, build_segment_line_graph
@@ -104,11 +109,14 @@ _DEFAULT_NODE_FEATURES: tuple[str, ...] = ("peak_time", "radius")
 
 # Node-granularity modes. ``"voxel"`` keeps one node per skeleton voxel;
 # ``"segment"`` contracts each vessel segment to a single node (line graph, see
-# ``gnn.segment_graph``). ``"junction"`` (segment-as-edge, Option A) is the next
-# planned mode -- see ``gnn/DESIGN_segment_graph.md``.
+# ``gnn.segment_graph``); ``"junction"`` keeps junction/endpoint voxels as nodes
+# and each segment as an edge carrying the segment summary as ``edge_attr``
+# (segment-as-edge, Option A, see ``gnn.junction_graph``). See
+# ``gnn/DESIGN_segment_graph.md``.
 _VOXEL_MODE = "voxel"
 _SEGMENT_MODE = "segment"
-_IMPLEMENTED_NODE_MODES = (_VOXEL_MODE, _SEGMENT_MODE)
+_JUNCTION_MODE = "junction"
+_IMPLEMENTED_NODE_MODES = (_VOXEL_MODE, _SEGMENT_MODE, _JUNCTION_MODE)
 
 # Default segment-mode features mirror the voxel default (one kinetic + one
 # geometry feature), expressed in the segment vocabulary.
@@ -116,18 +124,43 @@ _DEFAULT_SEGMENT_NODE_FEATURES: tuple[str, ...] = (
     "seg_peak_time_mean",
     "seg_radius_mean",
 )
+# Junction mode splits features across nodes (per-voxel signal at the junction
+# + degree) and edges (the segment summary -- same vocabulary segment mode uses
+# for its nodes). The edge default mirrors a broad geometry+kinetics set;
+# ``seg_time_to_enhancement_*`` is deliberately left out of the default because
+# it is NaN for segments with no detected arrival (opt in explicitly if wanted).
+_DEFAULT_JUNCTION_NODE_FEATURES: tuple[str, ...] = ("peak_time", "radius", "degree")
+_DEFAULT_JUNCTION_EDGE_FEATURES: tuple[str, ...] = (
+    "seg_length",
+    "seg_tortuosity",
+    "seg_radius_mean",
+    "seg_peak_time_mean",
+    "seg_peak_enhancement_mean",
+    "seg_washin_slope_mean",
+    "seg_auc_positive_mean",
+)
 
-# Per-mode feature vocabulary (name -> ``Data`` attribute backing that column of
-# ``data.x``) and default feature set. This is the single place node modes
-# declare which features they support, so ``__init__`` validation, defaults,
-# and ``_finalize_data``'s column stacking all stay consistent.
+# Per-mode NODE feature vocabulary (name -> ``Data`` attribute backing that
+# column of ``data.x``) and default node feature set. Single source of truth so
+# ``__init__`` validation, defaults, and ``_finalize_data``'s column stacking
+# stay consistent.
 _MODE_FEATURE_ATTR: dict[str, dict[str, str]] = {
     _VOXEL_MODE: _FEATURE_ATTR,
     _SEGMENT_MODE: SEGMENT_FEATURE_ATTR,
+    _JUNCTION_MODE: JUNCTION_NODE_FEATURE_ATTR,
 }
 _MODE_DEFAULT_FEATURES: dict[str, tuple[str, ...]] = {
     _VOXEL_MODE: _DEFAULT_NODE_FEATURES,
     _SEGMENT_MODE: _DEFAULT_SEGMENT_NODE_FEATURES,
+    _JUNCTION_MODE: _DEFAULT_JUNCTION_NODE_FEATURES,
+}
+# EDGE feature vocabulary + default. Only junction mode has edge features; the
+# other modes carry none (empty), so ``data.edge_attr`` is never set for them.
+_MODE_EDGE_FEATURE_ATTR: dict[str, dict[str, str]] = {
+    _JUNCTION_MODE: JUNCTION_EDGE_FEATURE_ATTR,
+}
+_MODE_DEFAULT_EDGE_FEATURES: dict[str, tuple[str, ...]] = {
+    _JUNCTION_MODE: _DEFAULT_JUNCTION_EDGE_FEATURES,
 }
 
 
@@ -264,15 +297,26 @@ def _finalize_data(
     node_features: tuple[str, ...],
     num_connected_components: int,
     feature_attr: dict[str, str],
+    edge_features: tuple[str, ...] = (),
+    edge_feature_attr: dict[str, str] | None = None,
 ) -> Data:
-    """Assemble ``data.x``, the label, and provenance metadata.
+    """Assemble ``data.x`` (+ ``data.edge_attr``), the label, and metadata.
 
-    ``feature_attr`` maps each requested feature name to the ``Data`` attribute
-    backing its column -- ``_FEATURE_ATTR`` in voxel mode, ``SEGMENT_FEATURE_ATTR``
-    in segment mode -- so the stacking is identical across node modes.
+    ``feature_attr`` maps each requested node-feature name to the ``Data``
+    attribute backing its ``data.x`` column -- ``_FEATURE_ATTR`` (voxel),
+    ``SEGMENT_FEATURE_ATTR`` (segment), or ``JUNCTION_NODE_FEATURE_ATTR``
+    (junction) -- so the node stacking is identical across modes.
+
+    ``edge_features`` is non-empty only in junction mode (segment-as-edge):
+    those columns are stacked into ``data.edge_attr`` from ``edge_feature_attr``
+    (``JUNCTION_EDGE_FEATURE_ATTR``), aligned with ``data.edge_index``. Voxel and
+    segment modes pass no edge features, so ``data.edge_attr`` is never set.
     """
     columns = [data[feature_attr[name]] for name in node_features]
     data.x = torch.stack([column.float() for column in columns], dim=1)
+    if edge_features:
+        edge_columns = [data[edge_feature_attr[name]] for name in edge_features]
+        data.edge_attr = torch.stack([col.float() for col in edge_columns], dim=1)
     data.y = torch.tensor([int(label)], dtype=torch.long)
     data.case_id = case_id
     data.num_timepoints = num_timepoints
@@ -294,6 +338,7 @@ def _build_case(
     dce_root: Path,
     node_features: tuple[str, ...],
     node_mode: str,
+    edge_features: tuple[str, ...] = (),
 ) -> tuple[Data, dict[str, list[float]]]:
     """Build one labeled :class:`Data` graph for ``case_id`` in ``node_mode``.
 
@@ -305,9 +350,12 @@ def _build_case(
     ``node_mode="voxel"`` keeps one node per skeleton voxel with per-voxel
     features; ``node_mode="segment"`` contracts each vessel segment to a single
     node via ``gnn.segment_graph.build_segment_line_graph`` (Option B, line
-    graph). Both converge on the same ``from_networkx -> _finalize_data`` path,
-    differing only in which ``nx.Graph`` is finalized and which feature
-    vocabulary backs ``data.x``.
+    graph); ``node_mode="junction"`` keeps junction/endpoint voxels as nodes and
+    each segment as an edge carrying the segment summary as ``edge_attr`` via
+    ``gnn.junction_graph.build_junction_graph`` (Option A). Voxel and segment
+    mode go through ``from_networkx``; junction mode builds its ``Data``
+    directly (it must emit edge features too). All three converge on
+    ``_finalize_data``. ``edge_features`` is non-empty only for junction mode.
     """
     stage_samples: dict[str, list[float]] = {}
     study_dir = mask_path.parent
@@ -351,25 +399,34 @@ def _build_case(
     num_timepoints = int(dce_4d.shape[0])
     time_axis = time_axis_from_study_timepoints(study_timepoints)
 
-    if node_mode == _SEGMENT_MODE:
-        with _stage_timer(stage_samples, "segment_build"):
-            graph = build_segment_line_graph(voxel_graph, radius_map, dce_4d, time_axis)
+    if node_mode == _JUNCTION_MODE:
+        # Junction mode builds Data directly (node + edge features) and records
+        # its own connected-component count on the junction graph.
+        with _stage_timer(stage_samples, "junction_build"):
+            data = build_junction_graph(voxel_graph, radius_map, dce_4d, time_axis)
+        num_connected_components = int(data.num_connected_components)
     else:
-        with _stage_timer(stage_samples, "peak_time"):
-            _attach_node_features(
-                voxel_graph, radius_map, dce_4d, time_axis, label, node_features
-            )
-        graph = voxel_graph
+        if node_mode == _SEGMENT_MODE:
+            with _stage_timer(stage_samples, "segment_build"):
+                graph = build_segment_line_graph(
+                    voxel_graph, radius_map, dce_4d, time_axis
+                )
+        else:
+            with _stage_timer(stage_samples, "peak_time"):
+                _attach_node_features(
+                    voxel_graph, radius_map, dce_4d, time_axis, label, node_features
+                )
+            graph = voxel_graph
 
-    # Must be counted on the (modeled) nx.Graph itself -- from_networkx() below
-    # discards it, and edge_index on the resulting Data is directed-both-ways,
-    # which is not a valid input to nx.connected_components without
-    # reconstruction. Counted on ``graph`` (voxel or line graph) so it stays
-    # consistent with the num_nodes/num_edges QC reports for the same object.
-    num_connected_components = nx.number_connected_components(graph)
-
-    with _stage_timer(stage_samples, "from_networkx"):
-        data = from_networkx(graph)
+        # Must be counted on the (modeled) nx.Graph itself -- from_networkx()
+        # below discards it, and edge_index on the resulting Data is
+        # directed-both-ways, which is not a valid input to
+        # nx.connected_components without reconstruction. Counted on ``graph``
+        # (voxel or line graph) so it stays consistent with the
+        # num_nodes/num_edges QC reports for the same object.
+        num_connected_components = nx.number_connected_components(graph)
+        with _stage_timer(stage_samples, "from_networkx"):
+            data = from_networkx(graph)
 
     data = _finalize_data(
         data,
@@ -381,6 +438,8 @@ def _build_case(
         node_features,
         num_connected_components,
         feature_attr=_MODE_FEATURE_ATTR[node_mode],
+        edge_features=edge_features,
+        edge_feature_attr=_MODE_EDGE_FEATURE_ATTR.get(node_mode),
     )
     return data, stage_samples
 
@@ -431,10 +490,11 @@ class VanguardCenterlineDataset(InMemoryDataset):
             source. Useful during development to avoid stale-cache surprises.
         node_mode: Node granularity. ``"voxel"`` (default) keeps one node per
             skeleton voxel; ``"segment"`` contracts each vessel segment to a single
-            node (line graph, see ``gnn.segment_graph``). ``"junction"``
-            (segment-as-edge, Option A) is planned next and still raises
-            :class:`NotImplementedError` -- see ``gnn/DESIGN_segment_graph.md``.
-            The mode selects both the feature vocabulary and the default features.
+            node (line graph, see ``gnn.segment_graph``); ``"junction"`` keeps
+            junction/endpoint voxels as nodes and each segment as an edge carrying
+            the segment summary as ``edge_attr`` (segment-as-edge, Option A, see
+            ``gnn.junction_graph``). The mode selects the node (and, for junction,
+            edge) feature vocabulary and defaults. See ``gnn/DESIGN_segment_graph.md``.
         node_features: Node-feature names, in ``data.x`` column order. ``None``
             (default) resolves to the mode's default feature set. Supported names
             depend on ``node_mode``:
@@ -458,7 +518,18 @@ class VanguardCenterlineDataset(InMemoryDataset):
               auc_positive}_{mean,std}"``), and ``"seg_num_voxels"``. See
               ``gnn.segment_graph.SEGMENT_FEATURE_ATTR``. (``"pcr_dummy"`` is
               voxel-only for now.)
-        id_column: Case-ID column in the labels file.
+            - **junction:** per-voxel signal at the junction voxel
+              (``"peak_time"``, ``"peak_enhancement"``, ``"time_to_enhancement"``,
+              ``"washin_slope"``, ``"auc_positive"``, ``"radius"``) plus
+              ``"degree"``. The segment summary goes on ``edge_features``, not
+              here. See ``gnn.junction_graph.JUNCTION_NODE_FEATURE_ATTR``.
+        edge_features: Edge-feature names, in ``data.edge_attr`` column order.
+            Only valid (and required) for ``node_mode="junction"``, where each
+            segment's summary rides on its edge -- the same ``seg_*`` vocabulary
+            segment mode uses for its nodes
+            (``gnn.junction_graph.JUNCTION_EDGE_FEATURE_ATTR``). ``None`` resolves
+            to the junction default; must be empty/unset for voxel and segment
+            mode (their graphs carry no edge features).
         label_column: Binary label column in the labels file.
         max_missing_label_frac: Maximum fraction of discovered cases allowed to
             be dropped for lacking a ``label_column`` value. Every drop is
@@ -492,6 +563,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         no_cache: bool = False,
         node_mode: str = _VOXEL_MODE,
         node_features: Sequence[str] | None = None,
+        edge_features: Sequence[str] | None = None,
         id_column: str = "case_id",
         label_column: str = "pcr",
         max_missing_label_frac: float = 0.1,
@@ -526,6 +598,31 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 f"Unknown node_features {unknown} for node_mode={node_mode!r}; "
                 f"supported: {sorted(feature_attr)}"
             )
+        # Edge features exist only for junction mode (segment-as-edge). Resolve a
+        # None to the mode's default there; require it be empty everywhere else,
+        # since voxel/segment graphs carry no edge features.
+        edge_feature_attr = _MODE_EDGE_FEATURE_ATTR.get(node_mode)
+        if edge_feature_attr is None:
+            if edge_features:
+                raise ValueError(
+                    f"edge_features are only supported for node_mode='junction', "
+                    f"not {node_mode!r}; got {list(edge_features)}."
+                )
+            edge_features = ()
+        else:
+            if edge_features is None:
+                edge_features = _MODE_DEFAULT_EDGE_FEATURES[node_mode]
+            if not edge_features:
+                raise ValueError(
+                    "node_mode='junction' requires at least one edge feature "
+                    "(the segment summary rides on the edges)."
+                )
+            unknown_edges = [f for f in edge_features if f not in edge_feature_attr]
+            if unknown_edges:
+                raise ValueError(
+                    f"Unknown edge_features {unknown_edges} for "
+                    f"node_mode={node_mode!r}; supported: {sorted(edge_feature_attr)}"
+                )
         if not 0.0 <= max_missing_label_frac <= 1.0:
             raise ValueError(
                 f"max_missing_label_frac must be in [0, 1], got {max_missing_label_frac}"
@@ -541,6 +638,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._data_list_cache: list[Data] | None = None
         self._node_mode = node_mode
         self._node_features = tuple(node_features)
+        self._edge_features = tuple(edge_features)
         self._id_column = id_column
         self._label_column = label_column
         self._max_missing_label_frac = max_missing_label_frac
@@ -634,7 +732,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         ``max_missing_label_frac``) are deliberately excluded: they don't
         change what ends up in the cache, only how it's built.
         """
-        return {
+        settings: dict[str, object] = {
             "centerline_root": str(self._centerline_root),
             "dce_root": str(self._dce_root),
             "labels_path": str(self._labels_path),
@@ -645,6 +743,13 @@ class VanguardCenterlineDataset(InMemoryDataset):
             "node_features": list(self._node_features),
             "feature_source": _FEATURE_SOURCE,
         }
+        # Only junction mode has edge features. Recording the key only when it's
+        # non-empty keeps voxel/segment manifests (and the caches already built
+        # under them) schema-compatible -- a pre-edge_features cache has no such
+        # key and must still validate against a voxel/segment request.
+        if self._edge_features:
+            settings["edge_features"] = list(self._edge_features)
+        return settings
 
     def _check_cache_manifest(self) -> None:
         """Fail loudly if an on-disk cache was built under different settings.
@@ -811,6 +916,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     dce_root=self._dce_root,
                     node_features=self._node_features,
                     node_mode=self._node_mode,
+                    edge_features=self._edge_features,
                 )
                 self._timings.merge(stage_samples)
                 logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
@@ -836,6 +942,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                         dce_root=self._dce_root,
                         node_features=self._node_features,
                         node_mode=self._node_mode,
+                        edge_features=self._edge_features,
                     )
                     for case_id, mask_path, label in batch
                 ]
