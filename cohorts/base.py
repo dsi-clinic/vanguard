@@ -1,13 +1,13 @@
 """Base dataset adapter: the contract every dataset gives the pipeline.
 
 Step 1 scaffolding for the multi-dataset redesign (see
-``docs/modularization-design.md``). Nothing in the pipeline stages calls this
+``cohorts/README.md``). Nothing in the pipeline stages calls this
 module yet — it is purely additive.
 
 The base class encodes the *current* MAMA-MIA behavior (case-id prefix parsing,
 the existing orientation transform, the existing clinical/label loaders, the
 current file-naming patterns). That is deliberate: it lets ``MamaMiaDataset``
-work with no method overrides (design doc §6.5), while other datasets subclass
+work with no method overrides (see cohorts/README.md), while other datasets subclass
 and override only the handful of methods that genuinely differ.
 """
 
@@ -26,7 +26,7 @@ class DatasetAdapter:
     """One dataset's answers to "how do I find, orient, and label its cases".
 
     Construct with the dataset's on-disk ``root``, which is injected from run
-    config (design doc §10 decision 5) rather than hardcoded in the class, so the
+    config (see cohorts/README.md — Design decisions) rather than hardcoded in the class, so the
     same class keeps working when the data moves on disk.
     """
 
@@ -41,7 +41,7 @@ class DatasetAdapter:
 
     #: Target voxel spacing ``(z, y, x)`` in mm to resample to before the shared
     #: pipeline, or ``None`` to keep native spacing. MAMA-MIA currently uses native
-    #: spacing (design doc §2.3), so the default is ``None``.
+    #: spacing (see cohorts/README.md), so the default is ``None``.
     target_spacing_mm: ClassVar[tuple[float, float, float] | None] = None
 
     def __init__(self, root: Path, *, dataset_filter: str | None = None) -> None:
@@ -160,7 +160,7 @@ class DatasetAdapter:
             return volume
         raise NotImplementedError(
             "resample-to-target is not implemented yet; add it when a dataset "
-            "sets target_spacing_mm (design doc §6). "
+            "sets target_spacing_mm (see cohorts/README.md). "
             f"(requested target={self.target_spacing_mm}, native={native_spacing_mm})"
         )
 

@@ -175,7 +175,7 @@ def test_split_policy_auto_uses_adapter_default() -> None:
 
 
 def test_split_policy_explicit_override_wins() -> None:
-    """An explicit policy overrides the adapter default (design doc §10 decision 3)."""
+    """An explicit policy overrides the adapter default (see cohorts/README.md — Design decisions)."""
     adapter = UChicagoDataset(root=Path("/x"))
     config = _dataset_config(
         {"name": "uchicago", "cohort": None, "root": "/x", "split_policy": "compute"}

@@ -1,8 +1,8 @@
 """UChicago ultrafast DCE dataset adapter (scaffold).
 
 Overrides the base MAMA-MIA behavior for the differences identified in
-``docs/modularization-design.md`` §6.5. The real ultrafast preprocessing is a
-frozen-copy port (§10 decision 4) that is **not implemented yet**; ``preprocess``
+``cohorts/README.md``. The real ultrafast preprocessing is a
+frozen-copy port (see cohorts/README.md — Design decisions) that is **not implemented yet**; ``preprocess``
 raises ``NotImplementedError`` so nothing silently applies the wrong transform.
 """
 
@@ -81,13 +81,13 @@ class UChicagoDataset(DatasetAdapter):
     def preprocess(self, volume: np.ndarray) -> np.ndarray:
         """Ultrafast-specific preprocessing — frozen-copy port, not done yet.
 
-        See ``docs/modularization-design.md`` §6 and §10 decision 4. Until the
+        See ``cohorts/README.md``. Until the
         frozen copy is brought into the repo this raises, rather than falling
         back to the MAMA-MIA transform, which would be wrong for ultrafast data.
         """
         raise NotImplementedError(
             "UChicago preprocessing is not ported yet (frozen-copy port pending; "
-            "see docs/modularization-design.md §6 and §10 decision 4)."
+            "see cohorts/README.md)."
         )
 
     # -- internal helpers --

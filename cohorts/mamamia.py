@@ -1,7 +1,7 @@
 """MAMA-MIA dataset adapter, parameterized by cohort.
 
 One class covers all four MAMA-MIA cohorts (duke/ispy1/ispy2/nact) because they
-are ~95% identical (design doc §4/§6.5). Per the design, this requires *no*
+are ~95% identical (see cohorts/README.md). Per the design, this requires *no*
 method overrides: the base class already encodes MAMA-MIA behavior, and the
 ``cohort`` argument only sets a discovery filter.
 """

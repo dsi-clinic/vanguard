@@ -2,8 +2,7 @@
 
 These are the only two seams that read run config: the factory turns the
 ``dataset`` config block into a concrete adapter, and :func:`resolve_split_policy`
-applies the run-config override on top of the adapter's default (design doc §10
-decisions 3 and 5).
+applies the run-config override on top of the adapter's default (see cohorts/README.md).
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ def build_adapter_from_config(config: ConfigNode) -> DatasetAdapter | None:
 
     Reads ``config.dataset.{name, cohort, root}``. Returns ``None`` when no
     dataset is configured, so callers can fall back to today's behavior — Step 1
-    wires nothing (design doc §9).
+    wires nothing (see cohorts/README.md).
 
     Args:
         config: A loaded run config (see ``config.DEFAULT_CONFIG``).
@@ -58,7 +57,7 @@ def resolve_split_policy(config: ConfigNode, adapter: DatasetAdapter) -> str:
 
     ``config.dataset.split_policy`` is ``"auto"``, ``"compute"``, or
     ``"provided"``. ``"auto"`` defers to ``adapter.default_split_policy``; an
-    explicit value overrides it (design doc §10 decision 3), so a run can force
+    explicit value overrides it (see cohorts/README.md — Design decisions), so a run can force
     ``"compute"`` even for a dataset that ships folds.
 
     Args:

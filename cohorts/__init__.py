@@ -3,7 +3,7 @@
 One class per dataset shape: ``MamaMiaDataset`` (parameterized by cohort) and
 ``UChicagoDataset``, both subclassing :class:`DatasetAdapter`. A factory builds
 the right one from run config. Nothing in the pipeline stages calls these yet —
-see ``docs/modularization-design.md``.
+see ``cohorts/README.md``.
 """
 
 from __future__ import annotations
