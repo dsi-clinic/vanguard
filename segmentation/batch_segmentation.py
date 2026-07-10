@@ -71,6 +71,57 @@ def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
     return nii_files
 
 
+def find_case_files(
+    images_dir: str,
+    adapter: DatasetAdapter | None = None,
+    case_limit: int | None = None,
+) -> list[tuple[str, str]]:
+    """Enumerate (case_id, file_path) pairs to preprocess.
+
+    When ``adapter`` is given (Step 4), discovery routes through
+    ``adapter.discover_cases()`` / ``adapter.load_timepoints(case_id)`` instead
+    of assuming the MAMA-MIA ``<images_dir>/<case_id>/*.nii.gz`` layout --
+    e.g. UChicago's manifest-driven, sub-source-partitioned images would
+    otherwise be silently missed or misread by ``find_nii_files``. ``images_dir``
+    is unused in that case (the adapter owns its own root).
+
+    ``case_limit`` (applied here, at case granularity, before file expansion)
+    exists because the CLI's ``--patient-limit`` slices the flat file list --
+    imprecise for a case with more than one phase file. When ``adapter`` is
+    ``None``, this function is exactly :func:`find_nii_files` and ``case_limit``
+    is ignored; the CLI keeps applying ``--patient-limit`` post-hoc for that
+    path, unchanged from before Step 4.
+    """
+    if adapter is None:
+        return find_nii_files(images_dir)
+    case_ids = adapter.discover_cases()
+    if case_limit is not None:
+        case_ids = case_ids[:case_limit]
+    pairs: list[tuple[str, str]] = []
+    for case_id in case_ids:
+        for phase_path in adapter.load_timepoints(case_id):
+            pairs.append((case_id, str(phase_path)))
+    return pairs
+
+
+def _base_name_for(case_id: str, file_path: str, adapter: DatasetAdapter | None) -> str:
+    """Derive the unique intermediate-file base name for one (case, phase) file.
+
+    MAMA-MIA filenames already embed the case id (``DUKE_001_0000.nii.gz``), so
+    the bare stem is used -- byte-for-byte the pre-Step-4 behavior when
+    ``adapter`` is ``None``. UChicago's phase files are named identically
+    across *every* case (``phase_0000.nii.gz`` for every exam); without a
+    case-id prefix, different patients' same-numbered phase would collide on
+    the same path in the flat step1/step2/step3 intermediate directories,
+    silently overwriting each other's preprocessed output. Prefixing with
+    ``case_id`` (only when an adapter is given) avoids that collision --
+    :func:`build_output_path` already expects and strips exactly this prefix
+    when recovering the timepoint for the final output filename.
+    """
+    raw = Path(file_path).name.replace(".nii.gz", "")
+    return f"{case_id}_{raw}" if adapter is not None else raw
+
+
 def preprocess_image(
     input_path: str, output_path: str, adapter: DatasetAdapter | None = None
 ) -> bool:
@@ -186,7 +237,7 @@ def preprocess_parallel(
 
     def _work(item: tuple[str, str]) -> tuple[str, str, bool]:
         case_id, file_path = item
-        base_name = Path(file_path).name.replace(".nii.gz", "")
+        base_name = _base_name_for(case_id, file_path, adapter)
         step1_file = step1_dir / f"{base_name}.npy"
         ok = preprocess_image(file_path, step1_file, adapter=adapter)
         return case_id, base_name, ok
@@ -300,7 +351,47 @@ def main() -> None:
     p.add_argument("--no-amp", action="store_true", help="Disable mixed precision")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--cleanup", action="store_true")
+    p.add_argument(
+        "--dataset-name",
+        default=None,
+        help=(
+            "If set (mamamia|uchicago), build a DatasetAdapter via "
+            "cohorts.factory and route discovery/preprocessing/output-path "
+            "through it instead of the hardcoded MAMA-MIA logic (Step 4). "
+            "--images-dir is ignored in this mode; the adapter owns its root."
+        ),
+    )
+    p.add_argument(
+        "--dataset-root",
+        default=None,
+        help="Root path for --dataset-name (e.g. the UChicago manifest directory).",
+    )
+    p.add_argument(
+        "--dataset-cohort",
+        default=None,
+        help="mamamia only: duke|ispy1|ispy2|nact.",
+    )
     args = p.parse_args()
+
+    adapter: DatasetAdapter | None = None
+    if args.dataset_name:
+        from cohorts.factory import build_adapter_from_config
+        from config import ConfigNode
+
+        if not args.dataset_root:
+            p.error("--dataset-root is required when --dataset-name is set.")
+        dataset_config = ConfigNode._wrap(
+            {
+                "dataset": {
+                    "name": args.dataset_name,
+                    "cohort": args.dataset_cohort,
+                    "root": args.dataset_root,
+                    "split_policy": "auto",
+                }
+            }
+        )
+        adapter = build_adapter_from_config(dataset_config)
+        print(f"Using dataset adapter: {type(adapter).__name__}")
 
     out_dir = Path(args.output_dir)
     temp_dir = Path(args.temp_dir)
@@ -312,16 +403,31 @@ def main() -> None:
     for d in (out_dir, step1_dir, step2_dir, step3_dir):
         d.mkdir(parents=True, exist_ok=True)
 
-    print(f"Finding .nii.gz files in {args.images_dir}...")
-    nii_files = sorted(find_nii_files(args.images_dir), key=lambda x: (x[0], str(x[1])))
-    print(f"Found {len(nii_files)} .nii.gz files")
+    if adapter is not None:
+        print(f"Discovering cases via {type(adapter).__name__}...")
+        # Case-level limit applied before file expansion (see find_case_files):
+        # a file-list-level limit would be imprecise once a case has more than
+        # one phase file.
+        nii_files = sorted(
+            find_case_files(
+                args.images_dir, adapter=adapter, case_limit=args.patient_limit
+            ),
+            key=lambda x: (x[0], str(x[1])),
+        )
+        print(f"Found {len(nii_files)} file(s) across the selected cases")
+    else:
+        print(f"Finding .nii.gz files in {args.images_dir}...")
+        nii_files = sorted(
+            find_nii_files(args.images_dir), key=lambda x: (x[0], str(x[1]))
+        )
+        print(f"Found {len(nii_files)} .nii.gz files")
 
     if args.file_start is not None:
         end = args.file_end if args.file_end is not None else args.file_start
         end = min(end, len(nii_files) - 1)
         nii_files = nii_files[args.file_start : end + 1]
         print(f"Range {args.file_start}-{end}: {len(nii_files)} files")
-    if args.patient_limit:
+    if args.patient_limit and adapter is None:
         nii_files = nii_files[: args.patient_limit]
 
     if args.resume:
@@ -330,7 +436,7 @@ def main() -> None:
             (cid, fp)
             for cid, fp in nii_files
             if not build_output_path(
-                out_dir, cid, Path(fp).name.replace(".nii.gz", "")
+                out_dir, cid, _base_name_for(cid, fp, adapter), adapter=adapter
             ).exists()
         ]
         print(f"Resume: {len(nii_files)} remaining (skipped {before - len(nii_files)})")
@@ -344,7 +450,7 @@ def main() -> None:
         f"Preprocessing {len(nii_files)} file(s) with {args.preprocess_workers} workers..."
     )
     base_name_to_case, failed = preprocess_parallel(
-        nii_files, step1_dir, args.preprocess_workers
+        nii_files, step1_dir, args.preprocess_workers, adapter=adapter
     )
     t_pre = time.time()
     print(
@@ -375,7 +481,7 @@ def main() -> None:
     for base_name, case_id in base_name_to_case.items():
         step3_file = step3_dir / f"{base_name}.npz"
         if step3_file.exists():
-            dst = build_output_path(out_dir, case_id, base_name)
+            dst = build_output_path(out_dir, case_id, base_name, adapter=adapter)
             shutil.move(str(step3_file), str(dst))
             successful.append(str(dst))
             print(f"  ✓ {case_id}: {dst}")
