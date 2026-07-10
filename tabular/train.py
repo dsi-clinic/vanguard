@@ -372,8 +372,10 @@ def _apply_provided_folds(
     both train and validation), this validates rather than trusts, and raises on
     anything unsafe:
 
-    - ``split_col`` must not collide with ``case_id`` or the configured label
-      column (it would overwrite real data);
+    - ``split_col`` must not already be a column in ``feats_df`` (it would
+      silently drop and overwrite whatever that column held -- ``case_id`` and
+      the label column included, but not limited to them: any real feature or
+      metadata column of the same name is just as unsafe to clobber);
     - the provided folds must map each ``case_id`` at most once, and the merge is
       ``validate="one_to_one"`` so a duplicate on either side is an error, not a
       row-exploding leak;
@@ -389,11 +391,12 @@ def _apply_provided_folds(
         return feats_df
 
     split_col = str(config.model_params.split_col)
-    label_col = str(config.data_paths.label_column)
-    if split_col in {"case_id", label_col}:
+    if split_col in feats_df.columns:
         raise ValueError(
-            f"model_params.split_col={split_col!r} collides with a reserved column "
-            f"('case_id' or the label column {label_col!r}); choose another name."
+            f"model_params.split_col={split_col!r} collides with an existing "
+            "column in the feature table; attaching provided folds under that "
+            "name would silently drop and overwrite it. Choose a different "
+            "model_params.split_col."
         )
 
     dup_folds = folds["case_id"][folds["case_id"].duplicated()].unique().tolist()
@@ -404,8 +407,6 @@ def _apply_provided_folds(
         )
 
     folds = folds.rename(columns={"fold": split_col})
-    if split_col in feats_df.columns:
-        feats_df = feats_df.drop(columns=[split_col])
     # validate="one_to_one": a duplicate case_id on either side raises MergeError
     # rather than fanning a case across folds.
     feats_df = feats_df.merge(folds, on="case_id", how="left", validate="one_to_one")
