@@ -23,7 +23,9 @@ UCHICAGO_ROOT="${UCHICAGO_ROOT:-/gpfs/data/karczmar-lab/vanguard/dce2d_internal_
 SEG_OUTPUT_DIR="${SEG_OUTPUT_DIR:?SEG_OUTPUT_DIR must be set to the segmentation smoke jobs --output-dir}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/ess/scratch/scratch1/t-9sbose/uchicago_centerlines_smoke}"
 PATIENT_LIMIT="${PATIENT_LIMIT:-5}"
-PARTITION="${PARTITION:-general}"
+# `general` does not exist on this cluster; `tier1q` is the confirmed
+# replacement (see gnn/slurm/submit_gnn_build.slurm).
+PARTITION="${PARTITION:-tier1q}"
 
 mkdir -p "${REPO_ROOT}/logs" "${OUTPUT_ROOT}"
 CASE_LIST="$(mktemp "${REPO_ROOT}/logs/uc-skeleton-cases.XXXXXX.txt")"

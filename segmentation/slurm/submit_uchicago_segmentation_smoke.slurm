@@ -3,7 +3,7 @@
 #SBATCH --partition=gpuq
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --mem=128G
 #SBATCH --time=01:00:00
 #SBATCH --output=logs/uc-seg-smoke-%j.out
 #SBATCH --error=logs/uc-seg-smoke-%j.err
@@ -14,12 +14,20 @@ set -eo pipefail
 # message). Writes to a SEPARATE scratch output dir; cannot disturb any
 # existing MAMA-MIA segmentation output.
 #
-# KNOWN, ACCEPTED RISK (explicitly not verified before this run): UChicagoDataset
-# .preprocess() is a pass-through -- it assumes the manifest's images are
-# already correctly oriented for this model. That assumption has not been
-# checked against real UChicago volumes. If it's wrong, this will not error --
-# it will silently produce garbage segmentations. Treat any output from this
-# run as exploratory until that assumption is verified.
+# --mem=128G (vs. 32G in the analogous MAMA-MIA smoke script) is not a guess:
+# a first run at 32G was OOM-killed during inference. UChicago has ~24 phases
+# per patient at larger volume dimensions vs. MAMA-MIA's ~4-6, and
+# run_inference_in_process loads every volume for the current stage into
+# memory at once (Dataset3DSimple/Dataset3DDivided) -- 5 patients x 24 phases
+# = 120 full volumes resident at once.
+#
+# ORIENTATION (was a known risk; now checked): UChicagoDataset.preprocess() used
+# to be a pass-through, assuming the manifest's images already arrived correctly
+# oriented for this model. That was wrong -- it fed mis-oriented volumes in and
+# crashed inference on a tiling-coverage assertion. preprocess() now flips x/z
+# (RAS -> LAI) before the base reorientation; see cohorts/README.md. One residual
+# unknown: a pure left-right mirror can't be ruled out from near-symmetric breast
+# anatomy, so treat left/right-specific conclusions from this run as provisional.
 #
 # Submit from the repo root:
 #   PROJECT_ROOT="$(pwd)" sbatch segmentation/slurm/submit_uchicago_segmentation_smoke.slurm
