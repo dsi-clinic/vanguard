@@ -8,14 +8,19 @@
 
 set -euo pipefail
 
-PY=/home/t-9sbose/micromamba/envs/vanguard/bin/python3
+# Activate the project environment (see AGENTS.md).
+set +u
+eval "$(micromamba shell hook -s bash)"
+micromamba activate vanguard
+set -u
+
 REPO="$HOME/vanguard"
 DATA=/gpfs/data/karczmar-lab/vanguard/batch_effect_inputs
 NATIVE="$DATA/features_full_labeled_native.csv"
 RESAMPLED="$DATA/features_full_labeled_resampled_808.csv"
 OUT=/ess/scratch/scratch1/t-9sbose/ispy2_native_vs_resampled_pcr
 
-"$PY" "$REPO/scripts/compare_native_resampled_pcr_ispy2.py" \
+python3 "$REPO/scripts/batch_effect/compare_native_resampled_pcr_ispy2.py" \
     --native "$NATIVE" \
     --resampled "$RESAMPLED" \
     --outdir "$OUT"

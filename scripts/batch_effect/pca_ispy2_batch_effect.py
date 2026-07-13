@@ -25,9 +25,9 @@ Pipeline:
 
 Usage::
 
-    python scripts/pca_ispy2_batch_effect.py \
-        --features /gpfs/data/karczmar-lab/workspaces/saritbose/tabular/all_datasets_run/features_full_labeled.csv \
-        --spacing  /gpfs/data/karczmar-lab/workspaces/saritbose/data_viz/spacing_by_hospital.csv \
+    python scripts/batch_effect/pca_ispy2_batch_effect.py \
+        --features /gpfs/data/karczmar-lab/vanguard/batch_effect_inputs/features_full_labeled_native.csv \
+        --spacing  /gpfs/data/karczmar-lab/vanguard/batch_effect_inputs/spacing_by_hospital.csv \
         --outdir   /ess/scratch/scratch1/t-9sbose/ispy2_pca_batch_effect
 """
 

@@ -8,13 +8,17 @@
 
 set -euo pipefail
 
-# Compute-node python (per CLAUDE.md: the vanguard micromamba env, hardcoded).
-PY=/home/t-9sbose/micromamba/envs/vanguard/bin/python3
+# Activate the project environment (see AGENTS.md).
+set +u
+eval "$(micromamba shell hook -s bash)"
+micromamba activate vanguard
+set -u
+
 REPO="$HOME/vanguard"
 DATA=/gpfs/data/karczmar-lab/vanguard/batch_effect_inputs
 OUT=/ess/scratch/scratch1/t-9sbose/ispy2_pca_batch_effect
 
-"$PY" "$REPO/scripts/pca_ispy2_batch_effect.py" \
+python3 "$REPO/scripts/batch_effect/pca_ispy2_batch_effect.py" \
     --features "$DATA/features_full_labeled_native.csv" \
     --spacing  "$DATA/spacing_by_hospital.csv" \
     --outdir   "$OUT"

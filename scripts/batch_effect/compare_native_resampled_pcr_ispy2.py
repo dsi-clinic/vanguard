@@ -25,7 +25,7 @@ Models mirror the pipeline: elasticnet logistic regression and XGBoost. Same
 
 Usage::
 
-    python scripts/compare_native_resampled_pcr_ispy2.py \
+    python scripts/batch_effect/compare_native_resampled_pcr_ispy2.py \
         --native   .../tabular/all_datasets_run/features_full_labeled.csv \
         --resampled .../independent_signal_resampled_ispy2/features_full_labeled.csv \
         --outdir   /ess/scratch/scratch1/t-9sbose/ispy2_native_vs_resampled_pcr

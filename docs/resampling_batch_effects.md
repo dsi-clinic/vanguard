@@ -32,7 +32,7 @@ the biological outcome (pCR), that is a batch effect that modeling has to reckon
 All inputs (except scanner metadata, already on shared storage) have been copied to
 `/gpfs/data/karczmar-lab/vanguard/batch_effect_inputs/` (md5-verified against the
 originals; see the README there) so this is reproducible off personal/scratch storage.
-The default paths baked into `scripts/submit_*_ispy2.sbatch` already point here.
+The default paths baked into `scripts/batch_effect/submit_*_ispy2.sbatch` already point here.
 
 | Thing | Path | ISPY2 n |
 |---|---|---|
@@ -59,7 +59,7 @@ centerlines if wanted.
 
 ## Analyses & results
 
-### 1. PCA of native vessel features (`scripts/pca_ispy2_batch_effect.py`)
+### 1. PCA of native vessel features (`scripts/batch_effect/pca_ispy2_batch_effect.py`)
 
 980 cases, 994 features, median-imputed + z-scored.
 
@@ -94,7 +94,7 @@ explained by z-spacing. [confidence: high]
 **Conclusion:** the batch effect is nuisance variance, not an outcome confounder.
 [confidence: high]
 
-### 3. Batch detectability (`scripts/batch_detectability_ispy2.py`)
+### 3. Batch detectability (`scripts/batch_effect/batch_detectability_ispy2.py`)
 
 Can a classifier predict the scanner from the features? Matched 808 cases, same folds,
 native vs resampled. Metric: macro one-vs-rest ROC AUC (chance = 0.5). Representative
@@ -112,7 +112,7 @@ values (random forest):
 kinematic (contrast dynamics) is fixed least and stays highly scanner-identifiable
 (AUC 0.83 even after resampling). [confidence: high]
 
-### 4. Signal preservation (`scripts/signal_preservation_ispy2.py`)
+### 4. Signal preservation (`scripts/batch_effect/signal_preservation_ispy2.py`)
 
 Does resampling weaken the features' association with pCR? Matched 808 cases.
 
@@ -158,7 +158,7 @@ power. [confidence: medium]
 
 ## Scripts & artifacts
 
-Scripts (in `scripts/`, all run via Slurm, `express` partition):
+Scripts (in `scripts/batch_effect/`, all run via Slurm, `express` partition):
 - `pca_ispy2_batch_effect.py` — PCA, scree, PC scatters, loadings, ANOVA.
 - `batch_detectability_ispy2.py` — predict scanner from features (`--feature-prefixes`).
 - `signal_preservation_ispy2.py` — per-feature + multivariate pCR signal (`--feature-prefixes`).

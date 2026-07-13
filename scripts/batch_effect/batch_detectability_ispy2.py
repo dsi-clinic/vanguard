@@ -28,7 +28,7 @@ detectable"; AUC well above 0.5 means "the batch is written into the features".
 
 Usage::
 
-    python scripts/batch_detectability_ispy2.py \
+    python scripts/batch_effect/batch_detectability_ispy2.py \
         --native   .../tabular/all_datasets_run/features_full_labeled.csv \
         --resampled .../independent_signal_resampled_ispy2/features_full_labeled.csv \
         --clinical .../MAMA-MIA-syn60868042/clinical_and_imaging_info.xlsx \

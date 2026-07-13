@@ -21,7 +21,7 @@ Notes:
 
 Usage::
 
-    python scripts/pca_native_vs_resampled_ispy2.py \
+    python scripts/batch_effect/pca_native_vs_resampled_ispy2.py \
         --native   .../tabular/all_datasets_run/features_full_labeled.csv \
         --resampled .../independent_signal_resampled_ispy2/features_full_labeled.csv \
         --spacing  .../data_viz/spacing_by_hospital.csv \

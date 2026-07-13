@@ -8,7 +8,12 @@
 
 set -euo pipefail
 
-PY=/home/t-9sbose/micromamba/envs/vanguard/bin/python3
+# Activate the project environment (see AGENTS.md).
+set +u
+eval "$(micromamba shell hook -s bash)"
+micromamba activate vanguard
+set -u
+
 REPO="$HOME/vanguard"
 DATA=/gpfs/data/karczmar-lab/vanguard/batch_effect_inputs
 NATIVE="$DATA/features_full_labeled_native.csv"
@@ -26,13 +31,13 @@ declare -A ARMS=(
 for arm in "${!ARMS[@]}"; do
     prefixes="${ARMS[$arm]}"
     echo "===== batch detectability: $arm ($prefixes) ====="
-    "$PY" "$REPO/scripts/batch_detectability_ispy2.py" \
+    python3 "$REPO/scripts/batch_effect/batch_detectability_ispy2.py" \
         --native "$NATIVE" --resampled "$RESAMPLED" --clinical "$CLINICAL" \
         --feature-prefixes "$prefixes" \
         --outdir "$BASE/ispy2_batch_detectability_${arm}"
 
     echo "===== signal preservation: $arm ($prefixes) ====="
-    "$PY" "$REPO/scripts/signal_preservation_ispy2.py" \
+    python3 "$REPO/scripts/batch_effect/signal_preservation_ispy2.py" \
         --native "$NATIVE" --resampled "$RESAMPLED" \
         --feature-prefixes "$prefixes" \
         --outdir "$BASE/ispy2_signal_preservation_${arm}"
