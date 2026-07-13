@@ -41,7 +41,9 @@ def node_kinetic_features(
     ``features.kinematic.compute_tumor_kinematic_feature_payload``: baseline is
     the timepoint-0 value, arrival is estimated with
     ``graph_extraction.feature_stats._arrival_index_from_enhancement``, and
-    washin/AUC use the same formulas.
+    washin/washout/AUC use the same formulas (``washout_slope`` mirrors
+    ``deepsets.build_dataset._dynamic_features_for_voxel``'s peak-to-last-
+    timepoint slope).
 
     ``tte_idx`` is ``None`` when the voxel shows no meaningful enhancement
     (peak <= 0) -- a real "no signal" voxel, not a bug -- and the caller is
@@ -59,11 +61,16 @@ def node_kinetic_features(
         if washin_den > 0.0
         else 0.0
     )
+    washout_den = float(time_axis[-1] - time_axis[peak_idx])
+    washout_slope = (
+        float((enh[-1] - enh[peak_idx]) / washout_den) if washout_den > 0.0 else 0.0
+    )
     auc_positive = float(np.trapz(np.maximum(enh, 0.0), x=time_axis))
     return {
         "peak_idx": peak_idx,
         "peak_enhancement": peak_enhancement,
         "tte_idx": tte_idx,
         "washin_slope": washin_slope,
+        "washout_slope": washout_slope,
         "auc_positive": auc_positive,
     }

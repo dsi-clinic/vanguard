@@ -55,9 +55,15 @@ _GEOMETRY_FEATURE_PATHS: dict[str, tuple[str, str | None]] = {
     "seg_radius_std": ("radius", "sd"),
     "seg_radius_median": ("radius", "median"),
     "seg_radius_min": ("radius", "min"),
+    "seg_radius_q1": ("radius", "q1"),
+    "seg_radius_q3": ("radius", "q3"),
     "seg_radius_max": ("radius", "max"),
     "seg_curvature_mean": ("curvature", "mean"),
     "seg_curvature_std": ("curvature", "sd"),
+    "seg_curvature_median": ("curvature", "median"),
+    "seg_curvature_min": ("curvature", "min"),
+    "seg_curvature_q1": ("curvature", "q1"),
+    "seg_curvature_q3": ("curvature", "q3"),
     "seg_curvature_max": ("curvature", "max"),
 }
 
@@ -68,11 +74,20 @@ _KINETIC_SCALARS: tuple[str, ...] = (
     "peak_enhancement",
     "time_to_enhancement",
     "washin_slope",
+    "washout_slope",
     "auc_positive",
 )
 
-# Extra topological descriptor of the segment itself.
-_TOPO_FEATURES: tuple[str, ...] = ("seg_num_voxels",)
+# Extra topological descriptors of the segment itself. ``seg_degree_mean``/
+# ``seg_degree_max`` summarize the voxel-graph degree of the segment's two
+# endpoints (order-invariant, since ``extract_segments`` traversal direction is
+# arbitrary): together they fully determine both endpoint degrees (a 2-element
+# set's min is recoverable as ``2 * mean - max``), so no separate min is kept.
+_TOPO_FEATURES: tuple[str, ...] = (
+    "seg_num_voxels",
+    "seg_degree_mean",
+    "seg_degree_max",
+)
 
 
 def _segment_feature_names() -> tuple[str, ...]:
@@ -118,6 +133,7 @@ def _segment_kinetic_summary(
             float("nan") if tte_idx is None else float(tte_idx) / denom
         )
         samples["washin_slope"].append(float(kinetic["washin_slope"]))
+        samples["washout_slope"].append(float(kinetic["washout_slope"]))
         samples["auc_positive"].append(float(kinetic["auc_positive"]))
 
     summary: dict[str, float] = {}
@@ -135,12 +151,15 @@ def segment_summary_features(
     radius_map: dict[Point3D, float],
     dce_4d: np.ndarray,
     time_axis: np.ndarray,
+    voxel_graph: nx.Graph,
 ) -> dict[str, float]:
     """All segment-level features for one segment polyline, as a flat dict.
 
     Combines geometry (``compute_segment_metrics``), kinetics
-    (``_segment_kinetic_summary``), and the segment's voxel count. Keys are the
-    ``SEGMENT_FEATURE_ATTR`` feature names.
+    (``_segment_kinetic_summary``), the segment's voxel count, and its
+    endpoints' voxel-graph degree (``voxel_graph``, the skeleton graph the
+    segment was extracted from). Keys are the ``SEGMENT_FEATURE_ATTR`` feature
+    names.
 
     This is the mode-neutral segment summary: ``node_mode="segment"`` (Option B)
     attaches it to the segment's *node*, while ``node_mode="junction"``
@@ -154,6 +173,10 @@ def segment_summary_features(
         attrs[name] = float(value)
     attrs.update(_segment_kinetic_summary(path, dce_4d, time_axis))
     attrs["seg_num_voxels"] = float(len(path))
+    start_degree = voxel_graph.degree(path[0])
+    end_degree = voxel_graph.degree(path[-1])
+    attrs["seg_degree_mean"] = float(start_degree + end_degree) / 2.0
+    attrs["seg_degree_max"] = float(max(start_degree, end_degree))
     return attrs
 
 
@@ -196,7 +219,9 @@ def build_segment_line_graph(
     line = nx.Graph()
     junction_to_segments: dict[Point3D, list[int]] = defaultdict(list)
     for seg_id, path in enumerate(segments):
-        attrs = segment_summary_features(path, radius_map, dce_4d, time_axis)
+        attrs = segment_summary_features(
+            path, radius_map, dce_4d, time_axis, voxel_graph
+        )
         midpoint = np.mean(np.asarray(path, dtype=float), axis=0)
         line.add_node(seg_id, pos=midpoint, **attrs)
         # A segment is anchored at both its endpoints (a self-loop segment has

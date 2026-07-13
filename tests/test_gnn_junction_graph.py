@@ -69,6 +69,12 @@ def test_straight_vessel_two_nodes_one_segment_edge() -> None:
     # The segment summary rides on the edges: the 5-voxel line is 4 units long.
     assert torch.allclose(data.seg_length, torch.full((2,), 4.0))
     assert torch.allclose(data.seg_num_voxels, torch.full((2,), 5.0))
+    # No bifurcation at either endpoint (both degree 1) -> unfilled NaN here
+    # (sentinel-filling happens later, in gnn.data_loader._finalize_data).
+    assert torch.isnan(data.bifurcation_angle_mean).all()
+    # Enhancement peaks at the last timepoint -> no washout window (den == 0).
+    assert torch.allclose(data.washout_slope, torch.zeros(2))
+    assert torch.allclose(data.seg_washout_slope_mean, torch.zeros(2))
 
 
 def test_y_junction_star_topology() -> None:
@@ -93,6 +99,16 @@ def test_y_junction_star_topology() -> None:
     # connected with 3 undirected edges.
     assert int(data.num_connected_components) == 1
 
+    # Bifurcation opening angles at the degree-3 centre: three axis-aligned
+    # arms ((1,0,0), (-1,0,0), (0,1,0)) give pairwise angles {180, 90, 90}.
+    centre_idx = int(torch.argmax(data.degree).item())
+    assert data.bifurcation_angle_mean[centre_idx] == pytest.approx(120.0)
+    assert data.bifurcation_angle_min[centre_idx] == pytest.approx(90.0)
+    assert data.bifurcation_angle_max[centre_idx] == pytest.approx(180.0)
+    # Tips are degree-1 endpoints: no bifurcation to measure -> NaN.
+    tip_mask = data.degree == TIP_DEGREE
+    assert torch.isnan(data.bifurcation_angle_mean[tip_mask]).all()
+
 
 def test_x_junction_four_segments() -> None:
     """X-junction -> centre + 4 tips, 4 segment edges."""
@@ -112,6 +128,14 @@ def test_x_junction_four_segments() -> None:
     assert data.edge_index.shape == (2, 2 * X_SEGMENTS)
     assert max(data.degree.tolist()) == CENTRE_DEGREE_X
 
+    # Four axis-aligned arms at the centre give 6 pairwise angles
+    # {180, 90, 90, 90, 90, 180} -> mean 120, min 90, max 180 (same numbers as
+    # the Y-junction by coincidence of symmetric right-angle branches).
+    centre_idx = int(torch.argmax(data.degree).item())
+    assert data.bifurcation_angle_mean[centre_idx] == pytest.approx(120.0)
+    assert data.bifurcation_angle_min[centre_idx] == pytest.approx(90.0)
+    assert data.bifurcation_angle_max[centre_idx] == pytest.approx(180.0)
+
 
 def test_node_and_edge_feature_attrs_present() -> None:
     """Per-voxel features land on nodes; the segment summary lands on edges."""
@@ -127,6 +151,28 @@ def test_node_and_edge_feature_attrs_present() -> None:
         assert data[name].shape == (data.edge_index.shape[1],)
     # Node and edge vocabularies are disjoint (bare per-voxel names vs seg_*).
     assert not set(JUNCTION_NODE_FEATURE_ATTR) & set(JUNCTION_EDGE_FEATURE_ATTR)
+
+    # New Tier 0/1 features are registered in the vocabulary.
+    for name in (
+        "washout_slope",
+        "bifurcation_angle_mean",
+        "bifurcation_angle_min",
+        "bifurcation_angle_max",
+    ):
+        assert name in JUNCTION_NODE_FEATURE_ATTR
+    for name in (
+        "seg_radius_q1",
+        "seg_radius_q3",
+        "seg_curvature_median",
+        "seg_curvature_min",
+        "seg_curvature_q1",
+        "seg_curvature_q3",
+        "seg_degree_mean",
+        "seg_degree_max",
+        "seg_washout_slope_mean",
+        "seg_washout_slope_std",
+    ):
+        assert name in JUNCTION_EDGE_FEATURE_ATTR
 
 
 def test_pure_cycle_component_raises() -> None:

@@ -35,7 +35,11 @@ from torch_geometric.data import Data
 
 from gnn.kinetics import node_kinetic_features
 from gnn.segment_graph import SEGMENT_FEATURE_ATTR, segment_summary_features
-from graph_extraction.skeleton_to_graph_primitives import Point3D, extract_segments
+from graph_extraction.skeleton_to_graph_primitives import (
+    Point3D,
+    detect_bifurcations,
+    extract_segments,
+)
 
 _SINGLE_TIMEPOINT = 1
 _SEGMENT_DEGREE = 2
@@ -49,15 +53,57 @@ _JUNCTION_KINETIC_SCALARS: tuple[str, ...] = (
     "peak_enhancement",
     "time_to_enhancement",
     "washin_slope",
+    "washout_slope",
     "auc_positive",
 )
+# Opening-angle summary between every pair of a bifurcation's outgoing
+# segments (``graph_extraction.detect_bifurcations``, degree>=3 voxels only).
+# NaN for a degree-1 endpoint node (no neighbor pair to measure an angle
+# from) -- a real "not a bifurcation" case, sentinel-filled and audited via
+# ``gnn.data_loader``'s ``NO_BIFURCATION_SENTINEL`` / ``no_bifurcation_count``,
+# never silently defaulted. Explicitly named as the natural next junction
+# feature in ``gnn/DESIGN_segment_graph.md`` §9.
+_BIFURCATION_ANGLE_NAMES: tuple[str, ...] = (
+    "bifurcation_angle_mean",
+    "bifurcation_angle_min",
+    "bifurcation_angle_max",
+)
 JUNCTION_NODE_FEATURE_ATTR: dict[str, str] = {
-    name: name for name in (*_JUNCTION_KINETIC_SCALARS, "radius", "degree")
+    name: name
+    for name in (
+        *_JUNCTION_KINETIC_SCALARS,
+        "radius",
+        "degree",
+        *_BIFURCATION_ANGLE_NAMES,
+    )
 }
 
 # Edges carry the mode-neutral segment summary -- the identical vector segment
 # mode (Option B) attaches to its nodes (``gnn.segment_graph``).
 JUNCTION_EDGE_FEATURE_ATTR: dict[str, str] = dict(SEGMENT_FEATURE_ATTR)
+
+
+def _bifurcation_angle_summary(
+    voxel_graph: nx.Graph,
+) -> dict[Point3D, dict[str, float]]:
+    """Per-junction opening-angle mean/min/max, keyed by voxel coordinate.
+
+    Built once per case from ``detect_bifurcations`` (all pairwise angles, in
+    degrees, between neighbor directions at each degree>=3 voxel). A degree-1
+    endpoint node has no entry here -- it has no bifurcation to measure -- and
+    the caller fills it with NaN for the ``_BIFURCATION_ANGLE_NAMES`` columns,
+    matching how ``time_to_enhancement`` handles "no detected arrival".
+    """
+    summary: dict[Point3D, dict[str, float]] = {}
+    for entry in detect_bifurcations(voxel_graph):
+        node = tuple(entry["bifurcation"]["midpoint"])
+        angles = np.asarray(list(entry["angles"].values()), dtype=float)
+        summary[node] = {
+            "bifurcation_angle_mean": float(np.mean(angles)),
+            "bifurcation_angle_min": float(np.min(angles)),
+            "bifurcation_angle_max": float(np.max(angles)),
+        }
+    return summary
 
 
 def _junction_node_features(
@@ -66,6 +112,7 @@ def _junction_node_features(
     radius: float,
     dce_4d: np.ndarray,
     time_axis: np.ndarray,
+    bifurcation: dict[str, float] | None,
 ) -> dict[str, float]:
     """Per-voxel features for one junction/endpoint voxel, plus its degree.
 
@@ -77,22 +124,32 @@ def _junction_node_features(
     ``gnn.data_loader._finalize_data`` (same policy as voxel/segment modes and
     as the segment-summary ``edge_attr``), and the count is audited via
     ``graph_qc.csv``'s ``tte_no_arrival_count`` -- never silently defaulted.
+
+    ``bifurcation`` is ``None`` for a degree-1 endpoint node (no opening angle
+    to measure); its three ``_BIFURCATION_ANGLE_NAMES`` columns are then set to
+    NaN, sentinel-filled/audited the same way via ``no_bifurcation_count``.
     """
     denom = float(max(int(dce_4d.shape[0]) - 1, _SINGLE_TIMEPOINT))
     x, y, z = node
     kinetic = node_kinetic_features(dce_4d[:, z, y, x], time_axis)
     tte_idx = kinetic["tte_idx"]
-    return {
+    features = {
         "peak_time": float(kinetic["peak_idx"]) / denom,
         "peak_enhancement": float(kinetic["peak_enhancement"]),
         "time_to_enhancement": (
             float("nan") if tte_idx is None else float(tte_idx) / denom
         ),
         "washin_slope": float(kinetic["washin_slope"]),
+        "washout_slope": float(kinetic["washout_slope"]),
         "auc_positive": float(kinetic["auc_positive"]),
         "radius": float(radius),
         "degree": float(degree),
     }
+    if bifurcation is None:
+        features.update({name: float("nan") for name in _BIFURCATION_ANGLE_NAMES})
+    else:
+        features.update(bifurcation)
+    return features
 
 
 def build_junction_graph(
@@ -143,13 +200,19 @@ def build_junction_graph(
                 node_index[endpoint] = len(node_index)
     ordered_nodes = sorted(node_index, key=node_index.__getitem__)
 
+    bifurcation_summary = _bifurcation_angle_summary(voxel_graph)
     node_columns: dict[str, list[float]] = {
         name: [] for name in JUNCTION_NODE_FEATURE_ATTR
     }
     pos: list[list[float]] = []
     for node in ordered_nodes:
         features = _junction_node_features(
-            node, voxel_graph.degree(node), radius_map[node], dce_4d, time_axis
+            node,
+            voxel_graph.degree(node),
+            radius_map[node],
+            dce_4d,
+            time_axis,
+            bifurcation_summary.get(node),
         )
         for name in JUNCTION_NODE_FEATURE_ATTR:
             node_columns[name].append(features[name])
@@ -162,7 +225,9 @@ def build_junction_graph(
     }
     for path in segments:
         u, v = node_index[path[0]], node_index[path[-1]]
-        summary = segment_summary_features(path, radius_map, dce_4d, time_axis)
+        summary = segment_summary_features(
+            path, radius_map, dce_4d, time_axis, voxel_graph
+        )
         directed = [(u, v)] if u == v else [(u, v), (v, u)]
         for a, b in directed:
             src.append(a)

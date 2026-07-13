@@ -101,6 +101,7 @@ _FEATURE_ATTR: dict[str, str] = {
     "peak_enhancement": "peak_enhancement",
     "time_to_enhancement": "time_to_enhancement_norm",
     "washin_slope": "washin_slope",
+    "washout_slope": "washout_slope",
     "auc_positive": "auc_positive",
     "radius": "radius",
     "pcr_dummy": "pcr_dummy",
@@ -128,6 +129,18 @@ _TTE_FEATURE_NAMES: frozenset[str] = frozenset(
         "seg_time_to_enhancement_mean",
         "seg_time_to_enhancement_std",
     }
+)
+
+# Junction-mode bifurcation-angle features (``gnn.junction_graph``) are NaN for
+# a degree-1 junction/endpoint node: it has no neighbor pair to measure an
+# opening angle from, a real "not a bifurcation" case, not a bug. This mirrors
+# the TTE no-arrival policy above -- NaN is legitimate, sentinel-filled rather
+# than imputed, and audited -- but is tracked as its own sentinel/count since
+# it is an unrelated missingness mechanism (unrelated feature, unrelated
+# cause), not folded into ``tte_no_arrival_count``.
+NO_BIFURCATION_SENTINEL: float = -1.0
+_BIFURCATION_FEATURE_NAMES: frozenset[str] = frozenset(
+    {"bifurcation_angle_mean", "bifurcation_angle_min", "bifurcation_angle_max"}
 )
 
 # Node-granularity modes. ``"voxel"`` keeps one node per skeleton voxel;
@@ -308,32 +321,46 @@ def _attach_node_features(
             float("nan") if tte_idx is None else float(tte_idx) / float(denom)
         )
         attrs["washin_slope"] = float(kinetic["washin_slope"])
+        attrs["washout_slope"] = float(kinetic["washout_slope"])
         attrs["auc_positive"] = float(kinetic["auc_positive"])
         if include_pcr_dummy:
             attrs["pcr_dummy"] = float(label)
 
 
-def _sentinel_fill_tte(matrix: torch.Tensor, feature_names: tuple[str, ...]) -> int:
-    """Replace NaN with ``TTE_NO_ARRIVAL_SENTINEL`` in TTE columns, in place.
+def _sentinel_fill(
+    matrix: torch.Tensor,
+    feature_names: tuple[str, ...],
+    legitimate_nan_names: frozenset[str],
+    sentinel: float,
+) -> int:
+    """Replace NaN with ``sentinel`` in columns named in ``legitimate_nan_names``.
 
-    Returns the number of cells filled (no-arrival entries). ``time_to_enhancement``
-    (and its segment ``_mean``/``_std`` summaries) is the only feature that
-    legitimately produces NaN -- "no detected arrival" -- so a NaN in any other
-    column is a bug, and this raises loudly rather than filling it (fail-fast).
+    In place; returns the number of cells filled. Called once per registered
+    "legitimate NaN" category (TTE no-arrival, junction no-bifurcation) so each
+    keeps its own sentinel value and audit count rather than being merged into
+    one generic missingness bucket.
     """
     filled = 0
     for col, name in enumerate(feature_names):
-        if name in _TTE_FEATURE_NAMES:
+        if name in legitimate_nan_names:
             column = matrix[:, col]
             mask = torch.isnan(column)
             filled += int(mask.sum().item())
-            column[mask] = TTE_NO_ARRIVAL_SENTINEL
+            column[mask] = sentinel
+    return filled
+
+
+def _raise_on_unexpected_nan(matrix: torch.Tensor) -> None:
+    """Fail loudly if a NaN survives every registered sentinel fill (fail-fast).
+
+    Only ``_TTE_FEATURE_NAMES`` and ``_BIFURCATION_FEATURE_NAMES`` columns may
+    legitimately be NaN; a NaN anywhere else is a bug, not a "no signal" case.
+    """
     if bool(torch.isnan(matrix).any()):
         raise ValueError(
-            "Unexpected NaN in a non-time-to-enhancement feature column after "
-            "sentinel fill; only TTE features may be NaN (no detected arrival)."
+            "Unexpected NaN in a feature column after sentinel fill; only "
+            "registered no-arrival (TTE) or no-bifurcation columns may be NaN."
         )
-    return filled
 
 
 def _finalize_data(
@@ -362,19 +389,38 @@ def _finalize_data(
     segment modes pass no edge features, so ``data.edge_attr`` is never set.
 
     Any no-arrival NaN in a time-to-enhancement column of ``data.x`` /
-    ``data.edge_attr`` is replaced with ``TTE_NO_ARRIVAL_SENTINEL`` (see that
-    constant); the count of filled cells is recorded on
-    ``data.tte_no_arrival_count`` for the QC audit, and a NaN in any non-TTE
-    column raises.
+    ``data.edge_attr`` is replaced with ``TTE_NO_ARRIVAL_SENTINEL``, and any
+    no-bifurcation NaN in a junction bifurcation-angle column is replaced with
+    ``NO_BIFURCATION_SENTINEL`` (see those constants); the counts of filled
+    cells are recorded on ``data.tte_no_arrival_count`` /
+    ``data.no_bifurcation_count`` for the QC audit, and any NaN outside those
+    two registered categories raises.
     """
     columns = [data[feature_attr[name]] for name in node_features]
     data.x = torch.stack([column.float() for column in columns], dim=1)
-    no_arrival = _sentinel_fill_tte(data.x, node_features)
+    no_arrival = _sentinel_fill(
+        data.x, node_features, _TTE_FEATURE_NAMES, TTE_NO_ARRIVAL_SENTINEL
+    )
+    no_bifurcation = _sentinel_fill(
+        data.x, node_features, _BIFURCATION_FEATURE_NAMES, NO_BIFURCATION_SENTINEL
+    )
     if edge_features:
         edge_columns = [data[edge_feature_attr[name]] for name in edge_features]
         data.edge_attr = torch.stack([col.float() for col in edge_columns], dim=1)
-        no_arrival += _sentinel_fill_tte(data.edge_attr, edge_features)
+        no_arrival += _sentinel_fill(
+            data.edge_attr, edge_features, _TTE_FEATURE_NAMES, TTE_NO_ARRIVAL_SENTINEL
+        )
+        no_bifurcation += _sentinel_fill(
+            data.edge_attr,
+            edge_features,
+            _BIFURCATION_FEATURE_NAMES,
+            NO_BIFURCATION_SENTINEL,
+        )
+    _raise_on_unexpected_nan(data.x)
+    if edge_features:
+        _raise_on_unexpected_nan(data.edge_attr)
     data.tte_no_arrival_count = no_arrival
+    data.no_bifurcation_count = no_bifurcation
     data.y = torch.tensor([int(label)], dtype=torch.long)
     data.case_id = case_id
     data.num_timepoints = num_timepoints
@@ -1157,12 +1203,13 @@ class VanguardCenterlineDataset(InMemoryDataset):
         average node degree under that same doubled convention.
         ``missing_feature_count`` counts every non-finite (NaN or inf) entry
         in ``data.x``; ``nan_feature_count`` is the NaN-only subset of that.
-        Because time-to-enhancement no-arrival NaNs are sentinel-filled before
-        ``data.x`` is finalized (see ``_sentinel_fill_tte``), both are normally
-        ``0``; the "no signal detected" count is instead carried explicitly by
-        ``tte_no_arrival_count`` (no-arrival cells across ``data.x`` and, in
-        junction mode, ``data.edge_attr``). A non-zero ``nan_feature_count``
-        here therefore signals an unexpected NaN, not a missing arrival.
+        Because time-to-enhancement no-arrival and junction no-bifurcation NaNs
+        are sentinel-filled before ``data.x`` is finalized (see
+        ``_sentinel_fill``), both are normally ``0``; the "no signal detected"
+        counts are instead carried explicitly by ``tte_no_arrival_count`` and
+        ``no_bifurcation_count`` (cells across ``data.x`` and, in junction
+        mode, ``data.edge_attr``). A non-zero ``nan_feature_count`` here
+        therefore signals an unexpected NaN, not a missing arrival/bifurcation.
 
         Also writes ``processed/graph_qc_plots/`` (via
         ``gnn.graph_qc_plots.write_build_time_plots``): num_nodes vs pcr,
@@ -1191,6 +1238,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 "missing_feature_count": int((~finite).sum()),
                 "nan_feature_count": int(np.isnan(x).sum()),
                 "tte_no_arrival_count": int(getattr(data, "tte_no_arrival_count", 0)),
+                "no_bifurcation_count": int(getattr(data, "no_bifurcation_count", 0)),
             }
             for i, name in enumerate(self._node_features):
                 column = x[:, i]

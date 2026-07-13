@@ -21,9 +21,13 @@ pytest.importorskip("torch_geometric")
 sitk = pytest.importorskip("SimpleITK")
 
 from gnn.data_loader import (  # noqa: E402
+    _BIFURCATION_FEATURE_NAMES,
+    _TTE_FEATURE_NAMES,
+    NO_BIFURCATION_SENTINEL,
     TTE_NO_ARRIVAL_SENTINEL,
     VanguardCenterlineDataset,
-    _sentinel_fill_tte,
+    _raise_on_unexpected_nan,
+    _sentinel_fill,
 )
 
 VOLUME_SHAPE = (4, 8, 8)  # (z, y, x)
@@ -707,7 +711,12 @@ def test_sentinel_fill_tte_fills_tte_columns_and_counts() -> None:
     matrix = torch.tensor(
         [[float("nan"), 1.0], [real_arrival, 2.0], [float("nan"), 3.0]]
     )
-    filled = _sentinel_fill_tte(matrix, ("time_to_enhancement", "radius"))
+    filled = _sentinel_fill(
+        matrix,
+        ("time_to_enhancement", "radius"),
+        _TTE_FEATURE_NAMES,
+        TTE_NO_ARRIVAL_SENTINEL,
+    )
     assert filled == expected_filled
     assert matrix[0, 0].item() == TTE_NO_ARRIVAL_SENTINEL
     assert matrix[2, 0].item() == TTE_NO_ARRIVAL_SENTINEL
@@ -718,14 +727,39 @@ def test_sentinel_fill_tte_fills_tte_columns_and_counts() -> None:
 def test_sentinel_fill_tte_handles_segment_summary_column() -> None:
     """The segment/edge ``seg_time_to_enhancement_mean`` column is also filled."""
     matrix = torch.tensor([[float("nan")], [0.2]])
-    filled = _sentinel_fill_tte(matrix, ("seg_time_to_enhancement_mean",))
+    filled = _sentinel_fill(
+        matrix,
+        ("seg_time_to_enhancement_mean",),
+        _TTE_FEATURE_NAMES,
+        TTE_NO_ARRIVAL_SENTINEL,
+    )
     assert filled == 1
     assert matrix[0, 0].item() == TTE_NO_ARRIVAL_SENTINEL
     assert matrix[1, 0].item() == pytest.approx(0.2)
 
 
-def test_sentinel_fill_tte_raises_on_non_tte_nan() -> None:
-    """A NaN outside a TTE column is a bug and must raise, not be filled."""
+def test_sentinel_fill_bifurcation_angle_column() -> None:
+    """A NaN ``bifurcation_angle_mean`` (no-bifurcation node) is sentinel-filled."""
+    matrix = torch.tensor([[float("nan")], [120.0]])
+    filled = _sentinel_fill(
+        matrix,
+        ("bifurcation_angle_mean",),
+        _BIFURCATION_FEATURE_NAMES,
+        NO_BIFURCATION_SENTINEL,
+    )
+    assert filled == 1
+    assert matrix[0, 0].item() == NO_BIFURCATION_SENTINEL
+    assert matrix[1, 0].item() == pytest.approx(120.0)
+
+
+def test_raise_on_unexpected_nan_passes_when_clean() -> None:
+    """A matrix with no NaN left (after sentinel fills) does not raise."""
+    matrix = torch.tensor([[TTE_NO_ARRIVAL_SENTINEL, 0.5]])
+    _raise_on_unexpected_nan(matrix)  # must not raise
+
+
+def test_raise_on_unexpected_nan_raises_on_unregistered_nan() -> None:
+    """A NaN outside every registered category is a bug and must raise."""
     matrix = torch.tensor([[0.5, float("nan")]])  # NaN in the radius column
     with pytest.raises(ValueError, match="Unexpected NaN"):
-        _sentinel_fill_tte(matrix, ("time_to_enhancement", "radius"))
+        _raise_on_unexpected_nan(matrix)

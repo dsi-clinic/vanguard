@@ -1,11 +1,11 @@
 # GNN LOCO (Leave-One-Covariate-Out) sweep, node_mode="junction".
 #
 # gnn_node_features/gnn_edge_features below are the full junction-mode feature
-# superset (7 node + 22 edge, from evaluation.loco_gnn.superset_features_for_mode/
+# superset (11 node + 32 edge, from evaluation.loco_gnn.superset_features_for_mode/
 # superset_edge_features_for_mode) -- they document what the cache must be built
 # with, but every actual training run in the sweep overrides them per-arm (see
 # evaluation/loco_gnn.py::gnn_loco_adapter): one full-baseline run with everything,
-# then one leave-one-out run per node feature and per edge feature (~31 runs
+# then one leave-one-out run per node feature and per edge feature (~44 runs
 # total). See docs/loco_feature_importance.md.
 #
 # Build the superset cache first (build and sweep both read this same config,
@@ -38,18 +38,28 @@ model_params:
   gnn_node_mode: "junction"
   gnn_node_features:
     - "auc_positive"
+    - "bifurcation_angle_max"
+    - "bifurcation_angle_mean"
+    - "bifurcation_angle_min"
     - "degree"
     - "peak_enhancement"
     - "peak_time"
     - "radius"
     - "time_to_enhancement"
     - "washin_slope"
+    - "washout_slope"
   gnn_edge_features:
     - "seg_auc_positive_mean"
     - "seg_auc_positive_std"
     - "seg_curvature_max"
     - "seg_curvature_mean"
+    - "seg_curvature_median"
+    - "seg_curvature_min"
+    - "seg_curvature_q1"
+    - "seg_curvature_q3"
     - "seg_curvature_std"
+    - "seg_degree_max"
+    - "seg_degree_mean"
     - "seg_length"
     - "seg_num_voxels"
     - "seg_peak_enhancement_mean"
@@ -60,6 +70,8 @@ model_params:
     - "seg_radius_mean"
     - "seg_radius_median"
     - "seg_radius_min"
+    - "seg_radius_q1"
+    - "seg_radius_q3"
     - "seg_radius_std"
     - "seg_time_to_enhancement_mean"
     - "seg_time_to_enhancement_std"
@@ -67,6 +79,8 @@ model_params:
     - "seg_volume"
     - "seg_washin_slope_mean"
     - "seg_washin_slope_std"
+    - "seg_washout_slope_mean"
+    - "seg_washout_slope_std"
 
 data_paths:
   gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"

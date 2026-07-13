@@ -245,8 +245,10 @@ above — and the manifest records the kinetics-reduction choice (§4.2).
 
 - ~~Fork A vs B~~ — **resolved (§6):** build all three, B → A.
 - Kinetics reduction: mean only, or mean+std (§4.2)? Default mean+std.
-- Bifurcation angles as junction node features — deferred to A (they're natural there,
-  awkward in B).
+- ~~Bifurcation angles as junction node features~~ — **resolved:** implemented as
+  `bifurcation_angle_{mean,min,max}` in `gnn.junction_graph` (§A only, still awkward in B).
+  NaN for degree-1 endpoints (no bifurcation), sentinel-filled/audited via
+  `gnn.data_loader.NO_BIFURCATION_SENTINEL`/`no_bifurcation_count`.
 - Directionality: vessels have flow direction; do we keep the graph undirected (current)
   or attempt a root/flow orientation later? Defer — out of scope for this migration.
 

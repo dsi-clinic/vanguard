@@ -76,6 +76,16 @@ def test_straight_vessel_is_one_node_no_edges() -> None:
     assert attrs["seg_peak_time_mean"] == pytest.approx(1.0)
     assert attrs["seg_peak_time_std"] == pytest.approx(0.0)
     assert attrs["seg_peak_enhancement_mean"] == pytest.approx(2.0)
+    # Quantiles of a uniform radius map / straight-line (zero-curvature) path.
+    assert attrs["seg_radius_q1"] == pytest.approx(1.0)
+    assert attrs["seg_radius_q3"] == pytest.approx(1.0)
+    assert attrs["seg_curvature_median"] == pytest.approx(0.0)
+    assert attrs["seg_curvature_min"] == pytest.approx(0.0)
+    # Both endpoints are true endpoints (degree 1) -> mean == max == 1.0.
+    assert attrs["seg_degree_mean"] == pytest.approx(1.0)
+    assert attrs["seg_degree_max"] == pytest.approx(1.0)
+    # Enhancement peaks at the last timepoint -> no washout window (den == 0).
+    assert attrs["seg_washout_slope_mean"] == pytest.approx(0.0)
 
 
 def test_y_junction_gives_triangle_line_graph() -> None:
@@ -96,6 +106,9 @@ def test_y_junction_gives_triangle_line_graph() -> None:
     for attrs in (line.nodes[n] for n in line.nodes()):
         assert attrs["seg_num_voxels"] == VOXELS_PER_SEGMENT
         assert attrs["seg_length"] == pytest.approx(LENGTH_PER_SEGMENT)
+        # Each segment spans the degree-3 center and a degree-1 arm tip.
+        assert attrs["seg_degree_mean"] == pytest.approx(2.0)
+        assert attrs["seg_degree_max"] == pytest.approx(3.0)
 
 
 def test_x_junction_gives_complete_graph_k4() -> None:
@@ -115,6 +128,10 @@ def test_x_junction_gives_complete_graph_k4() -> None:
     assert line.number_of_nodes() == X_ARMS
     assert line.number_of_edges() == X_EDGES  # K4
     assert all(line.degree(n) == X_DEGREE for n in line.nodes())
+    for attrs in (line.nodes[n] for n in line.nodes()):
+        # Each segment spans the degree-4 center and a degree-1 arm tip.
+        assert attrs["seg_degree_mean"] == pytest.approx(2.5)
+        assert attrs["seg_degree_max"] == pytest.approx(4.0)
 
 
 def test_pure_cycle_component_raises() -> None:
@@ -138,3 +155,19 @@ def test_segment_feature_attr_is_identity_and_covers_node_attrs() -> None:
     for name, attr_key in SEGMENT_FEATURE_ATTR.items():
         assert name == attr_key  # identity map in segment mode
         assert attr_key in attrs
+
+    # New Tier 0/1 features are registered in the vocabulary, not just present
+    # by coincidence of the loop above.
+    for name in (
+        "seg_radius_q1",
+        "seg_radius_q3",
+        "seg_curvature_median",
+        "seg_curvature_min",
+        "seg_curvature_q1",
+        "seg_curvature_q3",
+        "seg_degree_mean",
+        "seg_degree_max",
+        "seg_washout_slope_mean",
+        "seg_washout_slope_std",
+    ):
+        assert name in SEGMENT_FEATURE_ATTR
