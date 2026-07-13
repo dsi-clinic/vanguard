@@ -9,10 +9,8 @@
 
 # Builds the full VanguardCenterlineDataset cache (all datasets under
 # ROOT, every case with a matching label in LABELS_PATH) via
-# gnn/build_dataset.py. See docs/slurm-site.md for how tier1q/karczmar-lab
-# were chosen -- the older `--partition=general` used by other scripts in
-# this repo does not exist on this cluster.
-#
+# gnn/build_dataset.py.
+# 
 # Usage:
 #   sbatch gnn/slurm/submit_gnn_build.slurm
 #   CACHE_DIR=/gpfs/.../my_cache sbatch gnn/slurm/submit_gnn_build.slurm
