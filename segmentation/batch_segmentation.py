@@ -54,6 +54,7 @@ except ImportError:
         raise ImportError("Required preprocessing function not found")  # noqa: F821
 
 
+import external_breast_masks  # noqa: E402
 import predict_fast  # noqa: E402
 
 
@@ -258,24 +259,26 @@ def preprocess_parallel(
     return base_name_to_case, failed
 
 
-def run_inference_in_process(
+def _run_breast_inference(
     step1_dir: Path,
     step2_dir: Path,
-    step3_dir: Path,
     breast_model_path: str,
-    vessel_model_path: str,
     batch_size: int,
     num_workers: int,
     use_amp: bool,
+    device: torch.device,
 ) -> None:
-    """Load each model once and run breast then vessel inference in-process."""
+    """STEP-2: run the breast U-Net over step1_dir, write masks to step2_dir.
+
+    Extracted verbatim from the STEP-2 block of the original
+    ``run_inference_in_process`` so it can be skipped when external
+    (ground-truth) breast masks are supplied instead (see
+    ``segmentation/external_breast_masks.py``). The vessel stage
+    (:func:`_run_vessel_inference`) consumes ``step2_dir`` either way.
+    """
     import torchio as tio
-    from dataset_3d import Dataset3DDivided, Dataset3DSimple
+    from dataset_3d import Dataset3DSimple
 
-    predict_fast.apply_shape_patch()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # ── STEP-2: breast ────────────────────────────────────────────────────
     breast_unet, _, _ = predict_fast.build_unet("breast")
     breast_unet = predict_fast.load_model(breast_unet, breast_model_path, device)
     breast_ds = Dataset3DSimple(
@@ -297,7 +300,27 @@ def run_inference_in_process(
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
-    # ── STEP-3: vessel ────────────────────────────────────────────────────
+
+def _run_vessel_inference(
+    step1_dir: Path,
+    step2_dir: Path,
+    step3_dir: Path,
+    vessel_model_path: str,
+    batch_size: int,
+    num_workers: int,
+    use_amp: bool,
+    device: torch.device,
+) -> None:
+    """STEP-3: run the vessel U-Net, reading breast masks from step2_dir.
+
+    Extracted verbatim from the STEP-3 block of the original
+    ``run_inference_in_process``. ``step2_dir`` may hold either model-predicted
+    (STEP-2) or externally supplied breast masks -- this stage is agnostic to
+    which.
+    """
+    import torchio as tio
+    from dataset_3d import Dataset3DDivided
+
     vessel_unet, _, n_classes = predict_fast.build_unet("dv")
     vessel_unet = predict_fast.load_model(vessel_unet, vessel_model_path, device)
     vessel_ds = Dataset3DDivided(
@@ -320,6 +343,40 @@ def run_inference_in_process(
         batch_size=batch_size,
         num_workers=num_workers,
         use_amp=use_amp,
+    )
+
+
+def run_inference_in_process(
+    step1_dir: Path,
+    step2_dir: Path,
+    step3_dir: Path,
+    breast_model_path: str,
+    vessel_model_path: str,
+    batch_size: int,
+    num_workers: int,
+    use_amp: bool,
+) -> None:
+    """Load each model once and run breast then vessel inference in-process."""
+    predict_fast.apply_shape_patch()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    _run_breast_inference(
+        step1_dir,
+        step2_dir,
+        breast_model_path,
+        batch_size,
+        num_workers,
+        use_amp,
+        device,
+    )
+    _run_vessel_inference(
+        step1_dir,
+        step2_dir,
+        step3_dir,
+        vessel_model_path,
+        batch_size,
+        num_workers,
+        use_amp,
+        device,
     )
 
 
@@ -377,6 +434,31 @@ def main() -> None:
         default=None,
         help="mamamia only: duke|ispy1|ispy2|nact.",
     )
+    p.add_argument(
+        "--use-external-breast-masks",
+        action="store_true",
+        help=(
+            "Skip STEP-2 breast-model inference; instead feed STEP-3 the "
+            "external whole-breast masks from --external-breast-mask-manifest "
+            "(see segmentation/external_breast_masks.py). uchicago only. "
+            "NOTE: one phase-0 mask is reused across all phases (no motion "
+            "correction) -- a documented approximation."
+        ),
+    )
+    p.add_argument(
+        "--external-breast-mask-manifest",
+        default=external_breast_masks.DEFAULT_MANIFEST_CSV,
+        help="Mask-augmented manifest CSV for --use-external-breast-masks.",
+    )
+    p.add_argument(
+        "--external-breast-mask-persist-dir",
+        default=None,
+        help=(
+            "If set, also write the converted external masks here (outside the "
+            "--cleanup temp dir) so a later comparison can read exactly what "
+            "was used."
+        ),
+    )
     args = p.parse_args()
 
     adapter: DatasetAdapter | None = None
@@ -398,6 +480,16 @@ def main() -> None:
         )
         adapter = build_adapter_from_config(dataset_config)
         print(f"Using dataset adapter: {type(adapter).__name__}")
+
+    if args.use_external_breast_masks:
+        if args.dataset_name != "uchicago":
+            p.error(
+                "--use-external-breast-masks is only supported for --dataset-name uchicago."
+            )
+        if not Path(args.external_breast_mask_manifest).exists():
+            p.error(
+                f"--external-breast-mask-manifest not found: {args.external_breast_mask_manifest}"
+            )
 
     out_dir = Path(args.output_dir)
     temp_dir = Path(args.temp_dir)
@@ -450,6 +542,19 @@ def main() -> None:
         print("Nothing to do, exiting.")
         return
 
+    # Fail-closed: verify every selected case has an external mask BEFORE
+    # spending ~90s on preprocessing (and before any GPU work).
+    if args.use_external_breast_masks:
+        manifest = external_breast_masks.load_manifest(
+            args.external_breast_mask_manifest
+        )
+        case_ids = sorted({cid for cid, _ in nii_files})
+        external_breast_masks.validate_masks_available(case_ids, manifest)
+        print(
+            f"External breast masks: verified available for all {len(case_ids)} case(s). "
+            "NOTE: one phase-0 mask reused across all phases (no motion correction)."
+        )
+
     t0 = time.time()
     use_amp = not args.no_amp
     print(
@@ -469,16 +574,45 @@ def main() -> None:
     print(
         f"Inference (batch_size={args.batch_size}, num_workers={args.num_workers}, amp={use_amp})..."
     )
-    run_inference_in_process(
-        step1_dir,
-        step2_dir,
-        step3_dir,
-        args.breast_model_path,
-        args.vessel_model_path,
-        args.batch_size,
-        args.num_workers,
-        use_amp,
-    )
+    if args.use_external_breast_masks:
+        # STEP-2 replaced: build step2_dir from external whole-breast masks,
+        # then run STEP-3 only (skip the breast model entirely).
+        print("Building external breast masks (skipping STEP-2 model inference)...")
+        external_breast_masks.build_external_step2_dir(
+            base_name_to_case,
+            step1_dir,
+            args.external_breast_mask_manifest,
+            step2_dir,
+            adapter,
+            persist_copy_dir=(
+                Path(args.external_breast_mask_persist_dir)
+                if args.external_breast_mask_persist_dir
+                else None
+            ),
+        )
+        predict_fast.apply_shape_patch()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        _run_vessel_inference(
+            step1_dir,
+            step2_dir,
+            step3_dir,
+            args.vessel_model_path,
+            args.batch_size,
+            args.num_workers,
+            use_amp,
+            device,
+        )
+    else:
+        run_inference_in_process(
+            step1_dir,
+            step2_dir,
+            step3_dir,
+            args.breast_model_path,
+            args.vessel_model_path,
+            args.batch_size,
+            args.num_workers,
+            use_amp,
+        )
     t_inf = time.time()
     print(f"Inference done in {t_inf - t_pre:.1f}s")
 
