@@ -15,7 +15,12 @@ from typing import Any
 
 import pandas as pd
 
-from cohorts.factory import build_adapter_from_config
+from cohorts.base import DatasetAdapter
+from cohorts.factory import (
+    build_adapter_from_config,
+    resolve_folds,
+    resolve_split_policy,
+)
 from evaluation import FoldResults
 from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.kfold import FoldSplit
@@ -46,10 +51,22 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_evaluation_pipeline(
-    df: pd.DataFrame, config: dict[str, Any], outdir: Path
+    df: pd.DataFrame,
+    config: dict[str, Any],
+    outdir: Path,
+    group_col_from_adapter: bool = False,
 ) -> None:
-    """Run evaluator-based cross-validation over configured model/features."""
-    context = prepare_evaluation_context(df, config)
+    """Run evaluator-based cross-validation over configured model/features.
+
+    ``group_col_from_adapter`` must be ``True`` only when the caller actually
+    populated ``model_params.group_col`` from an adapter identity key (via
+    ``_apply_group_keys`` -- e.g. UChicago's ``patient_key``). See
+    :func:`prepare_evaluation_context` for why this can't be inferred from
+    ``config`` alone.
+    """
+    context = prepare_evaluation_context(
+        df, config, group_col_from_adapter=group_col_from_adapter
+    )
     fold_results_list, nested_rows = run_cross_validation_from_context(context)
 
     # Nested tuning CSVs must live under the per-run directory (same leaf as metrics.json)
@@ -92,8 +109,20 @@ def run_evaluation_pipeline(
 def prepare_evaluation_context(
     df: pd.DataFrame,
     config: dict[str, Any],
+    group_col_from_adapter: bool = False,
 ) -> dict[str, Any]:
-    """Prepare evaluator inputs and deterministic fold splits for a config."""
+    """Prepare evaluator inputs and deterministic fold splits for a config.
+
+    ``group_col_from_adapter`` must be ``True`` only when the caller populated
+    ``model_params.group_col`` from an adapter identity key (``_apply_group_keys``
+    -- e.g. UChicago's ``patient_key``), never merely because a dataset is
+    configured: some callers (e.g. ``modeling/ablation.py``) build features with
+    an adapter but never call ``_apply_group_keys``, so ``group_col`` there can be
+    a genuine feature (e.g. MAMA-MIA's clinical ``site``), not an identity.
+    Deciding the drop from ``config.dataset.name`` alone conflated those cases and
+    silently stripped ``site`` from such runs; this flag is the caller's explicit
+    signal instead.
+    """
     label_col = config.data_paths.label_column
     model_params = config.model_params
     toggles = config.feature_toggles
@@ -130,11 +159,19 @@ def prepare_evaluation_context(
             }
         )
     group_col = str(model_params.group_col)
-    if bool(model_params.use_group_split):
+    if group_col_from_adapter:
+        # group_col was populated from the adapter's identity key (e.g.
+        # UChicago's patient_key) by _apply_group_keys -- always drop it so it
+        # can't leak into X.
+        drop_cols.add(group_col)
+    elif bool(model_params.use_group_split):
         drop_cols.discard(group_col)
     stratum_col = model_params.stratum_col
     if stratum_col:
         drop_cols.add(str(stratum_col))
+    # Eval bookkeeping, not a feature -- must not leak into X even when unset
+    # (harmless to drop a column that isn't present).
+    drop_cols.add(str(model_params.split_col))
 
     X = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
     if X.empty:
@@ -283,6 +320,143 @@ def run_cross_validation_from_context(
     return fold_results_list, nested_rows
 
 
+#: Cap on how many case ids to list in a fail-closed fold error before truncating.
+_MAX_MISSING_CASES_SHOWN = 10
+
+
+def _preview(case_ids: list[str]) -> str:
+    """Format a truncated ``case_id`` list for error messages."""
+    head = case_ids[:_MAX_MISSING_CASES_SHOWN]
+    return f"{head}{' ...' if len(case_ids) > _MAX_MISSING_CASES_SHOWN else ''}"
+
+
+def _apply_provided_folds(
+    feats_df: pd.DataFrame, config: dict[str, Any], adapter: DatasetAdapter
+) -> pd.DataFrame:
+    """Attach the adapter's provided CV folds onto the feature table, fail-closed.
+
+    ``resolve_folds`` returns a ``(case_id, fold)`` table when the resolved split
+    policy is "provided", or ``None`` when it's "compute" -- in which case
+    ``feats_df`` is returned unchanged. Otherwise the folds are attached under
+    ``model_params.split_col`` (default ``"fold"``), consumed downstream by the
+    predefined-fold path in ``create_splits_for_dataframe``.
+
+    Because a bad fold attachment silently corrupts cross-validation (a missing
+    fold becomes an empty validation split; a duplicate mapping puts one case in
+    both train and validation), this validates rather than trusts, and raises on
+    anything unsafe:
+
+    - ``split_col`` must not collide with ``case_id`` or the configured label
+      column (it would overwrite real data);
+    - the provided folds must map each ``case_id`` at most once, and the merge is
+      ``validate="one_to_one"`` so a duplicate on either side is an error, not a
+      row-exploding leak;
+    - every modeled case must receive exactly one non-null fold.
+
+    Raises:
+        ValueError: On a ``split_col`` collision, a duplicate fold mapping, a
+            non-unique feature-table ``case_id``, or any modeled case left
+            without a fold.
+    """
+    folds = resolve_folds(config, adapter)
+    if folds is None:
+        return feats_df
+
+    split_col = str(config.model_params.split_col)
+    label_col = str(config.data_paths.label_column)
+    if split_col in {"case_id", label_col}:
+        raise ValueError(
+            f"model_params.split_col={split_col!r} collides with a reserved column "
+            f"('case_id' or the label column {label_col!r}); choose another name."
+        )
+
+    dup_folds = folds["case_id"][folds["case_id"].duplicated()].unique().tolist()
+    if dup_folds:
+        raise ValueError(
+            "Provided folds map these case ids more than once: "
+            f"{_preview([str(c) for c in dup_folds])}"
+        )
+
+    folds = folds.rename(columns={"fold": split_col})
+    if split_col in feats_df.columns:
+        feats_df = feats_df.drop(columns=[split_col])
+    # validate="one_to_one": a duplicate case_id on either side raises MergeError
+    # rather than fanning a case across folds.
+    feats_df = feats_df.merge(folds, on="case_id", how="left", validate="one_to_one")
+
+    missing = feats_df.loc[feats_df[split_col].isna(), "case_id"].tolist()
+    if missing:
+        raise ValueError(
+            f"{len(missing)} modeled case(s) have no provided fold: "
+            f"{_preview([str(c) for c in missing])}. Provided folds must cover every "
+            "modeled case; use split_policy: compute to build splits instead."
+        )
+    return feats_df
+
+
+def _apply_group_keys(
+    feats_df: pd.DataFrame, config: dict[str, Any], adapter: DatasetAdapter
+) -> pd.DataFrame:
+    """Populate the split grouping column from the adapter, so computed CV groups.
+
+    When splits are *computed* (``split_policy: compute``), the pipeline must
+    keep a case's group together across folds -- for UChicago that is the patient
+    (multiple exams per patient), via ``adapter.group_key``. Without this the
+    grouping column is absent and ``create_splits_for_dataframe`` silently falls
+    back to case-level CV, leaking same-patient exams across train/validation.
+
+    Writes ``model_params.group_col`` from ``adapter.group_key(case_id)`` only
+    when that column is not already present, so a dataset whose group column is
+    supplied by an earlier stage (e.g. MAMA-MIA's clinical ``site``) is left
+    untouched. Callers should invoke this only when :func:`_needs_group_keys` is
+    true, and pass ``group_col_from_adapter=True`` to
+    :func:`prepare_evaluation_context` **only when this actually wrote the column**
+    (i.e. it was absent) -- that flag is what excludes the identity key from model
+    features, so setting it for a pre-existing genuine feature would wrongly drop
+    it.
+    """
+    group_col = str(config.model_params.group_col)
+    if group_col in feats_df.columns:
+        return feats_df
+    feats_df = feats_df.copy()
+    feats_df[group_col] = feats_df["case_id"].map(adapter.group_key)
+    return feats_df
+
+
+def _needs_group_keys(config: dict[str, Any], adapter: DatasetAdapter) -> bool:
+    """Whether this run should populate the grouping column from the adapter.
+
+    ``adapter.group_key(case_id)`` can require real I/O (e.g. ``MamaMiaDataset``
+    reads clinical data per case), so only call it when the result will be used:
+    the resolved split policy is ``"compute"`` (grouping only matters when the
+    pipeline builds its own splits -- a "provided" run uses the shipped fold
+    column instead, design decision 3 in cohorts/README.md) and
+    ``model_params.use_group_split`` is on. Otherwise the column would be
+    populated -- and then dropped -- for nothing, at the cost of an unnecessary,
+    possibly-failing adapter call.
+    """
+    return resolve_split_policy(config, adapter) == "compute" and bool(
+        config.model_params.use_group_split
+    )
+
+
+def _adapter_populates_group_col(
+    merged_data: pd.DataFrame, config: dict[str, Any], adapter: DatasetAdapter
+) -> bool:
+    """Whether this run will fill ``group_col`` from the adapter's identity key.
+
+    True only when grouping is needed (:func:`_needs_group_keys`) *and* the
+    column is not already present as a genuine feature. This is exactly the
+    condition under which :func:`_apply_group_keys` writes the column, so it also
+    decides ``group_col_from_adapter`` -- setting that flag when the column
+    pre-existed would make :func:`prepare_evaluation_context` drop a real feature
+    (e.g. MAMA-MIA's clinical ``site``) that the adapter never touched.
+    """
+    if not _needs_group_keys(config, adapter):
+        return False
+    return str(config.model_params.group_col) not in merged_data.columns
+
+
 def run_pipeline_from_config(
     config: dict[str, Any],
     outdir: Path,
@@ -300,9 +474,23 @@ def run_pipeline_from_config(
     if adapter is not None:
         logging.info("Using dataset adapter: %s", type(adapter).__name__)
 
+    group_col_from_adapter = False
     try:
         merged_data = prepare_data(config, outdir, adapter=adapter)
-        run_evaluation_pipeline(merged_data, config, outdir)
+        if adapter is not None:
+            merged_data = _apply_provided_folds(merged_data, config, adapter)
+            # Populate the grouping column from the adapter only when it will be
+            # used and isn't already a genuine feature; the flag mirrors that so
+            # prepare_evaluation_context drops the identity key but never a real
+            # pre-existing feature.
+            group_col_from_adapter = _adapter_populates_group_col(
+                merged_data, config, adapter
+            )
+            if group_col_from_adapter:
+                merged_data = _apply_group_keys(merged_data, config, adapter)
+        run_evaluation_pipeline(
+            merged_data, config, outdir, group_col_from_adapter=group_col_from_adapter
+        )
     except Exception as exc:  # noqa: BLE001
         logging.error("Pipeline failed: %s", exc, exc_info=True)
 

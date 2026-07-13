@@ -15,6 +15,8 @@ from cohorts.mamamia import MamaMiaDataset
 from cohorts.uchicago import UChicagoDataset
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from config import ConfigNode
 
 VALID_SPLIT_POLICIES: frozenset[str] = frozenset({"auto", "compute", "provided"})
@@ -79,3 +81,35 @@ def resolve_split_policy(config: ConfigNode, adapter: DatasetAdapter) -> str:
     if policy == "auto":
         return adapter.default_split_policy
     return policy
+
+
+def resolve_folds(config: ConfigNode, adapter: DatasetAdapter) -> pd.DataFrame | None:
+    """Return the CV folds to use, honoring the resolved split policy.
+
+    Ties :func:`resolve_split_policy` to the adapter's shipped folds so a caller
+    gets, in one call, the folds to use — or ``None`` when the run should compute
+    its own splits:
+
+    - resolved policy ``"compute"`` -> ``None`` (build splits the usual way);
+    - resolved policy ``"provided"`` -> ``adapter.load_folds()`` as
+      ``(case_id, fold)``.
+
+    Args:
+        config: A loaded run config.
+        adapter: The dataset adapter.
+
+    Returns:
+        A ``(case_id, fold)`` table, or ``None`` to compute splits.
+
+    Raises:
+        ValueError: If ``"provided"`` is resolved but the dataset ships no folds.
+    """
+    if resolve_split_policy(config, adapter) == "compute":
+        return None
+    folds = adapter.load_folds()
+    if folds is None:
+        raise ValueError(
+            f"split_policy resolved to 'provided' but {type(adapter).__name__} "
+            "ships no folds (load_folds returned None). Use split_policy: compute."
+        )
+    return folds
