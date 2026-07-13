@@ -12,6 +12,7 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 from scipy import ndimage
 
 from preprocessing.merge_motion_shards import merge_motion_shards
@@ -20,7 +21,12 @@ from preprocessing.motion import (
     correct_phase,
     motion_correct_exam_to_shard,
 )
-from preprocessing.spgr import baseline_relative_enhancement, load_exam, read_manifest
+from preprocessing.spgr import (
+    PreprocessingContractError,
+    baseline_relative_enhancement,
+    load_exam,
+    read_manifest,
+)
 
 TEST_VOLUME_SIZE = 20
 TRANSLATION_TOLERANCE_VOXELS = 0.3
@@ -223,6 +229,14 @@ def test_exam_shard_and_merge_publish_a_loadable_motion_manifest(
     metadata = motion_correct_exam_to_shard(record, output_root=output_root)
     assert metadata["status"] == "complete"
     assert int(metadata["n_phases"]) == record.n_phases
+    reused = motion_correct_exam_to_shard(record, output_root=output_root)
+    assert reused["shard_archive_sha256"] == metadata["shard_archive_sha256"]
+    with pytest.raises(PreprocessingContractError, match="settings"):
+        motion_correct_exam_to_shard(
+            record,
+            output_root=output_root,
+            settings=MotionSettings(max_translation_mm=10.0),
+        )
 
     summary = merge_motion_shards(
         manifest_path=manifest,

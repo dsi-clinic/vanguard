@@ -111,6 +111,47 @@ def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
     partial.replace(path)
 
 
+def _validate_reusable_shard(
+    metadata: dict[str, object],
+    *,
+    record: ExamRecord,
+    settings: MotionSettings,
+    metadata_path: Path,
+) -> None:
+    expected_settings = json.loads(json.dumps(asdict(settings)))
+    expected = {
+        "status": "complete",
+        "row_index": record.row_index,
+        "exam_id": record.exam_id,
+        "dataset": record.dataset,
+        "n_phases": record.n_phases,
+        "source_phase_archive_path": str(record.phase_archive_path),
+        "source_phase_archive_members": list(record.phase_archive_members),
+        "settings": expected_settings,
+    }
+    mismatches = {
+        field: {"expected": value, "observed": metadata.get(field)}
+        for field, value in expected.items()
+        if metadata.get(field) != value
+    }
+    expected_lengths = {
+        "output_phase_archive_members": record.n_phases,
+        "output_phase_member_sha256": record.n_phases,
+        "output_phase_member_bytes": record.n_phases,
+        "registration_metrics": record.n_phases - 1,
+    }
+    for field, expected_length in expected_lengths.items():
+        values = metadata.get(field)
+        if not isinstance(values, list) or len(values) != expected_length:
+            mismatches[field] = {
+                "expected_length": expected_length,
+                "observed_length": len(values) if isinstance(values, list) else None,
+            }
+    if mismatches:
+        message = f"existing shard contract mismatch at {metadata_path}: {mismatches}"
+        raise PreprocessingContractError(message)
+
+
 def _robust_registration_image(
     volume: np.ndarray,
     mask: np.ndarray | None,
@@ -425,12 +466,12 @@ def motion_correct_exam_to_shard(
             message = f"incomplete existing shard: {final_directory}"
             raise PreprocessingContractError(message)
         metadata = json.loads(metadata_path.read_text())
-        if (
-            metadata.get("status") != "complete"
-            or metadata.get("exam_id") != record.exam_id
-        ):
-            message = f"invalid existing shard metadata: {metadata_path}"
-            raise PreprocessingContractError(message)
+        _validate_reusable_shard(
+            metadata,
+            record=record,
+            settings=settings,
+            metadata_path=metadata_path,
+        )
         return dict(metadata)
 
     final_directory.parent.mkdir(parents=True, exist_ok=True)
