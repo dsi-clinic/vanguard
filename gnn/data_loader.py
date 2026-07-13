@@ -44,7 +44,9 @@ from torch_geometric.utils import from_networkx
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from clinical_features import load_clinical_from_excel, load_clinical_from_patient_info
 from config import DEFAULT_CONFIG
+from gnn.clinical import ALL_CLINICAL_COLUMNS, build_clinical_feature_matrix
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_build_time_plots
 from gnn.junction_graph import (
     JUNCTION_EDGE_FEATURE_ATTR,
@@ -668,6 +670,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
         node_mode: str = _VOXEL_MODE,
         node_features: Sequence[str] | None = None,
         edge_features: Sequence[str] | None = None,
+        graph_features: Sequence[str] | None = None,
+        patient_info_dir: str | Path | None = None,
+        clinical_excel: str | Path | None = None,
+        max_missing_clinical_frac: float = 0.1,
         id_column: str = "case_id",
         label_column: str = "pcr",
         max_missing_label_frac: float = 0.1,
@@ -733,6 +739,23 @@ class VanguardCenterlineDataset(InMemoryDataset):
             )
         if num_workers < 1:
             raise ValueError(f"num_workers must be >= 1, got {num_workers}")
+        graph_features = tuple(graph_features) if graph_features else ()
+        unknown_graph = [f for f in graph_features if f not in ALL_CLINICAL_COLUMNS]
+        if unknown_graph:
+            raise ValueError(
+                f"Unknown graph_features {unknown_graph}; supported: "
+                f"{sorted(ALL_CLINICAL_COLUMNS)}"
+            )
+        if graph_features and not (patient_info_dir or clinical_excel):
+            raise ValueError(
+                "graph_features requires patient_info_dir or clinical_excel "
+                "(a clinical data source) to be set."
+            )
+        if not 0.0 <= max_missing_clinical_frac <= 1.0:
+            raise ValueError(
+                f"max_missing_clinical_frac must be in [0, 1], got "
+                f"{max_missing_clinical_frac}"
+            )
 
         self._centerline_root = Path(root)
         self._labels_path = Path(labels_path)
@@ -743,6 +766,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._node_mode = node_mode
         self._node_features = tuple(node_features)
         self._edge_features = tuple(edge_features)
+        self._graph_features = graph_features
+        self._patient_info_dir = Path(patient_info_dir) if patient_info_dir else None
+        self._clinical_excel = Path(clinical_excel) if clinical_excel else None
+        self._max_missing_clinical_frac = max_missing_clinical_frac
         self._id_column = id_column
         self._label_column = label_column
         self._max_missing_label_frac = max_missing_label_frac
@@ -834,8 +861,8 @@ class VanguardCenterlineDataset(InMemoryDataset):
 
         ``process()`` only runs once per cache; every later load of the same
         cache still goes through here, so this is what keeps missing-label
-        drops visible instead of only being logged the one time the cache was
-        built.
+        (and missing-clinical) drops visible instead of only being logged the
+        one time the cache was built.
         """
         manifest_path = Path(self.processed_dir) / _DROPPED_MANIFEST_NAME
         if not manifest_path.exists():
@@ -843,14 +870,21 @@ class VanguardCenterlineDataset(InMemoryDataset):
         manifest = json.loads(manifest_path.read_text())
         self.dropped_case_ids = manifest["dropped_case_ids"]
         if self.dropped_case_ids:
+            # dropped_reasons is absent on caches built before graph_features
+            # existed; fall back to the original label-only phrasing so old
+            # caches still log sensibly.
+            reasons = manifest.get("dropped_reasons")
+            reason_text = (
+                dict(Counter(reasons.values()))
+                if reasons
+                else f"missing {manifest['label_column']!r} label"
+            )
             logging.warning(
-                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped for "
-                "missing %r label in %s: %s",
+                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped " "(%s): %s",
                 len(self.dropped_case_ids),
                 manifest["num_discovered"],
                 manifest["dropped_frac"] * 100,
-                manifest["label_column"],
-                manifest["labels_path"],
+                reason_text,
                 self.dropped_case_ids,
             )
 
@@ -881,6 +915,18 @@ class VanguardCenterlineDataset(InMemoryDataset):
         # key and must still validate against a voxel/segment request.
         if self._edge_features:
             settings["edge_features"] = list(self._edge_features)
+        # graph_features (clinical covariates) are opt-in and, unlike
+        # node_features/edge_features, are NOT eligible for the subset-request
+        # reslice (see _check_cache_manifest's subset_keys) -- a fit-once
+        # ColumnTransformer's one-hot vocabulary depends on exactly which
+        # columns and which cases were used to fit it, so a "narrower" request
+        # isn't just a column slice the way it is for node/edge features.
+        # Requesting a different graph_features list always requires a rebuild.
+        if self._graph_features:
+            settings["graph_features"] = list(self._graph_features)
+            settings["clinical_source"] = str(
+                self._patient_info_dir or self._clinical_excel
+            )
         return settings
 
     def _check_cache_manifest(self) -> None:
@@ -977,12 +1023,28 @@ class VanguardCenterlineDataset(InMemoryDataset):
             self._centerline_root,
         )
 
+        # graph_features (clinical covariates) need the clinical source loaded
+        # upfront: a case with no clinical row is dropped before the expensive
+        # per-case graph build runs, the same way a missing label is -- not as
+        # a post-build filter, so we don't waste compute on cases we'll drop.
+        clinical_df: pd.DataFrame | None = None
+        clinical_case_ids: set[str] | None = None
+        if self._graph_features:
+            clinical_df = self._load_clinical_df()
+            clinical_case_ids = set(clinical_df["case_id"])
+
         dropped: list[str] = []
+        dropped_reasons: dict[str, str] = {}
         tasks: list[tuple[str, Path, int]] = []
         for case_id, mask_path in discovered:
             label = labels.get(case_id)
             if label is None:
                 dropped.append(case_id)
+                dropped_reasons[case_id] = "missing_label"
+                continue
+            if clinical_case_ids is not None and case_id not in clinical_case_ids:
+                dropped.append(case_id)
+                dropped_reasons[case_id] = "missing_clinical"
                 continue
             tasks.append((case_id, mask_path, label))
 
@@ -992,32 +1054,56 @@ class VanguardCenterlineDataset(InMemoryDataset):
             data_list.append(data)
 
         self.dropped_case_ids = dropped
-        self._write_dropped_manifest(dropped, len(discovered))
+        self._write_dropped_manifest(dropped, dropped_reasons, len(discovered))
         if dropped:
             dropped_frac = len(dropped) / len(discovered)
+            by_reason = dict(Counter(dropped_reasons.values()))
             logging.warning(
-                "GNN build: dropped %d/%d case(s) (%.1f%%) with no %r label in %s: %s",
+                "GNN build: dropped %d/%d case(s) (%.1f%%): %s: %s",
                 len(dropped),
                 len(discovered),
                 dropped_frac * 100,
-                self._label_column,
-                self._labels_path,
+                by_reason,
                 dropped,
             )
-            if dropped_frac > self._max_missing_label_frac:
-                raise RuntimeError(
-                    f"{len(dropped)}/{len(discovered)} cases ({dropped_frac:.1%}) "
-                    f"are missing a {self._label_column!r} label in "
-                    f"{self._labels_path}, exceeding max_missing_label_frac="
-                    f"{self._max_missing_label_frac}. Fix the labels file, or "
-                    "pass a higher max_missing_label_frac if this many missing "
-                    "labels is expected."
-                )
+            missing_label = [
+                c for c in dropped if dropped_reasons[c] == "missing_label"
+            ]
+            if missing_label:
+                label_frac = len(missing_label) / len(discovered)
+                if label_frac > self._max_missing_label_frac:
+                    raise RuntimeError(
+                        f"{len(missing_label)}/{len(discovered)} cases "
+                        f"({label_frac:.1%}) are missing a {self._label_column!r} "
+                        f"label in {self._labels_path}, exceeding "
+                        f"max_missing_label_frac={self._max_missing_label_frac}. "
+                        "Fix the labels file, or pass a higher "
+                        "max_missing_label_frac if this many missing labels is "
+                        "expected."
+                    )
+            missing_clinical = [
+                c for c in dropped if dropped_reasons[c] == "missing_clinical"
+            ]
+            if missing_clinical:
+                clinical_frac = len(missing_clinical) / len(discovered)
+                if clinical_frac > self._max_missing_clinical_frac:
+                    raise RuntimeError(
+                        f"{len(missing_clinical)}/{len(discovered)} cases "
+                        f"({clinical_frac:.1%}) have no clinical row for "
+                        f"graph_features={list(self._graph_features)}, exceeding "
+                        f"max_missing_clinical_frac={self._max_missing_clinical_frac}. "
+                        "Check the clinical data source, or pass a higher "
+                        "max_missing_clinical_frac if this many missing records "
+                        "is expected."
+                    )
 
         if not data_list:
             raise RuntimeError(
                 "No graphs were built; check the centerline tree and labels file."
             )
+
+        if self._graph_features:
+            self._attach_graph_features(data_list, clinical_df)
 
         self._write_feature_summary(data_list)
         self._write_graph_qc(data_list)
@@ -1025,12 +1111,39 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._save_processed(data_list)
 
         logging.info(
-            "GNN build complete: %d graphs built, %d dropped for missing label",
+            "GNN build complete: %d graphs built, %d dropped",
             len(data_list),
             len(dropped),
         )
         if self._profile:
             self._timings.log_summary()
+
+    def _load_clinical_df(self) -> pd.DataFrame:
+        """Load clinical metadata, preferring ``patient_info_dir`` over ``clinical_excel``.
+
+        Mirrors ``clinical_features.get_clinical_features``'s preference order,
+        without requiring the caller to build a full training ``config`` object.
+        """
+        if self._patient_info_dir is not None:
+            return load_clinical_from_patient_info(self._patient_info_dir)
+        return load_clinical_from_excel(self._clinical_excel)
+
+    def _attach_graph_features(
+        self, data_list: list[Data], clinical_df: pd.DataFrame
+    ) -> None:
+        """Fit the clinical encoder over this build's cohort and attach ``data.graph_features``.
+
+        Every case in ``data_list`` is already confirmed present in
+        ``clinical_df`` (cases without a clinical row were dropped in
+        ``process()`` before the graph build ran), so this is a pure
+        transform, not a further filter.
+        """
+        case_ids = [str(data.case_id) for data in data_list]
+        matrix, _output_names = build_clinical_feature_matrix(
+            clinical_df, case_ids, self._graph_features
+        )
+        for data, row in zip(data_list, matrix, strict=True):
+            data.graph_features = torch.tensor(row, dtype=torch.float).unsqueeze(0)
 
     def _build_cases(
         self, tasks: list[tuple[str, Path, int]]
@@ -1100,12 +1213,18 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
                     yield case_id, data
 
-    def _write_dropped_manifest(self, dropped: list[str], num_discovered: int) -> None:
+    def _write_dropped_manifest(
+        self,
+        dropped: list[str],
+        dropped_reasons: dict[str, str],
+        num_discovered: int,
+    ) -> None:
         """Persist dropped-case bookkeeping so cache hits can re-surface it."""
         if self._no_cache:
             return
         manifest = {
             "dropped_case_ids": dropped,
+            "dropped_reasons": dropped_reasons,
             "num_discovered": num_discovered,
             "dropped_frac": len(dropped) / num_discovered if num_discovered else 0.0,
             "label_column": self._label_column,

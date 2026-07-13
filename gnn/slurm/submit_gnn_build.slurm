@@ -55,6 +55,12 @@ NODE_FEATURES="${NODE_FEATURES:-peak_time,radius}"
 # Only used by --node-mode junction (segment-as-edge): the segment summary rides
 # on the edges there. Empty for voxel/segment mode.
 EDGE_FEATURES="${EDGE_FEATURES:-}"
+# Graph-level clinical covariates (gnn/clinical.py), opt-in and mode-agnostic.
+# Requires PATIENT_INFO_DIR or CLINICAL_EXCEL when set.
+GRAPH_FEATURES="${GRAPH_FEATURES:-}"
+PATIENT_INFO_DIR="${PATIENT_INFO_DIR:-}"
+CLINICAL_EXCEL="${CLINICAL_EXCEL:-}"
+MAX_MISSING_CLINICAL_FRAC="${MAX_MISSING_CLINICAL_FRAC:-0.1}"
 MAX_MISSING_LABEL_FRAC="${MAX_MISSING_LABEL_FRAC:-0.1}"
 NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
 
@@ -70,6 +76,7 @@ ARGS=(
   --label-column "${LABEL_COLUMN}"
   --node-mode "${NODE_MODE}"
   --max-missing-label-frac "${MAX_MISSING_LABEL_FRAC}"
+  --max-missing-clinical-frac "${MAX_MISSING_CLINICAL_FRAC}"
   --num-workers "${NUM_WORKERS}"
 )
 
@@ -78,6 +85,15 @@ if [[ -n "${NODE_FEATURES:-}" ]]; then
 fi
 if [[ -n "${EDGE_FEATURES:-}" ]]; then
   ARGS+=(--edge-features "${EDGE_FEATURES}")
+fi
+if [[ -n "${GRAPH_FEATURES:-}" ]]; then
+  ARGS+=(--graph-features "${GRAPH_FEATURES}")
+fi
+if [[ -n "${PATIENT_INFO_DIR:-}" ]]; then
+  ARGS+=(--patient-info-dir "${PATIENT_INFO_DIR}")
+fi
+if [[ -n "${CLINICAL_EXCEL:-}" ]]; then
+  ARGS+=(--clinical-excel "${CLINICAL_EXCEL}")
 fi
 
 if [[ -n "${CASES:-}" ]]; then

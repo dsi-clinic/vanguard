@@ -90,3 +90,69 @@ def test_edge_model_rejects_invalid_edge_dim() -> None:
     """edge_dim must be positive."""
     with pytest.raises(ValueError, match="edge_dim"):
         EdgeGNNClassifier(input_dim=2, edge_dim=0)
+
+
+def _make_batch_with_graph_features(graph_dim: int) -> Batch:
+    """Same two tiny graphs as ``_make_batch``, plus a per-graph feature vector."""
+    graph_a = Data(
+        x=torch.randn(3, 2),
+        edge_index=torch.tensor([[0, 1, 1, 2, 2, 0], [1, 0, 2, 1, 0, 2]]),
+        y=torch.tensor([1.0]),
+        graph_features=torch.randn(1, graph_dim),
+    )
+    graph_b = Data(
+        x=torch.randn(2, 2),
+        edge_index=torch.tensor([[0, 1], [1, 0]]),
+        y=torch.tensor([0.0]),
+        graph_features=torch.randn(1, graph_dim),
+    )
+    return Batch.from_data_list([graph_a, graph_b])
+
+
+def test_graph_dim_zero_rejects_negative() -> None:
+    """graph_dim must be >= 0."""
+    with pytest.raises(ValueError, match="graph_dim"):
+        GCNClassifier(input_dim=2, graph_dim=-1)
+
+
+def test_graph_dim_positive_requires_graph_features() -> None:
+    """graph_dim > 0 without graph_features at forward time raises, not silently ignores."""
+    batch = _make_batch()
+    model = GCNClassifier(input_dim=2, hidden_dim=8, graph_dim=3, dropout=0.0)
+    with pytest.raises(ValueError, match="graph_features"):
+        model(batch.x, batch.edge_index, batch.batch)
+
+
+def test_graph_dim_concatenates_and_influences_output() -> None:
+    """graph_features are actually used: changing them changes the logits."""
+    batch = _make_batch_with_graph_features(graph_dim=3)
+    model = GCNClassifier(input_dim=2, hidden_dim=8, graph_dim=3, dropout=0.0)
+    model.eval()
+    baseline = model(batch.x, batch.edge_index, batch.batch, batch.graph_features)
+    perturbed = model(
+        batch.x, batch.edge_index, batch.batch, batch.graph_features + 5.0
+    )
+    assert baseline.shape == (2,)
+    assert not torch.allclose(baseline, perturbed)
+
+
+def test_edge_model_graph_dim_concatenates_and_influences_output() -> None:
+    """Same graph_dim concat path for EdgeGNNClassifier."""
+    batch = _make_batch_with_graph_features(graph_dim=2)
+    batch.edge_attr = torch.randn(int(batch.edge_index.shape[1]), 3)
+    model = EdgeGNNClassifier(
+        input_dim=2, edge_dim=3, hidden_dim=8, graph_dim=2, dropout=0.0
+    )
+    model.eval()
+    baseline = model(
+        batch.x, batch.edge_index, batch.edge_attr, batch.batch, batch.graph_features
+    )
+    perturbed = model(
+        batch.x,
+        batch.edge_index,
+        batch.edge_attr,
+        batch.batch,
+        batch.graph_features + 5.0,
+    )
+    assert baseline.shape == (2,)
+    assert not torch.allclose(baseline, perturbed)

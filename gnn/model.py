@@ -11,6 +11,14 @@ Two architectures, one per graph representation:
   ``EdgeConditionedConv``, a small message-passing layer that conditions each
   message on the connecting edge's features.
 
+Both classifiers optionally accept graph-level covariates (``graph_dim`` > 0,
+``gnn.clinical``'s clinical/demographic feature vector, see
+``gnn.data_loader``'s ``graph_features``): these aren't per-node/per-edge
+signal, so they're concatenated onto the pooled graph embedding *after*
+message passing, immediately before the final linear head, not fed into the
+conv stack. ``graph_dim=0`` (the default) is fully backward compatible -- no
+``graph_features`` argument is required or used.
+
 See ``gnn/README.md`` and ``gnn/DESIGN_segment_graph.md``.
 """
 
@@ -31,33 +39,46 @@ class GCNClassifier(nn.Module):
         hidden_dim: int = 32,
         num_layers: int = 2,
         dropout: float = 0.2,
+        graph_dim: int = 0,
     ) -> None:
         super().__init__()
         if input_dim <= 0:
             raise ValueError("input_dim must be positive")
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1")
+        if graph_dim < 0:
+            raise ValueError("graph_dim must be >= 0")
+        self.graph_dim = graph_dim
         self.convs = nn.ModuleList()
         in_dim = input_dim
         for _ in range(num_layers):
             self.convs.append(GCNConv(in_dim, hidden_dim))
             in_dim = hidden_dim
         self.dropout = nn.Dropout(p=dropout)
-        self.classifier = nn.Linear(hidden_dim, 1)
+        self.classifier = nn.Linear(hidden_dim + graph_dim, 1)
 
     def forward(
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
         batch_index: torch.Tensor,
+        graph_features: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Return one raw logit per graph in the batch (shape ``(batch_size,)``)."""
+        """Return one raw logit per graph in the batch (shape ``(batch_size,)``).
+
+        ``graph_features`` (shape ``(batch_size, graph_dim)``) is required
+        when ``graph_dim > 0`` and ignored otherwise.
+        """
         h = x
         for conv in self.convs:
             h = conv(h, edge_index)
             h = torch.relu(h)
             h = self.dropout(h)
         pooled = global_mean_pool(h, batch_index)
+        if self.graph_dim > 0:
+            if graph_features is None:
+                raise ValueError("graph_features is required when graph_dim > 0")
+            pooled = torch.cat([pooled, graph_features], dim=1)
         return self.classifier(pooled).view(-1)
 
 
@@ -107,6 +128,7 @@ class EdgeGNNClassifier(nn.Module):
         hidden_dim: int = 32,
         num_layers: int = 2,
         dropout: float = 0.2,
+        graph_dim: int = 0,
     ) -> None:
         super().__init__()
         if input_dim <= 0:
@@ -115,13 +137,16 @@ class EdgeGNNClassifier(nn.Module):
             raise ValueError("edge_dim must be positive")
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1")
+        if graph_dim < 0:
+            raise ValueError("graph_dim must be >= 0")
+        self.graph_dim = graph_dim
         self.convs = nn.ModuleList()
         in_dim = input_dim
         for _ in range(num_layers):
             self.convs.append(EdgeConditionedConv(in_dim, hidden_dim, edge_dim))
             in_dim = hidden_dim
         self.dropout = nn.Dropout(p=dropout)
-        self.classifier = nn.Linear(hidden_dim, 1)
+        self.classifier = nn.Linear(hidden_dim + graph_dim, 1)
 
     def forward(
         self,
@@ -129,12 +154,21 @@ class EdgeGNNClassifier(nn.Module):
         edge_index: torch.Tensor,
         edge_attr: torch.Tensor,
         batch_index: torch.Tensor,
+        graph_features: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Return one raw logit per graph in the batch (shape ``(batch_size,)``)."""
+        """Return one raw logit per graph in the batch (shape ``(batch_size,)``).
+
+        ``graph_features`` (shape ``(batch_size, graph_dim)``) is required
+        when ``graph_dim > 0`` and ignored otherwise.
+        """
         h = x
         for conv in self.convs:
             h = conv(h, edge_index, edge_attr)
             h = torch.relu(h)
             h = self.dropout(h)
         pooled = global_mean_pool(h, batch_index)
+        if self.graph_dim > 0:
+            if graph_features is None:
+                raise ValueError("graph_features is required when graph_dim > 0")
+            pooled = torch.cat([pooled, graph_features], dim=1)
         return self.classifier(pooled).view(-1)

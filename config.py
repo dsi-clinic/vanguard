@@ -167,6 +167,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # mode, which carry no edge features. Uses the seg_* vocabulary (see
         # gnn.segment_graph / gnn.junction_graph).
         "gnn_edge_features": [],
+        # Graph-level clinical/demographic covariates (gnn.clinical), opt-in
+        # and mode-agnostic (voxel/segment/junction all support them the same
+        # way, unlike node/edge features). Empty = no graph-level features,
+        # fully backward compatible. Requires gnn_patient_info_dir or
+        # gnn_clinical_excel under data_paths. See gnn/clinical.py for the
+        # supported column vocabulary and why breast_density/SITE_COLUMNS are
+        # excluded from casual use.
+        "gnn_graph_features": [],
+        # Cases with no clinical row for the requested gnn_graph_features are
+        # dropped before the (expensive) graph build, the same way a missing
+        # label is via max_missing_label_frac -- see gnn/data_loader.py.
+        "gnn_max_missing_clinical_frac": 0.1,
         # Class-conditional Gaussian noise layered onto the "pcr_dummy"
         # leakage-canary feature at train time (gnn/train.py), never at cache
         # -build time -- see _apply_pcr_dummy_noise. Defaults (0.0, 1.0, 0.0)
@@ -197,6 +209,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "gnn_cases": None,
         "gnn_dataset_include": None,
         "gnn_allow_manifest_mismatch": False,
+        # Clinical data source for gnn_graph_features (model_params), mirroring
+        # the shared patient_info_dir/clinical_excel above but kept
+        # GNN-specific so a GNN run's config stays self-contained, consistent
+        # with every other gnn_* data_paths key.
+        "gnn_patient_info_dir": "",
+        "gnn_clinical_excel": "",
     },
     # Dataset-adapter selection (multi-dataset redesign, Step 1). Read only by
     # cohorts/factory.py; no pipeline stage consumes it yet. When ``name`` is

@@ -172,15 +172,33 @@ def fit_edge_standardizer(graphs: list[Data]) -> tuple[torch.Tensor, torch.Tenso
     return _fit_standardizer(torch.cat([graph.edge_attr for graph in graphs], dim=0))
 
 
+def fit_graph_standardizer(graphs: list[Data]) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute per-feature mean/std over training-split graph-level (clinical) features.
+
+    Only present when ``gnn_graph_features`` was set at build time -- the
+    one-hot-encoded categorical columns get standardized the same as the
+    numeric ones (a constant-across-the-fold indicator column is caught by
+    ``_fit_standardizer``'s near-constant guard, same as any other feature).
+    """
+    return _fit_standardizer(
+        torch.cat([graph.graph_features for graph in graphs], dim=0)
+    )
+
+
 def _model_forward(model: nn.Module, batch: Data) -> torch.Tensor:
     """Call ``model`` with the right signature for its representation.
 
     ``EdgeGNNClassifier`` (junction mode) consumes ``edge_attr``; the plain
-    ``GCNClassifier`` (voxel/segment) does not.
+    ``GCNClassifier`` (voxel/segment) does not. Either passes ``graph_features``
+    through when the batch carries it (``gnn_graph_features`` was set at
+    build time), regardless of node mode.
     """
+    graph_features = getattr(batch, "graph_features", None)
     if isinstance(model, EdgeGNNClassifier):
-        return model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
-    return model(batch.x, batch.edge_index, batch.batch)
+        return model(
+            batch.x, batch.edge_index, batch.edge_attr, batch.batch, graph_features
+        )
+    return model(batch.x, batch.edge_index, batch.batch, graph_features)
 
 
 def _apply_pcr_dummy_noise(
@@ -384,6 +402,18 @@ def fit_predict_one_fold(
         for graph in train_graphs + val_graphs:
             graph.edge_attr = (graph.edge_attr - edge_mean) / edge_std
 
+    # graph_features (clinical covariates, gnn.clinical) are opt-in and,
+    # unlike x/edge_attr, don't depend on node_mode -- detected the same way
+    # edge_attr is, via presence on the graphs themselves.
+    has_graph_features = getattr(train_graphs[0], "graph_features", None) is not None
+    if has_graph_features:
+        graph_mean, graph_std = fit_graph_standardizer(train_graphs)
+        for graph in train_graphs + val_graphs:
+            graph.graph_features = (graph.graph_features - graph_mean) / graph_std
+        graph_dim = train_graphs[0].graph_features.shape[1]
+    else:
+        graph_dim = 0
+
     batch_size = int(params.batch_size)
     train_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=True)
     train_eval_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=False)
@@ -396,6 +426,7 @@ def fit_predict_one_fold(
             hidden_dim=int(params.hidden_dim),
             num_layers=int(params.num_layers),
             dropout=float(params.dropout),
+            graph_dim=graph_dim,
         ).to(device)
     else:
         model = GCNClassifier(
@@ -403,6 +434,7 @@ def fit_predict_one_fold(
             hidden_dim=int(params.hidden_dim),
             num_layers=int(params.num_layers),
             dropout=float(params.dropout),
+            graph_dim=graph_dim,
         ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(params.learning_rate))
     criterion = nn.BCEWithLogitsLoss()
@@ -478,6 +510,12 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> KFoldResults:
         edge_features=(
             tuple(params.gnn_edge_features) if params.gnn_edge_features else None
         ),
+        graph_features=(
+            tuple(params.gnn_graph_features) if params.gnn_graph_features else None
+        ),
+        patient_info_dir=data_paths.gnn_patient_info_dir or None,
+        clinical_excel=data_paths.gnn_clinical_excel or None,
+        max_missing_clinical_frac=float(params.gnn_max_missing_clinical_frac),
         id_column=data_paths.gnn_id_column,
         label_column=data_paths.gnn_label_column,
         allow_manifest_mismatch=bool(data_paths.gnn_allow_manifest_mismatch),

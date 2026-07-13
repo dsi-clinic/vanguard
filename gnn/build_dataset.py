@@ -91,6 +91,37 @@ def build_parser() -> argparse.ArgumentParser:
         "lacking a label before the build raises (see VanguardCenterlineDataset).",
     )
     parser.add_argument(
+        "--graph-features",
+        type=str,
+        default=None,
+        help="Comma-separated graph-level clinical covariate names (see "
+        "gnn/clinical.py for the supported vocabulary). Opt-in, mode-agnostic "
+        "(unlike --node-features/--edge-features). Requires "
+        "--patient-info-dir or --clinical-excel.",
+    )
+    parser.add_argument(
+        "--patient-info-dir",
+        type=Path,
+        default=None,
+        help="Directory of per-case patient_info JSON files, for "
+        "--graph-features. Preferred over --clinical-excel when both are set.",
+    )
+    parser.add_argument(
+        "--clinical-excel",
+        type=Path,
+        default=None,
+        help="Excel clinical/imaging metadata file, for --graph-features "
+        "(fallback if --patient-info-dir is not set).",
+    )
+    parser.add_argument(
+        "--max-missing-clinical-frac",
+        type=float,
+        default=0.1,
+        help="Max fraction of discovered cases allowed to be dropped for "
+        "lacking a clinical row before the build raises, when "
+        "--graph-features is set (see VanguardCenterlineDataset).",
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="Always rebuild from source instead of reading an existing cache.",
@@ -159,6 +190,9 @@ def main() -> None:
     # None -> let the dataset resolve the node mode's own default feature set.
     node_features = tuple(args.node_features.split(",")) if args.node_features else None
     edge_features = tuple(args.edge_features.split(",")) if args.edge_features else None
+    graph_features = (
+        tuple(args.graph_features.split(",")) if args.graph_features else None
+    )
     cases = args.cases.split(",") if args.cases else None
 
     if args.force_rebuild:
@@ -181,6 +215,10 @@ def main() -> None:
         node_mode=args.node_mode,
         node_features=node_features,
         edge_features=edge_features,
+        graph_features=graph_features,
+        patient_info_dir=args.patient_info_dir,
+        clinical_excel=args.clinical_excel,
+        max_missing_clinical_frac=args.max_missing_clinical_frac,
         id_column=args.id_column,
         label_column=args.label_column,
         max_missing_label_frac=args.max_missing_label_frac,
@@ -189,7 +227,7 @@ def main() -> None:
         allow_manifest_mismatch=args.allow_manifest_mismatch,
     )
     logging.info(
-        "Dataset ready: %d graph(s) cached under %s (%d dropped for missing label)",
+        "Dataset ready: %d graph(s) cached under %s (%d dropped)",
         len(dataset),
         args.cache_dir,
         len(dataset.dropped_case_ids),

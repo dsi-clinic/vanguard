@@ -35,6 +35,7 @@ NUM_TIMEPOINTS = 3
 SKELETON_Z = 2
 SKELETON_Y = 3
 SKELETON_XS = (1, 2, 3, 4, 5)  # 5 voxels -> 4 undirected edges
+NUM_CLINICAL_TEST_CASES = 2
 
 # curve = t for every voxel -> baseline=0, enhancement=[0, 1, 2]:
 # peak at the last timepoint (idx 2), arrival (20% of peak=2 -> threshold 0.4)
@@ -763,3 +764,117 @@ def test_raise_on_unexpected_nan_raises_on_unregistered_nan() -> None:
     matrix = torch.tensor([[0.5, float("nan")]])  # NaN in the radius column
     with pytest.raises(ValueError, match="Unexpected NaN"):
         _raise_on_unexpected_nan(matrix)
+
+
+def _write_patient_info(
+    patient_info_dir: Path, case_id: str, *, age: int, menopausal_status: str
+) -> None:
+    patient_info_dir.mkdir(parents=True, exist_ok=True)
+    (patient_info_dir / f"{case_id}.json").write_text(
+        json.dumps(
+            {
+                "case_id": case_id,
+                "clinical_data": {"age": age, "menopausal_status": menopausal_status},
+                "primary_lesion": {"tumor_subtype": "luminal_a"},
+                "imaging_data": {"dataset": "NACT"},
+            }
+        )
+    )
+
+
+def test_graph_features_attached_from_patient_info(tmp_path: Path) -> None:
+    """graph_features are attached as data.graph_features, shape (1, G) per case."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01")
+    _write_case(studies, dce_root, "NACT_02")
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\nNACT_02,0\n")
+
+    patient_info_dir = tmp_path / "patient_info"
+    _write_patient_info(patient_info_dir, "NACT_01", age=40, menopausal_status="pre")
+    _write_patient_info(patient_info_dir, "NACT_02", age=60, menopausal_status="post")
+
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=tmp_path / "cache",
+        node_features=("peak_time", "radius"),
+        graph_features=("age",),
+        patient_info_dir=patient_info_dir,
+    )
+
+    assert len(dataset) == NUM_CLINICAL_TEST_CASES
+    assert dataset.dropped_case_ids == []
+    for i in range(len(dataset)):
+        data = dataset[i]
+        assert data.graph_features.shape == (1, 1)
+
+
+def test_graph_features_requires_clinical_source() -> None:
+    """graph_features without patient_info_dir/clinical_excel fails fast at construction."""
+    with pytest.raises(ValueError, match="graph_features requires"):
+        VanguardCenterlineDataset(
+            Path("/nonexistent"),
+            labels_path=Path("/nonexistent/labels.csv"),
+            dce_root=Path("/nonexistent/images"),
+            graph_features=("age",),
+        )
+
+
+def test_case_missing_clinical_row_is_dropped(tmp_path: Path) -> None:
+    """A labeled case with no clinical row is dropped (missing_clinical), not a hard failure."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01")
+    _write_case(studies, dce_root, "NACT_02")  # no patient_info entry below
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\nNACT_02,0\n")
+
+    patient_info_dir = tmp_path / "patient_info"
+    _write_patient_info(patient_info_dir, "NACT_01", age=40, menopausal_status="pre")
+
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=tmp_path / "cache",
+        node_features=("peak_time", "radius"),
+        graph_features=("age",),
+        patient_info_dir=patient_info_dir,
+        max_missing_clinical_frac=0.5,
+    )
+
+    assert len(dataset) == 1
+    assert dataset.dropped_case_ids == ["NACT_02"]
+    assert dataset[0].case_id == "NACT_01"
+
+
+def test_missing_clinical_frac_exceeded_raises(tmp_path: Path) -> None:
+    """Dropping more cases than max_missing_clinical_frac allows raises loudly."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01")
+    _write_case(studies, dce_root, "NACT_02")
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\nNACT_02,0\n")
+
+    patient_info_dir = tmp_path / "patient_info"
+    _write_patient_info(patient_info_dir, "NACT_01", age=40, menopausal_status="pre")
+    # NACT_02 has no clinical row -> 1/2 = 50% missing, exceeds a 0.1 threshold.
+
+    with pytest.raises(RuntimeError, match="max_missing_clinical_frac"):
+        VanguardCenterlineDataset(
+            studies,
+            labels_path=labels_csv,
+            dce_root=dce_root,
+            cache_dir=tmp_path / "cache",
+            node_features=("peak_time", "radius"),
+            graph_features=("age",),
+            patient_info_dir=patient_info_dir,
+            max_missing_clinical_frac=0.1,
+        )
