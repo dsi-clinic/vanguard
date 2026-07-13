@@ -2,9 +2,10 @@
 
 Overrides the base MAMA-MIA behavior for the differences identified in
 ``cohorts/README.md``: manifest-driven discovery/identity/timepoints/labels,
-provided CV folds, and sub-source reporting. ``preprocess`` is a pass-through
-because the manifest ships already-preprocessed volumes (``policy_name =
-hfdp_t1_v1``); see the method docstring for the note on design decision 4.
+provided CV folds, and sub-source reporting. ``preprocess`` flips x/z (UChicago
+is stored ``RAS`` where MAMA-MIA is ``LAI``) and then applies the base
+reorientation; see the method docstring for the evidence and the note on design
+decision 4.
 """
 
 from __future__ import annotations
@@ -115,20 +116,37 @@ class UChicagoDataset(DatasetAdapter):
         return labels
 
     def preprocess(self, volume: np.ndarray) -> np.ndarray:
-        """Return the volume unchanged — UChicago data is already preprocessed.
+        """Reorient a raw UChicago volume into the pipeline's processing layout.
 
-        The manifest's ``phase_files`` are preprocessed upstream by Anna's HFDP
-        pipeline (``policy_name = hfdp_t1_v1``) and copied into ``images/``, so no
-        repo-side preprocessing is applied here. Crucially this must NOT fall back
-        to the base MAMA-MIA orientation transform, which would be wrong for this
-        already-oriented ultrafast data.
+        UChicago's NIfTI headers are consistently ``RAS`` (direction diag
+        ``(-1, -1, 1)``) across all three sub-sources, verified against a
+        sample from each. MAMA-MIA's ISPY2/DUKE cases are ``LAI`` (diag
+        ``(1, -1, -1)``) -- flipped in x and z relative to UChicago. Since
+        ``sitk.GetArrayFromImage`` returns arrays in (z, y, x) index order,
+        undoing that x/z sign difference before applying the base class's
+        MAMA-MIA swap+flip means array axes 0 (z) and 2 (x) get flipped here
+        first.
 
-        Note for Anna: this makes design decision 4 (port a frozen copy of the
-        UChicago preprocessing into the repo) unnecessary for the student
-        manifest, since the shipped data is already preprocessed. Revisit only if
-        we ever need to preprocess *raw* UChicago exams inside this pipeline.
+        This was previously an identity pass-through, on the unverified
+        assumption that Anna's HFDP pipeline (``policy_name = hfdp_t1_v1``)
+        already wrote UChicago volumes in the model's target layout. It
+        didn't: feeding the raw array straight through put the thin slice
+        axis where the model expects a large in-plane axis (and vice versa),
+        which is why ``segmentation/predict_fast.py``'s tiling coverage
+        assertion started failing on wide-matrix UChicago phases.
+
+        Note for Anna: NIfTI header orientation isn't reliable across all of
+        MAMA-MIA either -- ISPY1 reports ``PSL`` (a true axis permutation,
+        not just sign flips) yet gets the same fixed transform as
+        ISPY2/DUKE. This flip was chosen from the header comparison above but
+        confirmed by rendering corrected UChicago MIPs and a z-depth
+        progression against a MAMA-MIA reference and matching the anatomical
+        landmarks -- not trusted from headers alone. Still unverified: a pure
+        left-right mirror, which near-symmetric breast anatomy cannot rule out
+        visually. See ``cohorts/README.md`` for the full history.
         """
-        return volume
+        volume = volume[::-1, :, ::-1]
+        return super().preprocess(volume)
 
     def load_folds(self) -> pd.DataFrame:
         """Return the manifest's patient-grouped CV folds as ``(case_id, fold)``.

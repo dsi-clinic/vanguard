@@ -8,7 +8,7 @@ Deliberately not tested here: the exact set of methods each subclass
 overrides. That's an implementation-shape detail that will keep shifting as
 the design evolves; pinning it in a test would make routine changes fail for no
 functional reason. What's tested instead is the *behavior* those overrides are
-responsible for (identity parsing, preprocessing pass-through, provided folds,
+responsible for (identity parsing, preprocessing reorientation, provided folds,
 split-policy defaults, etc.).
 
 A few tests that need a small manifest use a synthetic CSV fixture; none touch
@@ -117,18 +117,20 @@ def test_resample_is_noop_when_no_target_spacing() -> None:
     assert np.array_equal(adapter.resample(volume, (1.0, 1.0, 1.0)), volume)
 
 
-def test_uchicago_preprocess_is_passthrough() -> None:
-    """UChicago data ships preprocessed, so preprocess returns it unchanged.
+def test_uchicago_preprocess_flips_x_and_z_then_applies_base_transform() -> None:
+    """UChicago is RAS where MAMA-MIA is LAI, so x/z are flipped before the base transform.
 
-    It must NOT apply the base MAMA-MIA orientation transform, which would be
-    wrong for the already-oriented ultrafast volumes.
+    SimpleITK returns (z, y, x)-ordered arrays, so undoing that sign difference
+    means flipping array axes 0 and 2 and then deferring to the base MAMA-MIA
+    reorientation. An identity pass-through (the original assumption) put the
+    thin slice axis where the model expects an in-plane axis.
     """
     adapter = UChicagoDataset(root=Path("/data/uchicago"))
     volume = np.arange(2 * 3 * 4).reshape(2, 3, 4)
-    result = adapter.preprocess(volume)
-    assert np.array_equal(result, volume)
-    base_transform = np.swapaxes(np.swapaxes(volume, 0, 2), 0, 1)[::-1]
-    assert not np.array_equal(result, base_transform)
+    flipped = volume[::-1, :, ::-1]
+    expected = np.swapaxes(np.swapaxes(flipped, 0, 2), 0, 1)[::-1]
+    assert np.array_equal(adapter.preprocess(volume), expected)
+    assert not np.array_equal(adapter.preprocess(volume), volume)
 
 
 def test_base_load_folds_is_none() -> None:

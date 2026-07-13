@@ -59,20 +59,25 @@ Genuinely different, so it overrides the handful of methods that differ:
 `load_labels()`, and `load_folds()` are all **manifest-driven** (read from a CSV,
 including a `phase_files` list per row); it sets `default_split_policy =
 "provided"` (ships patient-grouped folds) and `report_by = "dataset"`
-(sub-source breakdown). `preprocess()` is a **documented pass-through** — the
-manifest's phase files are already preprocessed upstream (`policy_name =
-hfdp_t1_v1`), so no repo-side transform is applied (and, importantly, the base
-MAMA-MIA orientation transform is *not* used, which would be wrong here). The
-181-exam student manifest lives at
+(sub-source breakdown). `preprocess()` flips array axes 0 and 2 and then applies
+the base MAMA-MIA reorientation: UChicago's volumes are stored `RAS` where
+MAMA-MIA's are `LAI`, i.e. flipped in x and z. The 181-exam student manifest
+lives at
 `/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/`; select it
 with `configs/uchicago.yaml`.
 
-> **Open item, needs Anna's sign-off:** the pass-through assumes the manifest's
-> `hfdp_t1_v1` volumes are already in the orientation the downstream vessel/graph
-> stages expect. That assumption isn't checked in code and isn't exercised
-> end-to-end yet (no UChicago imaging flows exist until Step 4) — if it's wrong,
-> it will silently feed mis-oriented volumes into Step 4 rather than failing
-> loudly. Flagging it here so it isn't mistaken for a verified fact.
+> **History, and an open item for Anna.** `preprocess()` was originally a
+> pass-through, assuming the manifest's `hfdp_t1_v1` volumes already arrived in
+> the orientation the vessel/graph stages expect. Running the segmentation smoke
+> test showed they don't: the pass-through put the thin slice axis where the model
+> expects a large in-plane axis, which surfaced as a tiling-coverage assertion
+> failure in `predict_fast.py`. The current flip was derived from the NIfTI
+> direction cosines and then **confirmed visually** (MIP + z-progression against a
+> MAMA-MIA reference), because headers alone are not trustworthy here — MAMA-MIA's
+> own ISPY1 reports `PSL`, a true axis permutation, yet gets the same fixed
+> transform as `LAI` ISPY2/DUKE and evidently works. **Still unverified:** a pure
+> left-right mirror, which near-symmetric breast anatomy can't rule out visually.
+> Worth confirming with Anna against the HFDP pipeline's actual output convention.
 
 > Note: `case_dataset_name()` here returns a manifest **sub-source**
 > (`simbiosys`/`uch_nac`/`her2_naclike`), a finer granularity than
