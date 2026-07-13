@@ -106,7 +106,9 @@ class DatasetAdapter:
 
         MAMA-MIA encodes this as the case-id prefix, e.g. ``"ISPY2_045" ->
         "ISPY2"`` (``segmentation/batch_segmentation.py:243``,
-        ``case_id.split("_")[0]``).
+        ``case_id.split("_")[0]``). Note this is cohort granularity; some
+        subclasses (e.g. ``UChicagoDataset``) return a finer sub-source instead
+        — see that override's docstring before combining tables across adapters.
         """
         return case_id.split("_")[0]
 
@@ -195,6 +197,16 @@ class DatasetAdapter:
         from tabular.cohort import load_labels as _load_labels
 
         return _load_labels(self.labels_csv, id_col="case_id", label_col="pcr")
+
+    def load_folds(self) -> pd.DataFrame | None:
+        """Return provided cross-validation folds as ``(case_id, fold)``, or ``None``.
+
+        Base datasets compute their own splits (``default_split_policy ==
+        "compute"``), so they ship no folds and this returns ``None``. A dataset
+        that ships its own folds (``default_split_policy == "provided"``)
+        overrides this to surface them.
+        """
+        return None
 
     # -- file-naming rules (current config patterns) --
 
