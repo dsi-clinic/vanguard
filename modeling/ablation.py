@@ -16,6 +16,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from cohorts.factory import build_adapter_from_config
 from config import DEFAULT_ABLATION_ARMS, to_plain_data
 from features import FEATURE_BLOCK_DESCRIPTIONS, normalize_selected_features
 from tabular.cohort import build_modular_features, load_labels, select_features
@@ -152,7 +153,14 @@ def _prepare_full_dataset(
         toggles.use_clinical = True
     toggles.pop("selected_features", None)
 
-    features_df = build_modular_features(full_config)
+    # Same adapter seam as tabular/train.py (Step 2): None for every config
+    # without a `dataset:` block, so this path stays byte-identical until a
+    # dataset is configured. Keeps the two feature-extraction entry points
+    # consistent rather than having one honor the adapter and the other ignore it.
+    adapter = build_adapter_from_config(full_config)
+    if adapter is not None:
+        logging.info("Using dataset adapter: %s", type(adapter).__name__)
+    features_df = build_modular_features(full_config, adapter=adapter)
     features_df.to_csv(outdir / "features_full_raw.csv", index=False)
 
     label_col = full_config.data_paths.label_column
