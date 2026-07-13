@@ -218,11 +218,10 @@ def correct_phase(
         dtype=np.float64,
     )
     proposed_translation_norm_mm = float(np.linalg.norm(proposed_translation_mm))
-    if proposed_translation_norm_mm > float(settings.max_translation_mm):
-        message = (
-            f"implausible proposed translation: {proposed_translation_norm_mm:.3f} mm"
-        )
-        raise PreprocessingContractError(message)
+    translation_within_bound = bool(
+        np.isfinite(proposed_translation_norm_mm)
+        and proposed_translation_norm_mm <= float(settings.max_translation_mm)
+    )
 
     proposed = ndimage.shift(
         moving_array,
@@ -254,7 +253,8 @@ def correct_phase(
         else float("nan")
     )
     accepted = bool(
-        np.isfinite(proposed_delta)
+        translation_within_bound
+        and np.isfinite(proposed_delta)
         and proposed_delta >= float(settings.minimum_correlation_delta)
     )
     corrected = proposed if accepted else moving_array
@@ -275,7 +275,13 @@ def correct_phase(
         ),
         "transform_accepted": accepted,
         "transform_rejection_reason": (
-            "" if accepted else "nonfinite_or_corr_delta_below_minimum"
+            ""
+            if accepted
+            else (
+                "proposed_translation_exceeds_maximum"
+                if not translation_within_bound
+                else "nonfinite_or_corr_delta_below_minimum"
+            )
         ),
         "proposed_translation_voxels": proposed_shift.tolist(),
         "proposed_translation_mm": proposed_translation_mm.tolist(),

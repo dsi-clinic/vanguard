@@ -24,6 +24,7 @@ from preprocessing.spgr import baseline_relative_enhancement, load_exam, read_ma
 
 TEST_VOLUME_SIZE = 20
 TRANSLATION_TOLERANCE_VOXELS = 0.3
+TIGHT_TRANSLATION_BOUND_MM = 0.5
 
 
 def _gzip_nifti(data: np.ndarray, affine: np.ndarray) -> bytes:
@@ -186,6 +187,29 @@ def test_translation_is_accepted_only_when_same_support_correlation_improves() -
     )
     assert rejected_metrics["transform_accepted"] is False
     np.testing.assert_array_equal(rejected, moving)
+
+    bound_settings = MotionSettings(
+        downsample_xyz=(1, 1, 1),
+        upsample_factor=10,
+        max_translation_mm=TIGHT_TRANSLATION_BOUND_MM,
+    )
+    bounded, _, bounded_metrics = correct_phase(
+        fixed,
+        moving,
+        support=np.ones_like(fixed, dtype=bool),
+        spacing_xyz_mm=np.ones(3),
+        settings=bound_settings,
+    )
+    assert bounded_metrics["transform_accepted"] is False
+    assert (
+        bounded_metrics["transform_rejection_reason"]
+        == "proposed_translation_exceeds_maximum"
+    )
+    assert (
+        float(bounded_metrics["proposed_translation_norm_mm"])
+        > TIGHT_TRANSLATION_BOUND_MM
+    )
+    np.testing.assert_array_equal(bounded, moving)
 
 
 def test_exam_shard_and_merge_publish_a_loadable_motion_manifest(
