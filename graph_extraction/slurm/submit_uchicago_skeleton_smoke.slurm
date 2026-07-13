@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=uc-skel-smoke
-#SBATCH --partition=general
+#SBATCH --partition=tier1q
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=02:00:00
 #SBATCH --output=logs/uc-skel-smoke-%A-%a.out
 #SBATCH --error=logs/uc-skel-smoke-%A-%a.err
 
-set -euo pipefail
+# `general` does not exist on this cluster (see gnn/slurm/submit_gnn_build.slurm);
+# `tier1q` is the confirmed replacement. `-u` (nounset) is deliberately not set
+# (matching segmentation/slurm/submit_uchicago_segmentation_smoke.slurm's
+# `set -eo pipefail`) -- it tripped on an unset variable inside the system
+# /etc/bashrc during `source ~/.bashrc || true`, aborting every array task
+# before it reached any of this script's own work (all 5 tasks of job 12844891
+# failed in ~2s with only a bashrc stderr line and no other output).
+set -eo pipefail
 
 cd "${REPO_ROOT}"
 source ~/.bashrc || true
