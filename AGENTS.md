@@ -64,3 +64,10 @@ Derived outputs should go in clearly named output folders with enough provenance
 If `agents.local.md` exists, read it after this file.
 
 `agents.local.md` is for personal preferences, student-specific context, and temporary working notes. It should not be committed.
+
+## Data Visualization Guidelines
+- Use color only to encode information, not for decoration.
+- If all bars represent the same type of data, use a single, consistent color.
+- Reserve contrasting colors only to highlight a specific result or distinguish meaningful categories.
+- Avoid unnecessary visual elements ("chartjunk") such as excessive colors, gradients, 3D effects, and heavy styling.
+- Favor clean, simple figures that emphasize the data rather than the design.
