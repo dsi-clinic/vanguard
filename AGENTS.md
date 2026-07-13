@@ -26,6 +26,9 @@ These are shared instructions for AI coding agents working in this repo.
   It should point to the Vanguard environment.
 - One-off command pattern:
   `micromamba run -n vanguard python <script.py>`
+- Every checked-in `.slurm` script self-activates the environment via
+  `eval "$(micromamba shell hook -s bash)"; micromamba activate vanguard` -- you don't need to
+  activate it separately before `sbatch`.
 
 ## HPC / Slurm
 - Do not run heavy compute on the head node.
@@ -38,6 +41,24 @@ These are shared instructions for AI coding agents working in this repo.
 - Standard submit pattern:
   `sbatch path/to/job.sbatch`
 - If a job fails, inspect the Slurm log before rerunning.
+- No `submit.py`/`submitit` entrypoint exists in this repo -- checked-in `.slurm` sbatch scripts
+  (under `slurm/`, `gnn/slurm/`, `deepsets/slurm/`) are the launch convention.
+
+### Site facts (this cluster)
+Recorded from live `sinfo`/`sacctmgr` inspection. Refresh only if commands contradict this or
+admins change policy.
+
+- **Default account**: `karczmar-lab`
+- **Default partition**: `tier1q` (10-day time limit, large and typically has idle capacity;
+  this is what every current `gnn/slurm/*.slurm` and `deepsets/slurm/*.slurm` script uses).
+  The older `--partition=general` referenced by some `slurm/*.slurm` scripts does **not** exist
+  on this cluster -- don't use it.
+- **Preemptible/overflow QoS**: none identified for this account (QOS shows
+  `nonpreemptible,norm...`). `express` (6h limit, 128 nodes) exists as a separate partition for
+  short jobs, but isn't a preemptible tier -- treat it as a short-job option, not overflow
+  capacity to prefer by default.
+- **Important limits**: `tier1q` allows up to 10-day jobs; plenty of idle capacity as of last
+  check. No special per-job core/mem caps observed beyond standard `--cpus-per-task`/`--mem`.
 
 ## Vanguard Data Layout
 These placeholders should be filled in as the team confirms paths:
