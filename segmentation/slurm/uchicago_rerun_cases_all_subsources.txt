@@ -1,0 +1,15 @@
+# UChicago rerun cases: 2 exams per sub-source (all three covered).
+# Deterministic: first 2 exam_ids of each 'dataset' group, manifest order.
+# Used for the 2026-07-14 re-run of the vessel smoke test on the CORRECTED
+# preprocess() (Anna's a8f8bcb, array-order only). The earlier 5-patient runs
+# were all her2_naclike AND ran under the mirrored transform -- both fixed here.
+#
+# her2_naclike
+her2_naclike_1_3_460916236258738760757611796646821159407878075922
+her2_naclike_1_3_832679562131043796836036911926759503134022916607
+# simbiosys
+simbiosys_1_3_1182546865420849063085610933350647997753785791330
+simbiosys_1_3_762581036591479695896658294531625749619654724689
+# uch_nac
+uch_nac_1_3_1019907248185347538207292859618046285193584113217
+uch_nac_1_3_308777118052852895330150307412056530807398339215
