@@ -82,6 +82,12 @@ VARIANTS: dict[str, type[UChicagoDataset]] = {
     "order_only": UChicagoDataset,  # current HEAD (a8f8bcb)
 }
 
+# Laterality is read off array axis 1, which is the left-right axis only once the
+# volume is in the model's (rows, cols, slices) layout. Passthrough leaves it in
+# SimpleITK's (slices, rows, cols), so axis 1 is rows there -- reading a left/right
+# centroid off it would be meaningless, not merely wrong.
+LATERALITY_READABLE = {"mirrored", "order_only"}
+
 
 MASK_THRESHOLD = 0.5
 LABEL_LEFT, LABEL_RIGHT = 1, 2  # BreastDivider mask labels (0 = background)
@@ -201,7 +207,11 @@ def main() -> None:
             labelled_t = adapter.preprocess(labelled.astype(np.float32))
 
             d = dice(pred, gt)
-            side = left_breast_side(labelled_t)
+            side = (
+                left_breast_side(labelled_t)
+                if name in LATERALITY_READABLE
+                else "n/a (not in (rows, cols, slices) layout; axis 1 is not left-right)"
+            )
             print(f"  {case_id[:28]:30s} dice={d:.3f}  left breast -> {side}")
             rows.append(
                 {
