@@ -56,24 +56,50 @@ cohort label.
 ### `UChicagoDataset(root, manifest_csv=None)` — `uchicago.py`
 Genuinely different, so it overrides the handful of methods that differ:
 `discover_cases()`, `case_dataset_name()`, `group_key()`, `load_timepoints()`,
-and `load_labels()` are all **manifest-driven** (read from a CSV, including a
-`phase_files` list per row); it sets `default_split_policy = "provided"` (ships
-patient-grouped folds) and `report_by = "dataset"` (sub-source breakdown).
-`preprocess()` currently **raises `NotImplementedError`** on purpose — the real
-ultrafast preprocessing is a frozen-copy port that hasn't landed yet, and we'd
-rather fail loudly than silently apply the wrong (MAMA-MIA) transform.
+`load_labels()`, and `load_folds()` are all **manifest-driven** (read from a CSV,
+including a `phase_files` list per row); it sets `default_split_policy =
+"provided"` (ships patient-grouped folds) and `report_by = "dataset"`
+(sub-source breakdown). `preprocess()` is a **documented pass-through** — the
+manifest's phase files are already preprocessed upstream (`policy_name =
+hfdp_t1_v1`), so no repo-side transform is applied (and, importantly, the base
+MAMA-MIA orientation transform is *not* used, which would be wrong here). The
+181-exam student manifest lives at
+`/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/`; select it
+with `configs/uchicago.yaml`.
+
+> **Open item, needs Anna's sign-off:** the pass-through assumes the manifest's
+> `hfdp_t1_v1` volumes are already in the orientation the downstream vessel/graph
+> stages expect. That assumption isn't checked in code and isn't exercised
+> end-to-end yet (no UChicago imaging flows exist until Step 4) — if it's wrong,
+> it will silently feed mis-oriented volumes into Step 4 rather than failing
+> loudly. Flagging it here so it isn't mistaken for a verified fact.
+
+> Note: `case_dataset_name()` here returns a manifest **sub-source**
+> (`simbiosys`/`uch_nac`/`her2_naclike`), a finer granularity than
+> `MamaMiaDataset`'s cohort (`"ISPY2"`). The `dataset` column means different
+> things across adapters — fine while runs stay separate, but flag it before
+> building a combined MAMA-MIA+UChicago table keyed on `dataset`.
+
+`load_timepoints()` rebases each `phase_files` path from the manifest's recorded
+`preproc_root` onto the injected `root / "images"`, so moving the manifest
+directory (decision 5) doesn't leave it pointing at a stale location.
 
 ---
 
 ## Selecting a dataset from run config — `factory.py`
 
-Two functions are the only seams that read run config:
+These functions are the only seams that read run config:
 
 - `build_adapter_from_config(config)` reads the `dataset:` block and returns the
   right adapter, or **`None`** when no dataset is configured (so callers fall
   back to today's behavior).
 - `resolve_split_policy(config, adapter)` applies the run-config `split_policy`
   knob (`auto`/`compute`/`provided`) on top of the adapter's default.
+- `resolve_folds(config, adapter)` ties the two together for the caller: it
+  returns the `(case_id, fold)` table to use when the policy resolves to
+  `provided`, or `None` when the run should compute its own splits (raising if
+  `provided` is asked of a dataset that ships no folds). This is parsing and
+  validation only — see below for how (and whether) a run actually consumes it.
 
 The `dataset:` block in run config (`config.py` `DEFAULT_CONFIG`):
 
@@ -109,6 +135,37 @@ points wire it the same way: `tabular/train.py` (`run_pipeline_from_config`) and
 `scripts/validate_adapter_feature_parity.py` (byte-identical MAMA-MIA output with
 vs. without the adapter). Other stages still run the pre-adapter way and are
 migrated one at a time.
+
+**Adopted so far — provided CV folds.** `tabular/train.py`'s
+`run_pipeline_from_config` calls `resolve_folds(config, adapter)` and, when it
+returns a fold table, merges it onto the feature table as the
+`model_params.split_col` column (`_apply_provided_folds`). This makes the folds
+*available*; it does not by itself change which splits a run trains on. A run
+opts in separately by setting `model_params.split_mode: predefined` (existing
+infra in `evaluation/build_splits.py`, previously used for hardcoded fold
+columns) with `split_col` matching the merged name — see `configs/uchicago.yaml`
+for the pairing. Split *policy* (does the dataset have folds to offer) and split
+*mode* (does this run use them) are deliberately separate knobs, per decision 3.
+`prepare_evaluation_context` excludes `split_col` from the model's input
+features unconditionally, so the fold assignment itself can never leak in as a
+predictor.
+
+Fold attachment is **fail-closed**: `_apply_provided_folds` rejects a `split_col`
+that collides with `case_id` or the label column, rejects a provided-fold table
+that maps a case more than once, merges `validate="one_to_one"` (so a duplicate
+`case_id` on either side is an error, not a case fanned across folds), and
+requires every modeled case to receive exactly one non-null fold. Any of these
+raises rather than silently corrupting cross-validation.
+
+**Adopted so far — patient grouping for computed folds.** When a run instead
+*computes* folds (`split_policy: compute`), `_apply_group_keys` fills
+`model_params.group_col` from `adapter.group_key(case_id)` (unless that column is
+already present), so `create_splits_for_dataframe` does grouped CV that keeps a
+case's group together — for UChicago, all exams of one patient (`patient_key`;
+181 exams from 143 patients). When a dataset adapter is configured,
+`prepare_evaluation_context` drops `group_col` from the model features, so an
+identity-like grouping key can never leak in as a predictor. See
+`configs/uchicago.yaml`.
 
 ---
 
