@@ -184,10 +184,10 @@ def preprocess_image(
         adapter: Optional dataset adapter (Step 4 of the multi-dataset
             migration, see cohorts/README.md). When given, the geometry
             reorientation is taken from ``adapter.preprocess`` instead of the
-            hardcoded MAMA-MIA axis transform -- e.g. UChicago ships
-            already-oriented data and overrides this to a pass-through. When
-            ``None`` (every caller today) the transform is byte-for-byte
-            unchanged. Intensity normalization (``normalize_image``/
+            hardcoded MAMA-MIA axis transform -- e.g. UChicago preserves its
+            HFDP anatomical directions and converts only array order. When
+            ``None`` the transform is byte-for-byte unchanged. Intensity
+            normalization (``normalize_image``/
             ``zscore_image``) is applied by this stage either way, matching the
             adapter contract in cohorts/base.py.
 

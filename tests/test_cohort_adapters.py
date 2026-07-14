@@ -117,20 +117,16 @@ def test_resample_is_noop_when_no_target_spacing() -> None:
     assert np.array_equal(adapter.resample(volume, (1.0, 1.0, 1.0)), volume)
 
 
-def test_uchicago_preprocess_flips_x_and_z_then_applies_base_transform() -> None:
-    """UChicago is RAS where MAMA-MIA is LAI, so x/z are flipped before the base transform.
-
-    SimpleITK returns (z, y, x)-ordered arrays, so undoing that sign difference
-    means flipping array axes 0 and 2 and then deferring to the base MAMA-MIA
-    reorientation. An identity pass-through (the original assumption) put the
-    thin slice axis where the model expects an in-plane axis.
-    """
+def test_uchicago_preprocess_changes_array_order_without_flipping() -> None:
+    """Map SimpleITK ``(z, y, x)`` to model ``(y, x, z)`` exactly."""
     adapter = UChicagoDataset(root=Path("/data/uchicago"))
     volume = np.arange(2 * 3 * 4).reshape(2, 3, 4)
-    flipped = volume[::-1, :, ::-1]
-    expected = np.swapaxes(np.swapaxes(flipped, 0, 2), 0, 1)[::-1]
-    assert np.array_equal(adapter.preprocess(volume), expected)
-    assert not np.array_equal(adapter.preprocess(volume), volume)
+    result = adapter.preprocess(volume)
+
+    assert result.shape == (3, 4, 2)
+    assert result[0, 0, 0] == volume[0, 0, 0]
+    assert result[2, 3, 1] == volume[1, 2, 3]
+    assert result[1, 2, 0] == volume[0, 1, 2]
 
 
 def test_base_load_folds_is_none() -> None:

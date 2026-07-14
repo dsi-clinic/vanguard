@@ -21,13 +21,11 @@ set -eo pipefail
 # memory at once (Dataset3DSimple/Dataset3DDivided) -- 5 patients x 24 phases
 # = 120 full volumes resident at once.
 #
-# ORIENTATION (was a known risk; now checked): UChicagoDataset.preprocess() used
-# to be a pass-through, assuming the manifest's images already arrived correctly
-# oriented for this model. That was wrong -- it fed mis-oriented volumes in and
-# crashed inference on a tiling-coverage assertion. preprocess() now flips x/z
-# (RAS -> LAI) before the base reorientation; see cohorts/README.md. One residual
-# unknown: a pure left-right mirror can't be ruled out from near-symmetric breast
-# anatomy, so treat left/right-specific conclusions from this run as provisional.
+# ORIENTATION: HFDP already canonicalized the anatomical axis directions.
+# SimpleITK returns each phase as (z, y, x), so UChicagoDataset.preprocess()
+# converts array order only to the model's (y, x, z). A pass-through put the thin
+# slice axis in the wrong model dimension; header-derived flips overcorrected the
+# data. See cohorts/README.md for the validated source-to-model contract.
 #
 # Submit from the repo root:
 #   PROJECT_ROOT="$(pwd)" sbatch segmentation/slurm/submit_uchicago_segmentation_smoke.slurm

@@ -59,25 +59,20 @@ Genuinely different, so it overrides the handful of methods that differ:
 `load_labels()`, and `load_folds()` are all **manifest-driven** (read from a CSV,
 including a `phase_files` list per row); it sets `default_split_policy =
 "provided"` (ships patient-grouped folds) and `report_by = "dataset"`
-(sub-source breakdown). `preprocess()` flips array axes 0 and 2 and then applies
-the base MAMA-MIA reorientation: UChicago's volumes are stored `RAS` where
-MAMA-MIA's are `LAI`, i.e. flipped in x and z. The 181-exam student manifest
-lives at
+(sub-source breakdown). UChicago phase data is already canonicalized in HFDP
+array space, so `preprocess()` only converts SimpleITK's `(z, y, x)` order to
+the pinned model's `(y, x, z)` order. It does not infer extra flips from the
+derived NIfTI affine. The 181-exam student manifest lives at
 `/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/`; select it
 with `configs/uchicago.yaml`.
 
-> **History, and an open item for Anna.** `preprocess()` was originally a
-> pass-through, assuming the manifest's `hfdp_t1_v1` volumes already arrived in
-> the orientation the vessel/graph stages expect. Running the segmentation smoke
-> test showed they don't: the pass-through put the thin slice axis where the model
-> expects a large in-plane axis, which surfaced as a tiling-coverage assertion
-> failure in `predict_fast.py`. The current flip was derived from the NIfTI
-> direction cosines and then **confirmed visually** (MIP + z-progression against a
-> MAMA-MIA reference), because headers alone are not trustworthy here — MAMA-MIA's
-> own ISPY1 reports `PSL`, a true axis permutation, yet gets the same fixed
-> transform as `LAI` ISPY2/DUKE and evidently works. **Still unverified:** a pure
-> left-right mirror, which near-symmetric breast anatomy can't rule out visually.
-> Worth confirming with Anna against the HFDP pipeline's actual output convention.
+> **Preprocessing contract.** The original pass-through preserved anatomical
+> directions but left the thin slice axis in the model's first spatial dimension,
+> causing the tiling-coverage assertion. A later header-derived RAS-to-LAI fix
+> overcorrected the already-canonicalized HFDP arrays. The order-only conversion
+> was checked through the pinned breast model on one phase-0 case from each
+> UChicago sub-source; it restored bilateral breast-mask alignment without
+> introducing an anatomical flip.
 
 > Note: `case_dataset_name()` here returns a manifest **sub-source**
 > (`simbiosys`/`uch_nac`/`her2_naclike`), a finer granularity than
