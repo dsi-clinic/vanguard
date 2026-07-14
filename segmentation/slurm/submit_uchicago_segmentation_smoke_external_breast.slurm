@@ -55,11 +55,22 @@ PERSIST_DIR="${PERSIST_DIR:-/ess/scratch/scratch1/t-9sbose/uchicago_breast_masks
 PATIENT_LIMIT="${PATIENT_LIMIT:-5}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 
+# CASE_IDS (optional): see submit_uchicago_segmentation_smoke.slurm -- selects
+# exams explicitly instead of taking the first PATIENT_LIMIT in discovery order.
+CASE_IDS="${CASE_IDS:-}"
+if [[ -n "${CASE_IDS}" ]]; then
+  SELECT_ARGS=(--case-ids "${CASE_IDS}")
+  SELECT_DESC="case ids from ${CASE_IDS}"
+else
+  SELECT_ARGS=(--patient-limit "${PATIENT_LIMIT}")
+  SELECT_DESC="first ${PATIENT_LIMIT} discovered patients"
+fi
+
 TMPDIR="/tmp/uc_seg_smoke_ext_${SLURM_JOB_ID:-local}"
 mkdir -p "${TMPDIR}" "${PERSIST_DIR}"
 trap 'rm -rf "${TMPDIR}" || true' EXIT
 
-echo "=== UChicago Segmentation Smoke Test -- EXTERNAL breast masks (${PATIENT_LIMIT} patients) ==="
+echo "=== UChicago Segmentation Smoke Test -- EXTERNAL breast masks (${SELECT_DESC}) ==="
 echo "Node: $(hostname)  GPU: ${CUDA_VISIBLE_DEVICES:-?}  Date: $(date)"
 echo "Manifest root: ${UCHICAGO_ROOT}"
 echo "Output: ${OUTPUT_DIR}"
@@ -73,7 +84,7 @@ python -u "${PROJECT_ROOT}/segmentation/batch_segmentation.py" \
   --temp-dir           "${TMPDIR}" \
   --breast-model-path  "${BREAST_MODEL}" \
   --vessel-model-path  "${VESSEL_MODEL}" \
-  --patient-limit      "${PATIENT_LIMIT}" \
+  "${SELECT_ARGS[@]}" \
   --batch-size         "${BATCH_SIZE}" \
   --num-workers        3 \
   --preprocess-workers 4 \

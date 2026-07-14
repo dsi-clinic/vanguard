@@ -1,0 +1,24 @@
+# UChicago QC cases: the first 3 exams of each of the two sub-sources that the
+# original 5-patient smoke test never reached.
+#
+# --patient-limit N can only take the FIRST N cases in discovery order, and the
+# manifest is grouped by sub-source (simbiosys, then uch_nac, then her2_naclike
+# -- and discovery order puts her2_naclike's exams first). That is the only
+# reason every earlier smoke run was 100% her2_naclike: not a sampling choice,
+# an artifact of the limit flag. Pass this file to batch_segmentation.py's
+# --case-ids to select explicitly instead.
+#
+# Selection rule (deterministic, no cherry-picking): the first 3 exams of each
+# sub-source in manifest/discovery order -- the same "first N in discovery
+# order" rule that chose the her2_naclike 5. All 6 have ground-truth
+# BreastDivider whole-breast masks in the manifest TAR, so the external-mask
+# run's fail-closed validation passes for all of them.
+#
+# simbiosys (86 exams in the manifest)
+simbiosys_1_3_1182546865420849063085610933350647997753785791330
+simbiosys_1_3_762581036591479695896658294531625749619654724689
+simbiosys_1_3_1105771244081795911622875098820358030057064206519
+# uch_nac (60 exams in the manifest)
+uch_nac_1_3_1019907248185347538207292859618046285193584113217
+uch_nac_1_3_308777118052852895330150307412056530807398339215
+uch_nac_1_3_1250630811977034081483705511958488817669131375036

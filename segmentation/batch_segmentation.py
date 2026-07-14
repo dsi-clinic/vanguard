@@ -31,6 +31,8 @@ import SimpleITK as sitk
 import torch
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from cohorts.base import DatasetAdapter
 
 _HERE = Path(__file__).resolve().parent
@@ -84,10 +86,27 @@ def find_nii_files(images_dir: str) -> list[tuple[str, str]]:
     return nii_files
 
 
+def _parse_case_ids(value: str | None) -> list[str] | None:
+    """Resolve ``--case-ids`` (a comma-separated list, or a file of one per line)."""
+    if value is None:
+        return None
+    path = Path(value)
+    if path.is_file():
+        lines = path.read_text().splitlines()
+        ids = [s.strip() for s in lines]
+    else:
+        ids = [s.strip() for s in value.split(",")]
+    ids = [s for s in ids if s and not s.startswith("#")]
+    if not ids:
+        raise ValueError(f"--case-ids resolved to an empty selection: {value!r}")
+    return ids
+
+
 def find_case_files(
     images_dir: str,
     adapter: DatasetAdapter | None = None,
     case_limit: int | None = None,
+    select_cases: Sequence[str] | None = None,
 ) -> list[tuple[str, str]]:
     """Enumerate (case_id, file_path) pairs to preprocess.
 
@@ -104,11 +123,30 @@ def find_case_files(
     ``None``, this function is exactly :func:`find_nii_files` and ``case_limit``
     is ignored; the CLI keeps applying ``--patient-limit`` post-hoc for that
     path, unchanged from before Step 4.
+
+    ``select_cases`` picks an explicit set of case ids instead of a prefix of
+    discovery order. ``case_limit`` alone can only ever reach the *first* N
+    discovered cases, which on a manifest grouped by sub-source (UChicago:
+    simbiosys, then uch_nac, then her2_naclike) means whole sub-sources are
+    unreachable -- the reason the first smoke tests only ever covered
+    her2_naclike. Selection is fail-closed: an id that discovery does not know
+    raises rather than being silently dropped, so a typo'd exam id can't quietly
+    shrink the run. Takes precedence over ``case_limit``.
     """
     if adapter is None:
         return find_nii_files(images_dir)
     case_ids = adapter.discover_cases()
-    if case_limit is not None:
+    if select_cases is not None:
+        known = set(case_ids)
+        unknown = [c for c in select_cases if c not in known]
+        if unknown:
+            raise ValueError(
+                f"{len(unknown)} requested case id(s) are not in "
+                f"{type(adapter).__name__}.discover_cases(): {unknown}"
+            )
+        wanted = set(select_cases)
+        case_ids = [c for c in case_ids if c in wanted]
+    elif case_limit is not None:
         case_ids = case_ids[:case_limit]
     pairs: list[tuple[str, str]] = []
     for case_id in case_ids:
@@ -406,6 +444,18 @@ def main() -> None:
         default=str(_SUBMODULE / "trained_models" / "dv_model.pth"),
     )
     p.add_argument("--patient-limit", type=int, default=None)
+    p.add_argument(
+        "--case-ids",
+        default=None,
+        help=(
+            "Adapter mode only: run exactly these case ids instead of the first "
+            "--patient-limit discovered ones. Either a comma-separated list or a "
+            "path to a file with one case id per line (blank lines and #comments "
+            "ignored). Fail-closed: an id discovery does not know raises. Needed "
+            "to reach cases outside the head of discovery order -- e.g. UChicago's "
+            "uch_nac/her2_naclike sub-sources, which --patient-limit cannot reach."
+        ),
+    )
     p.add_argument("--file-start", type=int, default=None)
     p.add_argument("--file-end", type=int, default=None)
     p.add_argument("--batch-size", type=int, default=16)
@@ -503,12 +553,18 @@ def main() -> None:
 
     if adapter is not None:
         print(f"Discovering cases via {type(adapter).__name__}...")
+        select_cases = _parse_case_ids(args.case_ids)
+        if select_cases is not None:
+            print(f"Explicit case selection: {len(select_cases)} case(s)")
         # Case-level limit applied before file expansion (see find_case_files):
         # a file-list-level limit would be imprecise once a case has more than
         # one phase file.
         nii_files = sorted(
             find_case_files(
-                args.images_dir, adapter=adapter, case_limit=args.patient_limit
+                args.images_dir,
+                adapter=adapter,
+                case_limit=args.patient_limit,
+                select_cases=select_cases,
             ),
             key=lambda x: (x[0], str(x[1])),
         )
