@@ -1,0 +1,34 @@
+# UChicago internal ultrafast DCE dataset (181 labeled exams).
+#
+# Step 3 of the multi-dataset migration: this config defines the dataset so the
+# adapter factory (cohorts.build_adapter_from_config) builds a UChicagoDataset.
+# It exercises the manifest-driven adapter path — case discovery, labels,
+# provided CV folds, and sub-source reporting — none of which needs the vessel
+# pipeline. The imaging pipeline (segmentation -> graph -> features) is not wired
+# for UChicago yet, so this config is not a full training run.
+#
+# See cohorts/README.md for the adapter contract and how stages consume it.
+
+dataset:
+  name: uchicago
+  cohort: null   # UChicago is not cohort-partitioned like MAMA-MIA
+  root: /gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest
+  split_policy: auto   # -> "provided": use the manifest's patient-grouped fold column
+
+# split_policy: provided only resolves *which* folds exist; a run must also opt
+# in to actually using them (tabular/train.py merges the provided fold column
+# onto the feature table either way, per design decision 3 -- see
+# cohorts/README.md). These two lines are that opt-in and pair with split_col
+# "fold", the name tabular/train.py merges the provided folds under by default.
+model_params:
+  split_mode: predefined
+  split_col: fold
+  # If a run overrides to split_policy: compute (recompute folds instead of using
+  # the shipped ones), keep same-patient exams together: the manifest has 181
+  # exams from 143 patients (36 patients with >1 exam). _apply_group_keys fills
+  # patient_key from UChicagoDataset.group_key(); group_col names it here so
+  # create_splits_for_dataframe does patient-grouped, pcr-stratified CV rather
+  # than leaking a patient across train/validation. patient_key is dropped from
+  # model features (it is an identity, not a predictor).
+  use_group_split: true
+  group_col: patient_key

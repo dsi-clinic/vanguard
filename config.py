@@ -186,6 +186,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "gnn_dataset_include": None,
         "gnn_allow_manifest_mismatch": False,
     },
+    # Dataset-adapter selection (multi-dataset redesign, Step 1). Read only by
+    # cohorts/factory.py; no pipeline stage consumes it yet. When ``name`` is
+    # None the factory returns no adapter and the pipeline uses today's behavior.
+    "dataset": {
+        "name": None,  # "mamamia" | "uchicago"
+        "cohort": None,  # mamamia only: "duke" | "ispy1" | "ispy2" | "nact"
+        # dataset_root: on-disk base dir, injected into the adapter (§10 decision 5).
+        "root": "",
+        # split_policy knob (§10 decision 3): "auto" defers to the adapter's
+        # default; "compute"/"provided" force that policy for the run.
+        "split_policy": "auto",
+    },
     "ablation_arms": deepcopy(DEFAULT_ABLATION_ARMS),
     # Optional multipliers for run_ablation_matrix (Issue #116 / #117 style experiments).
     "model_families": None,
