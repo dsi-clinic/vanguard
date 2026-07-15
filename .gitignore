@@ -216,6 +216,7 @@ analysis/issue121_figures/*.png
 NOTES.md
 notebooks/
 LAB_NOTEBOOK.md
+/LAB_NOTEBOOK.md
 
 # Local AI Agent Config 
 agents.local.md
@@ -226,5 +227,11 @@ sample_data/expert_tumors/
 repomix-output.xml
 gmon.out
 HANDOFF_2026-06-29.md
+qc/
 
-/LAB_NOTEBOOK.md
+
+# Presentations
+presentations/
+
+# Design Docs
+docs/design/
