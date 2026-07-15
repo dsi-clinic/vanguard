@@ -262,7 +262,7 @@ def test_cache_manifest_written_and_validated_on_reload(
     assert manifest["label_column"] == "pcr"
     assert manifest["node_mode"] == "voxel"
     assert manifest["node_features"] == ["peak_time", "radius"]
-    assert manifest["feature_source"] == "raw_dce"
+    assert manifest["feature_source"] == "raw_dce_physical_time_sidecar_v2"
     assert manifest["num_graphs"] == 1
     assert manifest["label_counts"] == {"1": 1}
     assert manifest["code_commit"]

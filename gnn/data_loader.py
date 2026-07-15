@@ -46,7 +46,11 @@ import matplotlib.pyplot as plt
 
 from config import DEFAULT_CONFIG
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_build_time_plots
-from gnn.raw_dce import discover_raw_dce_paths, load_raw_dce_series
+from gnn.raw_dce import (
+    discover_raw_dce_paths,
+    load_raw_dce_series,
+    load_raw_dce_times,
+)
 from graph_extraction.constants import NDIM_3D
 from graph_extraction.feature_stats import (
     _arrival_index_from_enhancement,
@@ -80,7 +84,7 @@ _HIST_BINS = 50
 # every cache_manifest.json so a manifest from before this migration -- or a
 # hypothetical future vessel_segmentation-sourced build -- is never silently
 # treated as compatible with the current code.
-_FEATURE_SOURCE = "raw_dce"
+_FEATURE_SOURCE = "raw_dce_physical_time_sidecar_v2"
 
 # Maps a requested node-feature name to the per-node ``Data`` attribute used to
 # populate the corresponding column of ``data.x``.
@@ -184,13 +188,21 @@ def _load_study_timepoints(case_id: str, study_dir: Path) -> list[int]:
     return [int(t) for t in study_timepoints]
 
 
-def _time_axis_from_study_timepoints(study_timepoints: list[int]) -> np.ndarray:
+def _time_axis_from_study_timepoints(
+    study_timepoints: list[int],
+    physical_times_seconds: np.ndarray | None = None,
+) -> np.ndarray:
     """Build a strictly increasing time axis, mirroring ``features.kinematic``.
 
-    Falls back to plain timepoint indices (``0..T-1``) if the recorded
-    timepoints are not finite and strictly increasing.
+    Physical acquisition seconds take precedence when the Vanguard sidecar is
+    present. Legacy cohorts use their recorded timepoint indices. Either input
+    falls back to ``0..T-1`` if it is not finite and strictly increasing.
     """
-    time_axis = np.asarray(study_timepoints, dtype=float)
+    time_axis = (
+        np.asarray(physical_times_seconds, dtype=float)
+        if physical_times_seconds is not None
+        else np.asarray(study_timepoints, dtype=float)
+    )
     if not np.all(np.isfinite(time_axis)) or np.any(np.diff(time_axis) <= 0.0):
         return np.arange(len(study_timepoints), dtype=float)
     return time_axis
@@ -357,13 +369,16 @@ def _build_case(
     with _stage_timer(stage_samples, "timeseries_load"):
         dce_paths = discover_raw_dce_paths(dce_root, case_id, study_timepoints)
         dce_4d = load_raw_dce_series(dce_paths, expected_shape_zyx=support.shape)
+        physical_times_seconds = load_raw_dce_times(dce_root, case_id, study_timepoints)
     if dce_4d.shape[1:] != support.shape:
         raise ValueError(
             f"Aligned raw DCE shape for {case_id} {dce_4d.shape[1:]} does not "
             f"match support mask shape {support.shape}"
         )
     num_timepoints = int(dce_4d.shape[0])
-    time_axis = _time_axis_from_study_timepoints(study_timepoints)
+    time_axis = _time_axis_from_study_timepoints(
+        study_timepoints, physical_times_seconds
+    )
 
     with _stage_timer(stage_samples, "peak_time"):
         _attach_node_features(

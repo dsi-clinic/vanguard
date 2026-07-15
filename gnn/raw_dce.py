@@ -25,6 +25,7 @@ import SimpleITK as sitk
 from deepsets.volume_align import align_zyx_4d_to_shape
 
 _DCE_PHASE_PATTERN = "{case_id}_{timepoint:04d}.nii.gz"
+_VANGUARD_TIMES_NAME = "ufast_times_seconds.npy"
 
 
 def discover_raw_dce_paths(
@@ -44,6 +45,35 @@ def discover_raw_dce_paths(
             raise FileNotFoundError(f"case={case_id}: missing raw DCE phase {path}")
         paths.append(path)
     return paths
+
+
+def load_raw_dce_times(
+    dce_root: Path,
+    case_id: str,
+    timepoints: list[int],
+) -> np.ndarray | None:
+    """Load Vanguard physical acquisition seconds when the sidecar is present.
+
+    Legacy cohorts do not provide the sidecar and return ``None`` so their
+    established index-time behavior remains explicit at the caller.
+    """
+    path = Path(dce_root) / case_id / _VANGUARD_TIMES_NAME
+    if not path.is_file():
+        return None
+    all_times = np.asarray(np.load(path, allow_pickle=False), dtype=np.float64)
+    if all_times.ndim != 1:
+        raise ValueError(f"case={case_id}: physical time sidecar is not 1D: {path}")
+    indices = np.asarray(timepoints, dtype=int)
+    if np.any(indices < 0) or np.any(indices >= all_times.size):
+        raise IndexError(
+            f"case={case_id}: timepoint indices exceed physical time sidecar {path}"
+        )
+    selected = all_times[indices]
+    if not np.all(np.isfinite(selected)) or np.any(np.diff(selected) <= 0.0):
+        raise ValueError(
+            f"case={case_id}: physical acquisition seconds are not finite and increasing"
+        )
+    return selected
 
 
 def load_raw_dce_series(
