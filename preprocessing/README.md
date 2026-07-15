@@ -89,3 +89,30 @@ and AUC use physical seconds rather than filename indices.
 
 Raw archives and inventories are immutable inputs and must not be deleted or
 modified after producing a derivative.
+
+## Shared UChicago source data
+
+The reviewed native HR series for every exam in the internal UFAST manifest
+are staged at:
+
+```text
+/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/high_resolution_source_dicom
+```
+
+Use `dicom_file_manifest.parquet` for ZIP-backed HR loading and the adjacent
+`dce2d_internal_ultrafast_with_high_resolution_manifest.csv` for the one-to-one
+HR/UFAST exam linkage. The original UFAST manifest is unchanged. The shared
+manifest has no patient columns or source member names, but the byte-preserved
+DICOM payloads are not deidentified and must stay in the restricted lab share.
+
+The selection is explicit and reviewed: 179 exams have one complete native HR
+series. One HITS exam has a single shared HR/UFAST acquisition. One Siemens
+exam has seven DCE phases stored as separate series plus a static HR series;
+all eight series are retained, but the exam is marked
+`split_series_not_runnable` rather than misrepresenting its legacy 84 exported
+images as physical UFAST phases.
+
+`preprocessing/stage_high_resolution_dicom.py` and the three
+`slurm/*_high_resolution_dicom.slurm` wrappers reproduce the restricted copy,
+manifest reduction, and SHA-256 verification. The source selection manifest
+and per-exam checksums live beside the staged data.
