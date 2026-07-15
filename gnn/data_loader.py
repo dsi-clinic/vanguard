@@ -47,6 +47,7 @@ import matplotlib.pyplot as plt
 from clinical_features import load_clinical_from_excel, load_clinical_from_patient_info
 from config import DEFAULT_CONFIG
 from gnn.clinical import ALL_CLINICAL_COLUMNS, build_clinical_feature_matrix
+from gnn.graph_derived import GRAPH_DERIVED_COLUMNS, build_graph_derived_feature_matrix
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_build_time_plots
 from gnn.junction_graph import (
     JUNCTION_EDGE_FEATURE_ATTR,
@@ -54,6 +55,7 @@ from gnn.junction_graph import (
     build_junction_graph,
 )
 from gnn.kinetics import node_kinetic_features, time_axis_from_study_timepoints
+from gnn.morphometry import MORPHOMETRY_COLUMNS, build_morphometry_feature_matrix
 from gnn.raw_dce import discover_raw_dce_paths, load_raw_dce_series
 from gnn.segment_graph import SEGMENT_FEATURE_ATTR, build_segment_line_graph
 from graph_extraction.constants import NDIM_3D
@@ -740,16 +742,28 @@ class VanguardCenterlineDataset(InMemoryDataset):
         if num_workers < 1:
             raise ValueError(f"num_workers must be >= 1, got {num_workers}")
         graph_features = tuple(graph_features) if graph_features else ()
-        unknown_graph = [f for f in graph_features if f not in ALL_CLINICAL_COLUMNS]
+        # graph_features spans three independent vocabularies -- clinical
+        # (external, joined by case_id), graph-derived (already on the built
+        # Data object), and morphometry (per-case JSON) -- so a name's source
+        # is resolved by membership, not by which mechanism the caller
+        # intended. See gnn.clinical / gnn.graph_derived / gnn.morphometry.
+        _ALL_GRAPH_FEATURE_COLUMNS = (
+            ALL_CLINICAL_COLUMNS | set(GRAPH_DERIVED_COLUMNS) | set(MORPHOMETRY_COLUMNS)
+        )
+        unknown_graph = [
+            f for f in graph_features if f not in _ALL_GRAPH_FEATURE_COLUMNS
+        ]
         if unknown_graph:
             raise ValueError(
                 f"Unknown graph_features {unknown_graph}; supported: "
-                f"{sorted(ALL_CLINICAL_COLUMNS)}"
+                f"{sorted(_ALL_GRAPH_FEATURE_COLUMNS)}"
             )
-        if graph_features and not (patient_info_dir or clinical_excel):
+        _requests_clinical = any(f in ALL_CLINICAL_COLUMNS for f in graph_features)
+        if _requests_clinical and not (patient_info_dir or clinical_excel):
             raise ValueError(
-                "graph_features requires patient_info_dir or clinical_excel "
-                "(a clinical data source) to be set."
+                "graph_features includes clinical column(s), which require "
+                "patient_info_dir or clinical_excel (a clinical data source) "
+                "to be set."
             )
         if not 0.0 <= max_missing_clinical_frac <= 1.0:
             raise ValueError(
@@ -880,7 +894,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 else f"missing {manifest['label_column']!r} label"
             )
             logging.warning(
-                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped " "(%s): %s",
+                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped (%s): %s",
                 len(self.dropped_case_ids),
                 manifest["num_discovered"],
                 manifest["dropped_frac"] * 100,
@@ -1023,13 +1037,33 @@ class VanguardCenterlineDataset(InMemoryDataset):
             self._centerline_root,
         )
 
-        # graph_features (clinical covariates) need the clinical source loaded
-        # upfront: a case with no clinical row is dropped before the expensive
-        # per-case graph build runs, the same way a missing label is -- not as
-        # a post-build filter, so we don't waste compute on cases we'll drop.
+        # graph_features spans three independent vocabularies -- see
+        # gnn.clinical / gnn.graph_derived / gnn.morphometry and
+        # _attach_graph_features's docstring.
+        requested_clinical = [
+            f for f in self._graph_features if f in ALL_CLINICAL_COLUMNS
+        ]
+        requested_graph_derived = [
+            f for f in self._graph_features if f in GRAPH_DERIVED_COLUMNS
+        ]
+        requested_morphometry = [
+            f for f in self._graph_features if f in MORPHOMETRY_COLUMNS
+        ]
+        case_id_to_study_dir = {
+            case_id: mask_path.parent for case_id, mask_path in discovered
+        }
+
+        # Clinical covariates need the clinical source loaded upfront: a case
+        # with no clinical row is dropped before the expensive per-case graph
+        # build runs, the same way a missing label is -- not as a post-build
+        # filter, so we don't waste compute on cases we'll drop. Graph-derived
+        # and morphometry features need no such upfront drop (graph-derived is
+        # always present on a built graph; morphometry is present for 100% of
+        # the real cohort and hard-fails instead, see
+        # _resolve_morphometry_paths).
         clinical_df: pd.DataFrame | None = None
         clinical_case_ids: set[str] | None = None
-        if self._graph_features:
+        if requested_clinical:
             clinical_df = self._load_clinical_df()
             clinical_case_ids = set(clinical_df["case_id"])
 
@@ -1090,7 +1124,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     raise RuntimeError(
                         f"{len(missing_clinical)}/{len(discovered)} cases "
                         f"({clinical_frac:.1%}) have no clinical row for "
-                        f"graph_features={list(self._graph_features)}, exceeding "
+                        f"graph_features={requested_clinical}, exceeding "
                         f"max_missing_clinical_frac={self._max_missing_clinical_frac}. "
                         "Check the clinical data source, or pass a higher "
                         "max_missing_clinical_frac if this many missing records "
@@ -1103,7 +1137,19 @@ class VanguardCenterlineDataset(InMemoryDataset):
             )
 
         if self._graph_features:
-            self._attach_graph_features(data_list, clinical_df)
+            morphometry_paths_by_case = (
+                self._resolve_morphometry_paths(data_list, case_id_to_study_dir)
+                if requested_morphometry
+                else None
+            )
+            self._attach_graph_features(
+                data_list,
+                clinical_df=clinical_df,
+                requested_clinical=requested_clinical,
+                requested_graph_derived=requested_graph_derived,
+                requested_morphometry=requested_morphometry,
+                morphometry_paths_by_case=morphometry_paths_by_case,
+            )
 
         self._write_feature_summary(data_list)
         self._write_graph_qc(data_list)
@@ -1128,21 +1174,85 @@ class VanguardCenterlineDataset(InMemoryDataset):
             return load_clinical_from_patient_info(self._patient_info_dir)
         return load_clinical_from_excel(self._clinical_excel)
 
+    def _resolve_morphometry_paths(
+        self, data_list: list[Data], case_id_to_study_dir: dict[str, Path]
+    ) -> dict[str, Path]:
+        """Read each surviving case's ``morphometry_path`` out of ``run_summary.json``.
+
+        ``morphometry_path`` is present for 100% of the real MAMA-MIA cohort
+        (see ``gnn/morphometry.py``'s module docstring) -- a missing summary,
+        missing key, or nonexistent file is treated as a hard failure (fail
+        loudly), not a third drop-threshold mechanism like
+        ``max_missing_clinical_frac``, since this is not an observed
+        real-world case and a build-time regression here should surface
+        immediately rather than silently shrinking the cohort.
+        """
+        paths: dict[str, Path] = {}
+        for data in data_list:
+            case_id = str(data.case_id)
+            summary_path = case_id_to_study_dir[case_id] / _RUN_SUMMARY_NAME
+            summary = json.loads(summary_path.read_text())
+            morphometry_path = summary.get("morphometry_path")
+            if not morphometry_path:
+                raise KeyError(
+                    f"case={case_id}: run_summary.json missing 'morphometry_path' "
+                    "-- expected present for every case (see gnn/morphometry.py)."
+                )
+            resolved = Path(morphometry_path)
+            if not resolved.exists():
+                raise FileNotFoundError(
+                    f"case={case_id}: morphometry_path {resolved} does not exist"
+                )
+            paths[case_id] = resolved
+        return paths
+
     def _attach_graph_features(
-        self, data_list: list[Data], clinical_df: pd.DataFrame
+        self,
+        data_list: list[Data],
+        *,
+        clinical_df: pd.DataFrame | None,
+        requested_clinical: list[str],
+        requested_graph_derived: list[str],
+        requested_morphometry: list[str],
+        morphometry_paths_by_case: dict[str, Path] | None,
     ) -> None:
-        """Fit the clinical encoder over this build's cohort and attach ``data.graph_features``.
+        """Build each requested graph-level feature block and concatenate.
+
+        ``graph_features`` spans three independent vocabularies -- clinical
+        (external, joined by ``case_id``, ``gnn.clinical``), graph-derived
+        (already on the built ``Data`` object, ``gnn.graph_derived``), and
+        morphometry (per-case JSON, ``gnn.morphometry``). Each block's
+        sub-matrix is built independently and concatenated column-wise in a
+        fixed source order (clinical, then graph-derived, then morphometry)
+        regardless of how the caller interleaved names in
+        ``gnn_graph_features`` -- column identity is always recoverable by
+        re-checking each name's vocabulary membership, so this fixed order
+        doesn't need to be recorded anywhere separately.
 
         Every case in ``data_list`` is already confirmed present in
-        ``clinical_df`` (cases without a clinical row were dropped in
-        ``process()`` before the graph build ran), so this is a pure
-        transform, not a further filter.
+        ``clinical_df`` (clinical-only drop happens in ``process()`` before
+        the graph build ran) and in ``morphometry_paths_by_case`` (resolved
+        for exactly ``data_list``'s cases), so this is a pure transform, not
+        a further filter.
         """
         case_ids = [str(data.case_id) for data in data_list]
-        matrix, _output_names = build_clinical_feature_matrix(
-            clinical_df, case_ids, self._graph_features
-        )
-        for data, row in zip(data_list, matrix, strict=True):
+        blocks: list[np.ndarray] = []
+        if requested_clinical:
+            clinical_matrix, _ = build_clinical_feature_matrix(
+                clinical_df, case_ids, requested_clinical
+            )
+            blocks.append(clinical_matrix)
+        if requested_graph_derived:
+            blocks.append(
+                build_graph_derived_feature_matrix(data_list, requested_graph_derived)
+            )
+        if requested_morphometry:
+            morphometry_matrix, _ = build_morphometry_feature_matrix(
+                morphometry_paths_by_case, case_ids, requested_morphometry
+            )
+            blocks.append(morphometry_matrix)
+        combined = np.concatenate(blocks, axis=1)
+        for data, row in zip(data_list, combined, strict=True):
             data.graph_features = torch.tensor(row, dtype=torch.float).unsqueeze(0)
 
     def _build_cases(

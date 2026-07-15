@@ -89,3 +89,41 @@ failure mode it protects against), and flagged at the point of use.
   `DEFAULT_CLINICAL_COLUMNS`); `gnn/data_loader.py`
   (`_load_clinical_df`/`_attach_graph_features`); tests in
   `tests/test_gnn_clinical.py`.
+
+## GNN — morphometry graph-level feature imputation
+
+- **What is handled.** `gnn/morphometry.py::build_morphometry_feature_matrix`
+  extracts ~40 `morph_*` scalars per case (segment length/tortuosity/volume/
+  curvature/radius summary stats, bifurcation angle stats, counts) from each
+  case's `<case_id>_morphometry.json` via `features/morph.py`'s existing
+  `extract_morphometry_features`, then mean-imputes via a fit-once
+  `sklearn.impute.SimpleImputer(strategy="mean")` before the matrix is
+  attached as part of `data.graph_features`.
+- **Why.** `features/morph.py::array_stats` (the helper that produces every
+  `_sum`/`_mean`/`_std`/`_max` column) returns `NaN` when the underlying group
+  has zero valid entries -- e.g. `morph_seg_dup_fraction` is `NaN` whenever a
+  case has zero raw segments at all, and any of the six stat groups
+  (`seg_length`, `seg_tortuosity`, `seg_volume`, `curvature_mean`,
+  `radius_mean`, `bif_angle`) can independently be empty for a sparse/small
+  vessel graph. This is a real, observed-in-the-wild case (not hypothetical):
+  `morphometry_path` itself is present for 100% of the real MAMA-MIA cohort
+  (1506/1506 cases, 2026-07), but the *contents* of a present file can still
+  legitimately yield an empty stat group for a case with few segments or
+  bifurcations. A raw `NaN` reaching `data.graph_features` would propagate to
+  a `NaN` training loss the same way an unhandled `NaN` in `data.x`/
+  `data.edge_attr` would.
+- **Failure mode it protects against.** A `NaN` loss silently corrupting
+  training, or -- the alternative this avoids -- treating a per-case-empty
+  stat group as a reason to drop the case from the cohort entirely (unlike
+  clinical data, where per-case missingness is expected and case-level; here
+  the file itself is always present, so dropping the whole case over one
+  empty stat group inside an otherwise-valid file would be a worse trade-off
+  than mean-imputing that one column). Unlike the clinical case, there is no
+  categorical-normalization step here (`morph_*` columns are already
+  all-numeric), so the only fallback in play is numeric mean-imputation, not
+  category bucketing.
+- **Where.** `gnn/morphometry.py` (`build_morphometry_feature_matrix`,
+  `MORPHOMETRY_COLUMNS`); `features/morph.py` (`array_stats`,
+  `extract_morphometry_features`, the actual `NaN` source); `gnn/data_loader.py`
+  (`_resolve_morphometry_paths`/`_attach_graph_features`); tests in
+  `tests/test_gnn_morphometry.py`.

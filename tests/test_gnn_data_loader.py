@@ -45,6 +45,42 @@ EXPECTED_TTE_IDX = 1
 EXPECTED_PEAK_ENHANCEMENT = 2.0
 
 
+def _write_morphometry_json(path: Path) -> None:
+    """Write a tiny synthetic morphometry.json matching the real nested schema."""
+    morph = {
+        "1": {
+            "component_1": [
+                {
+                    "segment": {"start": [0, 0, 0], "end": [3, 0, 0]},
+                    "radius": {
+                        "mean": 1.5,
+                        "sd": 0.1,
+                        "median": 1.5,
+                        "min": 1.4,
+                        "q1": 1.4,
+                        "q3": 1.6,
+                        "max": 1.7,
+                    },
+                    "length": 3.0,
+                    "tortuosity": 1.1,
+                    "volume": 10.0,
+                    "curvature": {
+                        "mean": 0.2,
+                        "sd": 0.05,
+                        "median": 0.2,
+                        "min": 0.1,
+                        "q1": 0.15,
+                        "q3": 0.25,
+                        "max": 0.3,
+                    },
+                }
+            ],
+            "component_1 bifurcation": [],
+        }
+    }
+    path.write_text(json.dumps(morph))
+
+
 def _write_case(
     studies_dir: Path,
     dce_dir: Path,
@@ -52,13 +88,16 @@ def _write_case(
     *,
     num_timepoints: int = NUM_TIMEPOINTS,
     flat_voxel_x: int | None = None,
+    include_morphometry: bool = False,
 ) -> None:
     """Write one synthetic case: centerline tree under ``studies_dir/NACT`` plus a raw DCE-MRI NIfTI series under ``dce_dir``.
 
     Every skeleton voxel gets a monotonically rising curve (``enhancement = t``)
     except ``flat_voxel_x`` (if given), which stays at zero for every timepoint
     -- a "no measurable enhancement" voxel, used to exercise the
-    ``time_to_enhancement`` NaN path.
+    ``time_to_enhancement`` NaN path. ``include_morphometry`` additionally
+    writes a synthetic ``<case_id>_morphometry.json`` and records its path in
+    ``run_summary.json``, for tests exercising ``gnn.morphometry``.
     """
     case_dir = studies_dir / "NACT" / case_id
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -91,9 +130,12 @@ def _write_case(
             str(dce_case_dir / f"{case_id}_{t:04d}.nii.gz"),
         )
 
-    (case_dir / "run_summary.json").write_text(
-        json.dumps({"study_timepoints": list(range(num_timepoints))})
-    )
+    summary: dict[str, object] = {"study_timepoints": list(range(num_timepoints))}
+    if include_morphometry:
+        morphometry_path = case_dir / f"{case_id}_morphometry.json"
+        _write_morphometry_json(morphometry_path)
+        summary["morphometry_path"] = str(morphometry_path)
+    (case_dir / "run_summary.json").write_text(json.dumps(summary))
 
 
 @pytest.fixture
@@ -814,8 +856,8 @@ def test_graph_features_attached_from_patient_info(tmp_path: Path) -> None:
 
 
 def test_graph_features_requires_clinical_source() -> None:
-    """graph_features without patient_info_dir/clinical_excel fails fast at construction."""
-    with pytest.raises(ValueError, match="graph_features requires"):
+    """A clinical graph_features name without patient_info_dir/clinical_excel fails fast."""
+    with pytest.raises(ValueError, match="graph_features includes clinical column"):
         VanguardCenterlineDataset(
             Path("/nonexistent"),
             labels_path=Path("/nonexistent/labels.csv"),
@@ -877,4 +919,104 @@ def test_missing_clinical_frac_exceeded_raises(tmp_path: Path) -> None:
             graph_features=("age",),
             patient_info_dir=patient_info_dir,
             max_missing_clinical_frac=0.1,
+        )
+
+
+def test_mixed_source_graph_features_concatenated_in_fixed_order(
+    tmp_path: Path,
+) -> None:
+    """Clinical + graph-derived + morphometry names in one request concatenate correctly."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01", include_morphometry=True)
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\n")
+
+    patient_info_dir = tmp_path / "patient_info"
+    _write_patient_info(patient_info_dir, "NACT_01", age=40, menopausal_status="pre")
+
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=tmp_path / "cache",
+        node_features=("peak_time", "radius"),
+        graph_features=("age", "num_connected_components", "morph_seg_length_n"),
+        patient_info_dir=patient_info_dir,
+    )
+
+    data = dataset[0]
+    # 1 clinical column (age, numeric passthrough) + 1 graph-derived +
+    # 1 morphometry column = 3, in fixed source order regardless of request order.
+    assert data.graph_features.shape == (1, 3)
+    row = data.graph_features[0].tolist()
+    assert row[0] == pytest.approx(40.0)  # age
+    assert row[1] == pytest.approx(1.0)  # num_connected_components: one straight vessel
+    assert row[2] == pytest.approx(1.0)  # morph_seg_length_n: one synthetic segment
+
+
+def test_graph_derived_only_does_not_require_clinical_source(tmp_path: Path) -> None:
+    """A graph_features request with no clinical names needs no patient_info_dir/clinical_excel."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01")
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\n")
+
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=tmp_path / "cache",
+        node_features=("peak_time", "radius"),
+        graph_features=("num_connected_components",),
+    )
+
+    data = dataset[0]
+    assert data.graph_features.shape == (1, 1)
+    assert data.graph_features[0, 0].item() == pytest.approx(1.0)
+
+
+def test_morphometry_only_does_not_require_clinical_source(tmp_path: Path) -> None:
+    """A morphometry-only graph_features request needs no clinical source either."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01", include_morphometry=True)
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\n")
+
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=tmp_path / "cache",
+        node_features=("peak_time", "radius"),
+        graph_features=("morph_seg_length_n", "morph_bifurcation_count"),
+    )
+
+    data = dataset[0]
+    assert data.graph_features.shape == (1, 2)
+    assert data.graph_features[0].tolist() == pytest.approx([1.0, 0.0])
+
+
+def test_missing_morphometry_path_raises(tmp_path: Path) -> None:
+    """A case whose run_summary.json lacks morphometry_path is a hard failure, not a drop."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01", include_morphometry=False)
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\n")
+
+    with pytest.raises(KeyError, match="morphometry_path"):
+        VanguardCenterlineDataset(
+            studies,
+            labels_path=labels_csv,
+            dce_root=dce_root,
+            cache_dir=tmp_path / "cache",
+            node_features=("peak_time", "radius"),
+            graph_features=("morph_seg_length_n",),
         )
