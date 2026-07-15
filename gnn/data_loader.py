@@ -46,6 +46,7 @@ import matplotlib.pyplot as plt
 
 from clinical_features import load_clinical_from_excel, load_clinical_from_patient_info
 from config import DEFAULT_CONFIG
+from gnn.breast_split import single_breast_skeleton_path
 from gnn.clinical import ALL_CLINICAL_COLUMNS, build_clinical_feature_matrix
 from gnn.graph_derived import GRAPH_DERIVED_COLUMNS, build_graph_derived_feature_matrix
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_build_time_plots
@@ -370,10 +371,8 @@ def _raise_on_unexpected_nan(matrix: torch.Tensor) -> None:
 def _finalize_data(
     data: Data,
     case_id: str,
-    study_dir: Path,
     label: int,
     num_timepoints: int,
-    centerline_root: Path,
     node_features: tuple[str, ...],
     num_connected_components: int,
     feature_attr: dict[str, str],
@@ -430,8 +429,13 @@ def _finalize_data(
     data.num_timepoints = num_timepoints
     data.num_connected_components = num_connected_components
 
-    rel_parts = study_dir.relative_to(centerline_root).parts
-    dataset = rel_parts[0] if rel_parts else "unknown"
+    # Case-id prefix (e.g. "DUKE_001" -> "DUKE"), not directory structure --
+    # the same convention used elsewhere (cohorts/base.py::case_dataset_name,
+    # evaluation/selection.py). Robust to a case's skeleton being substituted
+    # from a different root entirely (breast_split_mode="single" points
+    # mask_path at a workspace directory that isn't under centerline_root, so
+    # a directory-relative derivation would raise there).
+    dataset = case_id.split("_")[0]
     data.dataset = dataset
     data.site = dataset
     return data
@@ -442,7 +446,6 @@ def _build_case(
     mask_path: Path,
     label: int,
     *,
-    centerline_root: Path,
     dce_root: Path,
     node_features: tuple[str, ...],
     node_mode: str,
@@ -539,10 +542,8 @@ def _build_case(
     data = _finalize_data(
         data,
         case_id,
-        study_dir,
         label,
         num_timepoints,
-        centerline_root,
         node_features,
         num_connected_components,
         feature_attr=_MODE_FEATURE_ATTR[node_mode],
@@ -658,6 +659,26 @@ class VanguardCenterlineDataset(InMemoryDataset):
             under different settings. Set this to ``True`` to explicitly
             override that check (e.g. you know the mismatch is benign) --
             never use it to paper over an unexplained mismatch.
+        breast_split_mode: ``None`` (default, current exam-level-graph
+            behavior, fully backward compatible) or ``"single"`` to harmonize
+            bilateral cases down to their tumor-bearing breast (see
+            ``gnn.breast_split``, ``gnn.build_single_breast_skeletons``).
+            Native unilateral cases are always used unchanged -- there is
+            nothing to split. Requires ``breast_split_skeleton_root`` and a
+            clinical source (``patient_info_dir`` or ``clinical_excel``) to
+            look up each case's ``bilateral`` flag.
+        breast_split_skeleton_root: Root of precomputed single-breast
+            skeletons (``<root>/<dataset>/<case_id>/<case_id>_skeleton_4d_single_breast_mask.npy``),
+            written by ``gnn.build_single_breast_skeletons``. Required when
+            ``breast_split_mode="single"``.
+        max_missing_breast_split_frac: Maximum fraction of discovered cases
+            allowed to be dropped because they're bilateral but were excluded
+            by the splitter (unknown tumor side, tumor straddling both
+            sides, ...) or have no clinical row to determine laterality from.
+            Every drop is logged regardless; exceeding this fraction raises
+            ``RuntimeError`` instead of silently training on a
+            harmonized-cohort-mismatched cohort. Default 0.1 (10%), only
+            consulted when ``breast_split_mode`` is set.
     """
 
     def __init__(
@@ -682,6 +703,9 @@ class VanguardCenterlineDataset(InMemoryDataset):
         profile: bool = False,
         num_workers: int = 1,
         allow_manifest_mismatch: bool = False,
+        breast_split_mode: str | None = None,
+        breast_split_skeleton_root: str | Path | None = None,
+        max_missing_breast_split_frac: float = 0.1,
         transform: object = None,
         pre_transform: object = None,
     ) -> None:
@@ -770,6 +794,27 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 f"max_missing_clinical_frac must be in [0, 1], got "
                 f"{max_missing_clinical_frac}"
             )
+        if breast_split_mode is not None:
+            if breast_split_mode != "single":
+                raise ValueError(
+                    f"breast_split_mode={breast_split_mode!r} is not supported; "
+                    "only 'single' (or None to disable) is implemented."
+                )
+            if breast_split_skeleton_root is None:
+                raise ValueError(
+                    "breast_split_mode='single' requires breast_split_skeleton_root "
+                    "(see gnn.build_single_breast_skeletons)."
+                )
+            if not (patient_info_dir or clinical_excel):
+                raise ValueError(
+                    "breast_split_mode='single' requires patient_info_dir or "
+                    "clinical_excel to look up each case's bilateral flag."
+                )
+        if not 0.0 <= max_missing_breast_split_frac <= 1.0:
+            raise ValueError(
+                f"max_missing_breast_split_frac must be in [0, 1], got "
+                f"{max_missing_breast_split_frac}"
+            )
 
         self._centerline_root = Path(root)
         self._labels_path = Path(labels_path)
@@ -790,6 +835,11 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._profile = profile
         self._num_workers = num_workers
         self._allow_manifest_mismatch = allow_manifest_mismatch
+        self._breast_split_mode = breast_split_mode
+        self._breast_split_skeleton_root = (
+            Path(breast_split_skeleton_root) if breast_split_skeleton_root else None
+        )
+        self._max_missing_breast_split_frac = max_missing_breast_split_frac
         self._timings = _StageTimings()
         self.dropped_case_ids: list[str] = []
         # Populated by _check_cache_manifest() from cache_manifest.json; used by
@@ -894,7 +944,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 else f"missing {manifest['label_column']!r} label"
             )
             logging.warning(
-                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped (%s): %s",
+                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped " "(%s): %s",
                 len(self.dropped_case_ids),
                 manifest["num_discovered"],
                 manifest["dropped_frac"] * 100,
@@ -940,6 +990,18 @@ class VanguardCenterlineDataset(InMemoryDataset):
             settings["graph_features"] = list(self._graph_features)
             settings["clinical_source"] = str(
                 self._patient_info_dir or self._clinical_excel
+            )
+        # breast_split_mode changes which skeleton backs a bilateral case's
+        # graph (see _resolve_breast_split_paths) -- a cache built with it
+        # must never be silently reused as if it were the unsplit cohort, or
+        # vice versa. Always recorded (even as None) so a mismatch is caught
+        # in *both* directions: unlike graph_features/edge_features below,
+        # there's no valid "narrower request" reading of a missing
+        # breast_split_mode against a cache that was actually built with one.
+        settings["breast_split_mode"] = self._breast_split_mode
+        if self._breast_split_mode is not None:
+            settings["breast_split_skeleton_root"] = str(
+                self._breast_split_skeleton_root
             )
         return settings
 
@@ -1031,9 +1093,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
         """Discover cases, build one labeled graph each, and collate the cache."""
         labels = self._load_label_map()
         discovered = self._discover_cases()
+        total_discovered = len(discovered)
         logging.info(
             "GNN build: %d candidate case(s) under %s",
-            len(discovered),
+            total_discovered,
             self._centerline_root,
         )
 
@@ -1049,9 +1112,26 @@ class VanguardCenterlineDataset(InMemoryDataset):
         requested_morphometry = [
             f for f in self._graph_features if f in MORPHOMETRY_COLUMNS
         ]
+        # Computed from the pre-breast-split discovery: morphometry/graph_qc
+        # always resolve against the original exam-level study directory,
+        # even for a case whose *skeleton* gets substituted below.
         case_id_to_study_dir = {
             case_id: mask_path.parent for case_id, mask_path in discovered
         }
+
+        dropped: list[str] = []
+        dropped_reasons: dict[str, str] = {}
+        if self._breast_split_mode == "single":
+            resolved_paths, breast_split_dropped = self._resolve_breast_split_paths(
+                discovered
+            )
+            dropped.extend(breast_split_dropped)
+            dropped_reasons.update(breast_split_dropped)
+            discovered = [
+                (case_id, resolved_paths[case_id])
+                for case_id, _ in discovered
+                if case_id in resolved_paths
+            ]
 
         # Clinical covariates need the clinical source loaded upfront: a case
         # with no clinical row is dropped before the expensive per-case graph
@@ -1067,8 +1147,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
             clinical_df = self._load_clinical_df()
             clinical_case_ids = set(clinical_df["case_id"])
 
-        dropped: list[str] = []
-        dropped_reasons: dict[str, str] = {}
         tasks: list[tuple[str, Path, int]] = []
         for case_id, mask_path in discovered:
             label = labels.get(case_id)
@@ -1088,14 +1166,14 @@ class VanguardCenterlineDataset(InMemoryDataset):
             data_list.append(data)
 
         self.dropped_case_ids = dropped
-        self._write_dropped_manifest(dropped, dropped_reasons, len(discovered))
+        self._write_dropped_manifest(dropped, dropped_reasons, total_discovered)
         if dropped:
-            dropped_frac = len(dropped) / len(discovered)
+            dropped_frac = len(dropped) / total_discovered
             by_reason = dict(Counter(dropped_reasons.values()))
             logging.warning(
                 "GNN build: dropped %d/%d case(s) (%.1f%%): %s: %s",
                 len(dropped),
-                len(discovered),
+                total_discovered,
                 dropped_frac * 100,
                 by_reason,
                 dropped,
@@ -1104,10 +1182,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 c for c in dropped if dropped_reasons[c] == "missing_label"
             ]
             if missing_label:
-                label_frac = len(missing_label) / len(discovered)
+                label_frac = len(missing_label) / total_discovered
                 if label_frac > self._max_missing_label_frac:
                     raise RuntimeError(
-                        f"{len(missing_label)}/{len(discovered)} cases "
+                        f"{len(missing_label)}/{total_discovered} cases "
                         f"({label_frac:.1%}) are missing a {self._label_column!r} "
                         f"label in {self._labels_path}, exceeding "
                         f"max_missing_label_frac={self._max_missing_label_frac}. "
@@ -1119,16 +1197,35 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 c for c in dropped if dropped_reasons[c] == "missing_clinical"
             ]
             if missing_clinical:
-                clinical_frac = len(missing_clinical) / len(discovered)
+                clinical_frac = len(missing_clinical) / total_discovered
                 if clinical_frac > self._max_missing_clinical_frac:
                     raise RuntimeError(
-                        f"{len(missing_clinical)}/{len(discovered)} cases "
+                        f"{len(missing_clinical)}/{total_discovered} cases "
                         f"({clinical_frac:.1%}) have no clinical row for "
                         f"graph_features={requested_clinical}, exceeding "
                         f"max_missing_clinical_frac={self._max_missing_clinical_frac}. "
                         "Check the clinical data source, or pass a higher "
                         "max_missing_clinical_frac if this many missing records "
                         "is expected."
+                    )
+            breast_split_dropped_cases = [
+                c
+                for c in dropped
+                if dropped_reasons[c]
+                in ("breast_split_excluded", "breast_split_unknown_laterality")
+            ]
+            if breast_split_dropped_cases:
+                breast_split_frac = len(breast_split_dropped_cases) / total_discovered
+                if breast_split_frac > self._max_missing_breast_split_frac:
+                    raise RuntimeError(
+                        f"{len(breast_split_dropped_cases)}/{total_discovered} cases "
+                        f"({breast_split_frac:.1%}) were dropped for "
+                        "breast_split_mode='single' (excluded by the splitter or "
+                        "missing a clinical row for laterality), exceeding "
+                        f"max_missing_breast_split_frac={self._max_missing_breast_split_frac}. "
+                        "Check gnn.build_single_breast_skeletons's manifest, or pass "
+                        "a higher max_missing_breast_split_frac if this many "
+                        "exclusions is expected."
                     )
 
         if not data_list:
@@ -1282,7 +1379,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     case_id,
                     mask_path,
                     label,
-                    centerline_root=self._centerline_root,
                     dce_root=self._dce_root,
                     node_features=self._node_features,
                     node_mode=self._node_mode,
@@ -1308,7 +1404,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
                         case_id,
                         mask_path,
                         label,
-                        centerline_root=self._centerline_root,
                         dce_root=self._dce_root,
                         node_features=self._node_features,
                         node_mode=self._node_mode,
@@ -1502,6 +1597,50 @@ class VanguardCenterlineDataset(InMemoryDataset):
             str(case_id): int(value)
             for case_id, value in zip(frame["case_id"], frame[self._label_column])
         }
+
+    def _resolve_breast_split_paths(
+        self, discovered: list[tuple[str, Path]]
+    ) -> tuple[dict[str, Path], dict[str, str]]:
+        """Map each discovered case to the skeleton path ``breast_split_mode="single"`` should use.
+
+        Native unilateral cases (``bilateral=False``) keep their original
+        exam-level skeleton unchanged -- there is nothing to split, per the
+        harmonized-cohort plan. Bilateral cases are substituted with their
+        precomputed single-breast skeleton
+        (``gnn.build_single_breast_skeletons``) when one exists; a bilateral
+        case with no precomputed skeleton (excluded by the splitter -- e.g.
+        unknown tumor side or a tumor straddling both sides) or with no
+        clinical row to determine laterality from at all is dropped, not
+        silently kept with its original mixed-breast skeleton, which would
+        defeat the point of the harmonized cohort.
+
+        Returns:
+            ``(resolved_paths, drop_reasons)`` -- ``resolved_paths`` maps
+            every case that should still be built to the skeleton path to
+            use; ``drop_reasons`` maps every other case to why it's excluded.
+        """
+        clinical_df = self._load_clinical_df()
+        bilateral_by_case = dict(zip(clinical_df["case_id"], clinical_df["bilateral"]))
+
+        resolved_paths: dict[str, Path] = {}
+        drop_reasons: dict[str, str] = {}
+        for case_id, mask_path in discovered:
+            bilateral = bilateral_by_case.get(case_id)
+            if bilateral is None:
+                drop_reasons[case_id] = "breast_split_unknown_laterality"
+                continue
+            if not bilateral:
+                resolved_paths[case_id] = mask_path
+                continue
+            dataset = case_id.split("_")[0]
+            single_breast_path = single_breast_skeleton_path(
+                self._breast_split_skeleton_root, dataset, case_id
+            )
+            if single_breast_path.exists():
+                resolved_paths[case_id] = single_breast_path
+            else:
+                drop_reasons[case_id] = "breast_split_excluded"
+        return resolved_paths, drop_reasons
 
     def _discover_cases(self) -> list[tuple[str, Path]]:
         """Find ``(case_id, mask_path)`` pairs under the centerline tree."""

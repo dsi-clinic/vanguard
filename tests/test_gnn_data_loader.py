@@ -809,16 +809,24 @@ def test_raise_on_unexpected_nan_raises_on_unregistered_nan() -> None:
 
 
 def _write_patient_info(
-    patient_info_dir: Path, case_id: str, *, age: int, menopausal_status: str
+    patient_info_dir: Path,
+    case_id: str,
+    *,
+    age: int,
+    menopausal_status: str,
+    bilateral: bool | None = None,
 ) -> None:
     patient_info_dir.mkdir(parents=True, exist_ok=True)
+    imaging_data: dict[str, object] = {"dataset": "NACT"}
+    if bilateral is not None:
+        imaging_data["bilateral"] = bilateral
     (patient_info_dir / f"{case_id}.json").write_text(
         json.dumps(
             {
                 "case_id": case_id,
                 "clinical_data": {"age": age, "menopausal_status": menopausal_status},
                 "primary_lesion": {"tumor_subtype": "luminal_a"},
-                "imaging_data": {"dataset": "NACT"},
+                "imaging_data": imaging_data,
             }
         )
     )
@@ -1019,4 +1027,308 @@ def test_missing_morphometry_path_raises(tmp_path: Path) -> None:
             cache_dir=tmp_path / "cache",
             node_features=("peak_time", "radius"),
             graph_features=("morph_seg_length_n",),
+        )
+
+
+def _write_single_breast_skeleton(
+    breast_split_root: Path,
+    dataset_name: str,
+    case_id: str,
+    xs: tuple[int, ...],
+    *,
+    num_timepoints: int = NUM_TIMEPOINTS,
+) -> None:
+    """Write a synthetic precomputed single-breast skeleton, support mask, and run_summary.json.
+
+    Mirrors what ``gnn.build_single_breast_skeletons`` actually writes:
+    ``gnn/data_loader.py::_build_case`` looks up both the support mask and
+    ``study_timepoints`` (from ``run_summary.json``) next to whichever
+    skeleton path it's given, unaware of breast-split substitution --
+    omitting either would make this fixture unrepresentative of the real
+    precompute output.
+    """
+    out_dir = breast_split_root / dataset_name / case_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    skeleton = np.zeros(VOLUME_SHAPE, dtype=bool)
+    for x in xs:
+        skeleton[SKELETON_Z, SKELETON_Y, x] = True
+    np.save(out_dir / f"{case_id}_skeleton_4d_single_breast_mask.npy", skeleton)
+
+    support = np.zeros(VOLUME_SHAPE, dtype=bool)
+    support[
+        SKELETON_Z - 1 : SKELETON_Z + 2,
+        SKELETON_Y - 1 : SKELETON_Y + 2,
+        min(xs) - 1 : max(xs) + 2,
+    ] = True
+    np.save(out_dir / f"{case_id}_skeleton_4d_exam_support_mask.npy", support)
+
+    (out_dir / "run_summary.json").write_text(
+        json.dumps({"study_timepoints": list(range(num_timepoints))})
+    )
+
+
+def test_breast_split_single_substitutes_bilateral_case_skeleton(
+    tmp_path: Path,
+) -> None:
+    """A bilateral case with a precomputed single-breast skeleton builds from that file, not the exam-level one."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01")
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\n")
+
+    patient_info_dir = tmp_path / "patient_info"
+    _write_patient_info(
+        patient_info_dir, "NACT_01", age=40, menopausal_status="pre", bilateral=True
+    )
+
+    breast_split_root = tmp_path / "breast_split_skeletons"
+    kept_xs = (1, 2, 3)  # a strict subset of SKELETON_XS = (1, 2, 3, 4, 5)
+    _write_single_breast_skeleton(breast_split_root, "NACT", "NACT_01", kept_xs)
+
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=tmp_path / "cache",
+        node_features=("peak_time", "radius"),
+        patient_info_dir=patient_info_dir,
+        breast_split_mode="single",
+        breast_split_skeleton_root=breast_split_root,
+    )
+
+    assert dataset.dropped_case_ids == []
+    data = dataset[0]
+    assert data.num_nodes == len(kept_xs)  # not len(SKELETON_XS) -- proves substitution
+
+
+def test_cache_manifest_breast_split_mismatch_raises_unless_overridden(
+    tmp_path: Path,
+) -> None:
+    """A cache built with breast_split_mode="single" can't be silently reloaded as the unsplit cohort."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01")
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\n")
+
+    patient_info_dir = tmp_path / "patient_info"
+    _write_patient_info(
+        patient_info_dir, "NACT_01", age=40, menopausal_status="pre", bilateral=True
+    )
+
+    breast_split_root = tmp_path / "breast_split_skeletons"
+    _write_single_breast_skeleton(breast_split_root, "NACT", "NACT_01", (1, 2, 3))
+
+    cache_dir = tmp_path / "cache"
+    VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir,
+        node_features=("peak_time", "radius"),
+        patient_info_dir=patient_info_dir,
+        breast_split_mode="single",
+        breast_split_skeleton_root=breast_split_root,
+    )
+
+    with pytest.raises(RuntimeError, match="different settings"):
+        VanguardCenterlineDataset(
+            studies,
+            labels_path=labels_csv,
+            dce_root=dce_root,
+            cache_dir=cache_dir,
+            node_features=("peak_time", "radius"),
+            # breast_split_mode omitted -- this must not silently load the
+            # single-breast-built cache as if it were the mixed cohort.
+        )
+
+    overridden = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=cache_dir,
+        node_features=("peak_time", "radius"),
+        allow_manifest_mismatch=True,
+    )
+    assert len(overridden) == 1
+
+
+def test_breast_split_single_leaves_unilateral_case_unchanged(tmp_path: Path) -> None:
+    """A case flagged bilateral=False keeps its original exam-level skeleton."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01")
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\n")
+
+    patient_info_dir = tmp_path / "patient_info"
+    _write_patient_info(
+        patient_info_dir, "NACT_01", age=40, menopausal_status="pre", bilateral=False
+    )
+
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=tmp_path / "cache",
+        node_features=("peak_time", "radius"),
+        patient_info_dir=patient_info_dir,
+        breast_split_mode="single",
+        breast_split_skeleton_root=tmp_path / "breast_split_skeletons",  # empty, unused
+    )
+
+    assert dataset.dropped_case_ids == []
+    assert dataset[0].num_nodes == len(SKELETON_XS)
+
+
+def test_breast_split_single_drops_bilateral_case_with_no_precomputed_skeleton(
+    tmp_path: Path,
+) -> None:
+    """A bilateral case with no precomputed single-breast file is dropped, not silently kept mixed."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01")
+    _write_case(studies, dce_root, "NACT_02")
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\nNACT_02,0\n")
+
+    patient_info_dir = tmp_path / "patient_info"
+    _write_patient_info(
+        patient_info_dir, "NACT_01", age=40, menopausal_status="pre", bilateral=True
+    )
+    _write_patient_info(
+        patient_info_dir, "NACT_02", age=50, menopausal_status="post", bilateral=False
+    )
+
+    breast_split_root = tmp_path / "breast_split_skeletons"
+    # No single-breast skeleton written for NACT_01 -- it was "excluded by the splitter".
+
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=tmp_path / "cache",
+        node_features=("peak_time", "radius"),
+        patient_info_dir=patient_info_dir,
+        breast_split_mode="single",
+        breast_split_skeleton_root=breast_split_root,
+        max_missing_breast_split_frac=0.5,
+    )
+
+    assert dataset.dropped_case_ids == ["NACT_01"]
+    assert len(dataset) == 1
+    assert dataset[0].case_id == "NACT_02"
+
+    dropped_manifest = json.loads(
+        (tmp_path / "cache" / "processed" / "dropped_cases.json").read_text()
+    )
+    assert dropped_manifest["dropped_reasons"]["NACT_01"] == "breast_split_excluded"
+
+
+def test_breast_split_single_drops_case_with_unknown_laterality(tmp_path: Path) -> None:
+    """A case with no clinical row at all can't be laterality-checked, so it's dropped."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01")
+    _write_case(studies, dce_root, "NACT_02")
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\nNACT_02,0\n")
+
+    patient_info_dir = tmp_path / "patient_info"
+    # Only NACT_02 has a clinical row; NACT_01's laterality is unknowable.
+    _write_patient_info(
+        patient_info_dir, "NACT_02", age=50, menopausal_status="post", bilateral=False
+    )
+
+    dataset = VanguardCenterlineDataset(
+        studies,
+        labels_path=labels_csv,
+        dce_root=dce_root,
+        cache_dir=tmp_path / "cache",
+        node_features=("peak_time", "radius"),
+        patient_info_dir=patient_info_dir,
+        breast_split_mode="single",
+        breast_split_skeleton_root=tmp_path / "breast_split_skeletons",
+        max_missing_breast_split_frac=0.5,
+    )
+
+    assert dataset.dropped_case_ids == ["NACT_01"]
+    dropped_manifest = json.loads(
+        (tmp_path / "cache" / "processed" / "dropped_cases.json").read_text()
+    )
+    assert (
+        dropped_manifest["dropped_reasons"]["NACT_01"]
+        == "breast_split_unknown_laterality"
+    )
+
+
+def test_breast_split_max_missing_frac_exceeded_raises(tmp_path: Path) -> None:
+    """Too many breast-split exclusions raises instead of silently shrinking the cohort."""
+    studies = tmp_path / "studies"
+    dce_root = tmp_path / "images"
+    _write_case(studies, dce_root, "NACT_01")
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text("case_id,pcr\nNACT_01,1\n")
+
+    patient_info_dir = tmp_path / "patient_info"
+    _write_patient_info(
+        patient_info_dir, "NACT_01", age=40, menopausal_status="pre", bilateral=True
+    )
+    # No precomputed single-breast skeleton -> excluded; this is the only case,
+    # so the exclusion fraction is 100%, exceeding the default 0.1 threshold.
+
+    with pytest.raises(RuntimeError, match="max_missing_breast_split_frac"):
+        VanguardCenterlineDataset(
+            studies,
+            labels_path=labels_csv,
+            dce_root=dce_root,
+            cache_dir=tmp_path / "cache",
+            node_features=("peak_time", "radius"),
+            patient_info_dir=patient_info_dir,
+            breast_split_mode="single",
+            breast_split_skeleton_root=tmp_path / "breast_split_skeletons",
+        )
+
+
+def test_breast_split_requires_skeleton_root() -> None:
+    """breast_split_mode='single' without breast_split_skeleton_root fails fast."""
+    with pytest.raises(ValueError, match="breast_split_skeleton_root"):
+        VanguardCenterlineDataset(
+            Path("/nonexistent"),
+            labels_path=Path("/nonexistent/labels.csv"),
+            dce_root=Path("/nonexistent/images"),
+            patient_info_dir=Path("/nonexistent/patient_info"),
+            breast_split_mode="single",
+        )
+
+
+def test_breast_split_requires_clinical_source() -> None:
+    """breast_split_mode='single' without a clinical source fails fast."""
+    with pytest.raises(ValueError, match="patient_info_dir or"):
+        VanguardCenterlineDataset(
+            Path("/nonexistent"),
+            labels_path=Path("/nonexistent/labels.csv"),
+            dce_root=Path("/nonexistent/images"),
+            breast_split_mode="single",
+            breast_split_skeleton_root=Path("/nonexistent/breast_split_skeletons"),
+        )
+
+
+def test_breast_split_rejects_unknown_mode() -> None:
+    """An unsupported breast_split_mode value fails fast rather than being silently ignored."""
+    with pytest.raises(ValueError, match="breast_split_mode"):
+        VanguardCenterlineDataset(
+            Path("/nonexistent"),
+            labels_path=Path("/nonexistent/labels.csv"),
+            dce_root=Path("/nonexistent/images"),
+            patient_info_dir=Path("/nonexistent/patient_info"),
+            breast_split_mode="both",
+            breast_split_skeleton_root=Path("/nonexistent/breast_split_skeletons"),
         )

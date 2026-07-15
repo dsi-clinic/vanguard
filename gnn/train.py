@@ -72,6 +72,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override model_params.gnn_pcr_dummy_noise_seed",
     )
+    parser.add_argument(
+        "--random-state",
+        type=int,
+        default=None,
+        help="Override model_params.random_state (per-fold torch.manual_seed "
+        "offset; does not affect split_mode='predefined' fold assignment, "
+        "which is frozen by the labels file's fold column regardless).",
+    )
     return parser.parse_args()
 
 
@@ -519,6 +527,9 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> KFoldResults:
         id_column=data_paths.gnn_id_column,
         label_column=data_paths.gnn_label_column,
         allow_manifest_mismatch=bool(data_paths.gnn_allow_manifest_mismatch),
+        breast_split_mode=params.gnn_breast_split_mode or None,
+        breast_split_skeleton_root=data_paths.gnn_breast_split_skeleton_root or None,
+        max_missing_breast_split_frac=float(params.gnn_max_missing_breast_split_frac),
     )
     logging.info(
         "Loaded %d graph(s) from cache %s", len(dataset), data_paths.gnn_cache_dir
@@ -636,6 +647,8 @@ def main() -> None:
         config.model_params.gnn_pcr_dummy_noise_std = args.pcr_dummy_noise_std
     if args.pcr_dummy_noise_seed is not None:
         config.model_params.gnn_pcr_dummy_noise_seed = args.pcr_dummy_noise_seed
+    if args.random_state is not None:
+        config.model_params.random_state = args.random_state
     outdir = resolve_run_output_dir(config=config, outdir_override=args.outdir)
     write_config_snapshot(config=config, outdir=outdir, config_source=args.config)
     run_gnn_pipeline(config, outdir)

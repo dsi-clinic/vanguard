@@ -157,6 +157,33 @@ def build_parser() -> argparse.ArgumentParser:
         "-- safe on a login node); set to match --cpus-per-task for a full "
         "Slurm build.",
     )
+    parser.add_argument(
+        "--breast-split",
+        type=str,
+        default=None,
+        choices=["single"],
+        help="Harmonize bilateral cases down to their tumor-bearing breast "
+        "(see gnn/breast_split.py, gnn/build_single_breast_skeletons.py). "
+        "Native unilateral cases are always used unchanged. Requires "
+        "--breast-split-skeleton-root and a clinical source "
+        "(--patient-info-dir or --clinical-excel).",
+    )
+    parser.add_argument(
+        "--breast-split-skeleton-root",
+        type=Path,
+        default=None,
+        help="Root of precomputed single-breast skeletons, written by "
+        "gnn.build_single_breast_skeletons. Required with --breast-split single.",
+    )
+    parser.add_argument(
+        "--max-missing-breast-split-frac",
+        type=float,
+        default=0.1,
+        help="Max fraction of discovered cases allowed to be dropped for "
+        "being bilateral-but-excluded-by-the-splitter or missing a clinical "
+        "row for laterality, when --breast-split is set (see "
+        "VanguardCenterlineDataset).",
+    )
     return parser
 
 
@@ -225,6 +252,9 @@ def main() -> None:
         profile=not args.no_profile,
         num_workers=args.num_workers,
         allow_manifest_mismatch=args.allow_manifest_mismatch,
+        breast_split_mode=args.breast_split,
+        breast_split_skeleton_root=args.breast_split_skeleton_root,
+        max_missing_breast_split_frac=args.max_missing_breast_split_frac,
     )
     logging.info(
         "Dataset ready: %d graph(s) cached under %s (%d dropped)",

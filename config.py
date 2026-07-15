@@ -187,6 +187,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "gnn_pcr_dummy_class1_mean": 1.0,
         "gnn_pcr_dummy_noise_std": 0.0,
         "gnn_pcr_dummy_noise_seed": 0,
+        # Harmonized single-breast dataset (gnn.breast_split): None (default,
+        # fully backward compatible) keeps the exam-level mixed-breast
+        # skeleton for every case; "single" substitutes bilateral cases with
+        # their precomputed single-breast skeleton
+        # (gnn_breast_split_skeleton_root under data_paths) and drops any
+        # bilateral case the splitter excluded or that has no clinical row
+        # for laterality. Native unilateral cases are always unchanged.
+        "gnn_breast_split_mode": None,
+        # Cases dropped for being bilateral-but-excluded-by-the-splitter (or
+        # missing a clinical row for laterality) are logged the same way a
+        # missing label is via gnn_max_missing_label_frac -- see
+        # gnn/data_loader.py.
+        "gnn_max_missing_breast_split_frac": 0.1,
     },
     "data_paths": {
         "centerline_root": "",
@@ -215,6 +228,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # with every other gnn_* data_paths key.
         "gnn_patient_info_dir": "",
         "gnn_clinical_excel": "",
+        # Root of precomputed single-breast skeletons (gnn.build_single_breast_skeletons),
+        # required when model_params.gnn_breast_split_mode is set.
+        "gnn_breast_split_skeleton_root": "",
     },
     # Dataset-adapter selection (multi-dataset redesign, Step 1). Read only by
     # cohorts/factory.py; no pipeline stage consumes it yet. When ``name`` is
