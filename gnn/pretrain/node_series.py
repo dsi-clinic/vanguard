@@ -30,6 +30,8 @@ from graph_extraction.skeleton_to_graph_primitives import extract_segments
 Point3D = tuple[int, int, int]
 
 _NDIM_4D = 4  # (t, z, y, x)
+_NDIM_2D = 2
+_POINT_DIM = 3  # (x, y, z)
 
 
 def voxel_node_series(
@@ -107,3 +109,29 @@ def segment_node_series(
             voxel_curves = voxel_curves - voxel_curves[:, :1]
         series[i] = voxel_curves.mean(axis=0)
     return series
+
+
+def junction_node_series(
+    dce_4d: np.ndarray, pos: np.ndarray, *, baseline_subtract: bool = True
+) -> np.ndarray:
+    """Per-junction contrast series: the raw curve at each junction voxel.
+
+    **First-pass §4.3 target choice:** forecast the *raw* contrast at the
+    junction voxel -- the direct voxel-analogue -- NOT a flow/derivative
+    quantity. This deliberately ignores the segment dynamics that live on the
+    junction graph's *edges* (``edge_attr``); the flow/derivative reformulation
+    the design doc flags as possibly better-motivated (§4.3) is deferred, and is
+    a one-line target swap here. Committed to the raw curve for the first pass so
+    all three graph structures have a working pretext target (roadmap step 1).
+
+    ``pos`` is the ``(num_junctions, 3)`` array of junction voxel ``(x, y, z)``
+    coordinates that ``gnn.junction_graph.build_junction_graph`` puts on
+    ``data.pos`` in junction-node order (row ``i`` = ``ordered_nodes[i]``), so
+    the returned rows align with ``data.x``. Sampling reuses ``voxel_node_series``
+    -- a junction *is* a voxel -- so the signal is identical to voxel mode's.
+    """
+    coords = np.asarray(pos)
+    if coords.ndim != _NDIM_2D or coords.shape[1] != _POINT_DIM:
+        raise ValueError(f"pos must be (num_junctions, 3); got shape {coords.shape}")
+    nodes = [(int(x), int(y), int(z)) for x, y, z in coords]
+    return voxel_node_series(dce_4d, nodes, baseline_subtract=baseline_subtract)

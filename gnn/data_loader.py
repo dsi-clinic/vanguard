@@ -655,22 +655,27 @@ def _build_case(
     #   - segment: ``segment_node_series`` uses the same
     #     ``enumerate(extract_segments(voxel_graph))`` order that
     #     ``build_segment_line_graph`` numbered its segment-nodes with.
-    # Junction (segment-as-edge) node identity differs and its forecasting target
-    # is still an open design question (design doc §4.3), so it fails loudly here
-    # rather than silently attaching a mismatched matrix. Default off -> the
-    # classification build path is byte-for-byte unchanged.
+    #   - junction: ``junction_node_series`` samples the raw curve at each
+    #     junction voxel, ordered by ``data.pos`` (== ``build_junction_graph``'s
+    #     ``ordered_nodes``). First-pass target = raw junction-voxel curve
+    #     (design doc §4.3; flow/derivative alternative deferred).
+    # Default off -> the classification build path is byte-for-byte unchanged.
     if attach_node_series:
-        from gnn.pretrain.node_series import segment_node_series, voxel_node_series
+        from gnn.pretrain.node_series import (
+            junction_node_series,
+            segment_node_series,
+            voxel_node_series,
+        )
 
         if node_mode == _VOXEL_MODE:
             node_series = voxel_node_series(dce_4d, list(voxel_graph.nodes()))
         elif node_mode == _SEGMENT_MODE:
             node_series = segment_node_series(voxel_graph, dce_4d)
+        elif node_mode == _JUNCTION_MODE:
+            node_series = junction_node_series(dce_4d, data.pos.numpy())
         else:
             raise ValueError(
-                "attach_node_series=True supports node_mode in "
-                f"{{'voxel', 'segment'}}; got {node_mode!r} (junction forecasting "
-                "is not wired yet -- see design doc §4.3)."
+                f"attach_node_series=True: unknown node_mode {node_mode!r}."
             )
         data.node_series = torch.tensor(node_series, dtype=torch.float)
     return data, stage_samples

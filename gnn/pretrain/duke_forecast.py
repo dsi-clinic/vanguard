@@ -32,6 +32,7 @@ import pandas as pd
 
 from gnn.data_loader import (
     _CENTERLINE_SUFFIX,
+    _JUNCTION_MODE,
     _MODE_DEFAULT_FEATURES,
     _SEGMENT_MODE,
     _VOXEL_MODE,
@@ -120,8 +121,8 @@ def build_case_data(
     directly) so the caller can inspect every case's frame count ``T`` before
     committing a horizon -- Duke's ``T`` varies across cases (see
     ``resolve_smoke_horizon``), so the horizon can only be fixed once all series
-    lengths are known. ``node_mode`` is ``"voxel"`` or ``"segment"`` (junction
-    forecasting is not wired yet).
+    lengths are known. ``node_mode`` is ``"voxel"``, ``"segment"``, or
+    ``"junction"``.
     """
     data, _ = _build_case(
         case_id,
@@ -238,9 +239,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--outdir", type=Path, required=True)
     parser.add_argument(
         "--node-mode",
-        choices=(_VOXEL_MODE, _SEGMENT_MODE),
+        choices=(_VOXEL_MODE, _SEGMENT_MODE, _JUNCTION_MODE),
         default=_VOXEL_MODE,
-        help="Graph node definition: 'voxel' or 'segment' (junction not wired yet).",
+        help="Graph node definition: 'voxel', 'segment', or 'junction'.",
     )
     parser.add_argument("--input-len", type=int, default=3)
     parser.add_argument("--target-len", type=int, default=2)

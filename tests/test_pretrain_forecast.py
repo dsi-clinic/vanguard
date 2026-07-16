@@ -118,6 +118,41 @@ def test_segment_node_series_rejects_non_4d() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# junction_node_series (raw junction-voxel curve; §4.3 first-pass target)
+# --------------------------------------------------------------------------- #
+def test_junction_node_series_aligns_with_pos_and_baselines() -> None:
+    """Row i = raw baseline-subtracted curve at data.pos[i] (junction-node order)."""
+    from gnn.junction_graph import build_junction_graph
+    from gnn.pretrain.node_series import junction_node_series
+
+    graph = _y_voxel_graph()
+    num_frames = 4
+    dce_4d = np.random.default_rng(3).random((num_frames, 1, 16, 16)).astype(np.float32)
+    radius_map = dict.fromkeys(graph.nodes(), 1.0)
+    data = build_junction_graph(
+        graph, radius_map, dce_4d, np.arange(num_frames, dtype=float)
+    )
+    series = junction_node_series(dce_4d, data.pos.numpy())
+
+    assert series.shape == (data.num_nodes, num_frames)
+    pos = data.pos.numpy()
+    for i in range(data.num_nodes):
+        x, y, z = int(pos[i, 0]), int(pos[i, 1]), int(pos[i, 2])
+        expected = dce_4d[:, z, y, x] - dce_4d[0, z, y, x]
+        np.testing.assert_allclose(series[i], expected, rtol=1e-5)
+    np.testing.assert_allclose(series[:, 0], np.zeros(data.num_nodes), atol=1e-6)
+
+
+def test_junction_node_series_rejects_bad_pos_shape() -> None:
+    """A pos array that isn't (num_junctions, 3) fails loudly."""
+    from gnn.pretrain.node_series import junction_node_series
+
+    dce_4d = np.zeros((3, 1, 4, 4), dtype=np.float32)
+    with pytest.raises(ValueError, match="num_junctions, 3"):
+        junction_node_series(dce_4d, np.zeros((3, 2)))
+
+
+# --------------------------------------------------------------------------- #
 # forecast window split
 # --------------------------------------------------------------------------- #
 def test_split_forecast_window_shapes_and_values() -> None:
