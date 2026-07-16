@@ -33,6 +33,7 @@ import pandas as pd
 from gnn.data_loader import (
     _CENTERLINE_SUFFIX,
     _MODE_DEFAULT_FEATURES,
+    _SEGMENT_MODE,
     _VOXEL_MODE,
     _build_case,
     _git_commit,
@@ -111,14 +112,16 @@ def build_case_data(
     *,
     dce_root: Path,
     node_features: tuple[str, ...],
+    node_mode: str = _VOXEL_MODE,
 ) -> object:
-    """Build one Duke case's voxel ``Data`` (carrying ``node_series``).
+    """Build one Duke case's ``Data`` (carrying ``node_series``) for ``node_mode``.
 
     Split into build-vs-window (rather than returning a ``ForecastGraph``
     directly) so the caller can inspect every case's frame count ``T`` before
     committing a horizon -- Duke's ``T`` varies across cases (see
     ``resolve_smoke_horizon``), so the horizon can only be fixed once all series
-    lengths are known.
+    lengths are known. ``node_mode`` is ``"voxel"`` or ``"segment"`` (junction
+    forecasting is not wired yet).
     """
     data, _ = _build_case(
         case_id,
@@ -126,7 +129,7 @@ def build_case_data(
         label,
         dce_root=Path(dce_root),
         node_features=node_features,
-        node_mode=_VOXEL_MODE,
+        node_mode=node_mode,
         attach_node_series=True,
     )
     return data
@@ -181,6 +184,7 @@ def resolve_smoke_horizon(
 def _write_readme(
     outdir: Path,
     *,
+    node_mode: str,
     argv: list[str],
     tasks: list[tuple[str, Path, int]],
     horizon: ForecastHorizon,
@@ -190,7 +194,7 @@ def _write_readme(
 ) -> None:
     """Write the results README (repo rule: every results dir is self-documenting)."""
     lines = [
-        "# Duke voxel contrast-forecasting smoke (PLACEHOLDER DATA)",
+        f"# Duke {node_mode} contrast-forecasting smoke (PLACEHOLDER DATA)",
         "",
         "Plumbing smoke test of the voxel forecasting pilot "
         "(`docs/design/contrast_pretraining.md`) on Duke MAMA-MIA placeholder data. "
@@ -232,6 +236,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--cases", type=str, required=True, help="Comma-separated Duke case ids"
     )
     parser.add_argument("--outdir", type=Path, required=True)
+    parser.add_argument(
+        "--node-mode",
+        choices=(_VOXEL_MODE, _SEGMENT_MODE),
+        default=_VOXEL_MODE,
+        help="Graph node definition: 'voxel' or 'segment' (junction not wired yet).",
+    )
     parser.add_argument("--input-len", type=int, default=3)
     parser.add_argument("--target-len", type=int, default=2)
     parser.add_argument(
@@ -271,7 +281,7 @@ def main(argv: list[str] | None = None) -> None:
             f"got {args.val_cases}"
         )
 
-    node_features = _MODE_DEFAULT_FEATURES[_VOXEL_MODE]
+    node_features = _MODE_DEFAULT_FEATURES[args.node_mode]
     tasks = discover_forecast_tasks(
         args.centerline_root,
         args.labels_path,
@@ -284,13 +294,14 @@ def main(argv: list[str] | None = None) -> None:
     # frame count T before committing a horizon -- Duke's T varies across cases.
     built: list[object] = []
     for case_id, mask_path, label in tasks:
-        logging.info("Building voxel graph for %s", case_id)
+        logging.info("Building %s graph for %s", args.node_mode, case_id)
         data = build_case_data(
             case_id,
             mask_path,
             label,
             dce_root=args.dce_root,
             node_features=node_features,
+            node_mode=args.node_mode,
         )
         series_len = int(data.node_series.shape[1])
         logging.info("  %s: %d nodes, T=%d frames", case_id, data.num_nodes, series_len)
@@ -327,6 +338,7 @@ def main(argv: list[str] | None = None) -> None:
     (args.outdir / "gate_report.json").write_text(json.dumps(report, indent=2) + "\n")
     _write_readme(
         args.outdir,
+        node_mode=args.node_mode,
         argv=argv if argv is not None else _argv_for_readme(args),
         tasks=tasks,
         horizon=horizon,
@@ -346,6 +358,7 @@ def _argv_for_readme(args: argparse.Namespace) -> list[str]:
         f"--labels-path {args.labels_path}",
         f"--cases {args.cases}",
         f"--outdir {args.outdir}",
+        f"--node-mode {args.node_mode}",
         f"--input-len {args.input_len}",
         f"--target-len {args.target_len}",
         f"--min-frames-policy {args.min_frames_policy}",

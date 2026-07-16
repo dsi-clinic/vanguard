@@ -28,7 +28,7 @@ from gnn.pretrain.baselines import last_frame_forecast, temporal_mean_forecast
 from gnn.pretrain.forecast import ForecastHorizon, split_forecast_window
 from gnn.pretrain.loss import masked_mae
 from gnn.pretrain.model import ContrastForecastGNN, PerNodeForecaster
-from gnn.pretrain.node_series import voxel_node_series
+from gnn.pretrain.node_series import segment_node_series, voxel_node_series
 
 __all__ = [
     "ContrastForecastGNN",
@@ -36,6 +36,7 @@ __all__ = [
     "PerNodeForecaster",
     "last_frame_forecast",
     "masked_mae",
+    "segment_node_series",
     "split_forecast_window",
     "temporal_mean_forecast",
     "voxel_node_series",

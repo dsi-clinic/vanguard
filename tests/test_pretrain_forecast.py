@@ -21,7 +21,10 @@ from gnn.pretrain.baselines import (  # noqa: E402
 from gnn.pretrain.forecast import ForecastHorizon, split_forecast_window  # noqa: E402
 from gnn.pretrain.loss import masked_mae  # noqa: E402
 from gnn.pretrain.model import ContrastForecastGNN, PerNodeForecaster  # noqa: E402
-from gnn.pretrain.node_series import voxel_node_series  # noqa: E402
+from gnn.pretrain.node_series import (  # noqa: E402
+    segment_node_series,
+    voxel_node_series,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -51,6 +54,67 @@ def test_voxel_node_series_rejects_non_4d() -> None:
     """A non-4D dce array fails loudly."""
     with pytest.raises(ValueError, match="4D"):
         voxel_node_series(np.zeros((3, 3)), [(0, 0, 0)])
+
+
+# --------------------------------------------------------------------------- #
+# segment_node_series
+# --------------------------------------------------------------------------- #
+def _line_voxel_graph():  # noqa: ANN202
+    """A straight 3-voxel chain -> one segment (degree-1 tips, degree-2 middle)."""
+    import networkx as nx
+
+    graph = nx.Graph()
+    graph.add_edge((0, 0, 0), (1, 0, 0))
+    graph.add_edge((1, 0, 0), (2, 0, 0))
+    return graph
+
+
+def _y_voxel_graph():  # noqa: ANN202
+    """A Y (three arms meeting at a degree-3 junction) -> three segments."""
+    import networkx as nx
+
+    graph = nx.Graph()
+    center = (2, 2, 0)
+    graph.add_edge((0, 2, 0), (1, 2, 0))
+    graph.add_edge((1, 2, 0), center)
+    graph.add_edge((2, 0, 0), (2, 1, 0))
+    graph.add_edge((2, 1, 0), center)
+    graph.add_edge(center, (2, 3, 0))
+    graph.add_edge((2, 3, 0), (2, 4, 0))
+    return graph
+
+
+def test_segment_node_series_shape_and_mean() -> None:
+    """One segment -> one row = mean baseline-subtracted enhancement over its voxels."""
+    rng = np.random.default_rng(1)
+    dce_4d = rng.random((4, 1, 1, 3)).astype(np.float32)  # (t, z, y, x); x in 0..2
+    series = segment_node_series(_line_voxel_graph(), dce_4d)
+    assert series.shape == (1, 4)
+    voxels = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+    curves = np.stack([dce_4d[:, z, y, x] for x, y, z in voxels], axis=0)
+    expected = (curves - curves[:, :1]).mean(axis=0)  # mean is order-invariant
+    np.testing.assert_allclose(series[0], expected, rtol=1e-5)
+    np.testing.assert_allclose(series[:, 0], np.zeros(1), atol=1e-6)
+
+
+def test_segment_node_series_one_row_per_segment_and_deterministic() -> None:
+    """Row count matches extract_segments (the line-graph node count), order stable."""
+    from graph_extraction.skeleton_to_graph_primitives import extract_segments
+
+    graph = _y_voxel_graph()
+    dce_4d = np.random.default_rng(2).random((3, 1, 5, 3)).astype(np.float32)
+    segments = extract_segments(graph)
+    series = segment_node_series(graph, dce_4d)
+    assert series.shape[0] == len(segments)  # one row per segment node
+    # Alignment relies on extract_segments returning the same order twice.
+    assert extract_segments(graph) == segments
+    np.testing.assert_allclose(series[:, 0], np.zeros(series.shape[0]), atol=1e-6)
+
+
+def test_segment_node_series_rejects_non_4d() -> None:
+    """A non-4D dce array fails loudly."""
+    with pytest.raises(ValueError, match="4D"):
+        segment_node_series(_line_voxel_graph(), np.zeros((3, 3)))
 
 
 # --------------------------------------------------------------------------- #

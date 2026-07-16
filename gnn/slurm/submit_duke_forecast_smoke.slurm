@@ -42,6 +42,7 @@ CENTERLINE_ROOT="${CENTERLINE_ROOT:-/gpfs/data/karczmar-lab/workspaces/saritbose
 DCE_ROOT="${DCE_ROOT:-/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images}"
 LABELS_PATH="${LABELS_PATH:-/ess/scratch/scratch1/t-9svena/gnn_caches/pcr_labels_folded_matched_cohort.csv}"
 CASES="${CASES:-DUKE_001,DUKE_002,DUKE_005,DUKE_009,DUKE_010,DUKE_012}"
+NODE_MODE="${NODE_MODE:-voxel}"
 OUTDIR="${OUTDIR:-experiments/contrast_pretrain_duke_smoke}"
 INPUT_LEN="${INPUT_LEN:-3}"
 TARGET_LEN="${TARGET_LEN:-2}"
@@ -54,7 +55,7 @@ EPOCHS="${EPOCHS:-40}"
 HIDDEN_DIM="${HIDDEN_DIM:-16}"
 SEED="${SEED:-0}"
 
-echo "cases=${CASES} outdir=${OUTDIR} horizon=${INPUT_LEN}/${TARGET_LEN}"
+echo "mode=${NODE_MODE} cases=${CASES} outdir=${OUTDIR} horizon=${INPUT_LEN}/${TARGET_LEN}"
 
 python -u -m gnn.pretrain.duke_forecast \
   --centerline-root "${CENTERLINE_ROOT}" \
@@ -62,6 +63,7 @@ python -u -m gnn.pretrain.duke_forecast \
   --labels-path "${LABELS_PATH}" \
   --cases "${CASES}" \
   --outdir "${OUTDIR}" \
+  --node-mode "${NODE_MODE}" \
   --input-len "${INPUT_LEN}" \
   --target-len "${TARGET_LEN}" \
   --min-frames-policy "${MIN_FRAMES_POLICY}" \

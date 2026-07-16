@@ -649,24 +649,30 @@ def _build_case(
     )
 
     # Opt-in per-node contrast time-series for the forecasting pretext task
-    # (gnn.pretrain). Voxel mode only: the node identity is the voxel, so the
-    # raw curve dce_4d[:, z, y, x] is well-defined per node. ``list(voxel_graph
-    # .nodes())`` is exactly the order ``from_networkx`` used to stack
-    # ``data.x``, so ``data.node_series`` rows align with ``data.x`` rows.
-    # Segment/junction node identities differ, so this fails loudly there rather
-    # than silently attaching a mismatched matrix. Default off -> the
+    # (gnn.pretrain). Each row aligns with the corresponding ``data.x`` row:
+    #   - voxel: ``list(voxel_graph.nodes())`` is exactly the order
+    #     ``from_networkx`` used to stack ``data.x``.
+    #   - segment: ``segment_node_series`` uses the same
+    #     ``enumerate(extract_segments(voxel_graph))`` order that
+    #     ``build_segment_line_graph`` numbered its segment-nodes with.
+    # Junction (segment-as-edge) node identity differs and its forecasting target
+    # is still an open design question (design doc §4.3), so it fails loudly here
+    # rather than silently attaching a mismatched matrix. Default off -> the
     # classification build path is byte-for-byte unchanged.
     if attach_node_series:
-        if node_mode != _VOXEL_MODE:
-            raise ValueError(
-                "attach_node_series=True is only supported for node_mode='voxel'; "
-                f"got {node_mode!r}."
-            )
-        from gnn.pretrain.node_series import voxel_node_series
+        from gnn.pretrain.node_series import segment_node_series, voxel_node_series
 
-        data.node_series = torch.tensor(
-            voxel_node_series(dce_4d, list(voxel_graph.nodes())), dtype=torch.float
-        )
+        if node_mode == _VOXEL_MODE:
+            node_series = voxel_node_series(dce_4d, list(voxel_graph.nodes()))
+        elif node_mode == _SEGMENT_MODE:
+            node_series = segment_node_series(voxel_graph, dce_4d)
+        else:
+            raise ValueError(
+                "attach_node_series=True supports node_mode in "
+                f"{{'voxel', 'segment'}}; got {node_mode!r} (junction forecasting "
+                "is not wired yet -- see design doc §4.3)."
+            )
+        data.node_series = torch.tensor(node_series, dtype=torch.float)
     return data, stage_samples
 
 
