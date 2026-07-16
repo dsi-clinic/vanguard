@@ -92,3 +92,6 @@ If `agents.local.md` exists, read it after this file.
 - Reserve contrasting colors only to highlight a specific result or distinguish meaningful categories.
 - Avoid unnecessary visual elements ("chartjunk") such as excessive colors, gradients, 3D effects, and heavy styling.
 - Favor clean, simple figures that emphasize the data rather than the design.
+
+## Avoiding Repeated Mistakes
+After any material mistake, near-miss, wasted compute, confusing workflow, or user correction, identify the general rule that would have prevented it and propose a concise `AGENTS.md` change in the next substantive update. If an existing rule already covers the incident, explain why it was missed and propose clearer wording, placement, or triggers instead of a duplicate. Prefer reusable principles over incident-specific prohibitions; do not edit `AGENTS.md` without approval.
