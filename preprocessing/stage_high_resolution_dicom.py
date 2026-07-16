@@ -1,4 +1,4 @@
-"""Stage reviewed high-resolution DICOM series beside the UFAST cohort.
+"""Stage reviewed HR/UFAST DICOM series beside the UFAST cohort.
 
 The source archives are opened read-only. DICOM payloads are copied byte for
 byte into one restricted, restartable ZIP per exam; filenames and shared
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import zipfile
@@ -230,8 +231,14 @@ def stage_exam(selection_path: Path, destination: Path, index: int) -> None:
     )
 
 
+def _series_by_role(group: pd.DataFrame, role: str) -> pd.DataFrame:
+    if role == "hr":
+        return group.loc[group["series_role"].ne("ufast")]
+    return group.loc[group["series_role"].isin(("ufast", "shared_hr_ufast"))]
+
+
 def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> None:
-    """Merge completed shards and create HR-linked cohort manifests."""
+    """Merge completed shards and create paired-source cohort manifests."""
     selection = _selection(selection_path)
     exam_ids = sorted(selection["exam_id"].unique())
     shard_paths = [
@@ -259,10 +266,14 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
     temp_combined.replace(combined_path)
 
     grouped_rows: list[dict[str, object]] = []
+    runnable_rows: list[dict[str, object]] = []
+    exclusion_rows: list[dict[str, object]] = []
     for exam_id, group in selection.groupby("exam_id", sort=True):
         dataset = group["dataset"].iloc[0]
         statuses = sorted(set(group["selection_status"]))
         archive = destination / "archives" / dataset / f"{exam_id}.zip"
+        hr_group = _series_by_role(group, "hr")
+        ufast_group = _series_by_role(group, "ufast")
         paired_ufast_uid = ""
         if "paired_ufast_series_instance_uid" in group:
             ufast_uids = sorted(
@@ -272,23 +283,76 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
                 raise ValueError(f"{exam_id}: multiple paired UFAST series UIDs")
             if ufast_uids:
                 paired_ufast_uid = ufast_uids[0]
+        staged_ufast_uids = sorted(set(ufast_group["series_instance_uid"]))
+        if staged_ufast_uids:
+            if len(staged_ufast_uids) != 1:
+                raise ValueError(f"{exam_id}: multiple staged UFAST series UIDs")
+            if paired_ufast_uid and paired_ufast_uid != staged_ufast_uids[0]:
+                raise ValueError(f"{exam_id}: staged and paired UFAST UIDs disagree")
+            paired_ufast_uid = staged_ufast_uids[0]
         grouped_rows.append(
             {
                 "exam_id": exam_id,
                 "dataset": dataset,
                 "study_instance_uid": group["study_instance_uid"].iloc[0],
-                "hr_series_instance_uids": "|".join(group["series_instance_uid"]),
-                "hr_series_roles": "|".join(group["series_role"]),
+                "hr_series_instance_uids": "|".join(
+                    hr_group["series_instance_uid"]
+                ),
+                "hr_series_roles": "|".join(hr_group["series_role"]),
                 "hr_selection_status": "|".join(statuses),
                 "ufast_series_instance_uid": paired_ufast_uid,
+                "ufast_source_staged": bool(staged_ufast_uids),
                 "hr_source_archive_path": str(archive.resolve()),
                 "hr_inventory_path": str(combined_path.resolve()),
+                "paired_source_archive_path": str(archive.resolve()),
+                "paired_inventory_path": str(combined_path.resolve()),
             }
         )
+        has_baseline = "ufast_baseline_frame_count" in group
+        if len(hr_group) == 1 and len(ufast_group) == 1 and has_baseline:
+            baseline_values = sorted(
+                set(group["ufast_baseline_frame_count"].dropna()) - {""}
+            )
+            if len(baseline_values) != 1:
+                raise ValueError(f"{exam_id}: expected one UFAST baseline count")
+            runnable_rows.append(
+                {
+                    "exam_id": exam_id,
+                    "dataset": dataset,
+                    "study_instance_uid": group["study_instance_uid"].iloc[0],
+                    "hr_series_instance_uid": hr_group[
+                        "series_instance_uid"
+                    ].iloc[0],
+                    "ufast_series_instance_uid": ufast_group[
+                        "series_instance_uid"
+                    ].iloc[0],
+                    "ufast_baseline_frame_count": int(baseline_values[0]),
+                }
+            )
+        else:
+            missing_baseline = "" if has_baseline else "; baseline count unavailable"
+            exclusion_rows.append(
+                {
+                    "exam_id": exam_id,
+                    "dataset": dataset,
+                    "selection_status": "|".join(statuses),
+                    "reason": (
+                        f"requires exactly one HR and one UFAST series; found "
+                        f"{len(hr_group)} HR and {len(ufast_group)} UFAST"
+                        f"{missing_baseline}"
+                    ),
+                }
+            )
     cases = pd.DataFrame(grouped_rows)
     cases_path = destination / "high_resolution_case_manifest.csv"
     cases.to_csv(cases_path, index=False)
     cases_path.chmod(0o640)
+    runnable_path = destination / "paired_preprocessing_case_manifest.csv"
+    pd.DataFrame(runnable_rows).to_csv(runnable_path, index=False)
+    runnable_path.chmod(0o640)
+    exclusions_path = destination / "paired_preprocessing_exclusions.csv"
+    pd.DataFrame(exclusion_rows).to_csv(exclusions_path, index=False)
+    exclusions_path.chmod(0o640)
 
     cohort = pd.read_csv(ufast_manifest, dtype=str, keep_default_na=False)
     hr_columns = cases.drop(columns="study_instance_uid")
@@ -304,6 +368,11 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
     )
     enriched.to_csv(enriched_path, index=False)
     enriched_path.chmod(0o640)
+    paired_enriched_path = ufast_manifest.with_name(
+        "dce2d_internal_ultrafast_with_paired_source_manifest.csv"
+    )
+    enriched.to_csv(paired_enriched_path, index=False)
+    paired_enriched_path.chmod(0o640)
 
     checksum_path = destination / "SHA256SUMS"
     with checksum_path.open("w") as stream:
@@ -315,30 +384,43 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
 
     readme_path = destination / "README.md"
     readme_path.write_text(
-        "# High-resolution DCE source data\n\n"
-        "This directory contains the reviewed native high-resolution DCE series "
-        "associated with the 181-exam UFAST manifest. DICOM payloads were copied "
+        "# Paired HR/UFAST DCE source data\n\n"
+        "This directory contains the reviewed native HR and UFAST DCE series "
+        "associated with the 181-exam cohort manifest. DICOM payloads were copied "
         "byte-for-byte from read-only source ZIPs and recompressed into one ZIP "
         "per exam. The archive layout and shared manifests omit source filenames "
         "and patient columns, but the DICOM payloads are **not deidentified**; keep "
         "this data within the restricted Karczmar-lab share.\n\n"
         "- `dicom_file_manifest.parquet`: minimal ZIP-backed inventory accepted by "
         "Vanguard's DICOM loader.\n"
-        "- `high_resolution_case_manifest.csv`: one HR association row per UFAST "
+        "- `high_resolution_case_manifest.csv`: one paired association row per "
         "exam.\n"
+        "- `dicom_spatial_geometry_manifest.csv`: explicit DICOM LPS origin, "
+        "direction, spacing, shape, and frame-of-reference for every series.\n"
+        "- `hr_ufast_spatial_alignment_manifest.csv`: per-exam frame, direction, "
+        "origin, and field-of-view comparison.\n"
+        "- `paired_preprocessing_case_manifest.csv`: exact runnable inputs for "
+        "Vanguard's DICOM-to-skeleton cohort entrypoint.\n"
+        "- `paired_preprocessing_exclusions.csv`: explicit non-runnable cases.\n"
         "- `selection_manifest.csv`: reviewed series-level selection and source "
         "provenance.\n"
         "- `SHA256SUMS`: archive checksums relative to this directory.\n"
         "- `archives/<dataset>/<exam_id>.zip`: selected source DICOM payloads.\n\n"
         "The original `dce2d_internal_ultrafast_manifest.csv` was left unchanged. "
         "Use the adjacent "
-        "`dce2d_internal_ultrafast_with_high_resolution_manifest.csv` for the "
+        "`dce2d_internal_ultrafast_with_paired_source_manifest.csv` for the "
         "one-to-one HR/UFAST linkage. Of 181 exams, 179 have one complete native "
         "HR series. One HITS exam has no distinct HR acquisition and is marked "
         "`shared_hr_ufast_no_distinct_hr`. One Siemens exam stores pre/post phases "
         "as separate series; all seven phases plus its static high-resolution "
         "series are retained and marked `split_series_not_runnable`. Do not treat "
-        "its legacy 84 exported images as 84 physical UFAST phases.\n"
+        "its legacy 84 exported images as 84 physical UFAST phases. The runtime "
+        "inventory and case manifest reference only this Karczmar-lab package; "
+        "Huo-lab paths in `selection_manifest.csv` are source provenance only.\n\n"
+        "Run the complete Vanguard-owned DICOM preprocessing with "
+        "`PAIRED_INVENTORY` set to `dicom_file_manifest.parquet`, "
+        "`CASE_MANIFEST` set to `paired_preprocessing_case_manifest.csv`, and "
+        "`bash slurm/submit_paired_preprocessing.sh` from the Vanguard checkout.\n"
     )
     readme_path.chmod(0o640)
     print(
@@ -347,10 +429,113 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
     )
 
 
+def write_spatial_geometry_manifest(selection_path: Path, destination: Path) -> None:
+    """Extract non-PHI spatial geometry from each staged DICOM series."""
+    import pydicom
+
+    from preprocessing.dicom import _phase_geometry, geometry_alignment_checks
+
+    selection = _selection(selection_path)
+    inventory_path = destination / "dicom_file_manifest.parquet"
+    inventory = pd.read_parquet(inventory_path)
+    records: list[dict[str, object]] = []
+    geometries: dict[str, object] = {}
+    for series_uid, rows in inventory.groupby("series_instance_uid", sort=True):
+        temporal = pd.to_numeric(
+            rows["temporal_position_identifier"], errors="coerce"
+        )
+        if temporal.notna().any():
+            first_temporal = float(temporal.dropna().min())
+            phase_rows = rows.loc[temporal.eq(first_temporal)]
+            n_temporal = int(temporal.dropna().nunique())
+        else:
+            phase_rows = rows
+            n_temporal = 1
+        phase_rows = phase_rows.sort_values("instance_number")
+        archive_paths = sorted(set(phase_rows["archive_path"].astype(str)))
+        if len(archive_paths) != 1:
+            raise ValueError(f"{series_uid}: expected one staged archive")
+        datasets = []
+        with zipfile.ZipFile(archive_paths[0]) as archive:
+            for member in phase_rows["archive_member"].astype(str):
+                payload = archive.read(member)
+                datasets.append(
+                    pydicom.dcmread(
+                        io.BytesIO(payload), stop_before_pixels=True, force=True
+                    )
+                )
+        geometry, _ = _phase_geometry(datasets, series_uid=str(series_uid))
+        geometries[str(series_uid)] = geometry
+        selected = selection.loc[
+            selection["series_instance_uid"].eq(str(series_uid))
+        ].iloc[0]
+        direction = geometry.direction_lps
+        records.append(
+            {
+                "exam_id": selected["exam_id"],
+                "dataset": selected["dataset"],
+                "series_role": selected["series_role"],
+                "study_instance_uid": selected["study_instance_uid"],
+                "series_instance_uid": series_uid,
+                "coordinate_system": "DICOM LPS",
+                "frame_of_reference_uid": geometry.frame_of_reference_uid,
+                "shape_z": geometry.shape_zyx[0],
+                "shape_y": geometry.shape_zyx[1],
+                "shape_x": geometry.shape_zyx[2],
+                "spacing_x_mm": geometry.spacing_xyz_mm[0],
+                "spacing_y_mm": geometry.spacing_xyz_mm[1],
+                "spacing_z_mm": geometry.spacing_xyz_mm[2],
+                "origin_lps_x_mm": geometry.origin_lps_mm[0],
+                "origin_lps_y_mm": geometry.origin_lps_mm[1],
+                "origin_lps_z_mm": geometry.origin_lps_mm[2],
+                **{
+                    f"direction_lps_{row}{column}": direction[row * 3 + column]
+                    for row in range(3)
+                    for column in range(3)
+                },
+                "slice_thickness_mm": geometry.slice_thickness_mm,
+                "n_temporal_positions": n_temporal,
+            }
+        )
+    geometry_frame = pd.DataFrame(records)
+    geometry_path = destination / "dicom_spatial_geometry_manifest.csv"
+    geometry_frame.to_csv(geometry_path, index=False)
+    geometry_path.chmod(0o640)
+
+    alignment_records: list[dict[str, object]] = []
+    for exam_id, group in selection.groupby("exam_id", sort=True):
+        hr_group = _series_by_role(group, "hr")
+        ufast_group = _series_by_role(group, "ufast")
+        if ufast_group.empty:
+            continue
+        ufast_uid = str(ufast_group["series_instance_uid"].iloc[0])
+        for hr_uid in hr_group["series_instance_uid"].astype(str):
+            checks = geometry_alignment_checks(
+                geometries[hr_uid], geometries[ufast_uid]
+            )
+            alignment_records.append(
+                {
+                    "exam_id": exam_id,
+                    "dataset": group["dataset"].iloc[0],
+                    "hr_series_instance_uid": hr_uid,
+                    "ufast_series_instance_uid": ufast_uid,
+                    **checks,
+                }
+            )
+    alignment_path = destination / "hr_ufast_spatial_alignment_manifest.csv"
+    pd.DataFrame(alignment_records).to_csv(alignment_path, index=False)
+    alignment_path.chmod(0o640)
+    print(
+        f"[complete] wrote geometry for {len(geometry_frame)} series and "
+        f"{len(alignment_records)} HR/UFAST pairs",
+        flush=True,
+    )
+
+
 def main() -> None:
     """Run one array task or finalize all completed tasks."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("stage", "finalize"))
+    parser.add_argument("command", choices=("stage", "finalize", "geometry"))
     parser.add_argument("--selection", required=True, type=Path)
     parser.add_argument("--destination", required=True, type=Path)
     parser.add_argument("--index", type=int)
@@ -361,10 +546,12 @@ def main() -> None:
         if index is None:
             index = int(os.environ["SLURM_ARRAY_TASK_ID"])
         stage_exam(args.selection, args.destination, index)
-    else:
+    elif args.command == "finalize":
         if args.ufast_manifest is None:
             parser.error("finalize requires --ufast-manifest")
         finalize(args.selection, args.destination, args.ufast_manifest)
+    else:
+        write_spatial_geometry_manifest(args.selection, args.destination)
 
 
 if __name__ == "__main__":

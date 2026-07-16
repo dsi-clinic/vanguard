@@ -11,25 +11,30 @@ import pandas as pd
 
 from preprocessing.stage_high_resolution_dicom import finalize, stage_exam
 
-EXPECTED_FILES = 2
+EXPECTED_FILES = 4
 
 
 def _write_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes]]:
-    payloads = {"source/a.dcm": b"first dicom", "source/b.dcm": b"second dicom"}
+    payloads = {
+        "source/hr-a.dcm": b"first hr dicom",
+        "source/hr-b.dcm": b"second hr dicom",
+        "source/ufast-a.dcm": b"first ufast dicom",
+        "source/ufast-b.dcm": b"second ufast dicom",
+    }
     source_zip = tmp_path / "source.zip"
     with zipfile.ZipFile(source_zip, "w") as archive:
         for member, payload in payloads.items():
             archive.writestr(member, payload)
     inventory = pd.DataFrame(
         {
-            "study_instance_uid": ["study", "study"],
-            "series_instance_uid": ["series", "series"],
-            "archive_path": [str(source_zip), str(source_zip)],
+            "study_instance_uid": ["study"] * EXPECTED_FILES,
+            "series_instance_uid": ["hr-series", "hr-series", "ufast-series", "ufast-series"],
+            "archive_path": [str(source_zip)] * EXPECTED_FILES,
             "archive_member": list(payloads),
-            "read_ok": [True, True],
-            "temporal_position_identifier": [1, 2],
-            "instance_number": [1, 2],
-            "sop_instance_uid": ["sop-1", "sop-2"],
+            "read_ok": [True] * EXPECTED_FILES,
+            "temporal_position_identifier": [1, 2, 1, 2],
+            "instance_number": [1, 2, 1, 2],
+            "sop_instance_uid": ["sop-1", "sop-2", "sop-3", "sop-4"],
             "file_size_bytes": [len(value) for value in payloads.values()],
         }
     )
@@ -37,15 +42,16 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes]]:
     inventory.to_parquet(inventory_path, index=False)
     selection = pd.DataFrame(
         {
-            "exam_id": ["exam"],
-            "dataset": ["cohort"],
-            "study_instance_uid": ["study"],
-            "series_instance_uid": ["series"],
-            "series_role": ["hr"],
-            "selection_status": ["paired_complete"],
-            "paired_ufast_series_instance_uid": ["ufast-series"],
-            "source_inventory": [str(inventory_path)],
-            "expected_n_instances": [2],
+            "exam_id": ["exam", "exam"],
+            "dataset": ["cohort", "cohort"],
+            "study_instance_uid": ["study", "study"],
+            "series_instance_uid": ["hr-series", "ufast-series"],
+            "series_role": ["hr", "ufast"],
+            "selection_status": ["paired_complete", "paired_complete"],
+            "paired_ufast_series_instance_uid": ["ufast-series", "ufast-series"],
+            "ufast_baseline_frame_count": [1, 1],
+            "source_inventory": [str(inventory_path), str(inventory_path)],
+            "expected_n_instances": [2, 2],
         }
     )
     selection_path = tmp_path / "selection.csv"
@@ -62,8 +68,10 @@ def test_stage_exam_preserves_payloads_and_omits_source_names(tmp_path: Path) ->
     archive_path = destination / "archives" / "cohort" / "exam.zip"
     with zipfile.ZipFile(archive_path) as archive:
         assert archive.namelist() == [
-            "series/series/000000.dcm",
-            "series/series/000001.dcm",
+            "series/hr-series/000000.dcm",
+            "series/hr-series/000001.dcm",
+            "series/ufast-series/000000.dcm",
+            "series/ufast-series/000001.dcm",
         ]
         assert [archive.read(member) for member in archive.namelist()] == list(
             payloads.values()
@@ -98,7 +106,12 @@ def test_finalize_links_hr_to_existing_ufast_manifest(tmp_path: Path) -> None:
         tmp_path / "dce2d_internal_ultrafast_with_high_resolution_manifest.csv"
     )
     assert enriched.loc[0, "hr_selection_status"] == "paired_complete"
+    assert enriched.loc[0, "hr_series_instance_uids"] == "hr-series"
     assert enriched.loc[0, "ufast_series_instance_uid"] == "ufast-series"
+    assert bool(enriched.loc[0, "ufast_source_staged"])
     assert Path(enriched.loc[0, "hr_source_archive_path"]).exists()
+    runnable = pd.read_csv(destination / "paired_preprocessing_case_manifest.csv")
+    assert runnable.loc[0, "hr_series_instance_uid"] == "hr-series"
+    assert runnable.loc[0, "ufast_series_instance_uid"] == "ufast-series"
     combined = pd.read_parquet(destination / "dicom_file_manifest.parquet")
     assert len(combined) == EXPECTED_FILES

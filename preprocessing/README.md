@@ -92,17 +92,19 @@ modified after producing a derivative.
 
 ## Shared UChicago source data
 
-The reviewed native HR series for every exam in the internal UFAST manifest
-are staged at:
+The self-contained reviewed HR/UFAST DICOM source package is staged at:
 
 ```text
-/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/high_resolution_source_dicom
+/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/paired_hr_ufast_source_dicom
 ```
 
-Use `dicom_file_manifest.parquet` for ZIP-backed HR loading and the adjacent
-`dce2d_internal_ultrafast_with_high_resolution_manifest.csv` for the one-to-one
-HR/UFAST exam linkage. The original UFAST manifest is unchanged. The shared
-manifest has no patient columns or source member names, but the byte-preserved
+Use `dicom_file_manifest.parquet` for ZIP-backed loading,
+`paired_preprocessing_case_manifest.csv` for exact runnable series UIDs, and
+`dicom_spatial_geometry_manifest.csv` for explicit DICOM LPS origin, direction,
+spacing, shape, and frame-of-reference. The adjacent
+`dce2d_internal_ultrafast_with_paired_source_manifest.csv` links these inputs to
+the original cohort without changing the original UFAST manifest. Shared
+manifests have no patient columns or source member names, but the byte-preserved
 DICOM payloads are not deidentified and must stay in the restricted lab share.
 
 The selection is explicit and reviewed: 179 exams have one complete native HR
@@ -116,3 +118,28 @@ images as physical UFAST phases.
 `slurm/*_high_resolution_dicom.slurm` wrappers reproduce the restricted copy,
 manifest reduction, and SHA-256 verification. The source selection manifest
 and per-exam checksums live beside the staged data.
+
+### Cohort preprocessing from shared DICOM
+
+The cohort runner uses only the paired Karczmar-lab package and Vanguard code.
+It does not read Huo-lab inventories or old NIfTI affines. The CPU prepare stage
+loads every original HR/UFAST temporal position, preserves physical acquisition
+times, writes true RAS NIfTI qform/sform affines derived from DICOM LPS, and
+motion-corrects raw-signal UFAST data. GPU inference runs the frozen models on
+every native-HR phase. CPU postprocessing runs TC4D, maps the static skeleton
+through the shared DICOM frame, and writes QC.
+
+```bash
+export REPO_ROOT=/path/to/vanguard
+export PAIRED_ROOT=/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/paired_hr_ufast_source_dicom
+export PAIRED_INVENTORY=${PAIRED_ROOT}/dicom_file_manifest.parquet
+export CASE_MANIFEST=${PAIRED_ROOT}/paired_preprocessing_case_manifest.csv
+export OUTPUT_ROOT=/path/to/derived/vanguard_paired_preprocessing
+
+bash slurm/submit_paired_preprocessing.sh
+```
+
+The submission prints three job IDs. Corresponding array tasks are linked with
+`aftercorr`, so one failed case does not block unrelated cases. Completed stages
+are skipped on resubmission. The documented Vanguard environment can be
+overridden explicitly with `VANGUARD_PYTHON` when validating another checkout.

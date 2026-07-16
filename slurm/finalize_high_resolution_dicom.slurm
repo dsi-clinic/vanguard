@@ -24,3 +24,7 @@ echo "[python] ${VANGUARD_PYTHON}"
   --selection "${SELECTION_MANIFEST}" \
   --destination "${DESTINATION_ROOT}" \
   --ufast-manifest "${UFAST_MANIFEST}"
+
+"${VANGUARD_PYTHON}" preprocessing/stage_high_resolution_dicom.py geometry \
+  --selection "${SELECTION_MANIFEST}" \
+  --destination "${DESTINATION_ROOT}"

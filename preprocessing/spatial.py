@@ -56,7 +56,7 @@ def resample_to_geometry(
     *,
     nearest: bool = False,
 ) -> np.ndarray:
-    """Resample an array between physical grids with an identity transform."""
+    """Resample between grids in one physical frame, honoring both directions."""
     moving = sitk_image(np.asarray(array_zyx, dtype=np.float32), source)
     reference = sitk_image(np.zeros(target.shape_zyx, dtype=np.float32), target)
     interpolator = sitk.sitkNearestNeighbor if nearest else sitk.sitkLinear

@@ -68,8 +68,6 @@ def _validate_pair(record: CaseRecord, hr: Any, ufast: Any) -> dict[str, object]
     checks = geometry_alignment_checks(hr.geometry, ufast.geometry)
     if not checks["same_frame_of_reference_uid"]:
         raise ValueError("HR and UFAST do not share a DICOM FrameOfReferenceUID")
-    if not checks["direction_equal"]:
-        raise ValueError("HR and UFAST have different physical orientations")
     return checks
 
 
@@ -268,31 +266,38 @@ def infer_case(
         raise FileExistsError("refusing to overwrite existing model predictions")
     breast_dir.mkdir()
     vessel_dir.mkdir()
-    run_inference_in_process(
-        step1_dir,
-        breast_dir,
-        vessel_dir,
-        str(breast_model),
-        str(vessel_model),
-        batch_size,
-        3,
-        True,
-    )
-    provenance_path = case_root / "preprocessing_provenance.json"
-    provenance = json.loads(provenance_path.read_text())
-    expected = len(provenance["hr_source"]["times_seconds"])
-    outputs = sorted(vessel_dir.glob("*.npz"))
-    if len(outputs) != expected:
-        raise RuntimeError(f"expected {expected} vessel phases, found {len(outputs)}")
-    provenance["inference"] = {
-        "breast_model": str(breast_model.resolve()),
-        "breast_model_sha256": _sha256(breast_model),
-        "vessel_model": str(vessel_model.resolve()),
-        "vessel_model_sha256": _sha256(vessel_model),
-        "device": torch.cuda.get_device_name(0),
-        "phases": expected,
-    }
-    _write_json(provenance_path, provenance)
+    try:
+        run_inference_in_process(
+            step1_dir,
+            breast_dir,
+            vessel_dir,
+            str(breast_model),
+            str(vessel_model),
+            batch_size,
+            3,
+            True,
+        )
+        provenance_path = case_root / "preprocessing_provenance.json"
+        provenance = json.loads(provenance_path.read_text())
+        expected = len(provenance["hr_source"]["times_seconds"])
+        outputs = sorted(vessel_dir.glob("*.npz"))
+        if len(outputs) != expected:
+            raise RuntimeError(
+                f"expected {expected} vessel phases, found {len(outputs)}"
+            )
+        provenance["inference"] = {
+            "breast_model": str(breast_model.resolve()),
+            "breast_model_sha256": _sha256(breast_model),
+            "vessel_model": str(vessel_model.resolve()),
+            "vessel_model_sha256": _sha256(vessel_model),
+            "device": torch.cuda.get_device_name(0),
+            "phases": expected,
+        }
+        _write_json(provenance_path, provenance)
+    except Exception:
+        shutil.rmtree(breast_dir, ignore_errors=True)
+        shutil.rmtree(vessel_dir, ignore_errors=True)
+        raise
 
 
 def tc4d_case(*, case_root: Path) -> None:
@@ -346,8 +351,8 @@ def map_case(*, case_root: Path) -> None:
     provenance_path = case_root / "preprocessing_provenance.json"
     provenance = json.loads(provenance_path.read_text())
     checks = provenance["geometry_alignment"]
-    if not checks["same_frame_of_reference_uid"] or not checks["direction_equal"]:
-        raise ValueError("identity mapping is not justified by DICOM geometry")
+    if not checks["same_frame_of_reference_uid"]:
+        raise ValueError("physical mapping is not justified by DICOM frame geometry")
     hr_geometry = DicomGeometry.from_dict(provenance["hr_source"]["geometry"])
     target_geometry = DicomGeometry.from_dict(provenance["ufast_output_geometry"])
     skeleton = np.load(case_root / "hr_tc4d" / "exam_skeleton_zyx.npy").astype(bool)
@@ -385,7 +390,7 @@ def map_case(*, case_root: Path) -> None:
         },
     )
     provenance["mapping"] = {
-        "transform": "identity in shared DICOM FrameOfReferenceUID",
+        "transform": "physical-coordinate mapping in shared DICOM FrameOfReferenceUID",
         "interpolation": {
             "skeleton": "physical point rasterization",
             "support": "nearest neighbor",

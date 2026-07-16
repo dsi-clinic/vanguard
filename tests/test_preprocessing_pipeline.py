@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 from scipy import ndimage
@@ -16,6 +17,7 @@ from preprocessing.model import (
     prepare_hr_phase_for_model,
 )
 from preprocessing.motion import MotionSettings, correct_phase
+from preprocessing.pipeline import _validate_pair
 from preprocessing.spatial import isotropic_geometry, rasterize_skeleton_identity
 
 TEST_VOLUME_SIZE = 20
@@ -130,6 +132,28 @@ def test_identity_mapping_uses_physical_coordinates_not_array_indices() -> None:
     checks = geometry_alignment_checks(hr, ufast)
     assert checks["same_frame_of_reference_uid"] is True
     assert checks["direction_equal"] is True
+
+
+def test_pair_validation_allows_different_array_directions_in_shared_frame() -> None:
+    """Physical mapping needs a shared frame, not identical voxel-axis directions."""
+    hr = _geometry(series_uid="hr")
+    ufast = DicomGeometry(
+        series_instance_uid="ufast",
+        frame_of_reference_uid=hr.frame_of_reference_uid,
+        shape_zyx=hr.shape_zyx,
+        spacing_xyz_mm=hr.spacing_xyz_mm,
+        origin_lps_mm=hr.origin_lps_mm,
+        direction_lps=(0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+        slice_thickness_mm=hr.slice_thickness_mm,
+    )
+    record = SimpleNamespace(ufast_baseline_frame_count=1)
+    checks = _validate_pair(
+        record,
+        SimpleNamespace(geometry=hr),
+        SimpleNamespace(geometry=ufast, signal_tzyx=np.zeros((2, 1, 1, 1))),
+    )
+    assert checks["same_frame_of_reference_uid"] is True
+    assert checks["direction_equal"] is False
 
 
 def test_case_manifest_requires_explicit_series_uids_and_baseline_count(
