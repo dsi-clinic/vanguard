@@ -518,6 +518,7 @@ def _build_case(
     node_features: tuple[str, ...],
     node_mode: str,
     edge_features: tuple[str, ...] = (),
+    attach_node_series: bool = False,
 ) -> tuple[Data, dict[str, list[float]]]:
     """Build one labeled :class:`Data` graph for ``case_id`` in ``node_mode``.
 
@@ -646,6 +647,26 @@ def _build_case(
         edge_features=edge_features,
         edge_feature_attr=_MODE_EDGE_FEATURE_ATTR.get(node_mode),
     )
+
+    # Opt-in per-node contrast time-series for the forecasting pretext task
+    # (gnn.pretrain). Voxel mode only: the node identity is the voxel, so the
+    # raw curve dce_4d[:, z, y, x] is well-defined per node. ``list(voxel_graph
+    # .nodes())`` is exactly the order ``from_networkx`` used to stack
+    # ``data.x``, so ``data.node_series`` rows align with ``data.x`` rows.
+    # Segment/junction node identities differ, so this fails loudly there rather
+    # than silently attaching a mismatched matrix. Default off -> the
+    # classification build path is byte-for-byte unchanged.
+    if attach_node_series:
+        if node_mode != _VOXEL_MODE:
+            raise ValueError(
+                "attach_node_series=True is only supported for node_mode='voxel'; "
+                f"got {node_mode!r}."
+            )
+        from gnn.pretrain.node_series import voxel_node_series
+
+        data.node_series = torch.tensor(
+            voxel_node_series(dce_4d, list(voxel_graph.nodes())), dtype=torch.float
+        )
     return data, stage_samples
 
 
