@@ -41,7 +41,7 @@ class DicomGeometry:
         return payload
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> DicomGeometry:
+    def from_dict(cls: type[DicomGeometry], payload: dict[str, Any]) -> DicomGeometry:
         """Reconstruct geometry from saved provenance."""
         return cls(
             series_instance_uid=str(payload["series_instance_uid"]),

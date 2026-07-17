@@ -28,7 +28,12 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes]]:
     inventory = pd.DataFrame(
         {
             "study_instance_uid": ["study"] * EXPECTED_FILES,
-            "series_instance_uid": ["hr-series", "hr-series", "ufast-series", "ufast-series"],
+            "series_instance_uid": [
+                "hr-series",
+                "hr-series",
+                "ufast-series",
+                "ufast-series",
+            ],
             "archive_path": [str(source_zip)] * EXPECTED_FILES,
             "archive_member": list(payloads),
             "read_ok": [True] * EXPECTED_FILES,
@@ -85,9 +90,10 @@ def test_stage_exam_preserves_payloads_and_omits_source_names(tmp_path: Path) ->
     metadata = json.loads(
         (destination / "provenance_shards" / "cohort" / "exam.json").read_text()
     )
-    assert metadata["archive_sha256"] == hashlib.sha256(
-        archive_path.read_bytes()
-    ).hexdigest()
+    assert (
+        metadata["archive_sha256"]
+        == hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    )
 
 
 def test_finalize_links_hr_to_existing_ufast_manifest(tmp_path: Path) -> None:

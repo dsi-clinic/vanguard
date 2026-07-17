@@ -80,9 +80,7 @@ def _selection(path: Path) -> pd.DataFrame:
             _safe_component(str(value), field=column) for value in frame[column]
         ]
     frame["expected_n_instances"] = frame["expected_n_instances"].astype(int)
-    duplicated = frame.duplicated(
-        ["exam_id", "series_instance_uid"], keep=False
-    )
+    duplicated = frame.duplicated(["exam_id", "series_instance_uid"], keep=False)
     if duplicated.any():
         raise ValueError("selection manifest repeats an exam/series pair")
     return frame
@@ -126,7 +124,13 @@ def _sort_rows(rows: pd.DataFrame) -> pd.DataFrame:
         _instance=pd.to_numeric(rows["instance_number"], errors="coerce").fillna(-1),
     )
     return sortable.sort_values(
-        ["series_role", "series_instance_uid", "_temporal", "_instance", "archive_member"]
+        [
+            "series_role",
+            "series_instance_uid",
+            "_temporal",
+            "_instance",
+            "archive_member",
+        ]
     ).drop(columns=["_temporal", "_instance"])
 
 
@@ -170,7 +174,9 @@ def stage_exam(selection_path: Path, destination: Path, index: int) -> None:
             for row in rows.itertuples(index=False):
                 source_path = str(row.archive_path)
                 if source_path not in source_archives:
-                    source_archives[source_path] = zipfile.ZipFile(source_path, mode="r")
+                    source_archives[source_path] = zipfile.ZipFile(
+                        source_path, mode="r"
+                    )
                 payload = source_archives[source_path].read(str(row.archive_member))
                 if len(payload) != int(row.file_size_bytes):
                     raise ValueError(
@@ -249,13 +255,17 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
     ]
     missing = [str(path) for path in shard_paths if not path.exists()]
     if missing:
-        raise FileNotFoundError(f"missing {len(missing)} inventory shards: {missing[:5]}")
+        raise FileNotFoundError(
+            f"missing {len(missing)} inventory shards: {missing[:5]}"
+        )
     inventory = pd.concat(
         [pd.read_parquet(path) for path in shard_paths], ignore_index=True
     )
     expected_files = int(selection["expected_n_instances"].sum())
     if len(inventory) != expected_files:
-        raise ValueError(f"expected {expected_files} inventory rows, got {len(inventory)}")
+        raise ValueError(
+            f"expected {expected_files} inventory rows, got {len(inventory)}"
+        )
     if inventory["exam_id"].nunique() != len(exam_ids):
         raise ValueError("merged inventory does not cover every selected exam")
 
@@ -295,9 +305,7 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
                 "exam_id": exam_id,
                 "dataset": dataset,
                 "study_instance_uid": group["study_instance_uid"].iloc[0],
-                "hr_series_instance_uids": "|".join(
-                    hr_group["series_instance_uid"]
-                ),
+                "hr_series_instance_uids": "|".join(hr_group["series_instance_uid"]),
                 "hr_series_roles": "|".join(hr_group["series_role"]),
                 "hr_selection_status": "|".join(statuses),
                 "ufast_series_instance_uid": paired_ufast_uid,
@@ -320,9 +328,7 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
                     "exam_id": exam_id,
                     "dataset": dataset,
                     "study_instance_uid": group["study_instance_uid"].iloc[0],
-                    "hr_series_instance_uid": hr_group[
-                        "series_instance_uid"
-                    ].iloc[0],
+                    "hr_series_instance_uid": hr_group["series_instance_uid"].iloc[0],
                     "ufast_series_instance_uid": ufast_group[
                         "series_instance_uid"
                     ].iloc[0],
@@ -359,9 +365,10 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
     enriched = cohort.merge(
         hr_columns, on=["exam_id", "dataset"], how="left", validate="one_to_one"
     )
-    if enriched["hr_source_archive_path"].eq("").any() or enriched[
-        "hr_source_archive_path"
-    ].isna().any():
+    if (
+        enriched["hr_source_archive_path"].eq("").any()
+        or enriched["hr_source_archive_path"].isna().any()
+    ):
         raise ValueError("HR selection does not cover the complete UFAST cohort")
     enriched_path = ufast_manifest.with_name(
         "dce2d_internal_ultrafast_with_high_resolution_manifest.csv"
@@ -378,8 +385,15 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
     with checksum_path.open("w") as stream:
         for path in sorted(destination.glob("provenance_shards/*/*.json")):
             metadata = json.loads(path.read_text())
-            archive = destination / "archives" / metadata["dataset"] / f"{metadata['exam_id']}.zip"
-            stream.write(f"{metadata['archive_sha256']}  {archive.relative_to(destination)}\n")
+            archive = (
+                destination
+                / "archives"
+                / metadata["dataset"]
+                / f"{metadata['exam_id']}.zip"
+            )
+            stream.write(
+                f"{metadata['archive_sha256']}  {archive.relative_to(destination)}\n"
+            )
     checksum_path.chmod(0o640)
 
     readme_path = destination / "README.md"
@@ -441,9 +455,7 @@ def write_spatial_geometry_manifest(selection_path: Path, destination: Path) -> 
     records: list[dict[str, object]] = []
     geometries: dict[str, object] = {}
     for series_uid, rows in inventory.groupby("series_instance_uid", sort=True):
-        temporal = pd.to_numeric(
-            rows["temporal_position_identifier"], errors="coerce"
-        )
+        temporal = pd.to_numeric(rows["temporal_position_identifier"], errors="coerce")
         if temporal.notna().any():
             first_temporal = float(temporal.dropna().min())
             phase_rows = rows.loc[temporal.eq(first_temporal)]

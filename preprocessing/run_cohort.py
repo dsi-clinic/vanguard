@@ -19,7 +19,9 @@ from preprocessing.pipeline import (
 
 def select_array_case(case_manifest: Path, index: int) -> CaseRecord:
     """Select one case using a stable exam-ID sort order."""
-    records = sorted(read_case_manifest(case_manifest), key=lambda record: record.exam_id)
+    records = sorted(
+        read_case_manifest(case_manifest), key=lambda record: record.exam_id
+    )
     if index < 0 or index >= len(records):
         raise IndexError(f"array index {index} outside [0, {len(records) - 1}]")
     return records[index]
@@ -41,13 +43,16 @@ def _stage_complete(stage: str, case_root: Path) -> bool:
     if stage == "map":
         return "mapping" in provenance
     if stage == "qc":
-        return "mapping" in provenance and (
-            case_root.parents[1]
-            / "centerlines"
-            / str(provenance["case"]["dataset"])
-            / case_root.name
-            / "mapping_qc.png"
-        ).exists()
+        return (
+            "mapping" in provenance
+            and (
+                case_root.parents[1]
+                / "centerlines"
+                / str(provenance["case"]["dataset"])
+                / case_root.name
+                / "mapping_qc.png"
+            ).exists()
+        )
     if stage == "postprocess":
         return all(_stage_complete(item, case_root) for item in ("tc4d", "map", "qc"))
     raise ValueError(f"unknown pipeline stage: {stage}")
