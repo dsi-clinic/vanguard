@@ -31,9 +31,11 @@ from preprocessing.spatial import (
     save_nifti_xyz,
 )
 
-POLICY_NAME = "vanguard_spgr_raw_signal_v2"
+POLICY_NAME = "vanguard_spgr_raw_signal_v3"
 TARGET_SPACING_MM = 1.0
 BINARY_THRESHOLD = 0.5
+INTERSERIES_REVIEW_TRANSLATION_MM = 2.0
+INTERSERIES_MEANINGFUL_NCC_GAIN = 0.02
 
 
 def _sha256(path: Path) -> str:
@@ -71,12 +73,16 @@ def _validate_pair(record: CaseRecord, hr: Any, ufast: Any) -> dict[str, object]
     return checks
 
 
-def _identity_alignment_qc(hr: Any, ufast: Any) -> dict[str, object]:
-    """Measure image agreement under the DICOM-identity HR-to-UFAST mapping."""
+def _identity_alignment_qc(
+    hr: Any, ufast: Any, *, baseline_frame_count: int
+) -> dict[str, object]:
+    """Check whether image content supports the DICOM-identity mapping."""
     hr_phase0_on_ufast = resample_to_geometry(
         hr.signal_tzyx[0], hr.geometry, ufast.geometry
     )
-    ufast_baseline = np.asarray(ufast.signal_tzyx[:1].mean(axis=0), dtype=np.float32)
+    ufast_baseline = np.asarray(
+        ufast.signal_tzyx[:baseline_frame_count].mean(axis=0), dtype=np.float32
+    )
     overlap = (hr_phase0_on_ufast > 0) & (ufast_baseline > 0)
     identity_ncc = correlation_in_support(
         hr_phase0_on_ufast,
@@ -84,13 +90,53 @@ def _identity_alignment_qc(hr: Any, ufast: Any) -> dict[str, object]:
         overlap,
         maximum_voxels=DEFAULT_MOTION_SETTINGS.maximum_correlation_voxels,
     )
+    try:
+        _, _, proposal = correct_phase(
+            np.transpose(ufast_baseline, (2, 1, 0)),
+            np.transpose(hr_phase0_on_ufast, (2, 1, 0)),
+            support=np.transpose(overlap, (2, 1, 0)),
+            spacing_xyz_mm=np.asarray(ufast.geometry.spacing_xyz_mm),
+            settings=DEFAULT_MOTION_SETTINGS,
+        )
+        proposed_norm_mm = float(proposal["proposed_translation_norm_mm"])
+        proposed_ncc_gain = float(proposal["corr_delta"])
+        content_disagrees = bool(
+            proposed_norm_mm > INTERSERIES_REVIEW_TRANSLATION_MM
+            and proposed_ncc_gain >= INTERSERIES_MEANINGFUL_NCC_GAIN
+        )
+        status = "review_required" if content_disagrees else "pass"
+        reason = (
+            "meaningful_translation_would_improve_alignment"
+            if content_disagrees
+            else "no_meaningful_translation_improvement"
+        )
+    except ValueError as error:
+        proposal = None
+        proposed_norm_mm = None
+        proposed_ncc_gain = None
+        status = "review_required"
+        reason = f"translation_diagnostic_failed: {error}"
+    if not np.isfinite(identity_ncc):
+        status = "review_required"
+        reason = "identity_ncc_not_finite"
     return {
-        "metric": "Pearson correlation of HR phase 0 and UFAST phase 0 under identity",
+        "metric": (
+            "HR phase 0 versus mean protocol UFAST baseline under DICOM identity"
+        ),
+        "baseline_frame_count": baseline_frame_count,
         "identity_ncc": float(identity_ncc) if np.isfinite(identity_ncc) else None,
         "overlap_voxels": int(overlap.sum()),
+        "proposed_translation_norm_mm": proposed_norm_mm,
+        "proposed_translation_ncc_gain": proposed_ncc_gain,
+        "review_translation_threshold_mm": INTERSERIES_REVIEW_TRANSLATION_MM,
+        "meaningful_ncc_gain_threshold": INTERSERIES_MEANINGFUL_NCC_GAIN,
+        "status": status,
+        "reason": reason,
+        "translation_diagnostic": proposal,
         "interpretation": (
-            "Supporting QC only: sequence contrast differs, so DICOM physical "
-            "geometry remains the mapping authority. Review unexpectedly low values."
+            "FrameOfReferenceUID establishes a coordinate system, not absence of "
+            "inter-series motion. A meaningful translation proposal triggers review; "
+            "the proposal is never applied automatically."
         ),
     }
 
@@ -127,7 +173,11 @@ def prepare_case(
             series_uid=record.ufast_series_instance_uid,
         )
         geometry_checks = _validate_pair(record, hr, ufast)
-        identity_alignment_qc = _identity_alignment_qc(hr, ufast)
+        identity_alignment_qc = _identity_alignment_qc(
+            hr,
+            ufast,
+            baseline_frame_count=record.ufast_baseline_frame_count,
+        )
         model_dir = case_root / "hr_model_inputs"
         model_dir.mkdir(parents=True)
         dce_dir.mkdir(parents=True)
@@ -165,13 +215,25 @@ def prepare_case(
             }
         ]
         for phase_index, moving in enumerate(resampled_txyz[1:], start=1):
-            output, _shift, metrics = correct_phase(
+            _, shift, metrics = correct_phase(
                 fixed,
                 moving,
                 support=None,
                 spacing_xyz_mm=np.asarray(target_geometry.spacing_xyz_mm),
                 settings=DEFAULT_MOTION_SETTINGS,
             )
+            if metrics["transform_accepted"]:
+                output = np.transpose(
+                    resample_to_geometry(
+                        ufast.signal_tzyx[phase_index],
+                        ufast.geometry,
+                        target_geometry,
+                        output_shift_xyz_voxels=shift,
+                    ),
+                    (2, 1, 0),
+                )
+            else:
+                output = moving
             corrected.append(output)
             motion_metrics.append(
                 {
@@ -202,6 +264,8 @@ def prepare_case(
                 "ufast_resample_interpolator": "linear",
                 "motion_reference_phase": 0,
                 "motion_output_interpolator": "linear",
+                "motion_composed_with_spatial_resample": True,
+                "saved_phase_interpolation_count": 1,
             },
             "case": record.__dict__,
             "inventory_path": str(inventory_path.expanduser().resolve()),
@@ -385,6 +449,15 @@ def map_case(*, case_root: Path) -> None:
             "case_id": exam_id,
             "study_timepoints": list(range(int(ufast_times.size))),
             "physical_times_seconds": ufast_times.tolist(),
+            "alignment_qc_status": provenance["identity_alignment_qc"]["status"],
+            "kinetic_feature_policy": {
+                "baseline_frame_count": int(
+                    provenance["ufast_source"]["baseline_frame_count"]
+                ),
+                "baseline_estimator": "mean",
+                "enhancement": "relative_signal_change",
+                "time_axis": "physical_seconds",
+            },
             "skeleton_source": "all native-HR vessel phases via TC4D",
             "kinetic_signal_source": "motion-corrected raw UFAST signal",
         },

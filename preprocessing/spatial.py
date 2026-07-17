@@ -55,15 +55,37 @@ def resample_to_geometry(
     target: DicomGeometry,
     *,
     nearest: bool = False,
+    output_shift_xyz_voxels: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Resample between grids in one physical frame, honoring both directions."""
+    """Resample between grids, optionally shifting output content in target voxels.
+
+    The optional shift is composed into this resampling operation so a
+    motion-corrected phase is still interpolated only once. Positive values move
+    image content in the positive target-index direction, matching
+    ``scipy.ndimage.shift`` semantics.
+    """
     moving = sitk_image(np.asarray(array_zyx, dtype=np.float32), source)
     reference = sitk_image(np.zeros(target.shape_zyx, dtype=np.float32), target)
     interpolator = sitk.sitkNearestNeighbor if nearest else sitk.sitkLinear
+    transform: sitk.Transform = sitk.Transform(3, sitk.sitkIdentity)
+    if output_shift_xyz_voxels is not None:
+        shift_xyz = np.asarray(output_shift_xyz_voxels, dtype=np.float64)
+        if shift_xyz.shape != (3,) or not np.all(np.isfinite(shift_xyz)):
+            raise ValueError("output shift must contain three finite XYZ values")
+        target_direction = np.asarray(target.direction_lps, dtype=np.float64).reshape(
+            3, 3
+        )
+        physical_shift_lps = target_direction @ (
+            shift_xyz * np.asarray(target.spacing_xyz_mm)
+        )
+        translation = sitk.TranslationTransform(3)
+        # SimpleITK transforms map output points back into the moving image.
+        translation.SetOffset(tuple(float(value) for value in -physical_shift_lps))
+        transform = translation
     output = sitk.Resample(
         moving,
         reference,
-        sitk.Transform(3, sitk.sitkIdentity),
+        transform,
         interpolator,
         0.0,
         sitk.sitkFloat32,

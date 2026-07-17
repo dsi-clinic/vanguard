@@ -42,6 +42,15 @@ SHARED_INVENTORY_COLUMNS = [
     "sop_instance_uid",
     "file_size_bytes",
 ]
+RUNNABLE_CASE_COLUMNS = [
+    "exam_id",
+    "dataset",
+    "study_instance_uid",
+    "hr_series_instance_uid",
+    "ufast_series_instance_uid",
+    "ufast_baseline_frame_count",
+]
+EXCLUSION_COLUMNS = ["exam_id", "dataset", "selection_status", "reason"]
 
 
 def _safe_component(value: str, *, field: str) -> str:
@@ -317,7 +326,13 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
             }
         )
         has_baseline = "ufast_baseline_frame_count" in group
-        if len(hr_group) == 1 and len(ufast_group) == 1 and has_baseline:
+        shared_acquisition = bool(group["series_role"].eq("shared_hr_ufast").any())
+        if (
+            len(hr_group) == 1
+            and len(ufast_group) == 1
+            and has_baseline
+            and not shared_acquisition
+        ):
             baseline_values = sorted(
                 set(group["ufast_baseline_frame_count"].dropna()) - {""}
             )
@@ -337,16 +352,21 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
             )
         else:
             missing_baseline = "" if has_baseline else "; baseline count unavailable"
+            reason = (
+                "shared HR/UFAST acquisition has no distinct high-resolution series"
+                if shared_acquisition
+                else (
+                    f"requires exactly one HR and one UFAST series; found "
+                    f"{len(hr_group)} HR and {len(ufast_group)} UFAST"
+                    f"{missing_baseline}"
+                )
+            )
             exclusion_rows.append(
                 {
                     "exam_id": exam_id,
                     "dataset": dataset,
                     "selection_status": "|".join(statuses),
-                    "reason": (
-                        f"requires exactly one HR and one UFAST series; found "
-                        f"{len(hr_group)} HR and {len(ufast_group)} UFAST"
-                        f"{missing_baseline}"
-                    ),
+                    "reason": reason,
                 }
             )
     cases = pd.DataFrame(grouped_rows)
@@ -354,10 +374,14 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
     cases.to_csv(cases_path, index=False)
     cases_path.chmod(0o640)
     runnable_path = destination / "paired_preprocessing_case_manifest.csv"
-    pd.DataFrame(runnable_rows).to_csv(runnable_path, index=False)
+    pd.DataFrame(runnable_rows, columns=RUNNABLE_CASE_COLUMNS).to_csv(
+        runnable_path, index=False
+    )
     runnable_path.chmod(0o640)
     exclusions_path = destination / "paired_preprocessing_exclusions.csv"
-    pd.DataFrame(exclusion_rows).to_csv(exclusions_path, index=False)
+    pd.DataFrame(exclusion_rows, columns=EXCLUSION_COLUMNS).to_csv(
+        exclusions_path, index=False
+    )
     exclusions_path.chmod(0o640)
 
     cohort = pd.read_csv(ufast_manifest, dtype=str, keep_default_na=False)
@@ -424,10 +448,11 @@ def finalize(selection_path: Path, destination: Path, ufast_manifest: Path) -> N
         "Use the adjacent "
         "`dce2d_internal_ultrafast_with_paired_source_manifest.csv` for the "
         "one-to-one HR/UFAST linkage. Of 181 exams, 179 have one complete native "
-        "HR series. One HITS exam has no distinct HR acquisition and is marked "
-        "`shared_hr_ufast_no_distinct_hr`. One Siemens exam stores pre/post phases "
-        "as separate series; all seven phases plus its static high-resolution "
-        "series are retained and marked `split_series_not_runnable`. Do not treat "
+        "HR series and are runnable. One HITS exam has no distinct HR acquisition "
+        "and is excluded as `shared_hr_ufast_no_distinct_hr`. One Siemens exam "
+        "stores pre/post phases as separate series; all seven phases plus its "
+        "static high-resolution series are retained and excluded as "
+        "`split_series_not_runnable`. Do not treat "
         "its legacy 84 exported images as 84 physical UFAST phases. The runtime "
         "inventory and case manifest reference only this Karczmar-lab package; "
         "Huo-lab paths in `selection_manifest.csv` are source provenance only.\n\n"

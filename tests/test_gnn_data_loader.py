@@ -20,7 +20,11 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("torch_geometric")
 sitk = pytest.importorskip("SimpleITK")
 
-from gnn.data_loader import VanguardCenterlineDataset  # noqa: E402
+from gnn.data_loader import (  # noqa: E402
+    VanguardCenterlineDataset,
+    _node_kinetic_features,
+    _time_axis_from_study_timepoints,
+)
 
 VOLUME_SHAPE = (4, 8, 8)  # (z, y, x)
 NUM_TIMEPOINTS = 3
@@ -34,6 +38,34 @@ SKELETON_XS = (1, 2, 3, 4, 5)  # 5 voxels -> 4 undirected edges
 EXPECTED_PEAK_IDX = NUM_TIMEPOINTS - 1
 EXPECTED_TTE_IDX = 1
 EXPECTED_PEAK_ENHANCEMENT = 2.0
+PROTOCOL_EXPECTED_PEAK_IDX = 3
+PROTOCOL_EXPECTED_TTE_IDX = 2
+
+
+def test_protocol_kinetics_use_baseline_mean_relative_signal_and_seconds() -> None:
+    """UFAST features honor all baselines and the irregular physical time axis."""
+    curve = np.asarray([10.0, 12.0, 16.5, 22.0], dtype=np.float32)
+    times = np.asarray([0.0, 5.0, 50.0, 55.0], dtype=np.float64)
+    result = _node_kinetic_features(
+        curve,
+        times,
+        baseline_frame_count=2,
+        relative_enhancement=True,
+    )
+    assert result["baseline_signal"] == pytest.approx(11.0)
+    assert result["peak_idx"] == PROTOCOL_EXPECTED_PEAK_IDX
+    assert result["peak_time_seconds"] == pytest.approx(55.0)
+    assert result["tte_idx"] == PROTOCOL_EXPECTED_TTE_IDX
+    assert result["tte_seconds"] == pytest.approx(50.0)
+    assert result["peak_enhancement"] == pytest.approx(1.0)
+    assert result["washin_slope"] == pytest.approx(0.1)
+    assert result["auc_positive"] == pytest.approx(15.0)
+
+
+def test_vanguard_kinetics_require_physical_time_sidecar() -> None:
+    """New Vanguard cases must never silently substitute frame indices."""
+    with pytest.raises(FileNotFoundError, match="ufast_times_seconds.npy"):
+        _time_axis_from_study_timepoints([0, 1, 2], require_physical_seconds=True)
 
 
 def _write_case(
@@ -262,7 +294,7 @@ def test_cache_manifest_written_and_validated_on_reload(
     assert manifest["label_column"] == "pcr"
     assert manifest["node_mode"] == "voxel"
     assert manifest["node_features"] == ["peak_time", "radius"]
-    assert manifest["feature_source"] == "raw_dce_physical_time_sidecar_v2"
+    assert manifest["feature_source"] == "raw_dce_protocol_baseline_physical_time_v3"
     assert manifest["num_graphs"] == 1
     assert manifest["label_counts"] == {"1": 1}
     assert manifest["code_commit"]

@@ -13,7 +13,9 @@ inventory (CSV or Parquet).
 - Every temporal position is loaded in DICOM acquisition order. Physical
   timestamps are retained and must be strictly increasing.
 - UFAST is resampled once onto a source-aligned 1-mm grid with linear
-  interpolation. It is never clipped, normalized, or z-scored.
+  interpolation. Accepted motion translations are composed into that operation,
+  so saved phases aren't interpolated twice. UFAST is never clipped, normalized,
+  or z-scored.
 - Translation-only motion proposals align each UFAST phase to phase 0. A
   proposal is saved only when it is physically bounded and improves
   correlation; otherwise the raw phase and identity transform are retained.
@@ -23,6 +25,10 @@ inventory (CSV or Parquet).
   support are mapped to the 1-mm UFAST grid through the shared DICOM
   `FrameOfReferenceUID`; all UFAST phases and timestamps remain available for
   downstream kinetics.
+- Because a shared frame doesn't prove that anatomy stayed still between the HR
+  and UFAST acquisitions, Vanguard compares HR phase 0 with the mean protocol
+  UFAST baseline and flags cases where a meaningful translation would improve
+  agreement. Flagged cases can't be used by the GNN until they're reviewed.
 
 Each output case has one `preprocessing_provenance.json` containing source
 series identifiers and hashes, physical geometries and timestamps, one shared
@@ -84,8 +90,10 @@ mapped skeleton using the one shared intensity window recorded for the full
 UFAST 4D series.
 
 For the GNN loader, use `<output-root>/centerlines` as `centerline_root` and
-`<output-root>/dce` as `dce_root`. It reads `ufast_times_seconds.npy`, so slopes
-and AUC use physical seconds rather than filename indices.
+`<output-root>/dce` as `dce_root`. It uses the mean of the five protocol baseline
+frames, computes relative signal change, and reads `ufast_times_seconds.npy`, so
+peak time, arrival time, slopes, and AUC all use physical seconds rather than
+filename indices.
 
 Raw archives and inventories are immutable inputs and must not be deleted or
 modified after producing a derivative.
@@ -108,9 +116,10 @@ manifests have no patient columns or source member names, but the byte-preserved
 DICOM payloads are not deidentified and must stay in the restricted lab share.
 
 The selection is explicit and reviewed: 179 exams have one complete native HR
-series. One HITS exam has a single shared HR/UFAST acquisition. One Siemens
-exam has seven DCE phases stored as separate series plus a static HR series;
-all eight series are retained, but the exam is marked
+series and are eligible to run. One HITS exam has a single shared HR/UFAST
+acquisition and is excluded because it has no distinct high-resolution series.
+One Siemens exam has seven DCE phases stored as separate series plus a static HR
+series; all eight series are retained, but the exam is marked
 `split_series_not_runnable` rather than misrepresenting its legacy 84 exported
 images as physical UFAST phases.
 

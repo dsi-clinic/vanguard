@@ -121,3 +121,26 @@ def test_finalize_links_hr_to_existing_ufast_manifest(tmp_path: Path) -> None:
     assert runnable.loc[0, "ufast_series_instance_uid"] == "ufast-series"
     combined = pd.read_parquet(destination / "dicom_file_manifest.parquet")
     assert len(combined) == EXPECTED_FILES
+
+
+def test_finalize_excludes_shared_hr_ufast_acquisition(tmp_path: Path) -> None:
+    """A low-resolution shared acquisition cannot stand in for distinct HR data."""
+    selection, _, _ = _write_fixture(tmp_path)
+    selected = pd.read_csv(selection, dtype=str)
+    selected = selected.loc[selected["series_instance_uid"].eq("ufast-series")].copy()
+    selected["series_role"] = "shared_hr_ufast"
+    selected["selection_status"] = "shared_hr_ufast_no_distinct_hr"
+    selected["expected_n_instances"] = 2
+    selected.to_csv(selection, index=False)
+
+    destination = tmp_path / "shared"
+    stage_exam(selection, destination, 0)
+    ufast = tmp_path / "dce2d_internal_ultrafast_manifest.csv"
+    ufast.write_text("exam_id,dataset,n_phases\nexam,cohort,2\n")
+    finalize(selection, destination, ufast)
+
+    runnable = pd.read_csv(destination / "paired_preprocessing_case_manifest.csv")
+    assert runnable.empty
+    exclusions = pd.read_csv(destination / "paired_preprocessing_exclusions.csv")
+    assert exclusions.loc[0, "exam_id"] == "exam"
+    assert "no distinct high-resolution series" in exclusions.loc[0, "reason"]

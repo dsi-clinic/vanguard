@@ -17,11 +17,16 @@ from preprocessing.model import (
     prepare_hr_phase_for_model,
 )
 from preprocessing.motion import MotionSettings, correct_phase
-from preprocessing.pipeline import _validate_pair
-from preprocessing.spatial import isotropic_geometry, rasterize_skeleton_identity
+from preprocessing.pipeline import _identity_alignment_qc, _validate_pair
+from preprocessing.spatial import (
+    isotropic_geometry,
+    rasterize_skeleton_identity,
+    resample_to_geometry,
+)
 
 TEST_VOLUME_SIZE = 20
 EXPECTED_BASELINE_COUNT = 5
+ALIGNMENT_BASELINE_COUNT = 3
 
 
 def _geometry(
@@ -132,6 +137,57 @@ def test_identity_mapping_uses_physical_coordinates_not_array_indices() -> None:
     checks = geometry_alignment_checks(hr, ufast)
     assert checks["same_frame_of_reference_uid"] is True
     assert checks["direction_equal"] is True
+
+
+def test_motion_shift_is_composed_into_one_spatial_resample() -> None:
+    """A positive target-index shift moves content without a second interpolation."""
+    geometry = _geometry(shape_zyx=(7, 7, 7), spacing_xyz=(1.0, 1.0, 1.0))
+    source = np.zeros(geometry.shape_zyx, dtype=np.float32)
+    source[3, 3, 3] = 1.0
+    shifted = resample_to_geometry(
+        source,
+        geometry,
+        geometry,
+        output_shift_xyz_voxels=np.asarray([1.0, 0.0, 0.0]),
+    )
+    assert shifted[3, 3, 4] == 1.0
+    assert int(np.count_nonzero(shifted)) == 1
+
+
+def test_interseries_alignment_qc_uses_all_baselines_and_flags_translation() -> None:
+    """Frame identity is supplemented by an image-content translation diagnostic."""
+    geometry = _geometry(
+        shape_zyx=(TEST_VOLUME_SIZE,) * 3,
+        spacing_xyz=(1.0, 1.0, 1.0),
+    )
+    baseline = _structured_volume()
+    ufast = SimpleNamespace(
+        geometry=geometry,
+        signal_tzyx=np.stack([baseline, baseline, baseline, baseline * 1.2]),
+    )
+    aligned = SimpleNamespace(geometry=geometry, signal_tzyx=baseline[None])
+    aligned_qc = _identity_alignment_qc(
+        aligned, ufast, baseline_frame_count=ALIGNMENT_BASELINE_COUNT
+    )
+    assert aligned_qc["baseline_frame_count"] == ALIGNMENT_BASELINE_COUNT
+    assert aligned_qc["status"] == "pass"
+
+    displaced = ndimage.shift(
+        baseline,
+        shift=(0.0, 0.0, 4.0),
+        order=1,
+        mode="constant",
+        cval=0.0,
+        prefilter=False,
+    )
+    displaced_hr = SimpleNamespace(geometry=geometry, signal_tzyx=displaced[None])
+    displaced_qc = _identity_alignment_qc(
+        displaced_hr, ufast, baseline_frame_count=ALIGNMENT_BASELINE_COUNT
+    )
+    assert displaced_qc["status"] == "review_required"
+    assert float(displaced_qc["proposed_translation_norm_mm"]) > float(
+        displaced_qc["review_translation_threshold_mm"]
+    )
 
 
 def test_pair_validation_allows_different_array_directions_in_shared_frame() -> None:
