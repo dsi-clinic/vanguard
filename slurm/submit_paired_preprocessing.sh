@@ -14,10 +14,22 @@ fi
 ARRAY="0-$((N_CASES - 1))"
 EXPORTS="ALL,REPO_ROOT=${REPO_ROOT},PAIRED_INVENTORY=${PAIRED_INVENTORY},CASE_MANIFEST=${CASE_MANIFEST},OUTPUT_ROOT=${OUTPUT_ROOT}"
 
+# GPU resources are overridable so infer schedules wherever GPUs are free. The default
+# gres is generic (any GPU type); request a specific partition/qos/type via these vars.
+GPU_PARTITION="${GPU_PARTITION:-gpuq}"
+GPU_QOS="${GPU_QOS:-priority}"
+GPU_GRES="${GPU_GRES:-gpu:1}"
+
+# Slurm opens each job's --output relative to the submission directory and rejects the
+# job if the directory is missing. Submit from the repo root and create logs/slurm first.
+cd "${REPO_ROOT}"
+mkdir -p logs/slurm
+
 prepare_job="$(sbatch --parsable --array="${ARRAY}%8" \
   --export="${EXPORTS},PIPELINE_STAGE=prepare" \
   "${REPO_ROOT}/slurm/run_paired_preprocessing_cpu.slurm")"
 infer_job="$(sbatch --parsable --array="${ARRAY}%4" \
+  --partition="${GPU_PARTITION}" --qos="${GPU_QOS}" --gres="${GPU_GRES}" \
   --dependency="aftercorr:${prepare_job}" \
   --export="${EXPORTS}" \
   "${REPO_ROOT}/slurm/run_paired_preprocessing_gpu.slurm")"
