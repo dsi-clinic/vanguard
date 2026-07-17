@@ -400,3 +400,4 @@ Optional graph-extraction analysis helpers live under:
 - [`docs/data_policy.md`](docs/data_policy.md)
 - [`docs/resources.md`](docs/resources.md)
 - [`docs/workflow.md`](docs/workflow.md)
+- [`docs/resampling_batch_effects.md`](docs/resampling_batch_effects.md)
