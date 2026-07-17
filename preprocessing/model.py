@@ -15,7 +15,7 @@ def model_subject_id(phase_index: int) -> str:
     if phase_index < 0:
         raise ValueError("phase_index must be nonnegative")
     identifier = f"hr_phase_{phase_index:04d}_id"
-    if identifier.rstrip(".npy") != identifier:
+    if identifier.endswith(".npy"):
         raise ValueError(f"unsafe model subject identifier: {identifier}")
     return identifier
 
