@@ -31,6 +31,7 @@ dependencies:
   - seaborn=0.13.2
   - pydicom=3.0.1
   - pandas=2.3.3
+  - fastparquet
   # Required by evaluation imports; keep explicit to fail fast on env drift.
   - scikit-learn=1.7.2
   - joblib=1.5.3

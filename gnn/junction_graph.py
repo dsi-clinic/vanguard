@@ -113,12 +113,16 @@ def _junction_node_features(
     dce_4d: np.ndarray,
     time_axis: np.ndarray,
     bifurcation: dict[str, float] | None,
+    *,
+    baseline_frame_count: int = 1,
+    relative_enhancement: bool = False,
 ) -> dict[str, float]:
     """Per-voxel features for one junction/endpoint voxel, plus its degree.
 
     Samples the raw DCE curve at the junction voxel (``dce_4d[:, z, y, x]``,
     matching voxel mode) and normalizes ``peak_time`` / ``time_to_enhancement``
-    by ``T - 1`` the same way. ``time_to_enhancement`` is NaN when the voxel
+    by total acquisition duration the same way. ``time_to_enhancement`` is NaN
+    when the voxel
     shows no detected arrival; that NaN is replaced with
     ``TTE_NO_ARRIVAL_SENTINEL`` when stacked into ``data.x`` in
     ``gnn.data_loader._finalize_data`` (same policy as voxel/segment modes and
@@ -129,15 +133,24 @@ def _junction_node_features(
     to measure); its three ``_BIFURCATION_ANGLE_NAMES`` columns are then set to
     NaN, sentinel-filled/audited the same way via ``no_bifurcation_count``.
     """
-    denom = float(max(int(dce_4d.shape[0]) - 1, _SINGLE_TIMEPOINT))
+    duration_seconds = float(time_axis[-1] - time_axis[0])
+    if not duration_seconds > 0.0:
+        duration_seconds = float(_SINGLE_TIMEPOINT)
     x, y, z = node
-    kinetic = node_kinetic_features(dce_4d[:, z, y, x], time_axis)
+    kinetic = node_kinetic_features(
+        dce_4d[:, z, y, x],
+        time_axis,
+        baseline_frame_count=baseline_frame_count,
+        relative_enhancement=relative_enhancement,
+    )
     tte_idx = kinetic["tte_idx"]
     features = {
-        "peak_time": float(kinetic["peak_idx"]) / denom,
+        "peak_time": float(kinetic["peak_time_seconds"]) / duration_seconds,
         "peak_enhancement": float(kinetic["peak_enhancement"]),
         "time_to_enhancement": (
-            float("nan") if tte_idx is None else float(tte_idx) / denom
+            float("nan")
+            if tte_idx is None
+            else float(kinetic["tte_seconds"]) / duration_seconds
         ),
         "washin_slope": float(kinetic["washin_slope"]),
         "washout_slope": float(kinetic["washout_slope"]),
@@ -157,6 +170,9 @@ def build_junction_graph(
     radius_map: dict[Point3D, float],
     dce_4d: np.ndarray,
     time_axis: np.ndarray,
+    *,
+    baseline_frame_count: int = 1,
+    relative_enhancement: bool = False,
 ) -> Data:
     """Build the segment-as-edge (junction) graph from a voxel skeleton graph.
 
@@ -213,6 +229,8 @@ def build_junction_graph(
             dce_4d,
             time_axis,
             bifurcation_summary.get(node),
+            baseline_frame_count=baseline_frame_count,
+            relative_enhancement=relative_enhancement,
         )
         for name in JUNCTION_NODE_FEATURE_ATTR:
             node_columns[name].append(features[name])
@@ -226,7 +244,13 @@ def build_junction_graph(
     for path in segments:
         u, v = node_index[path[0]], node_index[path[-1]]
         summary = segment_summary_features(
-            path, radius_map, dce_4d, time_axis, voxel_graph
+            path,
+            radius_map,
+            dce_4d,
+            time_axis,
+            voxel_graph,
+            baseline_frame_count=baseline_frame_count,
+            relative_enhancement=relative_enhancement,
         )
         directed = [(u, v)] if u == v else [(u, v), (v, u)]
         for a, b in directed:

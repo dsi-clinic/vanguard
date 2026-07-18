@@ -100,6 +100,9 @@ This repository has four main workflows.
 
 Supporting pieces:
 
+- `preprocessing/`
+  - owns paired native-HR/UFAST DICOM loading, raw-signal motion correction,
+    vessel-model adaptation, TC4D handoff, and physical-grid skeleton mapping
 - `features/`
   - canonical definitions of the five modeling blocks: `clinical`, `tumor_size`, `morph`, `graph`, and `kinematic`
 - `deepsets/train.py`

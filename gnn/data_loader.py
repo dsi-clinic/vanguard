@@ -55,9 +55,18 @@ from gnn.junction_graph import (
     JUNCTION_NODE_FEATURE_ATTR,
     build_junction_graph,
 )
-from gnn.kinetics import node_kinetic_features, time_axis_from_study_timepoints
+from gnn.kinetics import (
+    node_kinetic_features as _node_kinetic_features,
+)
+from gnn.kinetics import (
+    time_axis_from_study_timepoints as _time_axis_from_study_timepoints,
+)
 from gnn.morphometry import MORPHOMETRY_COLUMNS, build_morphometry_feature_matrix
-from gnn.raw_dce import discover_raw_dce_paths, load_raw_dce_series
+from gnn.raw_dce import (
+    discover_raw_dce_paths,
+    load_raw_dce_series,
+    load_raw_dce_times,
+)
 from gnn.segment_graph import SEGMENT_FEATURE_ATTR, build_segment_line_graph
 from graph_extraction.constants import NDIM_3D
 from graph_extraction.feature_stats import mask_to_edges_bitmask
@@ -89,7 +98,7 @@ _HIST_BINS = 50
 # every cache_manifest.json so a manifest from before this migration -- or a
 # hypothetical future vessel_segmentation-sourced build -- is never silently
 # treated as compatible with the current code.
-_FEATURE_SOURCE = "raw_dce"
+_FEATURE_SOURCE = "raw_dce_protocol_baseline_physical_time_all_modes_v4"
 
 # Maps a requested node-feature name to the per-node ``Data`` attribute used to
 # populate the corresponding column of ``data.x``.
@@ -260,8 +269,8 @@ def _git_commit() -> str:
     return result.stdout.strip()
 
 
-def _load_study_timepoints(case_id: str, study_dir: Path) -> list[int]:
-    """Return the timepoint indices from ``run_summary.json["study_timepoints"]``.
+def _load_study_metadata(case_id: str, study_dir: Path) -> tuple[list[int], int, bool]:
+    """Return timepoints and the explicit kinetic baseline contract.
 
     These are the ``NNNN`` indices used to name both the vessel-segmentation
     NPZ files and the raw DCE NIfTI phases (``<case_id>_NNNN.nii.gz``), so they
@@ -282,7 +291,44 @@ def _load_study_timepoints(case_id: str, study_dir: Path) -> list[int]:
         raise KeyError(
             f"case={case_id}: run_summary.json missing or empty 'study_timepoints' key"
         )
-    return [int(t) for t in study_timepoints]
+    timepoints = [int(t) for t in study_timepoints]
+    alignment_status = summary.get("alignment_qc_status")
+    if alignment_status not in (None, "pass", "manually_approved"):
+        raise ValueError(
+            f"case={case_id}: HR-to-UFAST alignment requires review before "
+            "kinetic features can be sampled"
+        )
+    policy = summary.get("kinetic_feature_policy")
+    if policy is None:
+        # Legacy cohorts don't carry a protocol baseline contract. Preserve their
+        # established single-frame, absolute-enhancement behavior explicitly.
+        return timepoints, 1, False
+    if alignment_status not in ("pass", "manually_approved"):
+        raise ValueError(
+            f"case={case_id}: Vanguard kinetic metadata requires explicit "
+            "alignment approval before kinetic features can be sampled"
+        )
+    baseline_frame_count = int(policy["baseline_frame_count"])
+    if not 1 <= baseline_frame_count < len(timepoints):
+        raise ValueError(
+            f"case={case_id}: baseline_frame_count must be in [1, n_timepoints)"
+        )
+    enhancement = str(policy.get("enhancement", ""))
+    if enhancement != "relative_signal_change":
+        raise ValueError(
+            f"case={case_id}: unsupported kinetic enhancement policy {enhancement!r}"
+        )
+    if policy.get("time_axis") != "physical_seconds":
+        raise ValueError(
+            f"case={case_id}: Vanguard kinetic features require physical seconds"
+        )
+    return timepoints, baseline_frame_count, True
+
+
+def _load_study_timepoints(case_id: str, study_dir: Path) -> list[int]:
+    """Return only the timepoint indices for compatibility with existing callers."""
+    timepoints, _, _ = _load_study_metadata(case_id, study_dir)
+    return timepoints
 
 
 def _attach_node_features(
@@ -290,6 +336,8 @@ def _attach_node_features(
     radius_map: dict[tuple[int, int, int], float],
     dce_4d: np.ndarray,
     time_axis: np.ndarray,
+    baseline_frame_count: int,
+    relative_enhancement: bool,
     label: int,
     node_features: tuple[str, ...],
 ) -> None:
@@ -307,23 +355,36 @@ def _attach_node_features(
     canary for pipeline sanity checks, not a default feature, so it must stay
     opt-in rather than something every graph carries.
     """
-    num_timepoints = int(dce_4d.shape[0])
-    denom = max(num_timepoints - 1, _SINGLE_TIMEPOINT)
+    duration_seconds = float(time_axis[-1] - time_axis[0])
+    if not duration_seconds > 0.0:
+        duration_seconds = float(_SINGLE_TIMEPOINT)
     include_pcr_dummy = "pcr_dummy" in node_features
     for node in graph.nodes():
         x, y, z = int(node[0]), int(node[1]), int(node[2])
         curve = dce_4d[:, z, y, x]
-        kinetic = node_kinetic_features(curve, time_axis)
+        kinetic = _node_kinetic_features(
+            curve,
+            time_axis,
+            baseline_frame_count=baseline_frame_count,
+            relative_enhancement=relative_enhancement,
+        )
         tte_idx = kinetic["tte_idx"]
 
         attrs = graph.nodes[node]
         attrs["radius"] = float(radius_map[node])
+        attrs["baseline_signal"] = float(kinetic["baseline_signal"])
         attrs["peak_time"] = int(kinetic["peak_idx"])
-        attrs["peak_time_norm"] = float(kinetic["peak_idx"]) / float(denom)
+        attrs["peak_time_seconds"] = float(kinetic["peak_time_seconds"])
+        attrs["peak_time_norm"] = float(kinetic["peak_time_seconds"]) / duration_seconds
         attrs["peak_enhancement"] = float(kinetic["peak_enhancement"])
         attrs["time_to_enhancement"] = -1 if tte_idx is None else int(tte_idx)
+        attrs["time_to_enhancement_seconds"] = (
+            float("nan") if tte_idx is None else float(kinetic["tte_seconds"])
+        )
         attrs["time_to_enhancement_norm"] = (
-            float("nan") if tte_idx is None else float(tte_idx) / float(denom)
+            float("nan")
+            if tte_idx is None
+            else float(kinetic["tte_seconds"]) / duration_seconds
         )
         attrs["washin_slope"] = float(kinetic["washin_slope"])
         attrs["washout_slope"] = float(kinetic["washout_slope"])
@@ -498,34 +559,62 @@ def _build_case(
 
     radius_map = obtain_radius_map(support, voxel_graph)
 
-    study_timepoints = _load_study_timepoints(case_id, study_dir)
+    (
+        study_timepoints,
+        baseline_frame_count,
+        relative_enhancement,
+    ) = _load_study_metadata(case_id, study_dir)
     with _stage_timer(stage_samples, "timeseries_load"):
         dce_paths = discover_raw_dce_paths(dce_root, case_id, study_timepoints)
         dce_4d = load_raw_dce_series(dce_paths, expected_shape_zyx=support.shape)
+        physical_times_seconds = load_raw_dce_times(dce_root, case_id, study_timepoints)
     if dce_4d.shape[1:] != support.shape:
         raise ValueError(
             f"Aligned raw DCE shape for {case_id} {dce_4d.shape[1:]} does not "
             f"match support mask shape {support.shape}"
         )
     num_timepoints = int(dce_4d.shape[0])
-    time_axis = time_axis_from_study_timepoints(study_timepoints)
+    time_axis = _time_axis_from_study_timepoints(
+        study_timepoints,
+        physical_times_seconds,
+        require_physical_seconds=relative_enhancement,
+    )
 
     if node_mode == _JUNCTION_MODE:
         # Junction mode builds Data directly (node + edge features) and records
         # its own connected-component count on the junction graph.
         with _stage_timer(stage_samples, "junction_build"):
-            data = build_junction_graph(voxel_graph, radius_map, dce_4d, time_axis)
+            data = build_junction_graph(
+                voxel_graph,
+                radius_map,
+                dce_4d,
+                time_axis,
+                baseline_frame_count=baseline_frame_count,
+                relative_enhancement=relative_enhancement,
+            )
         num_connected_components = int(data.num_connected_components)
     else:
         if node_mode == _SEGMENT_MODE:
             with _stage_timer(stage_samples, "segment_build"):
                 graph = build_segment_line_graph(
-                    voxel_graph, radius_map, dce_4d, time_axis
+                    voxel_graph,
+                    radius_map,
+                    dce_4d,
+                    time_axis,
+                    baseline_frame_count=baseline_frame_count,
+                    relative_enhancement=relative_enhancement,
                 )
         else:
             with _stage_timer(stage_samples, "peak_time"):
                 _attach_node_features(
-                    voxel_graph, radius_map, dce_4d, time_axis, label, node_features
+                    voxel_graph,
+                    radius_map,
+                    dce_4d,
+                    time_axis,
+                    baseline_frame_count,
+                    relative_enhancement,
+                    label,
+                    node_features,
                 )
             graph = voxel_graph
 
@@ -615,10 +704,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
               ``"pcr_dummy"`` (the graph's ``pcr`` label broadcast onto every node
               -- a leakage-canary feature for pipeline sanity checks only; opt-in,
               never included unless named explicitly). The kinetic features are
-              sampled from the raw DCE enhancement curve (``curve =
-              dce_4d[:, z, y, x]``, ``enhancement = curve - curve[0]``), using the
-              same conventions as ``features/kinematic.py`` -- see
-              ``gnn.kinetics.node_kinetic_features``.
+              sampled from the raw DCE curve (``curve = dce_4d[:, z, y, x]``).
+              Vanguard UFAST uses its protocol baseline mean, relative signal
+              change, and physical seconds; legacy cohorts retain single-frame
+              absolute enhancement. See ``gnn.kinetics.node_kinetic_features``.
             - **segment:** geometry (``"seg_length"``, ``"seg_tortuosity"``,
               ``"seg_volume"``, ``"seg_radius_{mean,std,median,min,max}"``,
               ``"seg_curvature_{mean,std,max}"``), the same per-voxel kinetics
@@ -944,7 +1033,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 else f"missing {manifest['label_column']!r} label"
             )
             logging.warning(
-                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped " "(%s): %s",
+                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped (%s): %s",
                 len(self.dropped_case_ids),
                 manifest["num_discovered"],
                 manifest["dropped_frac"] * 100,

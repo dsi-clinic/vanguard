@@ -108,7 +108,8 @@ Every fresh build also writes `<cache_dir>/processed/cache_manifest.json`,
 recording everything that determines what the cached graphs actually
 contain: `centerline_root`, `dce_root`, `labels_path`, `id_column`,
 `label_column`, `cases` (whitelist, if any), `node_mode`, `node_features`,
-`feature_source` (`"raw_dce"` today), plus provenance-only fields not used
+`feature_source` (currently
+`"raw_dce_protocol_baseline_physical_time_all_modes_v4"`), plus provenance-only fields not used
 for comparison: `code_commit`, `num_graphs`, `label_counts`, `built_at`.
 
 Every later load of that cache (constructing `VanguardCenterlineDataset`
@@ -124,9 +125,8 @@ mismatch is benign; otherwise rebuild the cache (`--force-rebuild`) so a
 fresh, matching manifest is written.
 
 ### Modeling Features 
- - `peak_time` → normalized time-to-peak enhancement,
-    `argmax_t(enhancement) / (T − 1)`. The raw integer index is also kept on
-    `data.peak_time`.
+ - `peak_time` → elapsed time to peak enhancement divided by the full
+    acquisition duration. The raw integer index is also kept on `data.peak_time`.
   - `peak_enhancement` → `max(enhancement)`.
   - `time_to_enhancement` → normalized arrival time, using
     `graph_extraction.feature_stats._arrival_index_from_enhancement` (first
@@ -136,6 +136,9 @@ fresh, matching manifest is written.
     kept on `data.time_to_enhancement`. `NaN`s are caught per-feature by the
     `feature_summary/feature_na_report.json` audit rather than silently
     defaulted -- see `_write_feature_summary`.
+  UFAST cases use the protocol-defined precontrast-frame mean, relative signal
+  change, and physical acquisition seconds in voxel, segment, and junction
+  modes. Legacy cases retain the single-frame absolute-enhancement convention.
   - `washin_slope` → `(enhancement[peak] − enhancement[arrival_or_0]) /
     (time[peak] − time[arrival_or_0])`.
   - `auc_positive` → `trapz(max(enhancement, 0))` over the study's time axis.

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 import pytest
@@ -26,9 +27,15 @@ from gnn.data_loader import (  # noqa: E402
     NO_BIFURCATION_SENTINEL,
     TTE_NO_ARRIVAL_SENTINEL,
     VanguardCenterlineDataset,
+    _attach_node_features,
+    _load_study_metadata,
+    _node_kinetic_features,
     _raise_on_unexpected_nan,
     _sentinel_fill,
+    _time_axis_from_study_timepoints,
 )
+from gnn.junction_graph import build_junction_graph  # noqa: E402
+from gnn.segment_graph import build_segment_line_graph  # noqa: E402
 
 VOLUME_SHAPE = (4, 8, 8)  # (z, y, x)
 NUM_TIMEPOINTS = 3
@@ -43,6 +50,106 @@ NUM_CLINICAL_TEST_CASES = 2
 EXPECTED_PEAK_IDX = NUM_TIMEPOINTS - 1
 EXPECTED_TTE_IDX = 1
 EXPECTED_PEAK_ENHANCEMENT = 2.0
+PROTOCOL_EXPECTED_PEAK_IDX = 3
+PROTOCOL_EXPECTED_TTE_IDX = 2
+
+
+def test_protocol_kinetics_use_baseline_mean_relative_signal_and_seconds() -> None:
+    """UFAST features honor all baselines and the irregular physical time axis."""
+    curve = np.asarray([10.0, 12.0, 16.5, 22.0], dtype=np.float32)
+    times = np.asarray([0.0, 5.0, 50.0, 55.0], dtype=np.float64)
+    result = _node_kinetic_features(
+        curve,
+        times,
+        baseline_frame_count=2,
+        relative_enhancement=True,
+    )
+    assert result["baseline_signal"] == pytest.approx(11.0)
+    assert result["peak_idx"] == PROTOCOL_EXPECTED_PEAK_IDX
+    assert result["peak_time_seconds"] == pytest.approx(55.0)
+    assert result["tte_idx"] == PROTOCOL_EXPECTED_TTE_IDX
+    assert result["tte_seconds"] == pytest.approx(50.0)
+    assert result["peak_enhancement"] == pytest.approx(1.0)
+    assert result["washin_slope"] == pytest.approx(0.1)
+    assert result["auc_positive"] == pytest.approx(15.0)
+
+
+def test_ufast_kinetics_match_across_all_graph_modes() -> None:
+    """Voxel, segment, and junction modes share one physical-time contract."""
+    curve = np.asarray([10.0, 12.0, 16.5, 22.0], dtype=np.float32)
+    times = np.asarray([0.0, 5.0, 50.0, 55.0], dtype=np.float64)
+    graph = nx.path_graph([(x, 3, 0) for x in range(1, 6)])
+    radius_map = dict.fromkeys(graph.nodes, 1.0)
+    dce_4d = np.empty((len(curve), 1, 8, 8), dtype=np.float32)
+    for index, signal in enumerate(curve):
+        dce_4d[index] = signal
+
+    voxel_graph = graph.copy()
+    _attach_node_features(voxel_graph, radius_map, dce_4d, times, 2, True, 0, ())
+    segment_graph = build_segment_line_graph(
+        graph,
+        radius_map,
+        dce_4d,
+        times,
+        baseline_frame_count=2,
+        relative_enhancement=True,
+    )
+    junction_graph = build_junction_graph(
+        graph,
+        radius_map,
+        dce_4d,
+        times,
+        baseline_frame_count=2,
+        relative_enhancement=True,
+    )
+
+    voxel = voxel_graph.nodes[(1, 3, 0)]
+    expected = {
+        "peak_time": 1.0,
+        "peak_enhancement": 1.0,
+        "time_to_enhancement": 50.0 / 55.0,
+        "washin_slope": 0.1,
+        "washout_slope": 0.0,
+        "auc_positive": 15.0,
+    }
+    voxel_values = {
+        "peak_time": voxel["peak_time_norm"],
+        "peak_enhancement": voxel["peak_enhancement"],
+        "time_to_enhancement": voxel["time_to_enhancement_norm"],
+        "washin_slope": voxel["washin_slope"],
+        "washout_slope": voxel["washout_slope"],
+        "auc_positive": voxel["auc_positive"],
+    }
+    for name, expected_value in expected.items():
+        assert voxel_values[name] == pytest.approx(expected_value)
+        assert segment_graph.nodes[0][f"seg_{name}_mean"] == pytest.approx(
+            expected_value
+        )
+        assert float(junction_graph[name][0]) == pytest.approx(expected_value)
+        assert float(junction_graph[f"seg_{name}_mean"][0]) == pytest.approx(
+            expected_value
+        )
+
+
+def test_vanguard_kinetics_require_physical_time_sidecar() -> None:
+    """New Vanguard cases must never silently substitute frame indices."""
+    with pytest.raises(FileNotFoundError, match="ufast_times_seconds.npy"):
+        _time_axis_from_study_timepoints([0, 1, 2], require_physical_seconds=True)
+
+
+def test_vanguard_kinetics_require_explicit_alignment_approval(tmp_path: Path) -> None:
+    """A missing alignment status can't silently authorize HR/UFAST kinetics."""
+    summary = {
+        "study_timepoints": [0, 1, 2],
+        "kinetic_feature_policy": {
+            "baseline_frame_count": 1,
+            "enhancement": "relative_signal_change",
+            "time_axis": "physical_seconds",
+        },
+    }
+    (tmp_path / "run_summary.json").write_text(json.dumps(summary))
+    with pytest.raises(ValueError, match="requires explicit alignment approval"):
+        _load_study_metadata("case", tmp_path)
 
 
 def _write_morphometry_json(path: Path) -> None:
@@ -455,7 +562,10 @@ def test_cache_manifest_written_and_validated_on_reload(
     assert manifest["label_column"] == "pcr"
     assert manifest["node_mode"] == "voxel"
     assert manifest["node_features"] == ["peak_time", "radius"]
-    assert manifest["feature_source"] == "raw_dce"
+    assert (
+        manifest["feature_source"]
+        == "raw_dce_protocol_baseline_physical_time_all_modes_v4"
+    )
     assert manifest["num_graphs"] == 1
     assert manifest["label_counts"] == {"1": 1}
     assert manifest["code_commit"]

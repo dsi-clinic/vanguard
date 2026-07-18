@@ -109,28 +109,45 @@ SEGMENT_FEATURE_ATTR: dict[str, str] = {name: name for name in _segment_feature_
 
 
 def _segment_kinetic_summary(
-    path: list[Point3D], dce_4d: np.ndarray, time_axis: np.ndarray
+    path: list[Point3D],
+    dce_4d: np.ndarray,
+    time_axis: np.ndarray,
+    *,
+    baseline_frame_count: int = 1,
+    relative_enhancement: bool = False,
 ) -> dict[str, float]:
     """Mean/std of the per-voxel kinetic scalars along one segment's voxels.
 
     Samples the raw DCE curve at each voxel of ``path`` (``dce_4d[:, z, y, x]``,
     matching voxel mode), derives the per-voxel scalars via
     ``node_kinetic_features``, and reduces each along the segment. Arrival
-    (``time_to_enhancement``) is normalized like voxel mode
-    (``tte_idx / (T - 1)``) and NaN for voxels with no detected arrival, then
+    (``time_to_enhancement``) is normalized like voxel mode using elapsed
+    physical time over total acquisition duration and is NaN for voxels with
+    no detected arrival, then
     summarized with ``nanmean``/``nanstd`` so no-arrival voxels don't corrupt
     the segment mean and an all-no-arrival segment is left NaN (audited, not
     defaulted).
     """
-    denom = float(max(int(dce_4d.shape[0]) - 1, _SINGLE_TIMEPOINT))
+    duration_seconds = float(time_axis[-1] - time_axis[0])
+    if not duration_seconds > 0.0:
+        duration_seconds = float(_SINGLE_TIMEPOINT)
     samples: dict[str, list[float]] = {scalar: [] for scalar in _KINETIC_SCALARS}
     for x, y, z in path:
-        kinetic = node_kinetic_features(dce_4d[:, z, y, x], time_axis)
-        samples["peak_time"].append(float(kinetic["peak_idx"]) / denom)
+        kinetic = node_kinetic_features(
+            dce_4d[:, z, y, x],
+            time_axis,
+            baseline_frame_count=baseline_frame_count,
+            relative_enhancement=relative_enhancement,
+        )
+        samples["peak_time"].append(
+            float(kinetic["peak_time_seconds"]) / duration_seconds
+        )
         samples["peak_enhancement"].append(float(kinetic["peak_enhancement"]))
         tte_idx = kinetic["tte_idx"]
         samples["time_to_enhancement"].append(
-            float("nan") if tte_idx is None else float(tte_idx) / denom
+            float("nan")
+            if tte_idx is None
+            else float(kinetic["tte_seconds"]) / duration_seconds
         )
         samples["washin_slope"].append(float(kinetic["washin_slope"]))
         samples["washout_slope"].append(float(kinetic["washout_slope"]))
@@ -152,6 +169,9 @@ def segment_summary_features(
     dce_4d: np.ndarray,
     time_axis: np.ndarray,
     voxel_graph: nx.Graph,
+    *,
+    baseline_frame_count: int = 1,
+    relative_enhancement: bool = False,
 ) -> dict[str, float]:
     """All segment-level features for one segment polyline, as a flat dict.
 
@@ -171,7 +191,15 @@ def segment_summary_features(
     for name, (top_key, sub_key) in _GEOMETRY_FEATURE_PATHS.items():
         value = metrics[top_key] if sub_key is None else metrics[top_key][sub_key]
         attrs[name] = float(value)
-    attrs.update(_segment_kinetic_summary(path, dce_4d, time_axis))
+    attrs.update(
+        _segment_kinetic_summary(
+            path,
+            dce_4d,
+            time_axis,
+            baseline_frame_count=baseline_frame_count,
+            relative_enhancement=relative_enhancement,
+        )
+    )
     attrs["seg_num_voxels"] = float(len(path))
     start_degree = voxel_graph.degree(path[0])
     end_degree = voxel_graph.degree(path[-1])
@@ -185,6 +213,9 @@ def build_segment_line_graph(
     radius_map: dict[Point3D, float],
     dce_4d: np.ndarray,
     time_axis: np.ndarray,
+    *,
+    baseline_frame_count: int = 1,
+    relative_enhancement: bool = False,
 ) -> nx.Graph:
     """Build the segment line graph (Option B) from a voxel skeleton graph.
 
@@ -220,7 +251,13 @@ def build_segment_line_graph(
     junction_to_segments: dict[Point3D, list[int]] = defaultdict(list)
     for seg_id, path in enumerate(segments):
         attrs = segment_summary_features(
-            path, radius_map, dce_4d, time_axis, voxel_graph
+            path,
+            radius_map,
+            dce_4d,
+            time_axis,
+            voxel_graph,
+            baseline_frame_count=baseline_frame_count,
+            relative_enhancement=relative_enhancement,
         )
         midpoint = np.mean(np.asarray(path, dtype=float), axis=0)
         line.add_node(seg_id, pos=midpoint, **attrs)
