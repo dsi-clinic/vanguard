@@ -32,7 +32,7 @@ from preprocessing.spatial import (
     save_nifti_xyz,
 )
 
-POLICY_NAME = "vanguard_spgr_raw_signal_v4"
+POLICY_NAME = "vanguard_spgr_raw_signal_v5"
 TARGET_SPACING_MM = 1.0
 BINARY_THRESHOLD = 0.5
 INTERSERIES_REVIEW_TRANSLATION_MM = 2.0
@@ -165,7 +165,6 @@ def _motion_correct_hr_series(
             "translation_voxels": [0.0, 0.0, 0.0],
         }
     ]
-    status = "pass"
     for phase_index, moving_zyx in enumerate(signal_tzyx[1:], start=1):
         corrected_xyz, _, phase_metrics = correct_phase(
             fixed_xyz,
@@ -175,16 +174,6 @@ def _motion_correct_hr_series(
             settings=settings,
         )
         corrected_zyx.append(np.transpose(corrected_xyz, (2, 1, 0)))
-        finite_metrics = all(
-            np.isfinite(float(phase_metrics[key]))
-            for key in ("raw_correlation", "proposed_correlation", "corr_delta")
-        )
-        if (
-            phase_metrics["transform_rejection_reason"]
-            == "proposed_translation_exceeds_maximum"
-            or not finite_metrics
-        ):
-            status = "review_required"
         metrics.append(
             {
                 "phase_index": phase_index,
@@ -192,7 +181,41 @@ def _motion_correct_hr_series(
                 **phase_metrics,
             }
         )
-    return np.stack(corrected_zyx, axis=0), metrics, status
+    return np.stack(corrected_zyx, axis=0), metrics, _motion_qc_status(metrics)
+
+
+def _motion_qc_status(metrics: list[dict[str, object]]) -> str:
+    """Require review for invalid or physically implausible motion proposals."""
+    allowed_reasons = {"accepted", "correlation_gain_below_minimum"}
+    for phase_metrics in metrics[1:]:
+        reason = phase_metrics.get("transform_rejection_reason")
+        try:
+            finite = all(
+                np.isfinite(float(phase_metrics[key]))
+                for key in ("raw_correlation", "proposed_correlation", "corr_delta")
+            )
+        except (KeyError, TypeError, ValueError):
+            finite = False
+        if reason not in allowed_reasons or not finite:
+            return "review_required"
+    return "pass"
+
+
+def _combined_alignment_status(
+    provenance: dict[str, Any],
+) -> tuple[str, dict[str, str]]:
+    """Combine every spatial and motion QC component without defaulting to pass."""
+    components = {
+        "hr_to_ufast": str(provenance["identity_alignment_qc"]["status"]),
+        "hr_interphase_motion": str(provenance["hr_motion_qc"]["status"]),
+        "ufast_interphase_motion": str(provenance["ufast_motion_qc"]["status"]),
+    }
+    status = (
+        "pass"
+        if all(value == "pass" for value in components.values())
+        else "review_required"
+    )
+    return status, components
 
 
 def prepare_case(
@@ -300,6 +323,7 @@ def prepare_case(
                 }
             )
         corrected_txyz = np.stack(corrected, axis=0)
+        ufast_motion_status = _motion_qc_status(motion_metrics)
         if corrected_txyz.shape[0] != ufast.times_seconds.size:
             raise RuntimeError("motion correction changed the number of timepoints")
         if np.any(corrected_txyz < 0) or not np.all(np.isfinite(corrected_txyz)):
@@ -366,6 +390,11 @@ def prepare_case(
                 "status": hr_motion_status,
                 "reference_phase": 0,
                 "metrics": hr_motion_metrics,
+            },
+            "ufast_motion_qc": {
+                "status": ufast_motion_status,
+                "reference_phase": 0,
+                "metrics": motion_metrics,
             },
             "motion_settings": DEFAULT_MOTION_SETTINGS.to_dict(),
             "motion_metrics": motion_metrics,
@@ -512,13 +541,7 @@ def map_case(*, case_root: Path) -> None:
         mapped_support.astype(np.uint8),
     )
     ufast_times = np.asarray(provenance["ufast_source"]["times_seconds"], dtype=float)
-    interseries_status = provenance["identity_alignment_qc"]["status"]
-    hr_motion_status = provenance["hr_motion_qc"]["status"]
-    alignment_status = (
-        "pass"
-        if interseries_status == "pass" and hr_motion_status == "pass"
-        else "review_required"
-    )
+    alignment_status, alignment_components = _combined_alignment_status(provenance)
     _write_json(
         output_dir / "run_summary.json",
         {
@@ -526,10 +549,7 @@ def map_case(*, case_root: Path) -> None:
             "study_timepoints": list(range(int(ufast_times.size))),
             "physical_times_seconds": ufast_times.tolist(),
             "alignment_qc_status": alignment_status,
-            "alignment_qc_components": {
-                "hr_to_ufast": interseries_status,
-                "hr_interphase_motion": hr_motion_status,
-            },
+            "alignment_qc_components": alignment_components,
             "kinetic_feature_policy": {
                 "baseline_frame_count": int(
                     provenance["ufast_source"]["baseline_frame_count"]

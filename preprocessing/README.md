@@ -19,6 +19,8 @@ inventory (CSV or Parquet).
 - Translation-only motion proposals align each UFAST phase to phase 0. A
   proposal is saved only when it is physically bounded and improves
   correlation; otherwise the raw phase and identity transform are retained.
+  Invalid or physically implausible UFAST motion diagnostics require review
+  before downstream kinetic features can be sampled.
 - Each native-grid HR phase is translation-aligned to HR phase 0 before model
   adaptation. A physically bounded proposal is applied only when correlation
   improves; implausible proposals retain identity and require review. The

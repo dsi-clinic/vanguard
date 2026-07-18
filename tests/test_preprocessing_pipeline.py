@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from scipy import ndimage
 
 from gnn.raw_dce import discover_raw_dce_paths, load_raw_dce_times
@@ -18,8 +19,10 @@ from preprocessing.model import (
 )
 from preprocessing.motion import MotionSettings, correct_phase
 from preprocessing.pipeline import (
+    _combined_alignment_status,
     _identity_alignment_qc,
     _motion_correct_hr_series,
+    _motion_qc_status,
     _validate_pair,
 )
 from preprocessing.spatial import (
@@ -114,6 +117,23 @@ def test_motion_keeps_raw_signal_and_rejects_implausible_proposals() -> None:
     np.testing.assert_array_equal(retained, moving)
 
 
+def test_motion_registration_does_not_flatten_temporal_enhancement() -> None:
+    """Registration normalization is never substituted for raw DCE signal."""
+    fixed = _structured_volume()
+    enhanced = fixed * 1.5
+    corrected, shift, metrics = correct_phase(
+        fixed,
+        enhanced,
+        support=np.ones_like(fixed, dtype=bool),
+        spacing_xyz_mm=np.ones(3),
+        settings=MotionSettings(downsample_xyz=(1, 1, 1), upsample_factor=10),
+    )
+    assert metrics["transform_accepted"] is True
+    np.testing.assert_array_equal(shift, np.zeros(3))
+    np.testing.assert_allclose(corrected, enhanced, rtol=0.0, atol=1e-6)
+    assert float(corrected.mean() / fixed.mean()) == pytest.approx(1.5)
+
+
 def test_hr_phases_are_aligned_before_model_inference() -> None:
     """HR motion correction preserves the series while improving alignment."""
     fixed = _structured_volume()
@@ -174,6 +194,31 @@ def test_large_hr_motion_proposal_requires_review_and_keeps_identity() -> None:
     assert status == "review_required"
     assert metrics[1]["transform_accepted"] is False
     np.testing.assert_array_equal(corrected[1], moving)
+
+
+def test_invalid_ufast_motion_cannot_pass_the_final_alignment_gate() -> None:
+    """Kinetic sampling stays blocked when a UFAST phase requires review."""
+    provenance = {
+        "identity_alignment_qc": {"status": "pass"},
+        "hr_motion_qc": {"status": "pass"},
+        "ufast_motion_qc": {"status": "review_required"},
+    }
+    status, components = _combined_alignment_status(provenance)
+    assert status == "review_required"
+    assert components["ufast_interphase_motion"] == "review_required"
+
+
+def test_motion_qc_fails_closed_on_invalid_metrics() -> None:
+    """Missing or nonfinite motion diagnostics always require review."""
+    reference = {"phase_index": 0}
+    invalid = {
+        "phase_index": 1,
+        "transform_rejection_reason": "correlation_gain_below_minimum",
+        "raw_correlation": 0.5,
+        "proposed_correlation": float("nan"),
+        "corr_delta": float("nan"),
+    }
+    assert _motion_qc_status([reference, invalid]) == "review_required"
 
 
 def test_corrected_pixel_spacing_produces_expected_one_mm_grid() -> None:
