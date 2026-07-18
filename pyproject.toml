@@ -15,7 +15,7 @@ py-modules = ["clinic_metadata", "clinical_features", "config", "load_cohort"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["deepsets*", "gnn*", "tabular*", "evaluation*", "graph_extraction*", "modeling*", "features*", "analysis*", "cohorts*"]
+include = ["deepsets*", "gnn*", "tabular*", "evaluation*", "graph_extraction*", "modeling*", "features*", "analysis*", "cohorts*", "preprocessing*"]
 
 [tool.ruff.lint]
 extend-select = [

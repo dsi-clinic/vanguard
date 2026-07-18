@@ -367,3 +367,31 @@ def test_uchicago_load_folds_drops_exams_with_no_fold_assignment(
     folds = adapter.load_folds()
 
     assert list(folds["case_id"]) == ["e1"]
+
+
+def _write_manifest_with_duplicate_exam_id(tmp_path: Path) -> Path:
+    """Write a manifest where one exam_id appears in two rows."""
+    root = tmp_path / "uc"
+    root.mkdir()
+    csv_path = root / "dce2d_internal_ultrafast_manifest.csv"
+    csv_path.write_text(
+        "exam_id,dataset,patient_key,fold,pcr,phase_files\n"
+        'e1,simbiosys,p1,0,1.0,"[""/a/p0.nii.gz""]"\n'
+        'e1,uch_nac,p2,1,0.0,"[""/b/p0.nii.gz""]"\n'
+    )
+    return root
+
+
+def test_uchicago_duplicate_exam_id_raises_instead_of_silently_misrouting(
+    tmp_path: Path,
+) -> None:
+    """A duplicate exam_id must fail loudly, not hand back an ambiguous row.
+
+    Indexed row lookup (``_manifest_indexed``) returns a DataFrame instead of a
+    Series when the index has a duplicate label, which would otherwise break
+    every caller of ``_manifest_row`` in a confusing way (or silently pick
+    whichever row pandas happens to surface first).
+    """
+    adapter = UChicagoDataset(root=_write_manifest_with_duplicate_exam_id(tmp_path))
+    with pytest.raises(ValueError, match="duplicate exam_id"):
+        adapter.case_dataset_name("e1")

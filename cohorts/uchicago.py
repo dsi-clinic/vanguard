@@ -163,10 +163,21 @@ class UChicagoDataset(DatasetAdapter):
         return indexed.loc[key]
 
     def _manifest_indexed(self) -> pd.DataFrame:
-        """Manifest indexed by (string) ``exam_id``, cached for repeated row lookups."""
+        """Manifest indexed by (string) ``exam_id``, cached for repeated row lookups.
+
+        Fails loudly on a duplicate ``exam_id`` rather than letting ``.loc``
+        silently hand back multiple rows: a duplicate would otherwise make every
+        caller of ``_manifest_row`` (which assumes one row per id) either crash
+        deep inside pandas or misbehave on a Series-of-rows.
+        """
         if self._manifest_indexed_cache is None:
             manifest = self._manifest()
             indexed = manifest.copy()
             indexed.index = manifest["exam_id"].astype(str)
+            duplicated = indexed.index[indexed.index.duplicated()].unique()
+            if len(duplicated) > 0:
+                raise ValueError(
+                    f"manifest has duplicate exam_id values: {sorted(duplicated)}"
+                )
             self._manifest_indexed_cache = indexed
         return self._manifest_indexed_cache

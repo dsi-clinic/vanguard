@@ -29,26 +29,14 @@ import numpy as np
 import SimpleITK as sitk
 import torch
 
+from preprocessing.model import frozen_model_intensity_preprocess
+
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent
 _SUBMODULE = _PROJECT_ROOT / "vanguard-blood-vessel-segmentation"
 for _p in (str(_HERE), str(_SUBMODULE)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
-
-# FIXME: this is cobbling together an installation process in the script itself
-# packages must be installed in an environment
-try:
-    from preprocessing import normalize_image, zscore_image  # noqa: E402
-
-except ImportError:
-
-    def normalize_image(*args, **_kwargs):  # noqa: ANN201, D103
-        raise ImportError("Required preprocessing function not found")  # noqa: F821
-
-    def zscore_image(*args, **_kwargs):  # noqa: ANN201, D103
-        raise ImportError("Required preprocessing function not found")  # noqa: F821
-
 
 import predict_fast  # noqa: E402
 
@@ -93,9 +81,10 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
         # Load the image
         original_array = sitk.GetArrayFromImage(sitk.ReadImage(str(input_path)))
 
-        # Preprocess: rotate axes and normalize
-        preprocessed_array = zscore_image(
-            normalize_image(np.swapaxes(np.swapaxes(original_array, 0, 2), 0, 1)[::-1])
+        # Preserve the existing NIfTI orientation adapter, then apply the exact
+        # frozen-model intensity contract implemented and tested in Vanguard.
+        preprocessed_array = frozen_model_intensity_preprocess(
+            np.swapaxes(np.swapaxes(original_array, 0, 2), 0, 1)[::-1]
         )
 
         # Save as .npy
