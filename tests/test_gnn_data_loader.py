@@ -22,6 +22,7 @@ sitk = pytest.importorskip("SimpleITK")
 
 from gnn.data_loader import (  # noqa: E402
     VanguardCenterlineDataset,
+    _load_study_metadata,
     _node_kinetic_features,
     _time_axis_from_study_timepoints,
 )
@@ -66,6 +67,21 @@ def test_vanguard_kinetics_require_physical_time_sidecar() -> None:
     """New Vanguard cases must never silently substitute frame indices."""
     with pytest.raises(FileNotFoundError, match="ufast_times_seconds.npy"):
         _time_axis_from_study_timepoints([0, 1, 2], require_physical_seconds=True)
+
+
+def test_vanguard_kinetics_require_explicit_alignment_approval(tmp_path: Path) -> None:
+    """A missing alignment status can't silently authorize HR/UFAST kinetics."""
+    summary = {
+        "study_timepoints": [0, 1, 2],
+        "kinetic_feature_policy": {
+            "baseline_frame_count": 1,
+            "enhancement": "relative_signal_change",
+            "time_axis": "physical_seconds",
+        },
+    }
+    (tmp_path / "run_summary.json").write_text(json.dumps(summary))
+    with pytest.raises(ValueError, match="requires explicit alignment approval"):
+        _load_study_metadata("case", tmp_path)
 
 
 def _write_case(

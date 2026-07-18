@@ -17,7 +17,11 @@ from preprocessing.model import (
     prepare_hr_phase_for_model,
 )
 from preprocessing.motion import MotionSettings, correct_phase
-from preprocessing.pipeline import _identity_alignment_qc, _validate_pair
+from preprocessing.pipeline import (
+    _identity_alignment_qc,
+    _motion_correct_hr_series,
+    _validate_pair,
+)
 from preprocessing.spatial import (
     isotropic_geometry,
     rasterize_skeleton_identity,
@@ -108,6 +112,68 @@ def test_motion_keeps_raw_signal_and_rejects_implausible_proposals() -> None:
     )
     assert rejected["transform_accepted"] is False
     np.testing.assert_array_equal(retained, moving)
+
+
+def test_hr_phases_are_aligned_before_model_inference() -> None:
+    """HR motion correction preserves the series while improving alignment."""
+    fixed = _structured_volume()
+    moving = ndimage.shift(
+        fixed,
+        shift=(2.0, -1.0, 0.0),
+        order=1,
+        mode="constant",
+        cval=0.0,
+        prefilter=False,
+    )
+    hr = SimpleNamespace(
+        signal_tzyx=np.stack([fixed, moving]),
+        times_seconds=np.asarray([0.0, 60.0]),
+        geometry=_geometry(
+            shape_zyx=fixed.shape,
+            spacing_xyz=(1.0, 1.0, 1.0),
+        ),
+    )
+    corrected, metrics, status = _motion_correct_hr_series(
+        hr,
+        settings=MotionSettings(downsample_xyz=(1, 1, 1), upsample_factor=10),
+    )
+    assert corrected.shape == hr.signal_tzyx.shape
+    assert len(metrics) == hr.signal_tzyx.shape[0]
+    assert status == "pass"
+    assert metrics[1]["transform_accepted"] is True
+    assert np.mean(np.abs(corrected[1] - fixed)) < np.mean(np.abs(moving - fixed))
+
+
+def test_large_hr_motion_proposal_requires_review_and_keeps_identity() -> None:
+    """An implausible HR shift isn't applied or silently approved."""
+    fixed = _structured_volume()
+    moving = ndimage.shift(
+        fixed,
+        shift=(2.0, 0.0, 0.0),
+        order=1,
+        mode="constant",
+        cval=0.0,
+        prefilter=False,
+    )
+    hr = SimpleNamespace(
+        signal_tzyx=np.stack([fixed, moving]),
+        times_seconds=np.asarray([0.0, 60.0]),
+        geometry=_geometry(
+            shape_zyx=fixed.shape,
+            spacing_xyz=(1.0, 1.0, 1.0),
+        ),
+    )
+    corrected, metrics, status = _motion_correct_hr_series(
+        hr,
+        settings=MotionSettings(
+            downsample_xyz=(1, 1, 1),
+            upsample_factor=10,
+            max_translation_mm=0.5,
+        ),
+    )
+    assert status == "review_required"
+    assert metrics[1]["transform_accepted"] is False
+    np.testing.assert_array_equal(corrected[1], moving)
 
 
 def test_corrected_pixel_spacing_produces_expected_one_mm_grid() -> None:

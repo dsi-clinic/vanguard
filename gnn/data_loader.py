@@ -200,6 +200,11 @@ def _load_study_metadata(case_id: str, study_dir: Path) -> tuple[list[int], int,
         # Legacy cohorts don't carry a protocol baseline contract. Preserve their
         # established single-frame, absolute-enhancement behavior explicitly.
         return timepoints, 1, False
+    if alignment_status not in ("pass", "manually_approved"):
+        raise ValueError(
+            f"case={case_id}: Vanguard kinetic metadata requires explicit "
+            "alignment approval before kinetic features can be sampled"
+        )
     baseline_frame_count = int(policy["baseline_frame_count"])
     if not 1 <= baseline_frame_count < len(timepoints):
         raise ValueError(

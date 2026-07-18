@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from preprocessing.stage_high_resolution_dicom import finalize, stage_exam
 
@@ -94,6 +95,32 @@ def test_stage_exam_preserves_payloads_and_omits_source_names(tmp_path: Path) ->
         metadata["archive_sha256"]
         == hashlib.sha256(archive_path.read_bytes()).hexdigest()
     )
+
+
+def test_stage_exam_rejects_reuse_after_selection_changes(tmp_path: Path) -> None:
+    """A completed archive can't be relabeled under a different selection."""
+    selection, _, _ = _write_fixture(tmp_path)
+    destination = tmp_path / "shared"
+    stage_exam(selection, destination, 0)
+    changed = pd.read_csv(selection, dtype=str)
+    changed["selection_status"] = "new_review_status"
+    changed.to_csv(selection, index=False)
+
+    with pytest.raises(RuntimeError, match="refusing to reuse stale"):
+        stage_exam(selection, destination, 0)
+
+
+def test_stage_exam_rejects_partial_existing_outputs(tmp_path: Path) -> None:
+    """Restarting never overwrites one fragment of a staged package."""
+    selection, _, _ = _write_fixture(tmp_path)
+    destination = tmp_path / "shared"
+    archive = destination / "archives" / "cohort" / "exam.zip"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"partial")
+
+    with pytest.raises(RuntimeError, match="incomplete staged DICOM package"):
+        stage_exam(selection, destination, 0)
+    assert archive.read_bytes() == b"partial"
 
 
 def test_finalize_links_hr_to_existing_ufast_manifest(tmp_path: Path) -> None:

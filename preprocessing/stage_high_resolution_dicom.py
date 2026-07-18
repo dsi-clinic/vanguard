@@ -95,6 +95,86 @@ def _selection(path: Path) -> pd.DataFrame:
     return frame
 
 
+def _selection_sha256(selected: pd.DataFrame) -> str:
+    """Hash the complete, order-independent staging contract for one exam."""
+    normalized = selected.copy()
+    normalized = normalized.reindex(sorted(normalized.columns), axis=1)
+    for column in normalized.columns:
+        normalized[column] = normalized[column].astype(str)
+    normalized = normalized.sort_values(list(normalized.columns)).reset_index(drop=True)
+    payload = normalized.to_csv(index=False, lineterminator="\n").encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _validate_existing_stage(
+    *,
+    selected: pd.DataFrame,
+    archive: Path,
+    shard: Path,
+    provenance: Path,
+) -> None:
+    """Fail closed if existing outputs don't match today's exact selection."""
+    metadata = json.loads(provenance.read_text())
+    exam_id = str(selected["exam_id"].iloc[0])
+    dataset = str(selected["dataset"].iloc[0])
+    expected_files = int(selected["expected_n_instances"].sum())
+    checks = {
+        "exam_id": exam_id,
+        "dataset": dataset,
+        "selection_status": sorted(set(selected["selection_status"])),
+        "series_instance_uids": sorted(selected["series_instance_uid"].tolist()),
+        "series_roles": sorted(selected["series_role"].tolist()),
+        "n_files": expected_files,
+    }
+    recorded = dict(metadata)
+    for key in ("selection_status", "series_instance_uids", "series_roles"):
+        if isinstance(recorded.get(key), list):
+            recorded[key] = sorted(recorded[key])
+    mismatches = {
+        key: {"recorded": recorded.get(key), "current": value}
+        for key, value in checks.items()
+        if recorded.get(key) != value
+    }
+    selection_digest = metadata.get("selection_sha256")
+    if selection_digest is not None and selection_digest != _selection_sha256(selected):
+        mismatches["selection_sha256"] = {
+            "recorded": selection_digest,
+            "current": _selection_sha256(selected),
+        }
+    staged = pd.read_parquet(shard)
+    staged_pairs = sorted(
+        staged.groupby(["series_instance_uid", "series_role"]).size().items()
+    )
+    expected_pairs = sorted(
+        (
+            (str(row.series_instance_uid), str(row.series_role)),
+            int(row.expected_n_instances),
+        )
+        for row in selected.itertuples(index=False)
+    )
+    if staged_pairs != expected_pairs:
+        mismatches["staged_series_counts"] = {
+            "recorded": staged_pairs,
+            "current": expected_pairs,
+        }
+    expected_archive = str(archive.resolve())
+    if set(staged["archive_path"].astype(str)) != {expected_archive}:
+        mismatches["archive_path"] = {
+            "recorded": sorted(set(staged["archive_path"].astype(str))),
+            "current": expected_archive,
+        }
+    if archive.stat().st_size != int(metadata.get("archive_bytes", -1)):
+        mismatches["archive_bytes"] = {
+            "recorded": metadata.get("archive_bytes"),
+            "current": archive.stat().st_size,
+        }
+    if mismatches:
+        raise RuntimeError(
+            f"{exam_id}: refusing to reuse stale staged DICOM outputs: "
+            f"{json.dumps(mismatches, default=str, sort_keys=True)}"
+        )
+
+
 def _inventory_rows(selection: pd.DataFrame) -> pd.DataFrame:
     chunks: list[pd.DataFrame] = []
     for source, source_selection in selection.groupby("source_inventory", sort=False):
@@ -161,7 +241,19 @@ def stage_exam(selection_path: Path, destination: Path, index: int) -> None:
     for parent in (archive.parent, shard.parent, provenance.parent):
         parent.mkdir(parents=True, exist_ok=True)
 
-    if archive.exists() and shard.exists() and provenance.exists():
+    existing_outputs = [path.exists() for path in (archive, shard, provenance)]
+    if any(existing_outputs) and not all(existing_outputs):
+        raise RuntimeError(
+            f"{exam_id}: refusing to overwrite an incomplete staged DICOM package; "
+            "use a fresh destination or remove the partial derived outputs"
+        )
+    if all(existing_outputs):
+        _validate_existing_stage(
+            selected=selected,
+            archive=archive,
+            shard=shard,
+            provenance=provenance,
+        )
         print(f"[skip] complete outputs already exist for {exam_id}", flush=True)
         return
 
@@ -225,8 +317,9 @@ def stage_exam(selection_path: Path, destination: Path, index: int) -> None:
         "exam_id": exam_id,
         "dataset": dataset,
         "selection_status": sorted(set(selected["selection_status"])),
-        "series_instance_uids": selected["series_instance_uid"].tolist(),
-        "series_roles": selected["series_role"].tolist(),
+        "series_instance_uids": sorted(selected["series_instance_uid"].tolist()),
+        "series_roles": sorted(selected["series_role"].tolist()),
+        "selection_sha256": _selection_sha256(selected),
         "n_files": len(output),
         "payload_sha256": payload_digest.hexdigest(),
         "archive_sha256": _sha256(temp_archive),

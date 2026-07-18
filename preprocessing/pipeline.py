@@ -20,6 +20,7 @@ from preprocessing.dicom import (
 from preprocessing.model import model_subject_id, prepare_hr_phase_for_model
 from preprocessing.motion import (
     DEFAULT_MOTION_SETTINGS,
+    MotionSettings,
     correct_phase,
     correlation_in_support,
 )
@@ -31,7 +32,7 @@ from preprocessing.spatial import (
     save_nifti_xyz,
 )
 
-POLICY_NAME = "vanguard_spgr_raw_signal_v3"
+POLICY_NAME = "vanguard_spgr_raw_signal_v4"
 TARGET_SPACING_MM = 1.0
 BINARY_THRESHOLD = 0.5
 INTERSERIES_REVIEW_TRANSLATION_MM = 2.0
@@ -141,6 +142,59 @@ def _identity_alignment_qc(
     }
 
 
+def _motion_correct_hr_series(
+    hr: Any,
+    *,
+    settings: MotionSettings = DEFAULT_MOTION_SETTINGS,
+) -> tuple[np.ndarray, list[dict[str, object]], str]:
+    """Align every HR phase to phase 0 on the native HR grid.
+
+    TC4D uses temporal persistence and therefore requires its vessel-probability
+    phases to share anatomy, not merely DICOM geometry. Accepted translations
+    are applied once to raw HR signal before the frozen model preprocessing.
+    """
+    signal_tzyx = np.asarray(hr.signal_tzyx, dtype=np.float32)
+    fixed_xyz = np.transpose(signal_tzyx[0], (2, 1, 0))
+    corrected_zyx = [signal_tzyx[0]]
+    metrics: list[dict[str, object]] = [
+        {
+            "phase_index": 0,
+            "time_seconds": float(hr.times_seconds[0]),
+            "transform_accepted": True,
+            "transform_rejection_reason": "reference_phase",
+            "translation_voxels": [0.0, 0.0, 0.0],
+        }
+    ]
+    status = "pass"
+    for phase_index, moving_zyx in enumerate(signal_tzyx[1:], start=1):
+        corrected_xyz, _, phase_metrics = correct_phase(
+            fixed_xyz,
+            np.transpose(moving_zyx, (2, 1, 0)),
+            support=None,
+            spacing_xyz_mm=np.asarray(hr.geometry.spacing_xyz_mm),
+            settings=settings,
+        )
+        corrected_zyx.append(np.transpose(corrected_xyz, (2, 1, 0)))
+        finite_metrics = all(
+            np.isfinite(float(phase_metrics[key]))
+            for key in ("raw_correlation", "proposed_correlation", "corr_delta")
+        )
+        if (
+            phase_metrics["transform_rejection_reason"]
+            == "proposed_translation_exceeds_maximum"
+            or not finite_metrics
+        ):
+            status = "review_required"
+        metrics.append(
+            {
+                "phase_index": phase_index,
+                "time_seconds": float(hr.times_seconds[phase_index]),
+                **phase_metrics,
+            }
+        )
+    return np.stack(corrected_zyx, axis=0), metrics, status
+
+
 def prepare_case(
     *,
     inventory_path: Path,
@@ -182,7 +236,10 @@ def prepare_case(
         model_dir.mkdir(parents=True)
         dce_dir.mkdir(parents=True)
 
-        for phase_index, phase_zyx in enumerate(hr.signal_tzyx):
+        corrected_hr_tzyx, hr_motion_metrics, hr_motion_status = (
+            _motion_correct_hr_series(hr)
+        )
+        for phase_index, phase_zyx in enumerate(corrected_hr_tzyx):
             np.save(
                 model_dir / f"{model_subject_id(phase_index)}.npy",
                 prepare_hr_phase_for_model(phase_zyx),
@@ -266,9 +323,13 @@ def prepare_case(
                 "motion_output_interpolator": "linear",
                 "motion_composed_with_spatial_resample": True,
                 "saved_phase_interpolation_count": 1,
+                "hr_motion_reference_phase": 0,
+                "hr_motion_output_interpolator": "linear",
+                "hr_saved_phase_maximum_interpolation_count": 1,
             },
             "case": record.__dict__,
             "inventory_path": str(inventory_path.expanduser().resolve()),
+            "inventory_sha256": _sha256(inventory_path.expanduser().resolve()),
             "case_manifest_path": str(case_manifest.expanduser().resolve()),
             "case_manifest_sha256": _sha256(case_manifest.expanduser().resolve()),
             "hr_source": {
@@ -296,7 +357,15 @@ def prepare_case(
                 "temporal": "every HR phase in physical acquisition order",
                 "array_order": "DICOM z,y,x -> model y,x,z",
                 "intensity": "0.1% tail clip then per-volume z-score",
-                "spatial": "native HR grid; no resampling",
+                "spatial": (
+                    "native HR phase-0 grid; accepted translation motion is "
+                    "applied once before model preprocessing"
+                ),
+            },
+            "hr_motion_qc": {
+                "status": hr_motion_status,
+                "reference_phase": 0,
+                "metrics": hr_motion_metrics,
             },
             "motion_settings": DEFAULT_MOTION_SETTINGS.to_dict(),
             "motion_metrics": motion_metrics,
@@ -443,13 +512,24 @@ def map_case(*, case_root: Path) -> None:
         mapped_support.astype(np.uint8),
     )
     ufast_times = np.asarray(provenance["ufast_source"]["times_seconds"], dtype=float)
+    interseries_status = provenance["identity_alignment_qc"]["status"]
+    hr_motion_status = provenance["hr_motion_qc"]["status"]
+    alignment_status = (
+        "pass"
+        if interseries_status == "pass" and hr_motion_status == "pass"
+        else "review_required"
+    )
     _write_json(
         output_dir / "run_summary.json",
         {
             "case_id": exam_id,
             "study_timepoints": list(range(int(ufast_times.size))),
             "physical_times_seconds": ufast_times.tolist(),
-            "alignment_qc_status": provenance["identity_alignment_qc"]["status"],
+            "alignment_qc_status": alignment_status,
+            "alignment_qc_components": {
+                "hr_to_ufast": interseries_status,
+                "hr_interphase_motion": hr_motion_status,
+            },
             "kinetic_feature_policy": {
                 "baseline_frame_count": int(
                     provenance["ufast_source"]["baseline_frame_count"]

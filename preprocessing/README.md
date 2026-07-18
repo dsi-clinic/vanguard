@@ -19,8 +19,11 @@ inventory (CSV or Parquet).
 - Translation-only motion proposals align each UFAST phase to phase 0. A
   proposal is saved only when it is physically bounded and improves
   correlation; otherwise the raw phase and identity transform are retained.
-- The frozen breast/vessel models run on every native-grid HR phase. Only this
-  model adapter uses the original 0.1% tail clipping and per-volume z-score.
+- Each native-grid HR phase is translation-aligned to HR phase 0 before model
+  adaptation. A physically bounded proposal is applied only when correlation
+  improves; implausible proposals retain identity and require review. The
+  frozen breast/vessel models then run on every phase. Only this model adapter
+  uses the original 0.1% tail clipping and per-volume z-score.
 - TC4D receives every HR vessel-probability phase. Its static skeleton and
   support are mapped to the 1-mm UFAST grid through the shared DICOM
   `FrameOfReferenceUID`; all UFAST phases and timestamps remain available for
@@ -97,6 +100,9 @@ filename indices.
 
 Raw archives and inventories are immutable inputs and must not be deleted or
 modified after producing a derivative.
+Resubmission skips a stage only when its policy, case row, manifest and
+inventory checksums, model checksums (after inference), and expected artifacts
+match. Any mismatch fails closed and requires a fresh output root.
 
 ## Shared UChicago source data
 
@@ -135,7 +141,7 @@ It does not read Huo-lab inventories or old NIfTI affines. The CPU prepare stage
 loads every original HR/UFAST temporal position, preserves physical acquisition
 times, writes true RAS NIfTI qform/sform affines derived from DICOM LPS, and
 motion-corrects raw-signal UFAST data. GPU inference runs the frozen models on
-every native-HR phase. CPU postprocessing runs TC4D, maps the static skeleton
+every motion-aligned native-HR phase. CPU postprocessing runs TC4D, maps the static skeleton
 through the shared DICOM frame, and writes QC.
 
 ```bash
