@@ -27,6 +27,7 @@ from cohorts import (
     MamaMiaDataset,
     UChicagoDataset,
     build_adapter_from_config,
+    build_imaging_adapter_from_config,
     resolve_folds,
     resolve_split_policy,
 )
@@ -117,20 +118,19 @@ def test_resample_is_noop_when_no_target_spacing() -> None:
     assert np.array_equal(adapter.resample(volume, (1.0, 1.0, 1.0)), volume)
 
 
-def test_uchicago_preprocess_flips_x_and_z_then_applies_base_transform() -> None:
-    """UChicago is RAS where MAMA-MIA is LAI, so x/z are flipped before the base transform.
+def test_uchicago_preprocess_is_a_pass_through() -> None:
+    """UChicago asserts no orientation convention and must not inherit MAMA-MIA's.
 
-    SimpleITK returns (z, y, x)-ordered arrays, so undoing that sign difference
-    means flipping array axes 0 and 2 and then deferring to the base MAMA-MIA
-    reorientation. An identity pass-through (the original assumption) put the
-    thin slice axis where the model expects an in-plane axis.
+    The manifest ships already-preprocessed volumes, and there is no longer a
+    vessel-model consumer here at all (UChicago imaging runs through the paired
+    raw-DICOM pipeline). Falling through to the base MAMA-MIA swap+flip would
+    silently reorient already-oriented data.
     """
     adapter = UChicagoDataset(root=Path("/data/uchicago"))
     volume = np.arange(2 * 3 * 4).reshape(2, 3, 4)
-    flipped = volume[::-1, :, ::-1]
-    expected = np.swapaxes(np.swapaxes(flipped, 0, 2), 0, 1)[::-1]
-    assert np.array_equal(adapter.preprocess(volume), expected)
-    assert not np.array_equal(adapter.preprocess(volume), volume)
+    assert np.array_equal(adapter.preprocess(volume), volume)
+    base_transform = np.swapaxes(np.swapaxes(volume, 0, 2), 0, 1)[::-1]
+    assert not np.array_equal(adapter.preprocess(volume), base_transform)
 
 
 def test_base_load_folds_is_none() -> None:
@@ -164,6 +164,38 @@ def test_factory_builds_uchicago() -> None:
         {"name": "uchicago", "cohort": None, "root": "/data/uc", "split_policy": "auto"}
     )
     assert isinstance(build_adapter_from_config(config), UChicagoDataset)
+
+
+def test_imaging_factory_rejects_uchicago() -> None:
+    """UChicago's NIfTI imaging route is superseded by the raw-DICOM pipeline.
+
+    The adapter itself stays fully supported for non-imaging consumers; only the
+    imaging CLIs refuse it, and the error must name the replacement so a user
+    isn't left guessing.
+    """
+    config = _dataset_config(
+        {"name": "uchicago", "cohort": None, "root": "/data/uc", "split_policy": "auto"}
+    )
+    with pytest.raises(ValueError, match="preprocessing.pipeline"):
+        build_imaging_adapter_from_config(config)
+
+
+def test_imaging_factory_allows_mamamia_and_unset() -> None:
+    """The imaging guard is dataset-specific, not a blanket block."""
+    mamamia = _dataset_config(
+        {
+            "name": "mamamia",
+            "cohort": "ispy2",
+            "root": "/data/mm",
+            "split_policy": "auto",
+        }
+    )
+    assert isinstance(build_imaging_adapter_from_config(mamamia), MamaMiaDataset)
+
+    unset = _dataset_config(
+        {"name": None, "cohort": None, "root": "", "split_policy": "auto"}
+    )
+    assert build_imaging_adapter_from_config(unset) is None
 
 
 def test_factory_returns_none_when_unset() -> None:

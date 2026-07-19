@@ -355,10 +355,12 @@ def main() -> None:
         "--dataset-name",
         default=None,
         help=(
-            "If set (mamamia|uchicago), build a DatasetAdapter via "
-            "cohorts.factory and route discovery/preprocessing/output-path "
-            "through it instead of the hardcoded MAMA-MIA logic (Step 4). "
-            "--images-dir is ignored in this mode; the adapter owns its root."
+            "If set (mamamia), build a DatasetAdapter via cohorts.factory and "
+            "route discovery/preprocessing/output-path through it instead of "
+            "the hardcoded MAMA-MIA logic (Step 4). --images-dir is ignored in "
+            "this mode; the adapter owns its root. 'uchicago' is rejected here: "
+            "its imaging route is the paired raw-DICOM pipeline "
+            "(see preprocessing/README.md)."
         ),
     )
     p.add_argument(
@@ -375,7 +377,7 @@ def main() -> None:
 
     adapter: DatasetAdapter | None = None
     if args.dataset_name:
-        from cohorts.factory import build_adapter_from_config
+        from cohorts.factory import build_imaging_adapter_from_config
         from config import ConfigNode
 
         if not args.dataset_root:
@@ -390,7 +392,7 @@ def main() -> None:
                 }
             }
         )
-        adapter = build_adapter_from_config(dataset_config)
+        adapter = build_imaging_adapter_from_config(dataset_config)
         print(f"Using dataset adapter: {type(adapter).__name__}")
 
     out_dir = Path(args.output_dir)

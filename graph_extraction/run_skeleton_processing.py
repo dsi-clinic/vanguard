@@ -108,10 +108,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "If set (mamamia|uchicago), build a DatasetAdapter via "
-            "cohorts.factory and route per-timepoint segmentation discovery "
-            "and the MIP-only flip spec through it (Step 4), instead of the "
-            "hardcoded MAMA-MIA function/constant."
+            "If set (mamamia), build a DatasetAdapter via cohorts.factory and "
+            "route per-timepoint segmentation discovery and the MIP-only flip "
+            "spec through it (Step 4), instead of the hardcoded MAMA-MIA "
+            "function/constant. 'uchicago' is rejected here: its skeleton comes "
+            "from the paired raw-DICOM pipeline (see preprocessing/README.md)."
         ),
     )
     parser.add_argument(
@@ -140,7 +141,7 @@ def main() -> None:
 
     adapter = None
     if args.dataset_name:
-        from cohorts.factory import build_adapter_from_config
+        from cohorts.factory import build_imaging_adapter_from_config
         from config import ConfigNode
 
         if not args.dataset_root:
@@ -155,7 +156,7 @@ def main() -> None:
                 }
             }
         )
-        adapter = build_adapter_from_config(dataset_config)
+        adapter = build_imaging_adapter_from_config(dataset_config)
         print(f"Using dataset adapter: {type(adapter).__name__}")
 
     start = time.perf_counter()

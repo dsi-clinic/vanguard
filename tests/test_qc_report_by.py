@@ -12,6 +12,7 @@ run -- selection and predictions are byte-for-byte unchanged.
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from config import DEFAULT_CONFIG, ConfigNode, _deep_merge
 from evaluation.evaluator import _stratum_column
@@ -33,11 +34,20 @@ def test_stratum_column_prefers_report_by_when_present() -> None:
     assert _stratum_column(preds, report_by="dataset") == "dataset"
 
 
-def test_stratum_column_ignores_report_by_absent_from_predictions() -> None:
-    """A report_by column that isn't present falls back to the aliases."""
+def test_stratum_column_raises_when_report_by_absent_from_predictions() -> None:
+    """A requested report_by column that isn't present is a hard error.
+
+    Falling back to an alias would silently produce a breakdown by some other
+    column while the run still appears to have produced the requested UChicago
+    sub-source QC.
+    """
     preds = pd.DataFrame({"subtype": ["A", "B"]})
-    assert _stratum_column(preds, report_by="dataset") == "subtype"
-    assert _stratum_column(pd.DataFrame({"y_true": [1]}), report_by="dataset") is None
+    with pytest.raises(KeyError, match="dataset"):
+        _stratum_column(preds, report_by="dataset")
+
+    # Also fatal when there is no alias to fall back to at all.
+    with pytest.raises(KeyError, match="dataset"):
+        _stratum_column(pd.DataFrame({"y_true": [1]}), report_by="dataset")
 
 
 def _fold_config() -> ConfigNode:
