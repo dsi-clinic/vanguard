@@ -185,6 +185,13 @@ def main() -> int:  # noqa: C901
         # 6. find_case_files with an adapter discovers manifest-driven cases,
         #    not a directory glob (UChicago-shaped: two cases, no <case_id>/
         #    subdirectory of `images_dir` matching find_nii_files' assumption).
+        #    NOTE: UChicagoDataset is used here only as a convenient
+        #    manifest-shaped fixture for the *generic* discovery and
+        #    name-collision logic, which is dataset-independent. UChicago itself
+        #    can no longer be run through this stage -- the CLI rejects it (see
+        #    cohorts.factory.IMAGING_ROUTE_SUPERSEDED); its imaging route is the
+        #    paired raw-DICOM pipeline in preprocessing/. These functions are
+        #    called directly, below the factory, so the guard doesn't apply.
         expected_uc_exam_ids = {"e1", "e2"}
         uc_root = _write_uchicago_manifest(tmp, sorted(expected_uc_exam_ids))
         uc_adapter = UChicagoDataset(root=uc_root)
