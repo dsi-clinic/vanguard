@@ -13,8 +13,12 @@ comparable to that arm's GNN AUC (0.509 mean, 3 seeds x 5 folds, see
 experiments/harmonized_single_breast_v1/README.md). Per case, summarizes
 each of the 6 node-level features to (mean, std, q10, q50, q90), adds the
 TTE no-arrival fraction (fraction of nodes at TTE_NO_ARRIVAL_SENTINEL) and
-the already-recorded node/edge counts -- 33 tabular columns total. No new
-graph build: loads the existing cache read-only.
+the already-recorded node/edge counts -- 33 tabular columns total. The
+time_to_enhancement summaries are computed over observed-arrival nodes only
+(the no-arrival sentinel is excluded), so they measure arrival timing rather
+than a blend of timing and missingness prevalence -- the latter is carried
+separately by tte_no_arrival_fraction. No new graph build: loads the existing
+cache read-only.
 
 Writes the feature table and per-fold results to --out-dir (default
 experiments/tabular_baseline_v1/, see that directory's README.md for the
@@ -37,6 +41,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import make_pipeline
@@ -80,17 +85,48 @@ def load_dataset_from_config(
     return dataset, node_features
 
 
+def _summary_stats(values: np.ndarray, name: str) -> dict[str, float]:
+    """mean/std/quantiles for one feature column.
+
+    An empty ``values`` (e.g. the ``time_to_enhancement`` column after every
+    no-arrival node is masked out -- a case where no node ever enhanced) has no
+    defined timing summary, so every stat is ``NaN``. That ``NaN`` is handled by
+    a per-fold mean-imputer in ``run_cv`` (fit on the training split only, never
+    the whole cohort); the missingness itself is already carried explicitly by
+    ``tte_no_arrival_fraction``.
+    """
+    if values.size == 0:
+        stats = {f"{name}_mean": float("nan"), f"{name}_std": float("nan")}
+        for q in _SUMMARY_QUANTILES:
+            stats[f"{name}_q{int(q * 100)}"] = float("nan")
+        return stats
+    stats = {
+        f"{name}_mean": float(np.mean(values)),
+        f"{name}_std": float(np.std(values)),
+    }
+    for q in _SUMMARY_QUANTILES:
+        stats[f"{name}_q{int(q * 100)}"] = float(np.quantile(values, q))
+    return stats
+
+
 def summarize_graph(data: Data, node_features: tuple[str, ...]) -> dict[str, float]:
-    """Collapse one graph's per-node feature matrix into tabular summary stats."""
+    """Collapse one graph's per-node feature matrix into tabular summary stats.
+
+    ``time_to_enhancement`` is summarized over **observed-arrival nodes only**
+    (nodes not at ``TTE_NO_ARRIVAL_SENTINEL``): including the sentinel in the
+    mean/quantiles would make those features a mixture of actual arrival timing
+    and the prevalence of missing arrivals, even though the missingness is
+    already represented explicitly by ``tte_no_arrival_fraction``. Every other
+    feature is summarized over all nodes.
+    """
     x = data.x.numpy()
+    tte_idx = node_features.index("time_to_enhancement")
     row: dict[str, float] = {}
     for i, name in enumerate(node_features):
         column = x[:, i]
-        row[f"{name}_mean"] = float(np.mean(column))
-        row[f"{name}_std"] = float(np.std(column))
-        for q in _SUMMARY_QUANTILES:
-            row[f"{name}_q{int(q * 100)}"] = float(np.quantile(column, q))
-    tte_idx = node_features.index("time_to_enhancement")
+        if i == tte_idx:
+            column = column[column != TTE_NO_ARRIVAL_SENTINEL]
+        row.update(_summary_stats(column, name))
     tte_column = x[:, tte_idx]
     row["tte_no_arrival_fraction"] = float(
         np.mean(tte_column == TTE_NO_ARRIVAL_SENTINEL)
@@ -134,13 +170,25 @@ def run_cv(
         x_train, y_train = train[feature_cols].to_numpy(), train["pcr"].to_numpy()
         x_test, y_test = test[feature_cols].to_numpy(), test["pcr"].to_numpy()
 
+        # SimpleImputer (mean) is fit on this fold's training split only, so the
+        # NaN that summarize_graph emits for an all-no-arrival case's TTE timing
+        # summaries never draws on validation data. It is a near-no-op otherwise
+        # (only the handful of all-no-arrival cases carry any NaN).
         if model_name == "logistic_regression":
             model = make_pipeline(
-                StandardScaler(), LogisticRegression(max_iter=1000, random_state=seed)
+                SimpleImputer(strategy="mean"),
+                StandardScaler(),
+                LogisticRegression(max_iter=1000, random_state=seed),
             )
         elif model_name == "xgboost":
-            model = XGBClassifier(
-                n_estimators=100, max_depth=3, random_state=seed, eval_metric="logloss"
+            model = make_pipeline(
+                SimpleImputer(strategy="mean"),
+                XGBClassifier(
+                    n_estimators=100,
+                    max_depth=3,
+                    random_state=seed,
+                    eval_metric="logloss",
+                ),
             )
         else:
             raise ValueError(f"Unknown model_name: {model_name!r}")

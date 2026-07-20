@@ -332,3 +332,36 @@ failure mode it protects against), and flagged at the point of use.
   Verified end-to-end on two real cases (`DUKE_057`, `ISPY2_169536`,
   2026-07-14) via a full `VanguardCenterlineDataset` build with
   `breast_split_mode="single"`.
+
+## Tabular baseline — TTE summaries over observed arrivals only; all-no-arrival NaN
+
+- **What is handled.** In the tabular GNN-feature baseline
+  (`tabular/gnn_feature_baseline.py::summarize_graph`), the
+  `time_to_enhancement` column is summarized (mean/std/q10/q50/q90) over
+  **observed-arrival nodes only** -- nodes not at `TTE_NO_ARRIVAL_SENTINEL`
+  (`-1.0`). For a case where *no* node ever enhanced (every node at the
+  sentinel), the observed subset is empty, so those five timing summaries are
+  `NaN`. The `run_cv` model pipelines (logistic regression and XGBoost) each
+  begin with a `SimpleImputer(strategy="mean")` fit **per fold on the training
+  split only**, so that `NaN` is filled without drawing on validation data.
+  The no-arrival prevalence is kept as its own explicit feature,
+  `tte_no_arrival_fraction`.
+- **Why.** Including the `-1.0` sentinel in the TTE mean/quantiles makes those
+  features a mixture of actual arrival timing and the prevalence of missing
+  arrivals -- and missingness is already represented explicitly by
+  `tte_no_arrival_fraction`, so the sentinel-in-summary blend is redundant and
+  distorts the timing signal (it drags the mean/quantiles toward `-1`, out of
+  the real `[0, 1]` timing range, in proportion to how many nodes lacked
+  arrival). This is a real, observed case: 4/1332 cases in
+  `gnn_cache_voxel_mixed_baseline` have `tte_no_arrival_fraction == 1.0`, so
+  the empty-observed / `NaN` path is exercised, not hypothetical.
+- **Failure mode it protects against.** TTE timing features silently encoding
+  missing-arrival prevalence instead of (or blended with) arrival timing --
+  making a "later mean TTE" indistinguishable from "more no-arrival nodes",
+  and any coefficient on it uninterpretable. The per-fold imputer avoids the
+  alternative failure (a raw `NaN` crashing the logistic-regression fit for the
+  4 all-no-arrival cases) without the whole-cohort-fit leakage the GNN
+  graph-feature fix above also removes.
+- **Where.** `tabular/gnn_feature_baseline.py` (`summarize_graph`,
+  `_summary_stats`, `run_cv`); tests in
+  `tests/test_tabular_gnn_feature_baseline.py`.
