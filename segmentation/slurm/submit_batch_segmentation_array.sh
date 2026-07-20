@@ -34,7 +34,8 @@ if [[ -n "${START_INDEX}" && -n "${END_INDEX}" ]]; then
 
   echo "Submitting single array range: ${ARRAY_SPEC}"
   PROJECT_ROOT="${PROJECT_ROOT}" \
-  IMAGES_DIR="${IMAGES_DIR}" \
+  MAMAMIA_ROOT="${MAMAMIA_ROOT}" \
+  DATASET_COHORT="${DATASET_COHORT:-}" \
   OUTPUT_DIR="${OUTPUT_DIR}" \
   BREAST_MODEL="${BREAST_MODEL}" \
   VESSEL_MODEL="${VESSEL_MODEL}" \
@@ -56,7 +57,8 @@ while [[ ${START} -le ${ARRAY_MAX} ]]; do
 
   echo "Submitting array range: ${ARRAY_SPEC}"
   PROJECT_ROOT="${PROJECT_ROOT}" \
-  IMAGES_DIR="${IMAGES_DIR}" \
+  MAMAMIA_ROOT="${MAMAMIA_ROOT}" \
+  DATASET_COHORT="${DATASET_COHORT:-}" \
   OUTPUT_DIR="${OUTPUT_DIR}" \
   BREAST_MODEL="${BREAST_MODEL}" \
   VESSEL_MODEL="${VESSEL_MODEL}" \
