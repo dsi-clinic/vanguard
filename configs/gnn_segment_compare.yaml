@@ -1,0 +1,56 @@
+# SEGMENT arm of the matched graph-representation comparison (v1).
+# node_mode="segment": one node per vessel segment (line graph, Option B). See
+# gnn/DESIGN_segment_graph.md and experiments/graph_repr_compare_v1/README.md.
+#
+# Matched arm: same cohort/folds as the voxel and junction arms, and the same 6
+# underlying signals -- here the per-voxel signals are summarized along each
+# segment as their seg_*_mean analogues (mean over the segment's voxels).
+# seg_time_to_enhancement_mean is NaN only when a whole segment has no detected
+# arrival; that NaN is sentinel-filled (-1.0) at finalize time, same policy as
+# every arm (see gnn/data_loader.TTE_NO_ARRIVAL_SENTINEL).
+#
+# Folds frozen up front from pcr_labels_folded.csv (see gnn.make_fold_assignments).
+# Build the matching cache first (build + train must use the SAME folded labels):
+#   python -m gnn.build_dataset --node-mode segment \
+#       --labels-path <workspace>/pcr_labels_folded.csv \
+#       --cache-dir <workspace>/gnn_cache_segment_compare \
+#       --node-features seg_peak_time_mean,seg_peak_enhancement_mean,seg_time_to_enhancement_mean,seg_washin_slope_mean,seg_auc_positive_mean,seg_radius_mean
+# NOTE: /gpfs quota is exhausted; actual runs use scratch override configs.
+
+experiment_setup:
+  name: "gnn_segment_compare"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "predefined"
+  split_col: "fold"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "segment"
+  gnn_node_features:
+    - "seg_peak_time_mean"
+    - "seg_peak_enhancement_mean"
+    - "seg_time_to_enhancement_mean"
+    - "seg_washin_slope_mean"
+    - "seg_auc_positive_mean"
+    - "seg_radius_mean"
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/pcr_labels_folded.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_segment_compare"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null

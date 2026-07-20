@@ -13,6 +13,7 @@ from deepsets.build_dataset import (
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS,
     DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE,
+    DEEPSETS_FEATURE_LOCO_SUPERSET,
     DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_30_MM_WITH_FALLBACK,
     DEEPSETS_INCLUSION_RULE_FIXED_RADIUS_50_MM_WITH_FALLBACK,
     DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_ONLY,
@@ -65,6 +66,13 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
             len(deepsets_point_feature_names(DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC)),
             12,
         )
+        superset_names = deepsets_point_feature_names(DEEPSETS_FEATURE_LOCO_SUPERSET)
+        self.assertEqual(len(superset_names), 28)
+        self.assertEqual(len(set(superset_names)), 28)
+        # Union of geometry_topology (16) + curvature_rad (1) + dynamic (11).
+        self.assertIn("curvature_rad", superset_names)
+        self.assertIn("shell_0_2mm", superset_names)
+        self.assertIn("positive_enhancement_auc", superset_names)
 
     def test_deepsets_point_feature_names_unknown_raises(self) -> None:
         with self.assertRaises(ValueError) as ctx:
@@ -262,6 +270,54 @@ class TestDeepsetsPointFeatures(unittest.TestCase):
         self.assertEqual(tuple(out["x"].shape), (3, len(names)))
         self.assertAlmostEqual(float(row[idx["kinetic_signal_ok"]]), 1.0)
         self.assertAlmostEqual(float(row[idx["peak_enhancement"]]), 0.25, places=5)
+        self.assertGreater(float(row[idx["curvature_rad"]]), 3.0)
+
+    def test_build_case_set_loco_superset_triggers_dynamic_path(self) -> None:
+        """loco_superset must produce every geometry_topology + curvature + dynamic column.
+
+        Confirms the new regime (evaluation/loco_deepsets.py's build-once
+        input) actually exercises the gated dynamic-kinetics computation
+        (via _DYNAMIC_FEATURE_REGIMES), not just that the name list is right.
+        """
+        shape = (3, 3, 3)
+        skel = _empty_volume(shape)
+        skel[1, 1, 0] = True
+        skel[1, 1, 1] = True
+        skel[1, 1, 2] = True
+        tumor = _empty_volume(shape)
+        tumor[2, 2, 2] = True
+        spacing = (1.0, 1.0, 1.0)
+        signal_4d = np.zeros((4, 3, 3, 3), dtype=np.float32)
+        for ti in range(4):
+            signal_4d[ti, 1, 1, 1] = float([0.05, 0.12, 0.30, 0.22][ti])
+        out = _build_case_set(
+            case_id="toy",
+            label=1,
+            skeleton_mask_zyx=skel,
+            tumor_mask_zyx=tumor,
+            spacing_mm_zyx=spacing,
+            local_radius_mm=100.0,
+            tumor_equiv_radius_mm=1.0,
+            point_feature_set=DEEPSETS_FEATURE_LOCO_SUPERSET,
+            support_edt_mm_zyx=None,
+            support_radius_available_scalar=0.0,
+            signal_4d=signal_4d,
+            inclusion_rule=DEEPSETS_INCLUSION_RULE_LOCAL_RADIUS_WITH_FALLBACK,
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        names = deepsets_point_feature_names(DEEPSETS_FEATURE_LOCO_SUPERSET)
+        self.assertEqual(out["feature_names"], names)
+        self.assertEqual(tuple(out["x"].shape), (3, 28))
+        row = out["x"][1].numpy()
+        idx = {n: i for i, n in enumerate(names)}
+        # Geometry/topology column, present for this regime unlike curvature_plus_dynamic.
+        self.assertAlmostEqual(float(row[idx["inside_tumor"]]), 0.0)
+        # Dynamic column, confirming the gated kinetics path actually ran.
+        self.assertAlmostEqual(float(row[idx["kinetic_signal_ok"]]), 1.0)
+        self.assertAlmostEqual(float(row[idx["peak_enhancement"]]), 0.25, places=5)
+        # Curvature column, present alongside geometry_topology+dynamic (unlike
+        # geometry_topology_dynamic, which omits curvature_rad).
         self.assertGreater(float(row[idx["curvature_rad"]]), 3.0)
 
     def test_build_case_set_inclusion_rules_comparison_metrics(self) -> None:

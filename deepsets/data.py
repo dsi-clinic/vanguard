@@ -18,9 +18,23 @@ MIN_STD = 1e-6
 
 
 class SavedSetLookup:
-    """Lazy loader for per-case Deep Sets inputs stored on disk."""
+    """Lazy loader for per-case Deep Sets inputs stored on disk.
 
-    def __init__(self, manifest_df: pd.DataFrame) -> None:
+    ``keep_features``, if given, narrows every loaded case down to that
+    column subset (by name, looked up in the case's own ``feature_names``)
+    -- this is the mechanism LOCO uses to serve any left-one-covariate-out
+    request from a single on-disk build made with the full feature superset
+    (``deepsets.build_dataset.DEEPSETS_FEATURE_LOCO_SUPERSET``), without a
+    rebuild per covariate. Every downstream consumer (``subset``,
+    ``collate_case_sets``, the feature standardizer, and
+    ``deepsets/train.py``'s ``input_dim`` inference) reads through ``.get()``,
+    so this one change makes the subset visible everywhere uniformly. See
+    ``evaluation/loco_deepsets.py`` and ``docs/loco_feature_importance.md``.
+    """
+
+    def __init__(
+        self, manifest_df: pd.DataFrame, *, keep_features: list[str] | None = None
+    ) -> None:
         missing = [
             column
             for column in REQUIRED_DEEPSETS_MANIFEST_COLUMNS
@@ -37,6 +51,7 @@ class SavedSetLookup:
             for row in self._manifest.itertuples(index=False)
         }
         self._cache: dict[str, dict[str, Any]] = {}
+        self._keep_features = list(keep_features) if keep_features is not None else None
 
     def get(self, case_id: str) -> dict[str, Any]:
         """Load one case tensor package by case ID."""
@@ -53,6 +68,19 @@ class SavedSetLookup:
         cloned: dict[str, Any] = {}
         for key, value in cached.items():
             cloned[key] = value.clone() if isinstance(value, torch.Tensor) else value
+        if self._keep_features is not None:
+            all_names = [str(n) for n in cloned.get("feature_names", [])]
+            missing_features = [f for f in self._keep_features if f not in all_names]
+            if missing_features:
+                raise ValueError(
+                    f"keep_features {missing_features} not in case {case_key}'s "
+                    f"feature_names {all_names}; was this case built under the "
+                    "loco_superset regime (deepsets.build_dataset."
+                    "DEEPSETS_FEATURE_LOCO_SUPERSET)?"
+                )
+            idx = [all_names.index(f) for f in self._keep_features]
+            cloned["x"] = cloned["x"][:, idx]
+            cloned["feature_names"] = list(self._keep_features)
         return cloned
 
     def subset(self, case_ids: list[str]) -> list[dict[str, Any]]:

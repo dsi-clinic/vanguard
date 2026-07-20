@@ -1,0 +1,98 @@
+# GNN LOCO (Leave-One-Covariate-Out) sweep, node_mode="junction".
+#
+# gnn_node_features/gnn_edge_features below are the full junction-mode feature
+# superset (11 node + 32 edge, from evaluation.loco_gnn.superset_features_for_mode/
+# superset_edge_features_for_mode) -- they document what the cache must be built
+# with, but every actual training run in the sweep overrides them per-arm (see
+# evaluation/loco_gnn.py::gnn_loco_adapter): one full-baseline run with everything,
+# then one leave-one-out run per node feature and per edge feature (~44 runs
+# total). See docs/loco_feature_importance.md.
+#
+# Build the superset cache first (build and sweep both read this same config,
+# so they can never disagree on paths/mode):
+#   sbatch --export=CONFIG=configs/loco_gnn_junction.yaml gnn/slurm/submit_gnn_loco_build.slurm
+# then, once that completes:
+#   sbatch --dependency=afterok:<build_job_id> \
+#     --export=CONFIG=configs/loco_gnn_junction.yaml,OUTDIR=experiments/loco_gnn_junction \
+#     gnn/slurm/submit_gnn_loco_sweep.slurm
+
+experiment_setup:
+  name: "gnn_loco_junction"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "random"
+  split_col: "fold"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "junction"
+  gnn_node_features:
+    - "auc_positive"
+    - "bifurcation_angle_max"
+    - "bifurcation_angle_mean"
+    - "bifurcation_angle_min"
+    - "degree"
+    - "peak_enhancement"
+    - "peak_time"
+    - "radius"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "washout_slope"
+  gnn_edge_features:
+    - "seg_auc_positive_mean"
+    - "seg_auc_positive_std"
+    - "seg_curvature_max"
+    - "seg_curvature_mean"
+    - "seg_curvature_median"
+    - "seg_curvature_min"
+    - "seg_curvature_q1"
+    - "seg_curvature_q3"
+    - "seg_curvature_std"
+    - "seg_degree_max"
+    - "seg_degree_mean"
+    - "seg_length"
+    - "seg_num_voxels"
+    - "seg_peak_enhancement_mean"
+    - "seg_peak_enhancement_std"
+    - "seg_peak_time_mean"
+    - "seg_peak_time_std"
+    - "seg_radius_max"
+    - "seg_radius_mean"
+    - "seg_radius_median"
+    - "seg_radius_min"
+    - "seg_radius_q1"
+    - "seg_radius_q3"
+    - "seg_radius_std"
+    - "seg_time_to_enhancement_mean"
+    - "seg_time_to_enhancement_std"
+    - "seg_tortuosity"
+    - "seg_volume"
+    - "seg_washin_slope_mean"
+    - "seg_washin_slope_std"
+    - "seg_washout_slope_mean"
+    - "seg_washout_slope_std"
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_loco_junction"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
+
+# No loco.covariates / loco.feature_group override -> sweeps every node AND
+# edge feature in the junction vocabulary (see evaluation/loco_gnn.py::run_gnn_loco).
+loco:
+  family: "gnn"

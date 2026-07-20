@@ -71,6 +71,7 @@ For multi-fold runs, each fold is stored as a `FoldResults` object. The framewor
 | `random_baseline.py` | Random-baseline comparison utilities |
 | `utils.py` | Small helpers such as prediction-table preparation |
 | `types.py` | Lightweight result containers used during aggregation |
+| `loco.py` | LOCO (Leave-One-Covariate-Out) orchestrator: runs a baseline + per-covariate retraining sweep against a shared adapter contract and computes metric deltas. Per-family glue lives in `loco_tabular.py` / `loco_gnn.py` / `loco_deepsets.py` -- see [`../docs/loco_feature_importance.md`](../docs/loco_feature_importance.md) |
 
 ## Reusing This For A New Model
 
@@ -144,6 +145,7 @@ evaluator.save_results(kfold_results, output_dir)
 - [`../configs/ablation.yaml`](../configs/ablation.yaml)
 - [`../configs/independent_signal.yaml`](../configs/independent_signal.yaml)
 - [`../examples/baseline_model_example.py`](../examples/baseline_model_example.py)
+- [`../docs/loco_feature_importance.md`](../docs/loco_feature_importance.md)
 
 Config note:
 

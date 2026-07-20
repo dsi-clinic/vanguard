@@ -1,0 +1,60 @@
+# Arm 2 (single-breast) of the harmonized single-breast dataset minimal
+# experiment -- see LAB_NOTEBOOK.md 2026-07-14 and AUDITING_RESULTS.md.
+# Voxel mode only. Identical to gnn_voxel_mixed_baseline.yaml (arm 1) in
+# every respect -- features, hyperparameters, frozen folds, cohort -- except
+# gnn_breast_split_mode: bilateral cases are substituted with their
+# precomputed single-breast skeleton (gnn.build_single_breast_skeletons);
+# native unilateral cases are unchanged. Uses the SAME matched-cohort labels
+# file as arm 1 (pcr_labels_folded_matched_cohort.csv), so any AUC/stability
+# difference between the two arms reflects the skeleton representation, not
+# a different case set.
+#
+# Build:
+#   python -m gnn.build_dataset --node-mode voxel \
+#       --labels-path <scratch>/pcr_labels_folded_matched_cohort.csv \
+#       --cache-dir <scratch>/gnn_cache_voxel_single_breast \
+#       --node-features peak_time,peak_enhancement,time_to_enhancement,washin_slope,auc_positive,radius \
+#       --breast-split single \
+#       --breast-split-skeleton-root <scratch>/breast_split_skeletons \
+#       --patient-info-dir /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/patient_info_files
+
+experiment_setup:
+  name: "gnn_voxel_single_breast"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "predefined"
+  split_col: "fold"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "voxel"
+  gnn_node_features:
+    - "peak_time"
+    - "peak_enhancement"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "auc_positive"
+    - "radius"
+  gnn_breast_split_mode: "single"
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/ess/scratch/scratch1/t-9svena/gnn_caches/pcr_labels_folded_matched_cohort.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/gnn_cache_voxel_single_breast"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
+  gnn_patient_info_dir: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/patient_info_files"
+  gnn_breast_split_skeleton_root: "/ess/scratch/scratch1/t-9svena/breast_split_skeletons"
