@@ -22,11 +22,19 @@ model_params:
   dropout: 0.2
   learning_rate: 0.001
   gnn_node_features: ["peak_time", "radius"]
+  # Pinned to historical behavior, matching configs/gnn.yaml (see the D0.6 note
+  # there). Keeps the smoke path a faithful fast mirror of the frozen baseline.
+  weight_decay: 0.0
+  loss: "unweighted_bce"
+  lr_scheduler: "none"
+  max_grad_norm: 0.0
+  early_stopping_patience: 0
+  restore_best_epoch: false
 
 data_paths:
   gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
   gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
-  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/metadata/pcr_labels.csv"
   gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_smoke"
   gnn_id_column: "case_id"
   gnn_label_column: "pcr"
