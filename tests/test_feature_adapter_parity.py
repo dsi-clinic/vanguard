@@ -1,23 +1,15 @@
-"""Step 2 parity tests: the dataset adapter is a no-op for MAMA-MIA identity.
+"""Identity-seam tests for ``build_centerline_features``'s adapter usage.
 
-These are the CI-safe counterpart to the full-data gate in
-``scripts/validate_adapter_feature_parity.py``. They build a tiny synthetic
-centerline tree (no real data needed) and check two things:
-
-1. On a MAMA-MIA-shaped tree (each study's parent directory equals its case-id
-   prefix), ``build_centerline_features`` produces the *identical* table with
-   and without a ``MamaMiaDataset`` adapter — the invariant Step 2 must hold
-   (see cohorts/README.md).
-2. On a deliberately mismatched tree (directory name != id prefix), the adapter
-   result follows ``case_dataset_name(case_id)`` rather than the directory name,
-   proving the identity seam is actually live and not dead code.
+The dataset adapter is required (multi-dataset migration Step 5), so there is
+no ``adapter=None`` path left to compare against. What's still worth pinning:
+a case's ``dataset`` column always comes from ``adapter.case_dataset_name()``
+-- the case-id prefix -- even when the parent directory name disagrees, so a
+misfiled study directory can't silently report the wrong cohort.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-
-import pandas as pd
 
 from config import DEFAULT_CONFIG, ConfigNode, _deep_merge
 
@@ -54,8 +46,10 @@ def _make_study(root: Path, dataset_dir: str, case_id: str) -> None:
     (root / dataset_dir / case_id).mkdir(parents=True, exist_ok=True)
 
 
-def test_adapter_is_identity_noop_for_mamamia_shaped_tree(tmp_path: Path) -> None:
-    """Adapter on vs. off yields byte-identical tables when dir == id prefix."""
+def test_dataset_identity_follows_adapter_for_mamamia_shaped_tree(
+    tmp_path: Path,
+) -> None:
+    """On a MAMA-MIA-shaped tree, identity matches both the adapter and the dir."""
     from cohorts.mamamia import MamaMiaDataset
     from tabular.cohort import build_centerline_features
 
@@ -65,19 +59,21 @@ def test_adapter_is_identity_noop_for_mamamia_shaped_tree(tmp_path: Path) -> Non
     _make_study(root, "NACT", "NACT_007")
     config = _config(root)
 
-    without = build_centerline_features(config, adapter=None)
-    with_adapter = build_centerline_features(
-        config, adapter=MamaMiaDataset(cohort="duke", root=tmp_path)
+    result = build_centerline_features(
+        config, adapter=MamaMiaDataset(cohort=None, root=tmp_path)
     )
 
-    # Same rows in the same order, and identical everywhere (identity is the
-    # only thing the adapter touches, and it agrees here).
-    pd.testing.assert_frame_equal(without, with_adapter)
-    assert sorted(with_adapter["dataset"]) == ["DUKE", "ISPY2", "NACT"]
+    assert sorted(result["dataset"]) == ["DUKE", "ISPY2", "NACT"]
 
 
-def test_adapter_seam_is_live_when_dir_disagrees_with_prefix(tmp_path: Path) -> None:
-    """When the directory name lies, the adapter follows the case-id prefix."""
+def test_dataset_identity_follows_case_id_prefix_not_directory_name(
+    tmp_path: Path,
+) -> None:
+    """When the directory name lies, identity follows the case-id prefix.
+
+    This is the seam Step 2 introduced: cohort identity is the adapter's
+    authoritative answer, not whatever directory a study happens to sit in.
+    """
     from cohorts.mamamia import MamaMiaDataset
     from tabular.cohort import build_centerline_features
 
@@ -86,12 +82,8 @@ def test_adapter_seam_is_live_when_dir_disagrees_with_prefix(tmp_path: Path) -> 
     _make_study(root, "MISLABELED", "DUKE_777")
     config = _config(root)
 
-    without = build_centerline_features(config, adapter=None)
-    with_adapter = build_centerline_features(
-        config, adapter=MamaMiaDataset(cohort="duke", root=tmp_path)
+    result = build_centerline_features(
+        config, adapter=MamaMiaDataset(cohort=None, root=tmp_path)
     )
 
-    # Fallback trusts the directory; the adapter trusts the id prefix. This is
-    # exactly the three-way disagreement Step 2 exists to collapse (see cohorts/README.md).
-    assert without["dataset"].tolist() == ["MISLABELED"]
-    assert with_adapter["dataset"].tolist() == ["DUKE"]
+    assert result["dataset"].tolist() == ["DUKE"]
