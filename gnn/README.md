@@ -272,11 +272,15 @@ each case has many timepoints.
 
 ## Model + training
 
-`gnn/model.py` provides `GCNClassifier`: a stack of `GCNConv` layers, a global
-mean-pool readout to one embedding per graph, and a linear head producing one
-logit per graph. No edge features, attention, or segment-level pooling yet --
-those are deliberate next steps once this MVP is validated end-to-end, not
-omissions.
+`gnn/model.py` provides `GCNClassifier`: a stack of `GCNConv` layers, a
+configurable graph readout, and a linear head producing one logit per graph.
+The readout is set by `model_params.gnn_pooling` (Tier 1, decision D2.1):
+`"mean"` (default, the original single `global_mean_pool` -- backward
+compatible), `"mean_max"`, or `"mean_max_sum"`, which concatenate global
+max/add pools so the graph embedding keeps the distributional tails mean-pool
+discards (`gnn/model.py` `POOLING_WIDTHS` / `_graph_readout`). Junction mode
+(`EdgeGNNClassifier`) still mean-pools only. Attention readout and stronger
+conv operators are the next Tier-1 steps (see `gnn/PLAN_advanced_modeling.md`).
 
 Outline of `gnn/train.py`:
 

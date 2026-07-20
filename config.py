@@ -162,6 +162,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # gnn/DESIGN_segment_graph.md.
         "gnn_node_mode": "voxel",
         "gnn_node_features": ["peak_time", "radius"],
+        # Whole-graph readout for GCNClassifier (voxel/segment): "mean"
+        # (default, the original single global_mean_pool -- fully backward
+        # compatible), "mean_max", or "mean_max_sum". Concatenating max/sum
+        # pools keeps the distributional tails that mean-pool discards; see
+        # gnn/PLAN_advanced_modeling.md decision D2.1 and gnn/model.py
+        # POOLING_WIDTHS. Junction mode (EdgeGNNClassifier) ignores this and
+        # always mean-pools for now.
+        "gnn_pooling": "mean",
         # Edge features for node_mode="junction" (segment-as-edge, Option A):
         # the segment summary rides on the edges there. Empty for voxel/segment
         # mode, which carry no edge features. Uses the seg_* vocabulary (see

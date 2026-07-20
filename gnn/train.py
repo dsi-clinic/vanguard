@@ -594,6 +594,7 @@ def fit_predict_one_fold(
             num_layers=int(params.num_layers),
             dropout=float(params.dropout),
             graph_dim=graph_dim,
+            pooling=str(params.get("gnn_pooling", "mean")),
         ).to(device)
     optimizer = torch.optim.Adam(
         model.parameters(),

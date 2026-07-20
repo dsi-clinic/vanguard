@@ -9,7 +9,11 @@ pytest.importorskip("torch_geometric")
 
 from torch_geometric.data import Batch, Data  # noqa: E402
 
-from gnn.model import EdgeGNNClassifier, GCNClassifier  # noqa: E402
+from gnn.model import (  # noqa: E402
+    POOLING_WIDTHS,
+    EdgeGNNClassifier,
+    GCNClassifier,
+)
 
 
 def _make_batch() -> Batch:
@@ -34,6 +38,25 @@ def test_forward_returns_one_logit_per_graph() -> None:
     logits = model(batch.x, batch.edge_index, batch.batch)
     assert logits.shape == (2,)
     assert torch.isfinite(logits).all()
+
+
+@pytest.mark.parametrize("pooling", list(POOLING_WIDTHS))
+def test_pooling_variants_forward_and_classifier_width(pooling: str) -> None:
+    """Each readout yields a (2,) logit and scales the head input by its width."""
+    batch = _make_batch()
+    model = GCNClassifier(
+        input_dim=2, hidden_dim=8, num_layers=2, dropout=0.0, pooling=pooling
+    )
+    assert model.classifier.in_features == 8 * POOLING_WIDTHS[pooling]
+    logits = model(batch.x, batch.edge_index, batch.batch)
+    assert logits.shape == (2,)
+    assert torch.isfinite(logits).all()
+
+
+def test_rejects_invalid_pooling() -> None:
+    """Pooling must be one of the known readout variants."""
+    with pytest.raises(ValueError, match="Unknown pooling"):
+        GCNClassifier(input_dim=2, pooling="bogus")
 
 
 def test_rejects_invalid_input_dim() -> None:
