@@ -1,0 +1,55 @@
+# Smoke-test config for the breast_density opt-in clinical column
+# (gnn.clinical, excluded from DEFAULT_CLINICAL_COLUMNS because it's 96%
+# missing across the real MAMA-MIA cohort -- see AUDITING_RESULTS.md).
+#
+# Case set is NOT the usual 8-case smoke set: that set has breast_density
+# 100% missing (checked directly against patient_info_files), which would
+# hit build_clinical_feature_matrix's "column can't be imputed with zero
+# observed values" failure (see
+# tests/test_gnn_clinical.py::test_breast_density_fully_missing_column_raises)
+# -- a correct failure, but not what this config is for. These 6 DUKE cases
+# were confirmed (2026-07) to have a real breast_density value ('a'/'b'/'c'/'d')
+# recorded, so this actually exercises the encoding path rather than
+# immediately raising. Results NOT meaningful (n=6).
+#
+# Build the matching cache first (see gnn/slurm/submit_gnn_build.slurm,
+# GRAPH_FEATURES/PATIENT_INFO_DIR env vars) -- this config expects
+# gnn_cache_segment_smoke_breast_density to already exist.
+
+experiment_setup:
+  name: "gnn_segment_smoke_breast_density"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 2
+  random_state: 0
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "random"
+  split_col: "fold"
+  batch_size: 4
+  epochs: 3
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "segment"
+  gnn_node_features:
+    - "seg_peak_time_mean"
+    - "seg_radius_mean"
+  gnn_graph_features:
+    - "age"
+    - "breast_density"
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_segment_smoke_breast_density"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: ["DUKE_269", "DUKE_136", "DUKE_228", "DUKE_105", "DUKE_399", "DUKE_435"]
+  gnn_dataset_include: null
+  gnn_patient_info_dir: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/patient_info_files"

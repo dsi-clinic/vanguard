@@ -26,14 +26,16 @@ from torch import nn
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
-from evaluation import FoldResults
+from evaluation import FoldResults, KFoldResults
 from evaluation.build_splits import build_split_manifest, create_splits_for_dataframe
 from evaluation.kfold import FoldSplit
 from evaluation.metrics import compute_binary_metrics
 from evaluation.utils import prepare_predictions_df
+from gnn.clinical import fit_clinical_transformer, transform_clinical_frame
 from gnn.data_loader import VanguardCenterlineDataset
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_prediction_plot
-from gnn.model import GCNClassifier
+from gnn.model import EdgeGNNClassifier, GCNClassifier
+from gnn.morphometry import fit_morphometry_imputer, transform_morphometry_frame
 from load_cohort import load_config, resolve_run_output_dir, write_config_snapshot
 
 matplotlib.use("Agg")
@@ -71,6 +73,14 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Override model_params.gnn_pcr_dummy_noise_seed",
+    )
+    parser.add_argument(
+        "--random-state",
+        type=int,
+        default=None,
+        help="Override model_params.random_state (per-fold torch.manual_seed "
+        "offset; does not affect split_mode='predefined' fold assignment, "
+        "which is frozen by the labels file's fold column regardless).",
     )
     return parser.parse_args()
 
@@ -144,6 +154,14 @@ def build_graph_cohort(
     return cohort_df
 
 
+def _fit_standardizer(matrix: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-column mean/std, with near-constant columns left unscaled (std->1)."""
+    mean = matrix.mean(dim=0)
+    std = matrix.std(dim=0, unbiased=False)
+    std = torch.where(std < _MIN_STD, torch.ones_like(std), std)
+    return mean, std
+
+
 def fit_node_standardizer(graphs: list[Data]) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute per-feature mean/std over training-split node features.
 
@@ -152,11 +170,91 @@ def fit_node_standardizer(graphs: list[Data]) -> tuple[torch.Tensor, torch.Tenso
     directly, so standardization reflects whatever the model actually trains
     on.
     """
-    feature_matrix = torch.cat([graph.x for graph in graphs], dim=0)
-    mean = feature_matrix.mean(dim=0)
-    std = feature_matrix.std(dim=0, unbiased=False)
-    std = torch.where(std < _MIN_STD, torch.ones_like(std), std)
-    return mean, std
+    return _fit_standardizer(torch.cat([graph.x for graph in graphs], dim=0))
+
+
+def fit_edge_standardizer(graphs: list[Data]) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute per-feature mean/std over training-split edge features.
+
+    Junction mode (segment-as-edge) only: the segment summary lives on
+    ``edge_attr``, so it needs the same per-fold standardization ``data.x`` gets.
+    """
+    return _fit_standardizer(torch.cat([graph.edge_attr for graph in graphs], dim=0))
+
+
+def fit_graph_standardizer(graphs: list[Data]) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute per-feature mean/std over training-split graph-level (clinical) features.
+
+    Applied after :func:`_fit_transform_graph_features` has already fit the
+    clinical impute+one-hot and morphometry imputer on the training split and
+    attached ``graph_features`` to each graph. The one-hot-encoded categorical
+    columns get standardized the same as the numeric ones (a
+    constant-across-the-fold indicator column is caught by
+    ``_fit_standardizer``'s near-constant guard, same as any other feature).
+    """
+    return _fit_standardizer(
+        torch.cat([graph.graph_features for graph in graphs], dim=0)
+    )
+
+
+def _fit_transform_graph_features(
+    inputs: pd.DataFrame,
+    train_case_ids: list[str],
+    val_case_ids: list[str],
+    groups: tuple[list[str], list[str], list[str]],
+) -> dict[str, np.ndarray]:
+    """Fit clinical/morphometry preprocessing on the TRAIN split, transform both.
+
+    ``inputs`` is the raw graph-feature-input frame
+    (``VanguardCenterlineDataset.load_graph_feature_inputs``), indexed by
+    ``case_id``. The clinical imputer + one-hot encoder and the morphometry
+    mean-imputer are fit on the fold's **training** cases only; the validation
+    cases are transformed with those fitted objects, and any category unseen in
+    training encodes as all-zero (``handle_unknown="ignore"``, i.e. treated as
+    unknown). Graph-derived columns are pure per-graph reads with no cross-case
+    fit, so they pass through unchanged.
+
+    This is what makes cross-validation reflect a genuinely unseen cohort:
+    validation cases never contribute to the imputer means/modes or the one-hot
+    vocabulary. Blocks are concatenated in the fixed source order
+    ``(clinical, graph-derived, morphometry)`` -- the same order the sidecar
+    columns are laid out in. Returns a ``{case_id: feature_vector}`` mapping for
+    every train and validation case.
+    """
+    clinical_cols, graph_derived_cols, morphometry_cols = groups
+    fold_case_ids = list(train_case_ids) + list(val_case_ids)
+    fold = inputs.loc[fold_case_ids]
+    train = inputs.loc[list(train_case_ids)]
+
+    blocks: list[np.ndarray] = []
+    if clinical_cols:
+        transformer = fit_clinical_transformer(train[clinical_cols], clinical_cols)
+        clinical_matrix, _ = transform_clinical_frame(transformer, fold[clinical_cols])
+        blocks.append(clinical_matrix)
+    if graph_derived_cols:
+        blocks.append(fold[graph_derived_cols].to_numpy(dtype=np.float64))
+    if morphometry_cols:
+        imputer = fit_morphometry_imputer(train[morphometry_cols])
+        blocks.append(transform_morphometry_frame(imputer, fold[morphometry_cols]))
+
+    combined = np.concatenate(blocks, axis=1)
+    return {case_id: combined[row] for row, case_id in enumerate(fold_case_ids)}
+
+
+def _model_forward(model: nn.Module, batch: Data) -> torch.Tensor:
+    """Call ``model`` with the right signature for its representation.
+
+    ``EdgeGNNClassifier`` (junction mode) consumes ``edge_attr``; the plain
+    ``GCNClassifier`` (voxel/segment) does not. Either passes ``graph_features``
+    through when the batch carries it (``gnn_graph_features`` was set at
+    build time), regardless of node mode.
+    """
+    graph_features = getattr(batch, "graph_features", None)
+    if isinstance(model, EdgeGNNClassifier):
+        return model(
+            batch.x, batch.edge_index, batch.edge_attr, batch.batch, graph_features
+        )
+    return model(batch.x, batch.edge_index, batch.batch, graph_features)
 
 
 def _apply_pcr_dummy_noise(
@@ -229,7 +327,7 @@ def train_one_epoch(
     for batch in loader:
         batch = batch.to(device)
         optimizer.zero_grad()
-        logits = model(batch.x, batch.edge_index, batch.batch)
+        logits = _model_forward(model, batch)
         loss = criterion(logits, batch.y.float())
         loss.backward()
         optimizer.step()
@@ -253,7 +351,7 @@ def evaluate(
     y_prob_parts: list[np.ndarray] = []
     for batch in loader:
         batch = batch.to(device)
-        logits = model(batch.x, batch.edge_index, batch.batch)
+        logits = _model_forward(model, batch)
         loss = criterion(logits, batch.y.float())
         total_loss += loss.item() * batch.num_graphs
         num_graphs += batch.num_graphs
@@ -278,7 +376,7 @@ def _predict_loader(
     y_prob_parts: list[np.ndarray] = []
     for batch in loader:
         batch = batch.to(device)
-        logits = model(batch.x, batch.edge_index, batch.batch)
+        logits = _model_forward(model, batch)
         y_true_parts.append(batch.y.cpu().numpy())
         y_prob_parts.append(torch.sigmoid(logits).cpu().numpy())
     return np.concatenate(y_true_parts), np.concatenate(y_prob_parts)
@@ -329,8 +427,19 @@ def fit_predict_one_fold(
     cohort_df: pd.DataFrame,
     split: FoldSplit,
     config: Any,
+    graph_feature_inputs: pd.DataFrame | None = None,
+    graph_feature_groups: tuple[list[str], list[str], list[str]] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
-    """Train a fresh GCNClassifier for one fold and return validation predictions."""
+    """Train a fresh GCNClassifier for one fold and return validation predictions.
+
+    ``graph_feature_inputs`` (the raw graph-feature-input frame from
+    ``dataset.load_graph_feature_inputs``) and ``graph_feature_groups`` (from
+    ``dataset.graph_feature_groups``) are passed through when
+    ``gnn_graph_features`` was set at build time. The clinical/morphometry
+    preprocessing is fit on this fold's training cases only and applied to its
+    validation cases (see :func:`_fit_transform_graph_features`), so the
+    imputer means/modes and one-hot vocabulary never see validation data.
+    """
     params = config.model_params
     device = _resolve_device(str(params.device))
     torch.manual_seed(int(params.random_state) + int(split.fold_idx))
@@ -350,17 +459,66 @@ def fit_predict_one_fold(
     for graph in train_graphs + val_graphs:
         graph.x = (graph.x - mean) / std
 
+    # Junction mode (segment-as-edge) carries the segment summary on edge_attr,
+    # which needs the same per-fold standardization -- fit on the train split
+    # only, then apply to both splits. Detected off the graphs themselves so
+    # this branch is inert for voxel/segment mode (no edge_attr).
+    is_edge_mode = getattr(train_graphs[0], "edge_attr", None) is not None
+    if is_edge_mode:
+        edge_mean, edge_std = fit_edge_standardizer(train_graphs)
+        for graph in train_graphs + val_graphs:
+            graph.edge_attr = (graph.edge_attr - edge_mean) / edge_std
+
+    # graph_features (clinical covariates, gnn.clinical) are opt-in and, unlike
+    # x/edge_attr, don't depend on node_mode. The clinical imputer/one-hot
+    # encoder and morphometry imputer are fit on THIS fold's training cases only
+    # (never the whole cohort at build time), then applied to both splits --
+    # this is the cross-validation-leakage fix. The per-fold standardizer runs
+    # afterwards on the resulting vectors, exactly as it does for x/edge_attr.
+    if graph_feature_inputs is not None:
+        if graph_feature_groups is None:
+            raise ValueError(
+                "graph_feature_inputs was provided without graph_feature_groups; "
+                "pass dataset.graph_feature_groups() alongside the inputs."
+            )
+        train_case_ids = [str(graph.case_id) for graph in train_graphs]
+        val_case_ids = [str(graph.case_id) for graph in val_graphs]
+        features_by_case = _fit_transform_graph_features(
+            graph_feature_inputs, train_case_ids, val_case_ids, graph_feature_groups
+        )
+        for graph in train_graphs + val_graphs:
+            graph.graph_features = torch.tensor(
+                features_by_case[str(graph.case_id)], dtype=torch.float
+            ).unsqueeze(0)
+        graph_mean, graph_std = fit_graph_standardizer(train_graphs)
+        for graph in train_graphs + val_graphs:
+            graph.graph_features = (graph.graph_features - graph_mean) / graph_std
+        graph_dim = train_graphs[0].graph_features.shape[1]
+    else:
+        graph_dim = 0
+
     batch_size = int(params.batch_size)
     train_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=True)
     train_eval_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=False)
     val_loader = DataLoader(val_graphs, batch_size=batch_size, shuffle=False)
 
-    model = GCNClassifier(
-        input_dim=train_graphs[0].x.shape[1],
-        hidden_dim=int(params.hidden_dim),
-        num_layers=int(params.num_layers),
-        dropout=float(params.dropout),
-    ).to(device)
+    if is_edge_mode:
+        model: nn.Module = EdgeGNNClassifier(
+            input_dim=train_graphs[0].x.shape[1],
+            edge_dim=train_graphs[0].edge_attr.shape[1],
+            hidden_dim=int(params.hidden_dim),
+            num_layers=int(params.num_layers),
+            dropout=float(params.dropout),
+            graph_dim=graph_dim,
+        ).to(device)
+    else:
+        model = GCNClassifier(
+            input_dim=train_graphs[0].x.shape[1],
+            hidden_dim=int(params.hidden_dim),
+            num_layers=int(params.num_layers),
+            dropout=float(params.dropout),
+            graph_dim=graph_dim,
+        ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(params.learning_rate))
     criterion = nn.BCEWithLogitsLoss()
 
@@ -419,7 +577,7 @@ def _plot_metric_history(
     plt.close(fig)
 
 
-def run_gnn_pipeline(config: Any, outdir: Path) -> None:
+def run_gnn_pipeline(config: Any, outdir: Path) -> KFoldResults:
     """Build the dataset cohort table, run k-fold CV, and save evaluator outputs."""
     params = config.model_params
     data_paths = config.data_paths
@@ -430,10 +588,23 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
         dce_root=data_paths.gnn_dce_root,
         cache_dir=data_paths.gnn_cache_dir,
         cases=list(data_paths.gnn_cases) if data_paths.gnn_cases else None,
+        node_mode=str(params.gnn_node_mode),
         node_features=tuple(params.gnn_node_features),
+        edge_features=(
+            tuple(params.gnn_edge_features) if params.gnn_edge_features else None
+        ),
+        graph_features=(
+            tuple(params.gnn_graph_features) if params.gnn_graph_features else None
+        ),
+        patient_info_dir=data_paths.gnn_patient_info_dir or None,
+        clinical_excel=data_paths.gnn_clinical_excel or None,
+        max_missing_clinical_frac=float(params.gnn_max_missing_clinical_frac),
         id_column=data_paths.gnn_id_column,
         label_column=data_paths.gnn_label_column,
         allow_manifest_mismatch=bool(data_paths.gnn_allow_manifest_mismatch),
+        breast_split_mode=params.gnn_breast_split_mode or None,
+        breast_split_skeleton_root=data_paths.gnn_breast_split_skeleton_root or None,
+        max_missing_breast_split_frac=float(params.gnn_max_missing_breast_split_frac),
     )
     logging.info(
         "Loaded %d graph(s) from cache %s", len(dataset), data_paths.gnn_cache_dir
@@ -494,11 +665,23 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
     ]
     split_manifest_df.to_csv(model_dir / "split_manifest.csv", index=False)
 
+    # Raw graph-feature inputs are loaded once; the per-fold clinical/morphometry
+    # preprocessing is fit on each fold's training split inside fit_predict_one_fold.
+    graph_feature_inputs = dataset.load_graph_feature_inputs()
+    graph_feature_groups = (
+        dataset.graph_feature_groups() if graph_feature_inputs is not None else None
+    )
+
     fold_results: list[FoldResults] = []
     all_history_rows: list[dict[str, float]] = []
     for split in splits:
         val_case_ids, y_true, y_pred, y_prob, history = fit_predict_one_fold(
-            dataset=dataset, cohort_df=cohort_df, split=split, config=config
+            dataset=dataset,
+            cohort_df=cohort_df,
+            split=split,
+            config=config,
+            graph_feature_inputs=graph_feature_inputs,
+            graph_feature_groups=graph_feature_groups,
         )
         all_history_rows.extend(history)
         pred_df = build_fold_prediction_table(
@@ -535,6 +718,7 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> None:
     _plot_metric_history(history_df, "auc", model_dir / "auc_by_epoch.png")
 
     logging.info("Wrote GNN run outputs to %s", outdir)
+    return kfold_results
 
 
 def main() -> None:
@@ -550,6 +734,8 @@ def main() -> None:
         config.model_params.gnn_pcr_dummy_noise_std = args.pcr_dummy_noise_std
     if args.pcr_dummy_noise_seed is not None:
         config.model_params.gnn_pcr_dummy_noise_seed = args.pcr_dummy_noise_seed
+    if args.random_state is not None:
+        config.model_params.random_state = args.random_state
     outdir = resolve_run_output_dir(config=config, outdir_override=args.outdir)
     write_config_snapshot(config=config, outdir=outdir, config_source=args.config)
     run_gnn_pipeline(config, outdir)

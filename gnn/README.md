@@ -18,9 +18,18 @@ of consuming *summarized* morphometry + kinematic features, it operates on the
 
 ### What it builds
 
-- **Nodes:** one per skeleton voxel, keyed by
+- **Nodes** (`node_mode`, default `"voxel"`): one per skeleton voxel, keyed by
   `(x, y, z)`.
-    - `segment`, `node` modes are not-yet-implemented extension points.
+    - `"segment"` contracts each vessel segment to a single node (line graph);
+      see `gnn/segment_graph.py` and `gnn/DESIGN_segment_graph.md`. It uses a
+      different node-feature vocabulary (`seg_*`), so build it with matching
+      `--node-features` (or omit them for the mode default).
+    - `"junction"` keeps junction/endpoint voxels as nodes and each vessel
+      segment as an **edge** carrying the segment summary as `edge_attr`
+      (segment-as-edge, Option A; `gnn/junction_graph.py`). Node features are
+      per-voxel signal + `degree`; edge features are the `seg_*` summary, passed
+      via `--edge-features`. Trained with the edge-aware `EdgeGNNClassifier`
+      (`gnn/model.py`) since `GCNConv` ignores edge features.
 - **Edges:** between 26-connected skeleton voxels (8 corners, 12 *voxel* edges, 6 faces)
 - **`data.pos`:** `(num_nodes, 3)` voxel coordinates `(x, y, z)`.
 - **`data.x`:** node features stacked in the order given by `node_features`, see [Modeling Features](#modeling-features)
@@ -99,7 +108,8 @@ Every fresh build also writes `<cache_dir>/processed/cache_manifest.json`,
 recording everything that determines what the cached graphs actually
 contain: `centerline_root`, `dce_root`, `labels_path`, `id_column`,
 `label_column`, `cases` (whitelist, if any), `node_mode`, `node_features`,
-`feature_source` (`"raw_dce"` today), plus provenance-only fields not used
+`feature_source` (currently
+`"raw_dce_protocol_baseline_physical_time_all_modes_v4"`), plus provenance-only fields not used
 for comparison: `code_commit`, `num_graphs`, `label_counts`, `built_at`.
 
 Every later load of that cache (constructing `VanguardCenterlineDataset`
@@ -115,9 +125,8 @@ mismatch is benign; otherwise rebuild the cache (`--force-rebuild`) so a
 fresh, matching manifest is written.
 
 ### Modeling Features 
- - `peak_time` → normalized time-to-peak enhancement,
-    `argmax_t(enhancement) / (T − 1)`. The raw integer index is also kept on
-    `data.peak_time`.
+ - `peak_time` → elapsed time to peak enhancement divided by the full
+    acquisition duration. The raw integer index is also kept on `data.peak_time`.
   - `peak_enhancement` → `max(enhancement)`.
   - `time_to_enhancement` → normalized arrival time, using
     `graph_extraction.feature_stats._arrival_index_from_enhancement` (first
@@ -127,6 +136,9 @@ fresh, matching manifest is written.
     kept on `data.time_to_enhancement`. `NaN`s are caught per-feature by the
     `feature_summary/feature_na_report.json` audit rather than silently
     defaulted -- see `_write_feature_summary`.
+  UFAST cases use the protocol-defined precontrast-frame mean, relative signal
+  change, and physical acquisition seconds in voxel, segment, and junction
+  modes. Legacy cases retain the single-frame absolute-enhancement convention.
   - `washin_slope` → `(enhancement[peak] − enhancement[arrival_or_0]) /
     (time[peak] − time[arrival_or_0])`.
   - `auc_positive` → `trapz(max(enhancement, 0))` over the study's time axis.
@@ -180,9 +192,19 @@ cached graphs:
 - `mean_degree` -- `num_edges / num_nodes`, the correct average node degree
   under the doubled `num_edges` convention above.
 - `missing_feature_count` / `nan_feature_count` -- total non-finite
-  (NaN-or-inf) and NaN-only entries in `data.x` for that graph.
+  (NaN-or-inf) and NaN-only entries in `data.x` for that graph. These are
+  normally `0`: `time_to_enhancement` (the only feature that can be "missing",
+  i.e. no detected arrival) is sentinel-filled before `data.x` is finalized, so
+  a non-zero value here signals an *unexpected* NaN/inf, not a missing arrival.
+- `tte_no_arrival_count` -- number of no-arrival cells that were replaced with
+  `TTE_NO_ARRIVAL_SENTINEL` (`-1.0`, normalized space) across `data.x` and, in
+  junction mode, `data.edge_attr`. A raw NaN cannot enter the model, so
+  no-arrival time-to-enhancement is encoded as a distinct out-of-range sentinel
+  (a learnable "non-enhancing" value) rather than imputed to a plausible time;
+  this column keeps that fill audited per graph. See `AUDITING_RESULTS.md`.
 - `<feature>_min` / `_max` / `_mean` / `_std` for every name in
-  `node_features`, computed over that graph's nodes only (NaN-aware).
+  `node_features`, computed over that graph's nodes only (NaN-aware). For a
+  `time_to_enhancement` feature these now include the `-1.0` sentinel.
 
 The same build also renders the confound plots directly, into
 `<cache_dir>/processed/graph_qc_plots/` (`gnn/graph_qc_plots.py`, called from

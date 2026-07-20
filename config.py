@@ -154,7 +154,31 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deepsets_inclusion_rule": "local_radius_with_fallback",
         "deepsets_compare_inclusion_rules": [],
         "deepsets_point_feature_set": "baseline",
+        # Node granularity for the GNN graph. "voxel" = one node per skeleton
+        # voxel; "segment" = one node per vessel segment (line graph). Must
+        # match the node_mode the target gnn_cache_dir was built with (the
+        # cache manifest check enforces this), and gnn_node_features must use
+        # the matching vocabulary (voxel names vs seg_* names). See
+        # gnn/DESIGN_segment_graph.md.
+        "gnn_node_mode": "voxel",
         "gnn_node_features": ["peak_time", "radius"],
+        # Edge features for node_mode="junction" (segment-as-edge, Option A):
+        # the segment summary rides on the edges there. Empty for voxel/segment
+        # mode, which carry no edge features. Uses the seg_* vocabulary (see
+        # gnn.segment_graph / gnn.junction_graph).
+        "gnn_edge_features": [],
+        # Graph-level clinical/demographic covariates (gnn.clinical), opt-in
+        # and mode-agnostic (voxel/segment/junction all support them the same
+        # way, unlike node/edge features). Empty = no graph-level features,
+        # fully backward compatible. Requires gnn_patient_info_dir or
+        # gnn_clinical_excel under data_paths. See gnn/clinical.py for the
+        # supported column vocabulary and why breast_density/SITE_COLUMNS are
+        # excluded from casual use.
+        "gnn_graph_features": [],
+        # Cases with no clinical row for the requested gnn_graph_features are
+        # dropped before the (expensive) graph build, the same way a missing
+        # label is via max_missing_label_frac -- see gnn/data_loader.py.
+        "gnn_max_missing_clinical_frac": 0.1,
         # Class-conditional Gaussian noise layered onto the "pcr_dummy"
         # leakage-canary feature at train time (gnn/train.py), never at cache
         # -build time -- see _apply_pcr_dummy_noise. Defaults (0.0, 1.0, 0.0)
@@ -163,6 +187,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "gnn_pcr_dummy_class1_mean": 1.0,
         "gnn_pcr_dummy_noise_std": 0.0,
         "gnn_pcr_dummy_noise_seed": 0,
+        # Harmonized single-breast dataset (gnn.breast_split): None (default,
+        # fully backward compatible) keeps the exam-level mixed-breast
+        # skeleton for every case; "single" substitutes bilateral cases with
+        # their precomputed single-breast skeleton
+        # (gnn_breast_split_skeleton_root under data_paths) and drops any
+        # bilateral case the splitter excluded or that has no clinical row
+        # for laterality. Native unilateral cases are always unchanged.
+        "gnn_breast_split_mode": None,
+        # Cases dropped for being bilateral-but-excluded-by-the-splitter (or
+        # missing a clinical row for laterality) are logged the same way a
+        # missing label is via gnn_max_missing_label_frac -- see
+        # gnn/data_loader.py.
+        "gnn_max_missing_breast_split_frac": 0.1,
     },
     "data_paths": {
         "centerline_root": "",
@@ -185,6 +222,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "gnn_cases": None,
         "gnn_dataset_include": None,
         "gnn_allow_manifest_mismatch": False,
+        # Clinical data source for gnn_graph_features (model_params), mirroring
+        # the shared patient_info_dir/clinical_excel above but kept
+        # GNN-specific so a GNN run's config stays self-contained, consistent
+        # with every other gnn_* data_paths key.
+        "gnn_patient_info_dir": "",
+        "gnn_clinical_excel": "",
+        # Root of precomputed single-breast skeletons (gnn.build_single_breast_skeletons),
+        # required when model_params.gnn_breast_split_mode is set.
+        "gnn_breast_split_skeleton_root": "",
     },
     # Dataset-adapter selection (multi-dataset redesign, Step 1). Read only by
     # cohorts/factory.py; no pipeline stage consumes it yet. When ``name`` is
@@ -207,6 +253,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "export_subtype_summary": False,
     # Issue #151 driver block (see run_top_features_eval.py, configs/top_features_eval.yaml).
     "top_features_eval": None,
+    # LOCO (Leave-One-Covariate-Out) driver block -- see evaluation/loco.py and
+    # docs/loco_feature_importance.md for the expected schema.
+    "loco": None,
 }
 
 
