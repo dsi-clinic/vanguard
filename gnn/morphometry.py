@@ -19,6 +19,16 @@ case, and ``gnn.data_loader`` treats it as a hard failure.
 component has zero valid segments or bifurcations (e.g. `morph_seg_dup_fraction`
 is `NaN` when no segments were found at all). See ``AUDITING_RESULTS.md`` for
 why this is handled with mean-imputation rather than left to propagate.
+
+**Fit boundary (cross-validation leakage):** the mean-imputer is fit **per
+cross-validation fold on the training split only**, never once over the whole
+cohort -- otherwise validation cases would contribute to the column means used
+to fill training values (optimistic CV, inconsistent with deployment). The
+primitives below make that split explicit: :func:`extract_morphometry_frame`
+reads the raw (un-imputed) scalars once at dataset-build time (cached by
+``gnn.data_loader``), then :func:`fit_morphometry_imputer` /
+:func:`transform_morphometry_frame` fit on the training cases and transform
+the validation cases per fold in ``gnn.train``.
 """
 
 from __future__ import annotations
@@ -80,25 +90,24 @@ MORPHOMETRY_COLUMNS: tuple[str, ...] = (
 )
 
 
-def build_morphometry_feature_matrix(
+def extract_morphometry_frame(
     morphometry_paths_by_case: dict[str, Path],
     case_ids: Sequence[str],
     columns: Sequence[str],
-) -> tuple[np.ndarray, list[str]]:
-    """Extract ``columns`` for ``case_ids`` from each case's morphometry JSON.
+) -> pd.DataFrame:
+    """Read raw (un-imputed) ``columns`` for ``case_ids`` from each case's JSON.
+
+    Returns a frame indexed by ``case_id`` (in ``case_ids`` order), one column
+    per requested feature, with ``NaN`` left in place (see module docstring
+    for why `NaN`s occur even in a present file). Imputation is deliberately
+    deferred to :func:`fit_morphometry_imputer` /
+    :func:`transform_morphometry_frame` so the column means are fit per
+    cross-validation fold on the training split only.
 
     ``morphometry_paths_by_case`` must have an entry for every id in
     ``case_ids`` (the caller -- ``gnn.data_loader`` -- resolves this from
     ``run_summary.json``, hard-failing rather than dropping cases, since
-    ``morphometry_path`` is present for 100% of the real cohort; see module
-    docstring).
-
-    Returns ``(matrix, output_column_names)``: ``matrix`` has one row per
-    ``case_ids`` entry in that order and one column per requested feature,
-    mean-imputed via a fit-once ``SimpleImputer`` (see module docstring for
-    why `NaN`s occur even in a present file). ``output_column_names`` equals
-    ``list(columns)`` (no encoding/expansion, unlike ``gnn.clinical`` -- these
-    are already all-numeric).
+    ``morphometry_path`` is present for 100% of the real cohort).
     """
     unknown = [c for c in columns if c not in MORPHOMETRY_COLUMNS]
     if unknown:
@@ -111,13 +120,49 @@ def build_morphometry_feature_matrix(
         raise KeyError(
             f"No morphometry_path for case(s) {missing_cases}; the caller "
             "must resolve case coverage before calling "
-            "build_morphometry_feature_matrix."
+            "extract_morphometry_frame."
         )
-
     rows = [
         extract_morphometry_features(morphometry_paths_by_case[case_id])
         for case_id in case_ids
     ]
     frame = pd.DataFrame(rows, columns=list(columns))
-    matrix = SimpleImputer(strategy="mean").fit_transform(frame)
-    return np.asarray(matrix, dtype=np.float64), list(columns)
+    frame.index = pd.Index([str(c) for c in case_ids], name="case_id")
+    return frame
+
+
+def fit_morphometry_imputer(frame: pd.DataFrame) -> SimpleImputer:
+    """Fit a mean ``SimpleImputer`` on ``frame`` (one fold's training rows).
+
+    ``frame`` must be an :func:`extract_morphometry_frame` output restricted
+    to the training cases, so the column means used to fill missing values
+    come from training data only.
+    """
+    return SimpleImputer(strategy="mean").fit(frame)
+
+
+def transform_morphometry_frame(
+    imputer: SimpleImputer, frame: pd.DataFrame
+) -> np.ndarray:
+    """Apply a fitted morphometry imputer to ``frame`` (train or validation rows)."""
+    return np.asarray(imputer.transform(frame), dtype=np.float64)
+
+
+def build_morphometry_feature_matrix(
+    morphometry_paths_by_case: dict[str, Path],
+    case_ids: Sequence[str],
+    columns: Sequence[str],
+) -> tuple[np.ndarray, list[str]]:
+    """Extract, fit, and mean-impute ``columns`` for ``case_ids`` in one shot.
+
+    Convenience wrapper composing :func:`extract_morphometry_frame`,
+    :func:`fit_morphometry_imputer`, and :func:`transform_morphometry_frame`
+    on the **same** rows. Leakage-free only when ``case_ids`` is a single
+    fold's training split (or the whole cohort outside cross-validation);
+    cross-validation code fits per fold on the training split (see
+    ``gnn.train``). ``output_column_names`` equals ``list(columns)`` (no
+    encoding/expansion -- these are already all-numeric).
+    """
+    frame = extract_morphometry_frame(morphometry_paths_by_case, case_ids, columns)
+    imputer = fit_morphometry_imputer(frame)
+    return transform_morphometry_frame(imputer, frame), list(columns)

@@ -50,16 +50,32 @@ failure mode it protects against), and flagged at the point of use.
 
 ## GNN — clinical covariate imputation and category normalization
 
-- **What is handled.** Graph-level clinical covariates (`gnn.clinical`,
-  attached as `data.graph_features` when `gnn_graph_features` is set) are built
-  by a fit-once `sklearn.compose.ColumnTransformer`
-  (`gnn/clinical.py::build_clinical_feature_matrix`): numeric columns (`age`)
-  are mean-imputed, categorical columns (`menopausal_status`, `breast_density`,
-  `tumor_subtype`, and the opt-in site/scanner columns) are most-frequent
-  imputed then one-hot encoded (`handle_unknown="ignore"`). Additionally,
-  `menopausal_status`'s raw values are normalized through an exhaustive,
-  hand-built map (`_MENOPAUSAL_STATUS_MAP`) before encoding, and
-  `breast_density` is excluded from `DEFAULT_CLINICAL_COLUMNS`.
+- **What is handled.** Graph-level clinical covariates (`gnn.clinical`, used
+  when `gnn_graph_features` is set) go through a `sklearn.compose.ColumnTransformer`:
+  numeric columns (`age`) are mean-imputed, categorical columns
+  (`menopausal_status`, `breast_density`, `tumor_subtype`, and the opt-in
+  site/scanner columns) are most-frequent imputed then one-hot encoded
+  (`handle_unknown="ignore"`). Additionally, `menopausal_status`'s raw values
+  are normalized through an exhaustive, hand-built map (`_MENOPAUSAL_STATUS_MAP`)
+  before encoding, and `breast_density` is excluded from
+  `DEFAULT_CLINICAL_COLUMNS`.
+- **Fit boundary (cross-validation leakage).** The imputer and one-hot encoder
+  are fit **per cross-validation fold on the training split only**, never once
+  over the whole cohort. A whole-cohort fit would let validation cases
+  contribute to the imputer means/modes and to the one-hot category vocabulary,
+  so the training representation would depend on the validation distribution --
+  optimistic CV and inconsistent with deployment on a genuinely unseen cohort.
+  To make that split enforceable, the raw (normalized-but-un-imputed,
+  un-encoded) inputs are cached once at build time in
+  `processed/graph_feature_inputs.csv` (`_GRAPH_FEATURE_INPUTS_NAME`), and
+  `gnn/train.py::_fit_transform_graph_features` fits the transformer on each
+  fold's training cases and applies it to that fold's validation cases (a
+  category unseen in training encodes as all-zero, i.e. treated as unknown).
+  `menopausal_status` normalization is deterministic per case (no cross-case
+  fit), so it is still applied once at build time. A cache built before this
+  fix (which baked whole-cohort-fit features into the graphs) is detected on
+  load and refuses to serve silently; regenerate the sidecar without a full
+  rebuild via `python -m gnn.build_dataset --regenerate-graph-feature-inputs`.
 - **Why.** A case with one incomplete clinical field (e.g. `age` recorded but
   `menopausal_status` blank) shouldn't be dropped from the cohort entirely --
   the case still has a real vessel graph and label, and the missing field is a
@@ -84,21 +100,29 @@ failure mode it protects against), and flagged at the point of use.
   outside the exhaustive map, so a genuinely new category (data added after
   this map was written) is triaged explicitly rather than silently bucketed
   into "missing" or left to blow up the one-hot vocabulary uncontrolled.
-- **Where.** `gnn/clinical.py` (`build_clinical_feature_matrix`,
-  `_MENOPAUSAL_STATUS_MAP`, `_normalize_menopausal_status`,
-  `DEFAULT_CLINICAL_COLUMNS`); `gnn/data_loader.py`
-  (`_load_clinical_df`/`_attach_graph_features`); tests in
-  `tests/test_gnn_clinical.py`.
+- **Where.** `gnn/clinical.py` (`normalize_clinical_frame`,
+  `fit_clinical_transformer`, `transform_clinical_frame`, and the
+  `build_clinical_feature_matrix` one-shot wrapper; `_MENOPAUSAL_STATUS_MAP`,
+  `_normalize_menopausal_status`, `DEFAULT_CLINICAL_COLUMNS`);
+  `gnn/data_loader.py` (`_load_clinical_df`, `_build_graph_feature_inputs`,
+  `load_graph_feature_inputs`); the per-fold fit in
+  `gnn/train.py::_fit_transform_graph_features`; tests in
+  `tests/test_gnn_clinical.py` and `tests/test_gnn_graph_feature_folds.py`.
 
 ## GNN — morphometry graph-level feature imputation
 
-- **What is handled.** `gnn/morphometry.py::build_morphometry_feature_matrix`
-  extracts ~40 `morph_*` scalars per case (segment length/tortuosity/volume/
-  curvature/radius summary stats, bifurcation angle stats, counts) from each
-  case's `<case_id>_morphometry.json` via `features/morph.py`'s existing
-  `extract_morphometry_features`, then mean-imputes via a fit-once
-  `sklearn.impute.SimpleImputer(strategy="mean")` before the matrix is
-  attached as part of `data.graph_features`.
+- **What is handled.** `gnn/morphometry.py` extracts ~40 `morph_*` scalars per
+  case (segment length/tortuosity/volume/curvature/radius summary stats,
+  bifurcation angle stats, counts) from each case's `<case_id>_morphometry.json`
+  via `features/morph.py`'s existing `extract_morphometry_features`, then
+  mean-imputes via `sklearn.impute.SimpleImputer(strategy="mean")`.
+- **Fit boundary (cross-validation leakage).** Like the clinical imputer above,
+  the mean-imputer is fit **per cross-validation fold on the training split
+  only** (`gnn/train.py::_fit_transform_graph_features`), not once over the
+  whole cohort -- otherwise validation cases would contribute to the column
+  means used to fill training values. The raw (un-imputed) scalars are cached
+  once at build time in `processed/graph_feature_inputs.csv`; see the clinical
+  section above for the same sidecar/regeneration mechanism.
 - **Why.** `features/morph.py::array_stats` (the helper that produces every
   `_sum`/`_mean`/`_std`/`_max` column) returns `NaN` when the underlying group
   has zero valid entries -- e.g. `morph_seg_dup_fraction` is `NaN` whenever a
@@ -122,11 +146,14 @@ failure mode it protects against), and flagged at the point of use.
   categorical-normalization step here (`morph_*` columns are already
   all-numeric), so the only fallback in play is numeric mean-imputation, not
   category bucketing.
-- **Where.** `gnn/morphometry.py` (`build_morphometry_feature_matrix`,
-  `MORPHOMETRY_COLUMNS`); `features/morph.py` (`array_stats`,
-  `extract_morphometry_features`, the actual `NaN` source); `gnn/data_loader.py`
-  (`_resolve_morphometry_paths`/`_attach_graph_features`); tests in
-  `tests/test_gnn_morphometry.py`.
+- **Where.** `gnn/morphometry.py` (`extract_morphometry_frame`,
+  `fit_morphometry_imputer`, `transform_morphometry_frame`, and the
+  `build_morphometry_feature_matrix` one-shot wrapper; `MORPHOMETRY_COLUMNS`);
+  `features/morph.py` (`array_stats`, `extract_morphometry_features`, the
+  actual `NaN` source); `gnn/data_loader.py` (`_resolve_morphometry_paths`,
+  `_build_graph_feature_inputs`); the per-fold fit in
+  `gnn/train.py::_fit_transform_graph_features`; tests in
+  `tests/test_gnn_morphometry.py` and `tests/test_gnn_graph_feature_folds.py`.
 
 ## GNN — bilateral -> single-breast splitter exclusion policy
 

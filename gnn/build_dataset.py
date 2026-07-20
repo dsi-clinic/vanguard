@@ -141,6 +141,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable per-stage timing logs (on by default for full builds).",
     )
     parser.add_argument(
+        "--regenerate-graph-feature-inputs",
+        action="store_true",
+        help="Load the existing cache and (re)write only the raw "
+        "graph_feature_inputs.csv sidecar, without rebuilding the graphs. Use "
+        "to migrate a cache built before the per-fold graph-feature "
+        "preprocessing fix (which baked whole-cohort-fit, leaky features into "
+        "the graphs). Requires the same --graph-features (and clinical source) "
+        "the cache was built with.",
+    )
+    parser.add_argument(
         "--allow-manifest-mismatch",
         action="store_true",
         help="Load an existing cache even if its cache_manifest.json records "
@@ -214,6 +224,12 @@ def main() -> None:
             "but --no-cache never writes a cache to disk, so there would be "
             "nothing new to replace the archived cache with."
         )
+    if args.regenerate_graph_feature_inputs and (args.force_rebuild or args.no_cache):
+        raise ValueError(
+            "--regenerate-graph-feature-inputs only rewrites the sidecar for an "
+            "existing on-disk cache; it is incompatible with --force-rebuild and "
+            "--no-cache, which (re)build the graphs from source."
+        )
     # None -> let the dataset resolve the node mode's own default feature set.
     node_features = tuple(args.node_features.split(",")) if args.node_features else None
     edge_features = tuple(args.edge_features.split(",")) if args.edge_features else None
@@ -262,6 +278,10 @@ def main() -> None:
         args.cache_dir,
         len(dataset.dropped_case_ids),
     )
+
+    if args.regenerate_graph_feature_inputs:
+        sidecar = dataset.regenerate_graph_feature_inputs()
+        logging.info("Regenerated raw graph-feature-input sidecar at %s", sidecar)
 
 
 if __name__ == "__main__":

@@ -47,7 +47,7 @@ import matplotlib.pyplot as plt
 from clinical_features import load_clinical_from_excel, load_clinical_from_patient_info
 from config import DEFAULT_CONFIG
 from gnn.breast_split import single_breast_skeleton_path
-from gnn.clinical import ALL_CLINICAL_COLUMNS, build_clinical_feature_matrix
+from gnn.clinical import ALL_CLINICAL_COLUMNS, normalize_clinical_frame
 from gnn.graph_derived import GRAPH_DERIVED_COLUMNS, build_graph_derived_feature_matrix
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_build_time_plots
 from gnn.junction_graph import (
@@ -61,7 +61,7 @@ from gnn.kinetics import (
 from gnn.kinetics import (
     time_axis_from_study_timepoints as _time_axis_from_study_timepoints,
 )
-from gnn.morphometry import MORPHOMETRY_COLUMNS, build_morphometry_feature_matrix
+from gnn.morphometry import MORPHOMETRY_COLUMNS, extract_morphometry_frame
 from gnn.raw_dce import (
     discover_raw_dce_paths,
     load_raw_dce_series,
@@ -91,6 +91,13 @@ _DROPPED_MANIFEST_NAME = "dropped_cases.json"
 _CACHE_MANIFEST_NAME = "cache_manifest.json"
 _FEATURE_SUMMARY_DIRNAME = "feature_summary"
 _GRAPH_QC_NAME = "graph_qc.csv"
+# Raw (un-imputed, un-encoded) graph-level feature inputs, one row per case,
+# written when ``graph_features`` are requested. The clinical imputer/one-hot
+# encoder and morphometry imputer are fit per cross-validation fold on the
+# training split from this file (see ``gnn.train``), never once over the whole
+# cohort at build time -- that whole-cohort fit would leak the validation
+# distribution into the training features. See ``gnn.clinical`` / ``gnn.morphometry``.
+_GRAPH_FEATURE_INPUTS_NAME = "graph_feature_inputs.csv"
 _HIST_BINS = 50
 
 # The only node-feature source implemented today (see module docstring): raw
@@ -936,6 +943,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
         # down to what was actually requested (see both methods' docstrings).
         self._cached_node_features: list[str] | None = None
         self._cached_edge_features: list[str] | None = None
+        # Raw graph-level feature inputs held in memory for no_cache runs; on a
+        # cached build they are written to / read from _GRAPH_FEATURE_INPUTS_NAME
+        # instead (see _write_graph_feature_inputs / load_graph_feature_inputs).
+        self._graph_feature_inputs: pd.DataFrame | None = None
 
         resolved_cache = (
             Path(cache_dir)
@@ -1070,11 +1081,11 @@ class VanguardCenterlineDataset(InMemoryDataset):
             settings["edge_features"] = list(self._edge_features)
         # graph_features (clinical covariates) are opt-in and, unlike
         # node_features/edge_features, are NOT eligible for the subset-request
-        # reslice (see _check_cache_manifest's subset_keys) -- a fit-once
-        # ColumnTransformer's one-hot vocabulary depends on exactly which
-        # columns and which cases were used to fit it, so a "narrower" request
-        # isn't just a column slice the way it is for node/edge features.
-        # Requesting a different graph_features list always requires a rebuild.
+        # reslice (see _check_cache_manifest's subset_keys) -- the raw
+        # graph-feature-input sidecar only stores the columns that were
+        # requested at build time, so a "narrower" request still needs its own
+        # sidecar. Requesting a different graph_features list always requires a
+        # rebuild (or a sidecar regeneration -- see regenerate_graph_feature_inputs).
         if self._graph_features:
             settings["graph_features"] = list(self._graph_features)
             settings["clinical_source"] = str(
@@ -1191,16 +1202,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
 
         # graph_features spans three independent vocabularies -- see
         # gnn.clinical / gnn.graph_derived / gnn.morphometry and
-        # _attach_graph_features's docstring.
-        requested_clinical = [
-            f for f in self._graph_features if f in ALL_CLINICAL_COLUMNS
-        ]
-        requested_graph_derived = [
-            f for f in self._graph_features if f in GRAPH_DERIVED_COLUMNS
-        ]
-        requested_morphometry = [
-            f for f in self._graph_features if f in MORPHOMETRY_COLUMNS
-        ]
+        # _build_graph_feature_inputs's docstring.
+        requested_clinical, requested_graph_derived, requested_morphometry = (
+            self._requested_graph_feature_groups()
+        )
         # Computed from the pre-breast-split discovery: morphometry/graph_qc
         # always resolve against the original exam-level study directory,
         # even for a case whose *skeleton* gets substituted below.
@@ -1323,18 +1328,8 @@ class VanguardCenterlineDataset(InMemoryDataset):
             )
 
         if self._graph_features:
-            morphometry_paths_by_case = (
-                self._resolve_morphometry_paths(data_list, case_id_to_study_dir)
-                if requested_morphometry
-                else None
-            )
-            self._attach_graph_features(
-                data_list,
-                clinical_df=clinical_df,
-                requested_clinical=requested_clinical,
-                requested_graph_derived=requested_graph_derived,
-                requested_morphometry=requested_morphometry,
-                morphometry_paths_by_case=morphometry_paths_by_case,
+            self._write_graph_feature_inputs(
+                data_list, clinical_df, case_id_to_study_dir
             )
 
         self._write_feature_summary(data_list)
@@ -1392,54 +1387,176 @@ class VanguardCenterlineDataset(InMemoryDataset):
             paths[case_id] = resolved
         return paths
 
-    def _attach_graph_features(
+    def _requested_graph_feature_groups(self) -> tuple[list[str], list[str], list[str]]:
+        """Split the requested ``graph_features`` into their three vocabularies.
+
+        ``graph_features`` spans three independent sources -- clinical
+        (``gnn.clinical``), graph-derived (``gnn.graph_derived``), and
+        morphometry (``gnn.morphometry``). Membership resolves each name's
+        source, and each group preserves the requested order. This is the
+        single source of truth for the group split, used both when writing the
+        raw-input sidecar and by ``graph_feature_groups`` for the per-fold
+        transform in ``gnn.train``.
+        """
+        clinical = [f for f in self._graph_features if f in ALL_CLINICAL_COLUMNS]
+        graph_derived = [f for f in self._graph_features if f in GRAPH_DERIVED_COLUMNS]
+        morphometry = [f for f in self._graph_features if f in MORPHOMETRY_COLUMNS]
+        return clinical, graph_derived, morphometry
+
+    def graph_feature_groups(self) -> tuple[list[str], list[str], list[str]]:
+        """Public: requested (clinical, graph_derived, morphometry) names, in order.
+
+        The per-fold transform in ``gnn.train`` uses this to know which columns
+        of :meth:`load_graph_feature_inputs` get a clinical impute+one-hot
+        transformer, which get a morphometry imputer, and which pass through
+        (graph-derived), and to rebuild the graph-feature vector in the same
+        fixed source order the sidecar columns are laid out in.
+        """
+        return self._requested_graph_feature_groups()
+
+    def _build_graph_feature_inputs(
         self,
         data_list: list[Data],
-        *,
         clinical_df: pd.DataFrame | None,
-        requested_clinical: list[str],
-        requested_graph_derived: list[str],
-        requested_morphometry: list[str],
-        morphometry_paths_by_case: dict[str, Path] | None,
-    ) -> None:
-        """Build each requested graph-level feature block and concatenate.
+        case_id_to_study_dir: dict[str, Path],
+    ) -> pd.DataFrame:
+        """Assemble the RAW (un-imputed, un-encoded) graph-level feature inputs.
 
-        ``graph_features`` spans three independent vocabularies -- clinical
-        (external, joined by ``case_id``, ``gnn.clinical``), graph-derived
-        (already on the built ``Data`` object, ``gnn.graph_derived``), and
-        morphometry (per-case JSON, ``gnn.morphometry``). Each block's
-        sub-matrix is built independently and concatenated column-wise in a
-        fixed source order (clinical, then graph-derived, then morphometry)
-        regardless of how the caller interleaved names in
-        ``gnn_graph_features`` -- column identity is always recoverable by
-        re-checking each name's vocabulary membership, so this fixed order
-        doesn't need to be recorded anywhere separately.
+        One row per case (indexed by ``case_id``), columns laid out in a fixed
+        source order -- clinical, then graph-derived, then morphometry --
+        regardless of how the caller interleaved names in ``gnn_graph_features``
+        (each name's source is always recoverable by vocabulary membership).
+
+        This is the Option-1 cross-validation-leakage fix: rather than fitting
+        the clinical imputer/one-hot encoder and the morphometry imputer once
+        over the whole cohort here and baking the transformed vector into each
+        graph, we cache only the raw inputs and defer every cross-case fit to
+        per-fold code in ``gnn.train`` (see module-level
+        ``_GRAPH_FEATURE_INPUTS_NAME``). Clinical values are normalized
+        (deterministic per case, no fit) and morphometry scalars are read raw
+        with their ``NaN``s intact; graph-derived features are pure per-graph
+        reads (never missing, no cross-case fit) and pass through as-is.
 
         Every case in ``data_list`` is already confirmed present in
-        ``clinical_df`` (clinical-only drop happens in ``process()`` before
-        the graph build ran) and in ``morphometry_paths_by_case`` (resolved
-        for exactly ``data_list``'s cases), so this is a pure transform, not
-        a further filter.
+        ``clinical_df`` (the clinical drop happens in ``process()`` before the
+        graph build), so this is a pure read, not a further filter.
         """
+        clinical_cols, graph_derived_cols, morphometry_cols = (
+            self._requested_graph_feature_groups()
+        )
         case_ids = [str(data.case_id) for data in data_list]
-        blocks: list[np.ndarray] = []
-        if requested_clinical:
-            clinical_matrix, _ = build_clinical_feature_matrix(
-                clinical_df, case_ids, requested_clinical
-            )
-            blocks.append(clinical_matrix)
-        if requested_graph_derived:
+        index = pd.Index(case_ids, name="case_id")
+        blocks: list[pd.DataFrame] = []
+        if clinical_cols:
             blocks.append(
-                build_graph_derived_feature_matrix(data_list, requested_graph_derived)
+                normalize_clinical_frame(clinical_df, case_ids, clinical_cols)
             )
-        if requested_morphometry:
-            morphometry_matrix, _ = build_morphometry_feature_matrix(
-                morphometry_paths_by_case, case_ids, requested_morphometry
+        if graph_derived_cols:
+            graph_derived = build_graph_derived_feature_matrix(
+                data_list, graph_derived_cols
             )
-            blocks.append(morphometry_matrix)
-        combined = np.concatenate(blocks, axis=1)
-        for data, row in zip(data_list, combined, strict=True):
-            data.graph_features = torch.tensor(row, dtype=torch.float).unsqueeze(0)
+            blocks.append(
+                pd.DataFrame(
+                    graph_derived, columns=list(graph_derived_cols), index=index
+                )
+            )
+        if morphometry_cols:
+            morphometry_paths_by_case = self._resolve_morphometry_paths(
+                data_list, case_id_to_study_dir
+            )
+            blocks.append(
+                extract_morphometry_frame(
+                    morphometry_paths_by_case, case_ids, morphometry_cols
+                )
+            )
+        return pd.concat(blocks, axis=1)
+
+    def _write_graph_feature_inputs(
+        self,
+        data_list: list[Data],
+        clinical_df: pd.DataFrame | None,
+        case_id_to_study_dir: dict[str, Path],
+    ) -> None:
+        """Persist (or, for ``no_cache``, hold in memory) the raw graph-feature inputs."""
+        frame = self._build_graph_feature_inputs(
+            data_list, clinical_df, case_id_to_study_dir
+        )
+        if self._no_cache:
+            self._graph_feature_inputs = frame
+            return
+        frame.to_csv(Path(self.processed_dir) / _GRAPH_FEATURE_INPUTS_NAME)
+
+    def load_graph_feature_inputs(self) -> pd.DataFrame | None:
+        """Return the cached raw graph-level feature inputs (index=case_id), or None.
+
+        ``None`` when no ``graph_features`` were requested. The per-fold
+        transform in ``gnn.train`` fits the clinical/morphometry preprocessing
+        on the training split of this frame and transforms the validation
+        split -- so the imputer means/modes and one-hot vocabulary never see
+        validation cases.
+
+        Raises if ``graph_features`` were requested but the sidecar is absent
+        -- e.g. a cache built before this leakage fix, which baked the
+        whole-cohort-transformed vector into the graphs instead. Rebuild
+        (``--force-rebuild``) or regenerate the sidecar
+        (``gnn.build_dataset --regenerate-graph-feature-inputs``) rather than
+        silently falling back to the old leaky features.
+        """
+        if not self._graph_features:
+            return None
+        if self._no_cache:
+            if self._graph_feature_inputs is None:
+                raise RuntimeError(
+                    "no_cache=True but process() has not produced graph feature "
+                    "inputs yet"
+                )
+            return self._graph_feature_inputs
+        path = Path(self.processed_dir) / _GRAPH_FEATURE_INPUTS_NAME
+        if not path.exists():
+            raise RuntimeError(
+                f"graph_features were requested but {path} is missing. This cache "
+                "predates the per-fold graph-feature preprocessing fix (it baked "
+                "whole-cohort-fit features into the graphs, leaking the validation "
+                "distribution into training). Rebuild with --force-rebuild, or "
+                "regenerate the raw-input sidecar without a full rebuild via "
+                "`python -m gnn.build_dataset --regenerate-graph-feature-inputs ...`."
+            )
+        frame = pd.read_csv(path, index_col="case_id")
+        frame.index = frame.index.astype(str)
+        return frame
+
+    def regenerate_graph_feature_inputs(self) -> Path:
+        """Rebuild the raw graph-feature-input sidecar for an already-built cache.
+
+        Lightweight migration for caches built before the cross-validation
+        leakage fix: the raw inputs depend only on the surviving cases, the
+        clinical source, and the morphometry JSONs -- none of the expensive
+        raw-DCE graph construction -- so they are recomputed from the cached
+        graphs without a full rebuild. Returns the sidecar path.
+        """
+        if not self._graph_features:
+            raise ValueError(
+                "dataset was built without graph_features; nothing to regenerate."
+            )
+        if self._no_cache:
+            raise ValueError(
+                "regenerate_graph_feature_inputs is for on-disk caches; a "
+                "no_cache dataset holds its raw inputs in memory already."
+            )
+        data_list = [self[i] for i in range(len(self))]
+        discovered = self._discover_cases()
+        case_id_to_study_dir = {
+            case_id: mask_path.parent for case_id, mask_path in discovered
+        }
+        clinical_cols, _, _ = self._requested_graph_feature_groups()
+        clinical_df = self._load_clinical_df() if clinical_cols else None
+        frame = self._build_graph_feature_inputs(
+            data_list, clinical_df, case_id_to_study_dir
+        )
+        path = Path(self.processed_dir) / _GRAPH_FEATURE_INPUTS_NAME
+        frame.to_csv(path)
+        logging.info("Regenerated %s (%d cases)", path, len(frame))
+        return path
 
     def _build_cases(
         self, tasks: list[tuple[str, Path, int]]

@@ -942,8 +942,17 @@ def _write_patient_info(
     )
 
 
-def test_graph_features_attached_from_patient_info(tmp_path: Path) -> None:
-    """graph_features are attached as data.graph_features, shape (1, G) per case."""
+def test_graph_features_cached_as_raw_inputs_not_baked_on_graphs(
+    tmp_path: Path,
+) -> None:
+    """graph_features are cached as a raw-input sidecar, not baked onto data.graph_features.
+
+    The whole-cohort transform is deliberately NOT applied at build time (it
+    would leak the validation distribution across CV folds); the raw per-case
+    inputs are cached instead, one row per case, for a per-fold fit in
+    gnn.train. So the cached graphs carry no ``graph_features`` attribute, and
+    ``load_graph_feature_inputs`` returns the raw values.
+    """
     studies = tmp_path / "studies"
     dce_root = tmp_path / "images"
     _write_case(studies, dce_root, "NACT_01")
@@ -968,9 +977,14 @@ def test_graph_features_attached_from_patient_info(tmp_path: Path) -> None:
 
     assert len(dataset) == NUM_CLINICAL_TEST_CASES
     assert dataset.dropped_case_ids == []
+    # Nothing transformed is baked onto the cached graphs any more.
     for i in range(len(dataset)):
-        data = dataset[i]
-        assert data.graph_features.shape == (1, 1)
+        assert getattr(dataset[i], "graph_features", None) is None
+    # The raw (un-imputed, un-encoded) inputs are cached instead.
+    inputs = dataset.load_graph_feature_inputs()
+    assert list(inputs.columns) == ["age"]
+    assert inputs.loc["NACT_01", "age"] == pytest.approx(40.0)
+    assert inputs.loc["NACT_02", "age"] == pytest.approx(60.0)
 
 
 def test_graph_features_requires_clinical_source() -> None:
@@ -1040,10 +1054,10 @@ def test_missing_clinical_frac_exceeded_raises(tmp_path: Path) -> None:
         )
 
 
-def test_mixed_source_graph_features_concatenated_in_fixed_order(
+def test_mixed_source_graph_feature_inputs_in_fixed_source_order(
     tmp_path: Path,
 ) -> None:
-    """Clinical + graph-derived + morphometry names in one request concatenate correctly."""
+    """Clinical + graph-derived + morphometry names land in one raw sidecar, fixed order."""
     studies = tmp_path / "studies"
     dce_root = tmp_path / "images"
     _write_case(studies, dce_root, "NACT_01", include_morphometry=True)
@@ -1060,18 +1074,27 @@ def test_mixed_source_graph_features_concatenated_in_fixed_order(
         dce_root=dce_root,
         cache_dir=tmp_path / "cache",
         node_features=("peak_time", "radius"),
-        graph_features=("age", "num_connected_components", "morph_seg_length_n"),
+        # Deliberately interleaved request order; the sidecar must still lay
+        # columns out in fixed source order (clinical, graph-derived, morphometry).
+        graph_features=("morph_seg_length_n", "age", "num_connected_components"),
         patient_info_dir=patient_info_dir,
     )
 
-    data = dataset[0]
-    # 1 clinical column (age, numeric passthrough) + 1 graph-derived +
-    # 1 morphometry column = 3, in fixed source order regardless of request order.
-    assert data.graph_features.shape == (1, 3)
-    row = data.graph_features[0].tolist()
-    assert row[0] == pytest.approx(40.0)  # age
-    assert row[1] == pytest.approx(1.0)  # num_connected_components: one straight vessel
-    assert row[2] == pytest.approx(1.0)  # morph_seg_length_n: one synthetic segment
+    inputs = dataset.load_graph_feature_inputs()
+    assert list(inputs.columns) == [
+        "age",
+        "num_connected_components",
+        "morph_seg_length_n",
+    ]
+    assert dataset.graph_feature_groups() == (
+        ["age"],
+        ["num_connected_components"],
+        ["morph_seg_length_n"],
+    )
+    row = inputs.loc["NACT_01"]
+    assert row["age"] == pytest.approx(40.0)
+    assert row["num_connected_components"] == pytest.approx(1.0)  # one straight vessel
+    assert row["morph_seg_length_n"] == pytest.approx(1.0)  # one synthetic segment
 
 
 def test_graph_derived_only_does_not_require_clinical_source(tmp_path: Path) -> None:
@@ -1092,9 +1115,9 @@ def test_graph_derived_only_does_not_require_clinical_source(tmp_path: Path) -> 
         graph_features=("num_connected_components",),
     )
 
-    data = dataset[0]
-    assert data.graph_features.shape == (1, 1)
-    assert data.graph_features[0, 0].item() == pytest.approx(1.0)
+    inputs = dataset.load_graph_feature_inputs()
+    assert list(inputs.columns) == ["num_connected_components"]
+    assert inputs.loc["NACT_01", "num_connected_components"] == pytest.approx(1.0)
 
 
 def test_morphometry_only_does_not_require_clinical_source(tmp_path: Path) -> None:
@@ -1115,9 +1138,9 @@ def test_morphometry_only_does_not_require_clinical_source(tmp_path: Path) -> No
         graph_features=("morph_seg_length_n", "morph_bifurcation_count"),
     )
 
-    data = dataset[0]
-    assert data.graph_features.shape == (1, 2)
-    assert data.graph_features[0].tolist() == pytest.approx([1.0, 0.0])
+    inputs = dataset.load_graph_feature_inputs()
+    assert list(inputs.columns) == ["morph_seg_length_n", "morph_bifurcation_count"]
+    assert inputs.loc["NACT_01"].tolist() == pytest.approx([1.0, 0.0])
 
 
 def test_missing_morphometry_path_raises(tmp_path: Path) -> None:

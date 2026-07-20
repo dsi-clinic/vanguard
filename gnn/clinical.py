@@ -29,12 +29,26 @@ encoding of raw clinical values into a numeric matrix.
 
 **Missing-value handling (flagged per this repo's error-handling rules):**
 categorical columns are imputed with the most-frequent observed category and
-numeric columns with the column mean, via a fit-once sklearn
-``ColumnTransformer`` -- the same ``SimpleImputer`` + ``OneHotEncoder``
-pattern ``tabular/models.py`` already uses for clinical covariates. This is
-a real default-value-for-missing-data case; see ``AUDITING_RESULTS.md`` for
-why it's needed (a case with one incomplete clinical field shouldn't be
-dropped from the cohort) and what it protects against.
+numeric columns with the column mean, via a ``SimpleImputer`` +
+``OneHotEncoder`` ``ColumnTransformer`` -- the same pattern ``tabular/models.py``
+already uses for clinical covariates. This is a real
+default-value-for-missing-data case; see ``AUDITING_RESULTS.md`` for why it's
+needed (a case with one incomplete clinical field shouldn't be dropped from
+the cohort) and what it protects against.
+
+**Fit boundary (cross-validation leakage):** the transformer is fit **per
+cross-validation fold on the training split only**, never once over the whole
+cohort. Fitting on the full cohort would let validation cases contribute to
+the imputer means/modes and to the one-hot category vocabulary, making the
+training representation depend on the validation distribution -- optimistic
+CV and inconsistent with deployment on a genuinely unseen cohort. The three
+primitives below make that split explicit: :func:`normalize_clinical_frame`
+produces the raw (un-imputed, un-encoded) inputs once at dataset-build time
+(cached by ``gnn.data_loader``), then :func:`fit_clinical_transformer` /
+:func:`transform_clinical_frame` fit on the training cases and transform the
+validation cases per fold in ``gnn.train``. Categories unseen in the training
+split are encoded as all-zero (``handle_unknown="ignore"``), i.e. treated as
+unknown.
 
 ``menopausal_status`` additionally needs *normalization* before encoding: the
 real cohort contains wording/whitespace variants of the same clinical
@@ -149,27 +163,29 @@ def _normalize_categorical_column(series: pd.Series, column: str) -> pd.Series:
     return series.map(lambda v: np.nan if _is_missing(v) else v)
 
 
-def build_clinical_feature_matrix(
+def normalize_clinical_frame(
     clinical_df: pd.DataFrame,
     case_ids: Sequence[str],
     columns: Sequence[str],
-) -> tuple[np.ndarray, list[str]]:
-    """Fit a ColumnTransformer over ``columns`` for ``case_ids`` and transform.
+) -> pd.DataFrame:
+    """Select ``columns`` for ``case_ids`` and normalize to raw, un-imputed inputs.
+
+    Returns a frame indexed by ``case_id`` (in ``case_ids`` order) whose
+    categorical columns are canonicalized (``_normalize_categorical_column``)
+    and numeric columns coerced to float, with ``np.nan`` for every missing
+    value. Normalization is deterministic per case (no cross-case fit), so it
+    is done once at dataset-build time; imputation and one-hot encoding are
+    deliberately *not* applied here -- they are fit per cross-validation fold
+    on the training split by :func:`fit_clinical_transformer` /
+    :func:`transform_clinical_frame`, which is what keeps validation cases out
+    of the imputer means/modes and the one-hot vocabulary (see module
+    docstring).
 
     ``clinical_df`` must have a ``case_id`` column and a row for every id in
-    ``case_ids`` (the caller -- ``gnn.data_loader`` -- is responsible for
-    resolving which cases actually have a clinical record and dropping the
-    rest with an audited threshold before calling this, the same way
-    ``VanguardCenterlineDataset`` already handles missing labels via
-    ``max_missing_label_frac``; a missing case here is therefore a bug, not
-    an expected "no clinical data" case, and raises).
-
-    Returns ``(matrix, output_column_names)``: ``matrix`` has one row per
-    ``case_ids`` entry in that order and one column per encoded feature
-    (numeric columns pass through after mean-imputation; categorical columns
-    expand to one-hot columns after most-frequent imputation).
-    ``output_column_names`` names each matrix column (post one-hot
-    expansion), for cache-manifest provenance.
+    ``case_ids`` (the caller -- ``gnn.data_loader`` -- resolves which cases
+    actually have a clinical record and drops the rest with an audited
+    threshold beforehand; a missing case here is a bug, not an expected "no
+    clinical data" case, and raises).
     """
     unknown = [c for c in columns if c not in ALL_CLINICAL_COLUMNS]
     if unknown:
@@ -184,9 +200,10 @@ def build_clinical_feature_matrix(
         raise KeyError(
             f"No clinical row for case(s) {missing_cases}; the caller must "
             "resolve case coverage against clinical_df before calling "
-            "build_clinical_feature_matrix."
+            "normalize_clinical_frame."
         )
     frame = indexed.loc[list(case_ids), list(columns)].copy()
+    frame.index = pd.Index([str(c) for c in case_ids], name="case_id")
 
     numeric_cols = [c for c in columns if c in ALL_NUMERIC_CLINICAL_COLUMNS]
     categorical_cols = [c for c in columns if c in ALL_CATEGORICAL_CLINICAL_COLUMNS]
@@ -196,7 +213,24 @@ def build_clinical_feature_matrix(
         frame[col] = pd.to_numeric(
             frame[col].map(lambda v: np.nan if _is_missing(v) else v)
         )
+    return frame
 
+
+def fit_clinical_transformer(
+    frame: pd.DataFrame, columns: Sequence[str]
+) -> ColumnTransformer:
+    """Fit the impute + one-hot ``ColumnTransformer`` on ``frame``.
+
+    ``frame`` must be a :func:`normalize_clinical_frame` output restricted to
+    one cross-validation fold's **training** cases. Fitting here -- not over
+    the whole cohort -- is what keeps the imputer means/modes and the one-hot
+    category vocabulary derived from training data only. Numeric columns are
+    mean-imputed; categorical columns are most-frequent-imputed then one-hot
+    encoded with ``handle_unknown="ignore"`` so a category unseen in training
+    encodes as all-zero (treated as unknown) at transform time.
+    """
+    numeric_cols = [c for c in columns if c in ALL_NUMERIC_CLINICAL_COLUMNS]
+    categorical_cols = [c for c in columns if c in ALL_CATEGORICAL_CLINICAL_COLUMNS]
     transformers: list[tuple[str, object, list[str]]] = []
     if numeric_cols:
         transformers.append(("num", SimpleImputer(strategy="mean"), numeric_cols))
@@ -211,8 +245,42 @@ def build_clinical_feature_matrix(
             ]
         )
         transformers.append(("cat", cat_pipeline, categorical_cols))
-
     column_transformer = ColumnTransformer(transformers=transformers)
-    matrix = column_transformer.fit_transform(frame)
+    column_transformer.fit(frame)
+    return column_transformer
+
+
+def transform_clinical_frame(
+    column_transformer: ColumnTransformer, frame: pd.DataFrame
+) -> tuple[np.ndarray, list[str]]:
+    """Apply a fitted clinical transformer to ``frame`` (train or validation rows).
+
+    Returns ``(matrix, output_column_names)``: ``matrix`` has one row per
+    ``frame`` row in that order, one column per encoded feature (numeric
+    pass-through after mean-imputation; categorical one-hot after
+    most-frequent imputation). ``output_column_names`` names each column, for
+    provenance.
+    """
+    matrix = column_transformer.transform(frame)
     output_names = [str(name) for name in column_transformer.get_feature_names_out()]
     return np.asarray(matrix, dtype=np.float64), output_names
+
+
+def build_clinical_feature_matrix(
+    clinical_df: pd.DataFrame,
+    case_ids: Sequence[str],
+    columns: Sequence[str],
+) -> tuple[np.ndarray, list[str]]:
+    """Normalize, fit, and transform ``columns`` for ``case_ids`` in one shot.
+
+    Convenience wrapper composing :func:`normalize_clinical_frame`,
+    :func:`fit_clinical_transformer`, and :func:`transform_clinical_frame` on
+    the **same** rows. Because it fits and transforms on the same cases, it is
+    only leakage-free when ``case_ids`` is a single fold's training split (or
+    the whole cohort when no cross-validation is involved). Cross-validation
+    code must instead normalize once and fit per fold on the training split --
+    see ``gnn.train`` -- rather than calling this across a train/val boundary.
+    """
+    frame = normalize_clinical_frame(clinical_df, case_ids, columns)
+    column_transformer = fit_clinical_transformer(frame, columns)
+    return transform_clinical_frame(column_transformer, frame)
