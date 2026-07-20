@@ -127,6 +127,9 @@ def prepare_evaluation_context(
     ``report_by`` names an optional per-case subgroup column (a dataset adapter's
     ``report_by``, Step 4) attached to each fold's predictions for the QC
     breakdown; ``None`` (every non-adapter run) leaves predictions unchanged.
+    When it *is* set, the column must exist in ``df``: a missing one raises
+    rather than being skipped, since evaluation would otherwise fall back to
+    reporting by a different column under the requested column's name.
 
     ``group_col_from_adapter`` must be ``True`` only when the caller populated
     ``model_params.group_col`` from an adapter identity key (``_apply_group_keys``
@@ -309,11 +312,26 @@ def run_single_fold_from_context(
     # QC subgroup column from the dataset adapter's report_by (Step 4): attach it
     # so save_results can break metrics down by sub-source. None for non-adapter
     # runs, so predictions are unchanged.
-    if (
-        report_by
-        and report_by in cohort_df.columns
-        and report_by not in pred_df.columns
-    ):
+    #
+    # Missing here is fatal, and deliberately raised at *this* seam rather than
+    # left to evaluation: the cohort frame is where the column actually went
+    # missing, so this is the only place that can say so. Downstream,
+    # evaluation._stratum_column would also raise -- but it can only see that
+    # the column is absent from the predictions frame, which sends whoever is
+    # debugging to the wrong file. Skipping silently is not an option either:
+    # _stratum_column would then fall back to an alias and report the QC
+    # breakdown by some other column while the run still looked like it had
+    # produced the requested sub-source breakdown.
+    if report_by and report_by not in pred_df.columns:
+        if report_by not in cohort_df.columns:
+            raise KeyError(
+                f"The dataset adapter requested a QC breakdown by {report_by!r}, "
+                f"but that column is not in the cohort frame (columns: "
+                f"{sorted(cohort_df.columns)}). It must be attached upstream, "
+                "where the cohort table is built -- see prepare_data() and the "
+                "adapter's load_labels(). Refusing to run the fold without it, "
+                "because evaluation would otherwise report by a different column."
+            )
         pred_df[report_by] = cohort_df.iloc[val_idx][report_by].astype(str).to_numpy()
 
     return (

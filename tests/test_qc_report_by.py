@@ -97,6 +97,22 @@ def test_report_by_column_attached_to_fold_predictions() -> None:
     assert set(preds["dataset"]).issubset({"simbiosys", "uch_nac"})
 
 
+def test_report_by_missing_from_cohort_frame_names_that_frame() -> None:
+    """A requested report_by absent from the cohort frame fails at the fold seam.
+
+    Skipping the attach would leave evaluation to fall back to an alias and
+    report by some other column. Evaluation's own guard would also catch this,
+    but only as "absent from the predictions frame" -- pointing whoever is
+    debugging at the wrong file. The cohort frame is where the column actually
+    went missing, so the error has to name it.
+    """
+    frame = _toy_frame().drop(columns=["dataset"])
+    context = prepare_evaluation_context(frame, _fold_config(), report_by="dataset")
+
+    with pytest.raises(KeyError, match="cohort frame"):
+        run_single_fold_from_context(context, context["splits"][0])
+
+
 def test_no_report_by_leaves_predictions_without_subsource_column() -> None:
     """Without report_by (non-adapter run), no sub-source column is attached."""
     context = prepare_evaluation_context(_toy_frame(), _fold_config())
