@@ -103,6 +103,30 @@ def build_parser() -> argparse.ArgumentParser:
             "(expected `<case-id>.nii.gz`)."
         ),
     )
+    parser.add_argument(
+        "--dataset-name",
+        type=str,
+        default=None,
+        help=(
+            "If set (mamamia), build a DatasetAdapter via cohorts.factory and "
+            "route per-timepoint segmentation discovery and the MIP-only flip "
+            "spec through it (Step 4), instead of the hardcoded MAMA-MIA "
+            "function/constant. 'uchicago' is rejected here: its skeleton comes "
+            "from the paired raw-DICOM pipeline (see preprocessing/README.md)."
+        ),
+    )
+    parser.add_argument(
+        "--dataset-root",
+        type=str,
+        default=None,
+        help="Root path for --dataset-name (e.g. the UChicago manifest directory).",
+    )
+    parser.add_argument(
+        "--dataset-cohort",
+        type=str,
+        default=None,
+        help="mamamia only: duke|ispy1|ispy2|nact.",
+    )
 
     return parser
 
@@ -114,6 +138,26 @@ def main() -> None:
     if args.features_only and args.force_skeleton:
         parser.error("`--features-only` cannot be combined with `--force-skeleton`.")
     from graph_extraction.pipeline import run_study_pipeline
+
+    adapter = None
+    if args.dataset_name:
+        from cohorts.factory import build_imaging_adapter_from_config
+        from config import ConfigNode
+
+        if not args.dataset_root:
+            parser.error("--dataset-root is required when --dataset-name is set.")
+        dataset_config = ConfigNode._wrap(
+            {
+                "dataset": {
+                    "name": args.dataset_name,
+                    "cohort": args.dataset_cohort,
+                    "root": args.dataset_root,
+                    "split_policy": "auto",
+                }
+            }
+        )
+        adapter = build_imaging_adapter_from_config(dataset_config)
+        print(f"Using dataset adapter: {type(adapter).__name__}")
 
     start = time.perf_counter()
     result = run_study_pipeline(
@@ -130,6 +174,7 @@ def main() -> None:
         mip_dpi=args.mip_dpi,
         radiologist_annotations_dir=args.radiologist_annotations_dir,
         tumor_mask_dir=args.tumor_mask_dir,
+        adapter=adapter,
     )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)

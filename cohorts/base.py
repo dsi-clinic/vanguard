@@ -134,6 +134,36 @@ class DatasetAdapter:
             raise FileNotFoundError(f"No image dir for case {case_id}: {case_dir}")
         return sorted(case_dir.glob("*.nii.gz"))
 
+    def load_segmented_timepoints(
+        self, input_dir: Path, case_id: str
+    ) -> tuple[list[Path], list[int]]:
+        """Return a case's per-timepoint vessel-segmentation ``.npz`` files, ordered.
+
+        This is a *different* artifact from :meth:`load_timepoints`: it discovers
+        the graph-extraction stage's input (segmented vessel-probability volumes
+        produced by the segmentation stage), not raw DCE phases. Delegates to
+        ``graph_extraction.core4d.discover_study_timepoints`` for the base/MAMA-MIA
+        behavior (``<input_dir>/<case_id>/images/<case_id>_<4-digit>_vessel_segmentation.npz``),
+        so this is a no-op wrapper for MAMA-MIA and a documented seam for a future
+        dataset whose segmentation output is laid out differently.
+
+        Args:
+            input_dir: Root directory of vessel-segmentation output (a pipeline
+                artifact location, not this adapter's own ``root`` -- segmentation
+                output lives in its own directory, separate from raw data).
+            case_id: The case to discover timepoints for.
+
+        Returns:
+            ``(ordered file paths, ordered timepoint indices)``.
+        """
+        from graph_extraction.core4d import discover_study_timepoints
+
+        return discover_study_timepoints(input_dir=input_dir, case_id=case_id)
+
+    #: Axis to flip vessel/tumor/breast masks along for MIP visualization only
+    #: (does not affect computed centerline/graph features). MAMA-MIA default.
+    viz_flip_spec: ClassVar[str] = "z"
+
     def preprocess(self, volume: np.ndarray) -> np.ndarray:
         """Reorient a raw volume into the pipeline's processing layout.
 

@@ -203,6 +203,45 @@ def test_apply_provided_folds_rejects_split_col_collision(tmp_path: Path) -> Non
         _apply_provided_folds(feats_df, config, adapter)
 
 
+def test_apply_provided_folds_rejects_split_col_collision_with_ordinary_feature(
+    tmp_path: Path,
+) -> None:
+    """Regression test: split_col colliding with a non-reserved feature must also raise.
+
+    The original collision check only guarded case_id and the label column, so
+    split_col matching any other real feature/metadata column was silently
+    dropped and overwritten instead of raising -- exactly the kind of silent
+    corruption the rest of this function's fail-closed validation exists to
+    prevent.
+    """
+    adapter = UChicagoDataset(root=_write_manifest(tmp_path))
+    config = ConfigNode._wrap(
+        _deep_merge(
+            DEFAULT_CONFIG,
+            {
+                "dataset": {
+                    "name": "uchicago",
+                    "cohort": None,
+                    "root": "/x",
+                    "split_policy": "auto",
+                },
+                # Collides with an ordinary feature column, not case_id/pcr.
+                "model_params": {"split_col": "tumor_size"},
+            },
+        )
+    )
+    feats_df = pd.DataFrame(
+        {
+            "case_id": ["e1", "e2", "e3"],
+            "pcr": [1, 0, 1],
+            "tumor_size": [12.5, 8.0, 20.1],
+        }
+    )
+
+    with pytest.raises(ValueError, match="collides"):
+        _apply_provided_folds(feats_df, config, adapter)
+
+
 def test_apply_provided_folds_rejects_duplicate_case_in_features(
     tmp_path: Path,
 ) -> None:

@@ -34,7 +34,7 @@ not hardcoded), then call:
 | `load_labels()` | `(case_id, pcr)` label table |
 | `target_spacing_mm` | explicit resample target, or `None` to keep native spacing |
 | `default_split_policy` | `"compute"` (build our own folds) vs. `"provided"` (ship folds) |
-| `report_by` | optional column to break QC/eval results down by (else `None`) |
+| `report_by` | optional column to break QC/eval results down by (else `None`); **must exist in the predictions frame — a missing one raises rather than falling back to another column** |
 | `tumor_mask_filename` / `centerline_filename` / `morphometry_filename` | per-case artifact naming |
 
 ---
@@ -59,20 +59,35 @@ Genuinely different, so it overrides the handful of methods that differ:
 `load_labels()`, and `load_folds()` are all **manifest-driven** (read from a CSV,
 including a `phase_files` list per row); it sets `default_split_policy =
 "provided"` (ships patient-grouped folds) and `report_by = "dataset"`
-(sub-source breakdown). `preprocess()` is a **documented pass-through** — the
-manifest's phase files are already preprocessed upstream (`policy_name =
-hfdp_t1_v1`), so no repo-side transform is applied (and, importantly, the base
-MAMA-MIA orientation transform is *not* used, which would be wrong here). The
+(sub-source breakdown). `preprocess()` is a **pass-through** — see below. The
 181-exam student manifest lives at
 `/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/`; select it
 with `configs/uchicago.yaml`.
 
-> **Open item, needs Anna's sign-off:** the pass-through assumes the manifest's
-> `hfdp_t1_v1` volumes are already in the orientation the downstream vessel/graph
-> stages expect. That assumption isn't checked in code and isn't exercised
-> end-to-end yet (no UChicago imaging flows exist until Step 4) — if it's wrong,
-> it will silently feed mis-oriented volumes into Step 4 rather than failing
-> loudly. Flagging it here so it isn't mistaken for a verified fact.
+> **UChicago imaging does not run through this repo's NIfTI imaging stages.**
+> Vessel segmentation and skeletonization for UChicago come from the paired
+> raw-DICOM HR/UFAST pipeline in `preprocessing/`: it segments the
+> *high-resolution* phases, builds the skeleton from HR vessel probabilities,
+> maps that static skeleton onto the motion-corrected UFAST grid, and computes
+> kinetics from raw UFAST signal using **physical timestamps** (not filename
+> indices). Accordingly, `segmentation/batch_segmentation.py` and
+> `graph_extraction/run_skeleton_processing.py` **reject** `--dataset-name
+> uchicago` with a pointer to that pipeline (see
+> `cohorts.factory.IMAGING_ROUTE_SUPERSEDED`), so there aren't two competing
+> implementations that look interchangeable from the CLI.
+>
+> This adapter is still fully supported for every *non-imaging* consumer:
+> discovery, labels, provided folds, patient grouping, and QC `report_by`.
+>
+> **History.** An earlier revision of this branch made `preprocess()` reorient
+> UChicago volumes so they'd satisfy the vessel model's tiling-coverage
+> assertion. That transform served the now-retired NIfTI route and has been
+> removed along with it, so this adapter asserts no orientation convention at
+> all — the raw-DICOM pipeline owns its own spatial handling. (One of those
+> earlier attempts was a header-derived flip that turned out to silently
+> left-right mirror every patient; near-symmetric breast anatomy hides a mirror
+> in MIPs, which is why nothing here should be trusted from headers or visual
+> checks alone.)
 
 > Note: `case_dataset_name()` here returns a manifest **sub-source**
 > (`simbiosys`/`uch_nac`/`her2_naclike`), a finer granularity than

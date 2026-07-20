@@ -2,9 +2,12 @@
 
 Overrides the base MAMA-MIA behavior for the differences identified in
 ``cohorts/README.md``: manifest-driven discovery/identity/timepoints/labels,
-provided CV folds, and sub-source reporting. ``preprocess`` is a pass-through
-because the manifest ships already-preprocessed volumes (``policy_name =
-hfdp_t1_v1``); see the method docstring for the note on design decision 4.
+provided CV folds, and sub-source reporting.
+
+This adapter is *not* an imaging-stage adapter. UChicago's vessel segmentation
+and skeletonization run through the paired raw-DICOM HR/UFAST pipeline in
+``preprocessing/``, not through this repo's NIfTI-based imaging CLIs; those CLIs
+reject ``uchicago`` (see ``cohorts.factory.IMAGING_ROUTE_SUPERSEDED``).
 """
 
 from __future__ import annotations
@@ -122,6 +125,15 @@ class UChicagoDataset(DatasetAdapter):
         repo-side preprocessing is applied here. Crucially this must NOT fall back
         to the base MAMA-MIA orientation transform, which would be wrong for this
         already-oriented ultrafast data.
+
+        This method has no vessel-model consumer any more: UChicago's imaging
+        route is the paired raw-DICOM HR/UFAST pipeline (``preprocessing/``),
+        which owns its own spatial and intensity handling, and this repo's
+        NIfTI-based segmentation CLI now refuses ``uchicago`` outright (see
+        ``cohorts.factory.IMAGING_ROUTE_SUPERSEDED``). An earlier revision of
+        this branch reoriented here to satisfy the vessel model's tiling
+        assertion; that transform is retired along with the route it served, so
+        no orientation convention is asserted here at all.
 
         Note for Anna: this makes design decision 4 (port a frozen copy of the
         UChicago preprocessing into the repo) unnecessary for the student

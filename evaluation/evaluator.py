@@ -39,8 +39,34 @@ from evaluation.visualizations import (
 STRATUM_COLUMN_ALIASES = ("stratum", "subtype")
 
 
-def _stratum_column(predictions: pd.DataFrame) -> str | None:
-    """Return the first stratum column name present in predictions, or None."""
+def _stratum_column(
+    predictions: pd.DataFrame, report_by: str | None = None
+) -> str | None:
+    """Return the column to break QC metrics down by, or None.
+
+    ``report_by`` (a dataset adapter's ``report_by``, e.g. UChicago's ``dataset``
+    sub-source) takes precedence (Step 4 of the multi-dataset migration, see
+    cohorts/README.md). When it is ``None`` -- every non-adapter caller --
+    selection is byte-for-byte the old alias behavior.
+
+    Raises:
+        KeyError: if ``report_by`` is set but absent from ``predictions``.
+            Deliberately fatal rather than falling back to the aliases: a silent
+            fallback would emit a QC breakdown by some *other* column (e.g.
+            ``subtype``) while the run still looks like it produced the
+            requested UChicago sub-source breakdown. A wrong-but-plausible QC
+            report is worse than no report.
+    """
+    if report_by is not None:
+        if report_by not in predictions.columns:
+            raise KeyError(
+                f"report_by column {report_by!r} is not present in the "
+                f"predictions frame (columns: {sorted(predictions.columns)}). "
+                "The dataset adapter requested a QC breakdown by this column, "
+                "so it must be attached to the predictions upstream; refusing "
+                "to silently report by a different column."
+            )
+        return report_by
     for col in STRATUM_COLUMN_ALIASES:
         if col in predictions.columns:
             return col
@@ -352,6 +378,7 @@ class Evaluator:
         run_name: str | None = None,
         random_baseline_distribution: dict | None = None,
         run_aucs: list[float] | None = None,
+        report_by: str | None = None,
     ) -> None:
         """Save results to output directory, organized by model name and run name.
 
@@ -470,7 +497,7 @@ class Evaluator:
                 metrics_dict["run_auc_std"] = float(np.std(arr))
 
         # Subgroup (stratum) metrics: compute, add to dict, and print summary
-        stratum_col = _stratum_column(results.predictions)
+        stratum_col = _stratum_column(results.predictions, report_by=report_by)
         if stratum_col is not None:
             validation_summary = compute_metrics_by_group(
                 results.predictions, stratum_col

@@ -54,6 +54,57 @@ def build_adapter_from_config(config: ConfigNode) -> DatasetAdapter | None:
     )
 
 
+#: Datasets that must NOT be driven through this repo's NIfTI-based imaging
+#: stages (``segmentation/batch_segmentation.py``, ``graph_extraction/
+#: run_skeleton_processing.py``), mapped to the route that supersedes them.
+#:
+#: These stages take an already-converted NIfTI phase series and segment it
+#: directly. For UChicago that route is obsolete: the supported pipeline starts
+#: from the paired raw HR/UFAST DICOM archives, segments the *high-resolution*
+#: phases, builds the skeleton from HR vessel probabilities, maps that static
+#: skeleton onto the motion-corrected UFAST grid, and computes kinetics from
+#: raw UFAST signal using physical timestamps. Segmenting the legacy UFAST
+#: NIfTIs instead silently produces lower-resolution vessels and index-based
+#: (not time-based) kinetics, so this fails closed rather than leaving two
+#: competing implementations that look interchangeable from the CLI.
+IMAGING_ROUTE_SUPERSEDED: dict[str, str] = {
+    "uchicago": (
+        "UChicago imaging no longer runs through this stage. Segmenting the "
+        "legacy ultrafast NIfTI phases has been superseded by the paired "
+        "raw-DICOM HR/UFAST pipeline, which segments the high-resolution "
+        "phases, builds the skeleton from HR vessel probabilities, maps it "
+        "onto the motion-corrected UFAST grid, and derives kinetics from raw "
+        "UFAST signal using physical timestamps.\n"
+        "Use instead:\n"
+        "  python -m preprocessing.pipeline prepare|infer|tc4d|map \\\n"
+        "      --exam-id <exam> --output-root <root>\n"
+        "See preprocessing/README.md for the full contract and the Slurm "
+        "wrappers in preprocessing/slurm/."
+    )
+}
+
+
+def build_imaging_adapter_from_config(config: ConfigNode) -> DatasetAdapter | None:
+    """Build an adapter for an *imaging* stage, refusing superseded datasets.
+
+    Same as :func:`build_adapter_from_config`, plus the restriction that a
+    dataset listed in :data:`IMAGING_ROUTE_SUPERSEDED` cannot be run through
+    this repo's NIfTI-based segmentation/skeletonization CLIs. Non-imaging
+    consumers (feature extraction, folds/grouping, QC ``report_by``) keep using
+    :func:`build_adapter_from_config` and are unaffected -- the adapter itself
+    is still fully supported for those, only the imaging *route* is retired.
+
+    Raises:
+        ValueError: If the selected dataset's imaging route has been superseded.
+    """
+    name = config.dataset.name
+    if name:
+        key = str(name).strip().lower()
+        if key in IMAGING_ROUTE_SUPERSEDED:
+            raise ValueError(IMAGING_ROUTE_SUPERSEDED[key])
+    return build_adapter_from_config(config)
+
+
 def resolve_split_policy(config: ConfigNode, adapter: DatasetAdapter) -> str:
     """Resolve the effective split policy: the run-config knob overrides the default.
 
