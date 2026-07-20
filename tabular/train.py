@@ -17,7 +17,7 @@ import pandas as pd
 
 from cohorts.base import DatasetAdapter
 from cohorts.factory import (
-    build_adapter_from_config,
+    require_adapter_from_config,
     resolve_folds,
     resolve_split_policy,
 )
@@ -511,29 +511,24 @@ def run_pipeline_from_config(
     """Run the full feature-build + evaluation pipeline for a loaded config."""
     write_config_snapshot(config=config, outdir=outdir, config_source=config_source)
 
-    # Build the dataset adapter from run config (Step 2 of the multi-dataset
-    # migration). Returns None for every config without a `dataset:` block, so
-    # existing runs are unchanged; a configured dataset routes cohort identity
-    # through the adapter. See cohorts/README.md.
-    adapter = build_adapter_from_config(config)
-    if adapter is not None:
-        logging.info("Using dataset adapter: %s", type(adapter).__name__)
+    # Build the dataset adapter from run config (see cohorts/README.md). Every
+    # run requires a `dataset:` block (multi-dataset migration Step 5).
+    adapter = require_adapter_from_config(config)
+    logging.info("Using dataset adapter: %s", type(adapter).__name__)
 
-    report_by = adapter.report_by if adapter is not None else None
-    group_col_from_adapter = False
+    report_by = adapter.report_by
     try:
         merged_data = prepare_data(config, outdir, adapter=adapter)
-        if adapter is not None:
-            merged_data = _apply_provided_folds(merged_data, config, adapter)
-            # Populate the grouping column from the adapter only when it will be
-            # used and isn't already a genuine feature; the flag mirrors that so
-            # prepare_evaluation_context drops the identity key but never a real
-            # pre-existing feature.
-            group_col_from_adapter = _adapter_populates_group_col(
-                merged_data, config, adapter
-            )
-            if group_col_from_adapter:
-                merged_data = _apply_group_keys(merged_data, config, adapter)
+        merged_data = _apply_provided_folds(merged_data, config, adapter)
+        # Populate the grouping column from the adapter only when it will be
+        # used and isn't already a genuine feature; the flag mirrors that so
+        # prepare_evaluation_context drops the identity key but never a real
+        # pre-existing feature.
+        group_col_from_adapter = _adapter_populates_group_col(
+            merged_data, config, adapter
+        )
+        if group_col_from_adapter:
+            merged_data = _apply_group_keys(merged_data, config, adapter)
         run_evaluation_pipeline(
             merged_data,
             config,

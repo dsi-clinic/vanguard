@@ -54,6 +54,33 @@ def build_adapter_from_config(config: ConfigNode) -> DatasetAdapter | None:
     )
 
 
+def require_adapter_from_config(config: ConfigNode) -> DatasetAdapter:
+    """Like :func:`build_adapter_from_config`, but require a configured dataset.
+
+    Step 5 of the multi-dataset migration retired the ``adapter=None`` fallback
+    from every pipeline stage that had adopted the adapter (Steps 2-4), so those
+    entry points now call this instead of tolerating an unset ``dataset:``
+    block. Kept separate from :func:`build_adapter_from_config` because that
+    function is still the right primitive wherever ``None`` is a meaningful
+    answer (e.g. a future stage not yet migrated).
+
+    Raises:
+        ValueError: If ``config.dataset.name`` is unset.
+    """
+    adapter = build_adapter_from_config(config)
+    if adapter is None:
+        raise ValueError(
+            "This run requires a dataset adapter (multi-dataset migration Step "
+            "5), but the config has no `dataset:` block. Add one, e.g.:\n"
+            "  dataset:\n"
+            "    name: mamamia   # or uchicago\n"
+            "    cohort: null    # mamamia: duke|ispy1|ispy2|nact, or null for all\n"
+            "    root: /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042\n"
+            "See cohorts/README.md."
+        )
+    return adapter
+
+
 #: Datasets that must NOT be driven through this repo's NIfTI-based imaging
 #: stages (``segmentation/batch_segmentation.py``, ``graph_extraction/
 #: run_skeleton_processing.py``), mapped to the route that supersedes them.
@@ -103,6 +130,32 @@ def build_imaging_adapter_from_config(config: ConfigNode) -> DatasetAdapter | No
         if key in IMAGING_ROUTE_SUPERSEDED:
             raise ValueError(IMAGING_ROUTE_SUPERSEDED[key])
     return build_adapter_from_config(config)
+
+
+def require_imaging_adapter_from_config(config: ConfigNode) -> DatasetAdapter:
+    """Like :func:`build_imaging_adapter_from_config`, but require a configured dataset.
+
+    Same Step 5 rationale as :func:`require_adapter_from_config`, for the
+    imaging-stage CLIs (``segmentation/batch_segmentation.py``,
+    ``graph_extraction/run_skeleton_processing.py``).
+
+    Raises:
+        ValueError: If the selected dataset's imaging route has been
+            superseded, or if ``config.dataset.name`` is unset.
+    """
+    adapter = build_imaging_adapter_from_config(config)
+    if adapter is None:
+        raise ValueError(
+            "This imaging run requires a dataset adapter (multi-dataset "
+            "migration Step 5), but no `--dataset-name`/`--dataset-root` was "
+            "given. 'uchicago' is not accepted here -- see "
+            "IMAGING_ROUTE_SUPERSEDED. For MAMA-MIA:\n"
+            "  --dataset-name mamamia --dataset-root "
+            "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042 "
+            "[--dataset-cohort duke|ispy1|ispy2|nact]\n"
+            "Omit --dataset-cohort for all four cohorts combined."
+        )
+    return adapter
 
 
 def resolve_split_policy(config: ConfigNode, adapter: DatasetAdapter) -> str:
