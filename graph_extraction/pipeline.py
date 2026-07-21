@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -23,6 +24,9 @@ from graph_extraction.masks import (
 from graph_extraction.tc4d import run_tc4d_from_priority
 from graph_extraction.vessel_mip import render_vessel_coverage_mip
 
+if TYPE_CHECKING:
+    from cohorts.base import DatasetAdapter
+
 
 def run_study_pipeline(
     *,
@@ -39,6 +43,7 @@ def run_study_pipeline(
     mip_dpi: int,
     radiologist_annotations_dir: Path,
     tumor_mask_dir: Path,
+    adapter: DatasetAdapter | None = None,
 ) -> dict[str, object]:
     """Run the full graph-extraction workflow for one study.
 
@@ -55,9 +60,20 @@ def run_study_pipeline(
     The returned dictionary is the study-level run summary written to
     `run_summary.json`. It records which stages ran, how long they took,
     whether quality checks passed, and where the main outputs were written.
+
+    ``adapter`` is optional (Step 4 of the multi-dataset migration, see
+    cohorts/README.md): when given, per-timepoint segmentation discovery routes
+    through ``adapter.load_segmented_timepoints()`` and the MIP-only flip spec
+    through ``adapter.viz_flip_spec``, instead of the hardcoded MAMA-MIA
+    function/constant. When ``None`` (every caller today), behavior is
+    byte-for-byte unchanged.
     """
     start = time.perf_counter()
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    viz_flip_spec = (
+        adapter.viz_flip_spec if adapter is not None else PROCESSING_VIZ_FLIP_SPEC
+    )
 
     skeleton_path = output_dir / f"{case_id}_skeleton_4d_exam_mask.npy"
     support_path = output_dir / f"{case_id}_skeleton_4d_exam_support_mask.npy"
@@ -102,10 +118,16 @@ def run_study_pipeline(
         skeleton_status = "loaded_existing"
     else:
         t0 = time.perf_counter()
-        discovered_files, discovered_timepoints = discover_study_timepoints(
-            input_dir=input_dir,
-            case_id=case_id,
-        )
+        if adapter is not None:
+            discovered_files, discovered_timepoints = adapter.load_segmented_timepoints(
+                input_dir=input_dir,
+                case_id=case_id,
+            )
+        else:
+            discovered_files, discovered_timepoints = discover_study_timepoints(
+                input_dir=input_dir,
+                case_id=case_id,
+            )
         priority_4d = load_time_series_from_files(
             discovered_files,
         )
@@ -186,10 +208,16 @@ def run_study_pipeline(
                 }
             else:
                 try:
-                    k_files, k_timepoints = discover_study_timepoints(
-                        input_dir=input_dir,
-                        case_id=case_id,
-                    )
+                    if adapter is not None:
+                        k_files, k_timepoints = adapter.load_segmented_timepoints(
+                            input_dir=input_dir,
+                            case_id=case_id,
+                        )
+                    else:
+                        k_files, k_timepoints = discover_study_timepoints(
+                            input_dir=input_dir,
+                            case_id=case_id,
+                        )
                     kinetic_priority_4d = load_time_series_from_files(k_files)
                     kinetic_timepoints = list(k_timepoints)
                     if discovered_files is None:
@@ -267,11 +295,11 @@ def run_study_pipeline(
                 )
                 radiologist_mask_viz = _apply_flip_spec(
                     radiologist_mask_model,
-                    PROCESSING_VIZ_FLIP_SPEC,
+                    viz_flip_spec,
                 )
                 breast_mask_viz = _apply_flip_spec(
                     breast_mask_model,
-                    PROCESSING_VIZ_FLIP_SPEC,
+                    viz_flip_spec,
                 )
 
             tumor_mask_viz: np.ndarray | None = None
@@ -289,14 +317,14 @@ def run_study_pipeline(
             if tumor_mask_model is not None:
                 tumor_mask_viz = _apply_flip_spec(
                     tumor_mask_model,
-                    PROCESSING_VIZ_FLIP_SPEC,
+                    viz_flip_spec,
                 )
 
             method_label = "tc4d"
             row_masks: list[tuple[str, np.ndarray]] = [
                 (
                     method_label,
-                    _apply_flip_spec(skeleton_mask, PROCESSING_VIZ_FLIP_SPEC),
+                    _apply_flip_spec(skeleton_mask, viz_flip_spec),
                 )
             ]
             if radiologist_mask_viz is not None:
@@ -322,7 +350,7 @@ def run_study_pipeline(
                 **coverage_mip_diag,
                 "radiologist_context": radiologist_context_for_summary,
                 "tumor_context": tumor_context_for_summary,
-                "visualization_flip_spec": PROCESSING_VIZ_FLIP_SPEC,
+                "visualization_flip_spec": viz_flip_spec,
             }
             mip_status = "computed"
         except Exception as exc:

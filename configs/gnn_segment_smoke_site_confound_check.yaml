@@ -1,0 +1,62 @@
+# Smoke-test config for the SITE_CLINICAL_COLUMNS confound-sensitivity check
+# (gnn.clinical.SITE_CLINICAL_COLUMNS), segment mode. These columns
+# (dataset/site/bilateral/field_strength/echo_time/repetition_time/
+# scanner_manufacturer/scanner_model) are the codebase's own established
+# site/scanner confound taxonomy -- opt-in only, never a default -- and this
+# config exists to actually exercise them, e.g. to check whether validation
+# performance is suspiciously boosted by site identity rather than biology.
+# 8-case cache, results NOT meaningful at this scale (n=8, one positive
+# case) -- this smoke config only verifies the build/train wiring; a real
+# confound-sensitivity read needs the full cohort, a separate, explicit
+# decision (see the GNN feature-extension plan).
+#
+# Build the matching cache first (see gnn/slurm/submit_gnn_build.slurm,
+# GRAPH_FEATURES/PATIENT_INFO_DIR env vars) -- this config expects
+# gnn_cache_segment_smoke_site_confound to already exist.
+
+experiment_setup:
+  name: "gnn_segment_smoke_site_confound_check"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 2
+  random_state: 0
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "random"
+  split_col: "fold"
+  batch_size: 4
+  epochs: 3
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "segment"
+  gnn_node_features:
+    - "seg_peak_time_mean"
+    - "seg_radius_mean"
+  gnn_graph_features:
+    - "age"
+    - "menopausal_status"
+    - "tumor_subtype"
+    - "dataset"
+    - "site"
+    - "bilateral"
+    - "field_strength"
+    - "echo_time"
+    - "repetition_time"
+    - "scanner_manufacturer"
+    - "scanner_model"
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_segment_smoke_site_confound"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: ["DUKE_001", "DUKE_002", "ISPY1_1001", "ISPY1_1002", "ISPY2_100899", "ISPY2_102011", "NACT_01", "NACT_02"]
+  gnn_dataset_include: null
+  gnn_patient_info_dir: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/patient_info_files"

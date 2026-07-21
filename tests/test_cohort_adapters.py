@@ -8,7 +8,7 @@ Deliberately not tested here: the exact set of methods each subclass
 overrides. That's an implementation-shape detail that will keep shifting as
 the design evolves; pinning it in a test would make routine changes fail for no
 functional reason. What's tested instead is the *behavior* those overrides are
-responsible for (identity parsing, preprocessing pass-through, provided folds,
+responsible for (identity parsing, preprocessing reorientation, provided folds,
 split-policy defaults, etc.).
 
 A few tests that need a small manifest use a synthetic CSV fixture; none touch
@@ -27,6 +27,7 @@ from cohorts import (
     MamaMiaDataset,
     UChicagoDataset,
     build_adapter_from_config,
+    build_imaging_adapter_from_config,
     resolve_folds,
     resolve_split_policy,
 )
@@ -117,18 +118,19 @@ def test_resample_is_noop_when_no_target_spacing() -> None:
     assert np.array_equal(adapter.resample(volume, (1.0, 1.0, 1.0)), volume)
 
 
-def test_uchicago_preprocess_is_passthrough() -> None:
-    """UChicago data ships preprocessed, so preprocess returns it unchanged.
+def test_uchicago_preprocess_is_a_pass_through() -> None:
+    """UChicago asserts no orientation convention and must not inherit MAMA-MIA's.
 
-    It must NOT apply the base MAMA-MIA orientation transform, which would be
-    wrong for the already-oriented ultrafast volumes.
+    The manifest ships already-preprocessed volumes, and there is no longer a
+    vessel-model consumer here at all (UChicago imaging runs through the paired
+    raw-DICOM pipeline). Falling through to the base MAMA-MIA swap+flip would
+    silently reorient already-oriented data.
     """
     adapter = UChicagoDataset(root=Path("/data/uchicago"))
     volume = np.arange(2 * 3 * 4).reshape(2, 3, 4)
-    result = adapter.preprocess(volume)
-    assert np.array_equal(result, volume)
+    assert np.array_equal(adapter.preprocess(volume), volume)
     base_transform = np.swapaxes(np.swapaxes(volume, 0, 2), 0, 1)[::-1]
-    assert not np.array_equal(result, base_transform)
+    assert not np.array_equal(adapter.preprocess(volume), base_transform)
 
 
 def test_base_load_folds_is_none() -> None:
@@ -162,6 +164,38 @@ def test_factory_builds_uchicago() -> None:
         {"name": "uchicago", "cohort": None, "root": "/data/uc", "split_policy": "auto"}
     )
     assert isinstance(build_adapter_from_config(config), UChicagoDataset)
+
+
+def test_imaging_factory_rejects_uchicago() -> None:
+    """UChicago's NIfTI imaging route is superseded by the raw-DICOM pipeline.
+
+    The adapter itself stays fully supported for non-imaging consumers; only the
+    imaging CLIs refuse it, and the error must name the replacement so a user
+    isn't left guessing.
+    """
+    config = _dataset_config(
+        {"name": "uchicago", "cohort": None, "root": "/data/uc", "split_policy": "auto"}
+    )
+    with pytest.raises(ValueError, match="preprocessing.pipeline"):
+        build_imaging_adapter_from_config(config)
+
+
+def test_imaging_factory_allows_mamamia_and_unset() -> None:
+    """The imaging guard is dataset-specific, not a blanket block."""
+    mamamia = _dataset_config(
+        {
+            "name": "mamamia",
+            "cohort": "ispy2",
+            "root": "/data/mm",
+            "split_policy": "auto",
+        }
+    )
+    assert isinstance(build_imaging_adapter_from_config(mamamia), MamaMiaDataset)
+
+    unset = _dataset_config(
+        {"name": None, "cohort": None, "root": "", "split_policy": "auto"}
+    )
+    assert build_imaging_adapter_from_config(unset) is None
 
 
 def test_factory_returns_none_when_unset() -> None:
@@ -367,3 +401,31 @@ def test_uchicago_load_folds_drops_exams_with_no_fold_assignment(
     folds = adapter.load_folds()
 
     assert list(folds["case_id"]) == ["e1"]
+
+
+def _write_manifest_with_duplicate_exam_id(tmp_path: Path) -> Path:
+    """Write a manifest where one exam_id appears in two rows."""
+    root = tmp_path / "uc"
+    root.mkdir()
+    csv_path = root / "dce2d_internal_ultrafast_manifest.csv"
+    csv_path.write_text(
+        "exam_id,dataset,patient_key,fold,pcr,phase_files\n"
+        'e1,simbiosys,p1,0,1.0,"[""/a/p0.nii.gz""]"\n'
+        'e1,uch_nac,p2,1,0.0,"[""/b/p0.nii.gz""]"\n'
+    )
+    return root
+
+
+def test_uchicago_duplicate_exam_id_raises_instead_of_silently_misrouting(
+    tmp_path: Path,
+) -> None:
+    """A duplicate exam_id must fail loudly, not hand back an ambiguous row.
+
+    Indexed row lookup (``_manifest_indexed``) returns a DataFrame instead of a
+    Series when the index has a duplicate label, which would otherwise break
+    every caller of ``_manifest_row`` in a confusing way (or silently pick
+    whichever row pandas happens to surface first).
+    """
+    adapter = UChicagoDataset(root=_write_manifest_with_duplicate_exam_id(tmp_path))
+    with pytest.raises(ValueError, match="duplicate exam_id"):
+        adapter.case_dataset_name("e1")

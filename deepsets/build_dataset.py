@@ -133,6 +133,13 @@ DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC = "geometry_topology_dynamic"
 DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE = "geometry_topology_plus_curvature"
 DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS = "geometry_topology_no_shells"
 DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC = "curvature_plus_dynamic"
+# Union of every other regime's columns (geometry_topology + curvature_rad +
+# the 11 dynamic kinetic columns, 28 total, no overlap between the three
+# groups) -- lets LOCO build the on-disk cache once with every candidate
+# point feature, then select a subset at load time instead of rebuilding per
+# left-out covariate. See evaluation/loco_deepsets.py and
+# docs/loco_feature_importance.md.
+DEEPSETS_FEATURE_LOCO_SUPERSET = "loco_superset"
 VALID_DEEPSETS_POINT_FEATURE_SETS: frozenset[str] = frozenset(
     {
         DEEPSETS_FEATURE_BASELINE,
@@ -141,6 +148,18 @@ VALID_DEEPSETS_POINT_FEATURE_SETS: frozenset[str] = frozenset(
         DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_PLUS_CURVATURE,
         DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_NO_SHELLS,
         DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
+        DEEPSETS_FEATURE_LOCO_SUPERSET,
+    }
+)
+# Regimes whose columns require the dynamic-kinetics computation (the one
+# genuinely expensive/gated per-point feature -- see _build_case_set), and
+# therefore need the raw 4D vessel signal loaded. Centralized so the three
+# call sites that gate on this can't drift out of sync.
+_DYNAMIC_FEATURE_REGIMES: frozenset[str] = frozenset(
+    {
+        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
+        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
+        DEEPSETS_FEATURE_LOCO_SUPERSET,
     }
 )
 
@@ -218,6 +237,24 @@ def deepsets_point_feature_names(regime: str) -> list[str]:
             "kinetic_signal_ok",
             "reference_ok",
         ]
+    if regime == DEEPSETS_FEATURE_LOCO_SUPERSET:
+        return list(
+            geom_topo
+            + [
+                "curvature_rad",
+                "arrival_index_norm",
+                "has_arrival",
+                "peak_index_norm",
+                "peak_enhancement",
+                "washin_slope",
+                "washout_slope",
+                "positive_enhancement_auc",
+                "peak_rel_reference",
+                "auc_rel_reference",
+                "kinetic_signal_ok",
+                "reference_ok",
+            ]
+        )
     raise ValueError(
         f"Unknown deepsets_point_feature_set {regime!r}; expected one of "
         f"{sorted(VALID_DEEPSETS_POINT_FEATURE_SETS)}"
@@ -678,10 +715,7 @@ def _build_case_set(
 
     kinetic_tp = int(signal_4d.shape[0]) if signal_4d is not None else 0
     dynamic_batch: np.ndarray | None = None
-    if point_feature_set in {
-        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
-        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
-    }:
+    if point_feature_set in _DYNAMIC_FEATURE_REGIMES:
         dynamic_batch = _dynamic_features_for_coords_batch(
             signal_4d=signal_4d,
             coords_xyz=coords_xyz,
@@ -760,7 +794,9 @@ def _build_case_set(
             dyn = tuple(float(v) for v in dynamic_batch[coord_index])
         if point_feature_set == DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC:
             return [float(curvature_rad)] + list(dyn)
-        return row + list(dyn)
+        if point_feature_set == DEEPSETS_FEATURE_LOCO_SUPERSET:
+            return row + [float(curvature_rad)] + list(dyn)
+        return row + list(dyn)  # DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC
 
     candidate_rows: list[tuple[float, list[float]]] = []
     feature_rows: list[list[float]] = []
@@ -1263,10 +1299,7 @@ def main() -> None:
                                 sup_exc,
                             )
                     signal_4d = None
-                    if point_feature_set in {
-                        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
-                        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
-                    }:
+                    if point_feature_set in _DYNAMIC_FEATURE_REGIMES:
                         signal_4d = _try_load_vessel_4d(
                             vessel_root=vessel_root_opt,
                             case_id=case_id,
@@ -1304,11 +1337,7 @@ def main() -> None:
                 if (
                     cached_case is not None
                     and signal_4d is None
-                    and point_feature_set
-                    in {
-                        DEEPSETS_FEATURE_GEOMETRY_TOPOLOGY_DYNAMIC,
-                        DEEPSETS_FEATURE_CURVATURE_PLUS_DYNAMIC,
-                    }
+                    and point_feature_set in _DYNAMIC_FEATURE_REGIMES
                 ):
                     sk_shape = tuple(int(v) for v in skeleton_mask.shape)
                     signal_4d = _try_load_vessel_4d(

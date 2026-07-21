@@ -44,14 +44,32 @@ from torch_geometric.utils import from_networkx
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from clinical_features import load_clinical_from_excel, load_clinical_from_patient_info
 from config import DEFAULT_CONFIG
+from gnn.breast_split import single_breast_skeleton_path
+from gnn.clinical import ALL_CLINICAL_COLUMNS, normalize_clinical_frame
+from gnn.graph_derived import GRAPH_DERIVED_COLUMNS, build_graph_derived_feature_matrix
 from gnn.graph_qc_plots import GRAPH_QC_PLOTS_DIRNAME, write_build_time_plots
-from gnn.raw_dce import discover_raw_dce_paths, load_raw_dce_series
-from graph_extraction.constants import NDIM_3D
-from graph_extraction.feature_stats import (
-    _arrival_index_from_enhancement,
-    mask_to_edges_bitmask,
+from gnn.junction_graph import (
+    JUNCTION_EDGE_FEATURE_ATTR,
+    JUNCTION_NODE_FEATURE_ATTR,
+    build_junction_graph,
 )
+from gnn.kinetics import (
+    node_kinetic_features as _node_kinetic_features,
+)
+from gnn.kinetics import (
+    time_axis_from_study_timepoints as _time_axis_from_study_timepoints,
+)
+from gnn.morphometry import MORPHOMETRY_COLUMNS, extract_morphometry_frame
+from gnn.raw_dce import (
+    discover_raw_dce_paths,
+    load_raw_dce_series,
+    load_raw_dce_times,
+)
+from gnn.segment_graph import SEGMENT_FEATURE_ATTR, build_segment_line_graph
+from graph_extraction.constants import NDIM_3D
+from graph_extraction.feature_stats import mask_to_edges_bitmask
 from graph_extraction.skeleton_to_graph_primitives import (
     edges_to_segments,
     obtain_radius_map,
@@ -73,6 +91,13 @@ _DROPPED_MANIFEST_NAME = "dropped_cases.json"
 _CACHE_MANIFEST_NAME = "cache_manifest.json"
 _FEATURE_SUMMARY_DIRNAME = "feature_summary"
 _GRAPH_QC_NAME = "graph_qc.csv"
+# Raw (un-imputed, un-encoded) graph-level feature inputs, one row per case,
+# written when ``graph_features`` are requested. The clinical imputer/one-hot
+# encoder and morphometry imputer are fit per cross-validation fold on the
+# training split from this file (see ``gnn.train``), never once over the whole
+# cohort at build time -- that whole-cohort fit would leak the validation
+# distribution into the training features. See ``gnn.clinical`` / ``gnn.morphometry``.
+_GRAPH_FEATURE_INPUTS_NAME = "graph_feature_inputs.csv"
 _HIST_BINS = 50
 
 # The only node-feature source implemented today (see module docstring): raw
@@ -80,7 +105,7 @@ _HIST_BINS = 50
 # every cache_manifest.json so a manifest from before this migration -- or a
 # hypothetical future vessel_segmentation-sourced build -- is never silently
 # treated as compatible with the current code.
-_FEATURE_SOURCE = "raw_dce"
+_FEATURE_SOURCE = "raw_dce_protocol_baseline_physical_time_all_modes_v4"
 
 # Maps a requested node-feature name to the per-node ``Data`` attribute used to
 # populate the corresponding column of ``data.x``.
@@ -97,11 +122,103 @@ _FEATURE_ATTR: dict[str, str] = {
     "peak_enhancement": "peak_enhancement",
     "time_to_enhancement": "time_to_enhancement_norm",
     "washin_slope": "washin_slope",
+    "washout_slope": "washout_slope",
     "auc_positive": "auc_positive",
     "radius": "radius",
     "pcr_dummy": "pcr_dummy",
 }
 _DEFAULT_NODE_FEATURES: tuple[str, ...] = ("peak_time", "radius")
+
+# "Time to enhancement" is NaN for any voxel / segment / edge with no detected
+# arrival (peak enhancement <= 0, i.e. non-enhancing tissue). A raw NaN cannot
+# enter the model -- it propagates to a NaN loss -- so at build time
+# ``_finalize_data`` replaces these NaNs with a fixed out-of-range sentinel in
+# the normalized [0, 1] TTE space. ``-1.0`` reads as a distinct, learnable "no
+# detectable arrival" value rather than being imputed to a plausible arrival
+# time, and is applied identically to voxel nodes, segment nodes, and junction
+# nodes/edges so the three representations agree. Every no-arrival cell is
+# counted per graph (``tte_no_arrival_count`` in ``graph_qc.csv``) so the fill
+# stays audited rather than silent. See ``AUDITING_RESULTS.md`` and
+# ``gnn/DESIGN_segment_graph.md``.
+TTE_NO_ARRIVAL_SENTINEL: float = -1.0
+# The feature names (across all three modes) whose column may legitimately be
+# NaN and therefore gets the sentinel. Any NaN outside these columns is a bug we
+# surface loudly rather than fill.
+_TTE_FEATURE_NAMES: frozenset[str] = frozenset(
+    {
+        "time_to_enhancement",
+        "seg_time_to_enhancement_mean",
+        "seg_time_to_enhancement_std",
+    }
+)
+
+# Junction-mode bifurcation-angle features (``gnn.junction_graph``) are NaN for
+# a degree-1 junction/endpoint node: it has no neighbor pair to measure an
+# opening angle from, a real "not a bifurcation" case, not a bug. This mirrors
+# the TTE no-arrival policy above -- NaN is legitimate, sentinel-filled rather
+# than imputed, and audited -- but is tracked as its own sentinel/count since
+# it is an unrelated missingness mechanism (unrelated feature, unrelated
+# cause), not folded into ``tte_no_arrival_count``.
+NO_BIFURCATION_SENTINEL: float = -1.0
+_BIFURCATION_FEATURE_NAMES: frozenset[str] = frozenset(
+    {"bifurcation_angle_mean", "bifurcation_angle_min", "bifurcation_angle_max"}
+)
+
+# Node-granularity modes. ``"voxel"`` keeps one node per skeleton voxel;
+# ``"segment"`` contracts each vessel segment to a single node (line graph, see
+# ``gnn.segment_graph``); ``"junction"`` keeps junction/endpoint voxels as nodes
+# and each segment as an edge carrying the segment summary as ``edge_attr``
+# (segment-as-edge, Option A, see ``gnn.junction_graph``). See
+# ``gnn/DESIGN_segment_graph.md``.
+_VOXEL_MODE = "voxel"
+_SEGMENT_MODE = "segment"
+_JUNCTION_MODE = "junction"
+_IMPLEMENTED_NODE_MODES = (_VOXEL_MODE, _SEGMENT_MODE, _JUNCTION_MODE)
+
+# Default segment-mode features mirror the voxel default (one kinetic + one
+# geometry feature), expressed in the segment vocabulary.
+_DEFAULT_SEGMENT_NODE_FEATURES: tuple[str, ...] = (
+    "seg_peak_time_mean",
+    "seg_radius_mean",
+)
+# Junction mode splits features across nodes (per-voxel signal at the junction
+# + degree) and edges (the segment summary -- same vocabulary segment mode uses
+# for its nodes). The edge default mirrors a broad geometry+kinetics set;
+# ``seg_time_to_enhancement_*`` is deliberately left out of the default because
+# it is NaN for segments with no detected arrival (opt in explicitly if wanted).
+_DEFAULT_JUNCTION_NODE_FEATURES: tuple[str, ...] = ("peak_time", "radius", "degree")
+_DEFAULT_JUNCTION_EDGE_FEATURES: tuple[str, ...] = (
+    "seg_length",
+    "seg_tortuosity",
+    "seg_radius_mean",
+    "seg_peak_time_mean",
+    "seg_peak_enhancement_mean",
+    "seg_washin_slope_mean",
+    "seg_auc_positive_mean",
+)
+
+# Per-mode NODE feature vocabulary (name -> ``Data`` attribute backing that
+# column of ``data.x``) and default node feature set. Single source of truth so
+# ``__init__`` validation, defaults, and ``_finalize_data``'s column stacking
+# stay consistent.
+_MODE_FEATURE_ATTR: dict[str, dict[str, str]] = {
+    _VOXEL_MODE: _FEATURE_ATTR,
+    _SEGMENT_MODE: SEGMENT_FEATURE_ATTR,
+    _JUNCTION_MODE: JUNCTION_NODE_FEATURE_ATTR,
+}
+_MODE_DEFAULT_FEATURES: dict[str, tuple[str, ...]] = {
+    _VOXEL_MODE: _DEFAULT_NODE_FEATURES,
+    _SEGMENT_MODE: _DEFAULT_SEGMENT_NODE_FEATURES,
+    _JUNCTION_MODE: _DEFAULT_JUNCTION_NODE_FEATURES,
+}
+# EDGE feature vocabulary + default. Only junction mode has edge features; the
+# other modes carry none (empty), so ``data.edge_attr`` is never set for them.
+_MODE_EDGE_FEATURE_ATTR: dict[str, dict[str, str]] = {
+    _JUNCTION_MODE: JUNCTION_EDGE_FEATURE_ATTR,
+}
+_MODE_DEFAULT_EDGE_FEATURES: dict[str, tuple[str, ...]] = {
+    _JUNCTION_MODE: _DEFAULT_JUNCTION_EDGE_FEATURES,
+}
 
 
 class _StageTimings:
@@ -159,8 +276,8 @@ def _git_commit() -> str:
     return result.stdout.strip()
 
 
-def _load_study_timepoints(case_id: str, study_dir: Path) -> list[int]:
-    """Return the timepoint indices from ``run_summary.json["study_timepoints"]``.
+def _load_study_metadata(case_id: str, study_dir: Path) -> tuple[list[int], int, bool]:
+    """Return timepoints and the explicit kinetic baseline contract.
 
     These are the ``NNNN`` indices used to name both the vessel-segmentation
     NPZ files and the raw DCE NIfTI phases (``<case_id>_NNNN.nii.gz``), so they
@@ -181,57 +298,44 @@ def _load_study_timepoints(case_id: str, study_dir: Path) -> list[int]:
         raise KeyError(
             f"case={case_id}: run_summary.json missing or empty 'study_timepoints' key"
         )
-    return [int(t) for t in study_timepoints]
+    timepoints = [int(t) for t in study_timepoints]
+    alignment_status = summary.get("alignment_qc_status")
+    if alignment_status not in (None, "pass", "manually_approved"):
+        raise ValueError(
+            f"case={case_id}: HR-to-UFAST alignment requires review before "
+            "kinetic features can be sampled"
+        )
+    policy = summary.get("kinetic_feature_policy")
+    if policy is None:
+        # Legacy cohorts don't carry a protocol baseline contract. Preserve their
+        # established single-frame, absolute-enhancement behavior explicitly.
+        return timepoints, 1, False
+    if alignment_status not in ("pass", "manually_approved"):
+        raise ValueError(
+            f"case={case_id}: Vanguard kinetic metadata requires explicit "
+            "alignment approval before kinetic features can be sampled"
+        )
+    baseline_frame_count = int(policy["baseline_frame_count"])
+    if not 1 <= baseline_frame_count < len(timepoints):
+        raise ValueError(
+            f"case={case_id}: baseline_frame_count must be in [1, n_timepoints)"
+        )
+    enhancement = str(policy.get("enhancement", ""))
+    if enhancement != "relative_signal_change":
+        raise ValueError(
+            f"case={case_id}: unsupported kinetic enhancement policy {enhancement!r}"
+        )
+    if policy.get("time_axis") != "physical_seconds":
+        raise ValueError(
+            f"case={case_id}: Vanguard kinetic features require physical seconds"
+        )
+    return timepoints, baseline_frame_count, True
 
 
-def _time_axis_from_study_timepoints(study_timepoints: list[int]) -> np.ndarray:
-    """Build a strictly increasing time axis, mirroring ``features.kinematic``.
-
-    Falls back to plain timepoint indices (``0..T-1``) if the recorded
-    timepoints are not finite and strictly increasing.
-    """
-    time_axis = np.asarray(study_timepoints, dtype=float)
-    if not np.all(np.isfinite(time_axis)) or np.any(np.diff(time_axis) <= 0.0):
-        return np.arange(len(study_timepoints), dtype=float)
-    return time_axis
-
-
-def _node_kinetic_features(
-    curve: np.ndarray, time_axis: np.ndarray
-) -> dict[str, object]:
-    """Derive enhancement-curve features for one node's raw DCE signal.
-
-    Mirrors the per-segment convention in
-    ``features.kinematic.compute_tumor_kinematic_feature_payload``: baseline is
-    the timepoint-0 value (no per-timepoint normalization, which would destroy
-    the kinetic meaning of the curve), arrival is estimated with
-    ``graph_extraction.feature_stats._arrival_index_from_enhancement``, and
-    washin/AUC use the same formulas.
-
-    ``tte_idx`` is ``None`` when the node shows no meaningful enhancement
-    (peak <= 0) -- a real "no signal" voxel, not a bug -- and the caller is
-    responsible for choosing a sentinel for the tensor-facing feature.
-    """
-    baseline = float(curve[0])
-    enh = np.asarray(curve, dtype=float) - baseline
-    peak_idx = int(np.argmax(enh))
-    peak_enhancement = float(enh[peak_idx])
-    tte_idx = _arrival_index_from_enhancement(enh)
-    start_idx = 0 if tte_idx is None else int(tte_idx)
-    washin_den = float(time_axis[peak_idx] - time_axis[start_idx])
-    washin_slope = (
-        float((enh[peak_idx] - enh[start_idx]) / washin_den)
-        if washin_den > 0.0
-        else 0.0
-    )
-    auc_positive = float(np.trapz(np.maximum(enh, 0.0), x=time_axis))
-    return {
-        "peak_idx": peak_idx,
-        "peak_enhancement": peak_enhancement,
-        "tte_idx": tte_idx,
-        "washin_slope": washin_slope,
-        "auc_positive": auc_positive,
-    }
+def _load_study_timepoints(case_id: str, study_dir: Path) -> list[int]:
+    """Return only the timepoint indices for compatibility with existing callers."""
+    timepoints, _, _ = _load_study_metadata(case_id, study_dir)
+    return timepoints
 
 
 def _attach_node_features(
@@ -239,64 +343,167 @@ def _attach_node_features(
     radius_map: dict[tuple[int, int, int], float],
     dce_4d: np.ndarray,
     time_axis: np.ndarray,
+    baseline_frame_count: int,
+    relative_enhancement: bool,
     label: int,
     node_features: tuple[str, ...],
 ) -> None:
     """Set ``radius`` and the DCE-derived kinetic features on every node.
 
     ``time_to_enhancement_norm`` is ``NaN`` for nodes with no detected arrival
-    (no meaningful enhancement) -- this is caught and reported per-feature by
-    ``_write_feature_summary``'s NaN/inf audit rather than silently defaulted.
+    (no meaningful enhancement). That NaN is later replaced with
+    ``TTE_NO_ARRIVAL_SENTINEL`` when the feature is stacked into ``data.x`` /
+    ``data.edge_attr`` (see ``_sentinel_fill_tte`` / ``_finalize_data``), so a
+    raw NaN never reaches the model; the per-graph no-arrival count is audited
+    via ``graph_qc.csv``'s ``tte_no_arrival_count``.
 
     ``pcr_dummy`` (the label broadcast onto every node) is only computed and
     attached when it is present in ``node_features`` -- it is a leakage
     canary for pipeline sanity checks, not a default feature, so it must stay
     opt-in rather than something every graph carries.
     """
-    num_timepoints = int(dce_4d.shape[0])
-    denom = max(num_timepoints - 1, _SINGLE_TIMEPOINT)
+    duration_seconds = float(time_axis[-1] - time_axis[0])
+    if not duration_seconds > 0.0:
+        duration_seconds = float(_SINGLE_TIMEPOINT)
     include_pcr_dummy = "pcr_dummy" in node_features
     for node in graph.nodes():
         x, y, z = int(node[0]), int(node[1]), int(node[2])
         curve = dce_4d[:, z, y, x]
-        kinetic = _node_kinetic_features(curve, time_axis)
+        kinetic = _node_kinetic_features(
+            curve,
+            time_axis,
+            baseline_frame_count=baseline_frame_count,
+            relative_enhancement=relative_enhancement,
+        )
         tte_idx = kinetic["tte_idx"]
 
         attrs = graph.nodes[node]
         attrs["radius"] = float(radius_map[node])
+        attrs["baseline_signal"] = float(kinetic["baseline_signal"])
         attrs["peak_time"] = int(kinetic["peak_idx"])
-        attrs["peak_time_norm"] = float(kinetic["peak_idx"]) / float(denom)
+        attrs["peak_time_seconds"] = float(kinetic["peak_time_seconds"])
+        attrs["peak_time_norm"] = float(kinetic["peak_time_seconds"]) / duration_seconds
         attrs["peak_enhancement"] = float(kinetic["peak_enhancement"])
         attrs["time_to_enhancement"] = -1 if tte_idx is None else int(tte_idx)
+        attrs["time_to_enhancement_seconds"] = (
+            float("nan") if tte_idx is None else float(kinetic["tte_seconds"])
+        )
         attrs["time_to_enhancement_norm"] = (
-            float("nan") if tte_idx is None else float(tte_idx) / float(denom)
+            float("nan")
+            if tte_idx is None
+            else float(kinetic["tte_seconds"]) / duration_seconds
         )
         attrs["washin_slope"] = float(kinetic["washin_slope"])
+        attrs["washout_slope"] = float(kinetic["washout_slope"])
         attrs["auc_positive"] = float(kinetic["auc_positive"])
         if include_pcr_dummy:
             attrs["pcr_dummy"] = float(label)
 
 
+def _sentinel_fill(
+    matrix: torch.Tensor,
+    feature_names: tuple[str, ...],
+    legitimate_nan_names: frozenset[str],
+    sentinel: float,
+) -> int:
+    """Replace NaN with ``sentinel`` in columns named in ``legitimate_nan_names``.
+
+    In place; returns the number of cells filled. Called once per registered
+    "legitimate NaN" category (TTE no-arrival, junction no-bifurcation) so each
+    keeps its own sentinel value and audit count rather than being merged into
+    one generic missingness bucket.
+    """
+    filled = 0
+    for col, name in enumerate(feature_names):
+        if name in legitimate_nan_names:
+            column = matrix[:, col]
+            mask = torch.isnan(column)
+            filled += int(mask.sum().item())
+            column[mask] = sentinel
+    return filled
+
+
+def _raise_on_unexpected_nan(matrix: torch.Tensor) -> None:
+    """Fail loudly if a NaN survives every registered sentinel fill (fail-fast).
+
+    Only ``_TTE_FEATURE_NAMES`` and ``_BIFURCATION_FEATURE_NAMES`` columns may
+    legitimately be NaN; a NaN anywhere else is a bug, not a "no signal" case.
+    """
+    if bool(torch.isnan(matrix).any()):
+        raise ValueError(
+            "Unexpected NaN in a feature column after sentinel fill; only "
+            "registered no-arrival (TTE) or no-bifurcation columns may be NaN."
+        )
+
+
 def _finalize_data(
     data: Data,
     case_id: str,
-    study_dir: Path,
     label: int,
     num_timepoints: int,
-    centerline_root: Path,
     node_features: tuple[str, ...],
     num_connected_components: int,
+    feature_attr: dict[str, str],
+    edge_features: tuple[str, ...] = (),
+    edge_feature_attr: dict[str, str] | None = None,
 ) -> Data:
-    """Assemble ``data.x``, the label, and provenance metadata."""
-    columns = [data[_FEATURE_ATTR[name]] for name in node_features]
+    """Assemble ``data.x`` (+ ``data.edge_attr``), the label, and metadata.
+
+    ``feature_attr`` maps each requested node-feature name to the ``Data``
+    attribute backing its ``data.x`` column -- ``_FEATURE_ATTR`` (voxel),
+    ``SEGMENT_FEATURE_ATTR`` (segment), or ``JUNCTION_NODE_FEATURE_ATTR``
+    (junction) -- so the node stacking is identical across modes.
+
+    ``edge_features`` is non-empty only in junction mode (segment-as-edge):
+    those columns are stacked into ``data.edge_attr`` from ``edge_feature_attr``
+    (``JUNCTION_EDGE_FEATURE_ATTR``), aligned with ``data.edge_index``. Voxel and
+    segment modes pass no edge features, so ``data.edge_attr`` is never set.
+
+    Any no-arrival NaN in a time-to-enhancement column of ``data.x`` /
+    ``data.edge_attr`` is replaced with ``TTE_NO_ARRIVAL_SENTINEL``, and any
+    no-bifurcation NaN in a junction bifurcation-angle column is replaced with
+    ``NO_BIFURCATION_SENTINEL`` (see those constants); the counts of filled
+    cells are recorded on ``data.tte_no_arrival_count`` /
+    ``data.no_bifurcation_count`` for the QC audit, and any NaN outside those
+    two registered categories raises.
+    """
+    columns = [data[feature_attr[name]] for name in node_features]
     data.x = torch.stack([column.float() for column in columns], dim=1)
+    no_arrival = _sentinel_fill(
+        data.x, node_features, _TTE_FEATURE_NAMES, TTE_NO_ARRIVAL_SENTINEL
+    )
+    no_bifurcation = _sentinel_fill(
+        data.x, node_features, _BIFURCATION_FEATURE_NAMES, NO_BIFURCATION_SENTINEL
+    )
+    if edge_features:
+        edge_columns = [data[edge_feature_attr[name]] for name in edge_features]
+        data.edge_attr = torch.stack([col.float() for col in edge_columns], dim=1)
+        no_arrival += _sentinel_fill(
+            data.edge_attr, edge_features, _TTE_FEATURE_NAMES, TTE_NO_ARRIVAL_SENTINEL
+        )
+        no_bifurcation += _sentinel_fill(
+            data.edge_attr,
+            edge_features,
+            _BIFURCATION_FEATURE_NAMES,
+            NO_BIFURCATION_SENTINEL,
+        )
+    _raise_on_unexpected_nan(data.x)
+    if edge_features:
+        _raise_on_unexpected_nan(data.edge_attr)
+    data.tte_no_arrival_count = no_arrival
+    data.no_bifurcation_count = no_bifurcation
     data.y = torch.tensor([int(label)], dtype=torch.long)
     data.case_id = case_id
     data.num_timepoints = num_timepoints
     data.num_connected_components = num_connected_components
 
-    rel_parts = study_dir.relative_to(centerline_root).parts
-    dataset = rel_parts[0] if rel_parts else "unknown"
+    # Case-id prefix (e.g. "DUKE_001" -> "DUKE"), not directory structure --
+    # the same convention used elsewhere (cohorts/base.py::case_dataset_name,
+    # evaluation/selection.py). Robust to a case's skeleton being substituted
+    # from a different root entirely (breast_split_mode="single" points
+    # mask_path at a workspace directory that isn't under centerline_root, so
+    # a directory-relative derivation would raise there).
+    dataset = case_id.split("_")[0]
     data.dataset = dataset
     data.site = dataset
     return data
@@ -307,16 +514,27 @@ def _build_case(
     mask_path: Path,
     label: int,
     *,
-    centerline_root: Path,
     dce_root: Path,
     node_features: tuple[str, ...],
+    node_mode: str,
+    edge_features: tuple[str, ...] = (),
 ) -> tuple[Data, dict[str, list[float]]]:
-    """Build one labeled :class:`Data` graph for ``case_id``.
+    """Build one labeled :class:`Data` graph for ``case_id`` in ``node_mode``.
 
     Standalone (no dataset instance state) so it can run, unmodified, inside a
     worker process when the build is parallelized across cases -- each case's
     graph depends only on its own files, so there is no cross-case state to
     share.
+
+    ``node_mode="voxel"`` keeps one node per skeleton voxel with per-voxel
+    features; ``node_mode="segment"`` contracts each vessel segment to a single
+    node via ``gnn.segment_graph.build_segment_line_graph`` (Option B, line
+    graph); ``node_mode="junction"`` keeps junction/endpoint voxels as nodes and
+    each segment as an edge carrying the segment summary as ``edge_attr`` via
+    ``gnn.junction_graph.build_junction_graph`` (Option A). Voxel and segment
+    mode go through ``from_networkx``; junction mode builds its ``Data``
+    directly (it must emit edge features too). All three converge on
+    ``_finalize_data``. ``edge_features`` is non-empty only for junction mode.
     """
     stage_samples: dict[str, list[float]] = {}
     study_dir = mask_path.parent
@@ -342,46 +560,91 @@ def _build_case(
         segments = edges_to_segments(mask_to_edges_bitmask(skeleton))
         if segments.size == 0:
             raise ValueError(f"Skeleton for {case_id} has zero segments")
-        graph = segments_to_graph(segments)
-    if graph.number_of_nodes() == 0:
+        voxel_graph = segments_to_graph(segments)
+    if voxel_graph.number_of_nodes() == 0:
         raise ValueError(f"Graph for {case_id} has zero nodes")
 
-    # Must be counted on the nx.Graph itself -- from_networkx() below discards
-    # it, and edge_index on the resulting Data is directed-both-ways, which is
-    # not a valid input to nx.connected_components without reconstruction.
-    num_connected_components = nx.number_connected_components(graph)
+    radius_map = obtain_radius_map(support, voxel_graph)
 
-    radius_map = obtain_radius_map(support, graph)
-
-    study_timepoints = _load_study_timepoints(case_id, study_dir)
+    (
+        study_timepoints,
+        baseline_frame_count,
+        relative_enhancement,
+    ) = _load_study_metadata(case_id, study_dir)
     with _stage_timer(stage_samples, "timeseries_load"):
         dce_paths = discover_raw_dce_paths(dce_root, case_id, study_timepoints)
         dce_4d = load_raw_dce_series(dce_paths, expected_shape_zyx=support.shape)
+        physical_times_seconds = load_raw_dce_times(dce_root, case_id, study_timepoints)
     if dce_4d.shape[1:] != support.shape:
         raise ValueError(
             f"Aligned raw DCE shape for {case_id} {dce_4d.shape[1:]} does not "
             f"match support mask shape {support.shape}"
         )
     num_timepoints = int(dce_4d.shape[0])
-    time_axis = _time_axis_from_study_timepoints(study_timepoints)
+    time_axis = _time_axis_from_study_timepoints(
+        study_timepoints,
+        physical_times_seconds,
+        require_physical_seconds=relative_enhancement,
+    )
 
-    with _stage_timer(stage_samples, "peak_time"):
-        _attach_node_features(
-            graph, radius_map, dce_4d, time_axis, label, node_features
-        )
+    if node_mode == _JUNCTION_MODE:
+        # Junction mode builds Data directly (node + edge features) and records
+        # its own connected-component count on the junction graph.
+        with _stage_timer(stage_samples, "junction_build"):
+            data = build_junction_graph(
+                voxel_graph,
+                radius_map,
+                dce_4d,
+                time_axis,
+                baseline_frame_count=baseline_frame_count,
+                relative_enhancement=relative_enhancement,
+            )
+        num_connected_components = int(data.num_connected_components)
+    else:
+        if node_mode == _SEGMENT_MODE:
+            with _stage_timer(stage_samples, "segment_build"):
+                graph = build_segment_line_graph(
+                    voxel_graph,
+                    radius_map,
+                    dce_4d,
+                    time_axis,
+                    baseline_frame_count=baseline_frame_count,
+                    relative_enhancement=relative_enhancement,
+                )
+        else:
+            with _stage_timer(stage_samples, "peak_time"):
+                _attach_node_features(
+                    voxel_graph,
+                    radius_map,
+                    dce_4d,
+                    time_axis,
+                    baseline_frame_count,
+                    relative_enhancement,
+                    label,
+                    node_features,
+                )
+            graph = voxel_graph
 
-    with _stage_timer(stage_samples, "from_networkx"):
-        data = from_networkx(graph)
+        # Must be counted on the (modeled) nx.Graph itself -- from_networkx()
+        # below discards it, and edge_index on the resulting Data is
+        # directed-both-ways, which is not a valid input to
+        # nx.connected_components without reconstruction. Counted on ``graph``
+        # (voxel or line graph) so it stays consistent with the
+        # num_nodes/num_edges QC reports for the same object.
+        num_connected_components = nx.number_connected_components(graph)
+        with _stage_timer(stage_samples, "from_networkx"):
+            data = from_networkx(graph)
 
     data = _finalize_data(
         data,
         case_id,
-        study_dir,
         label,
         num_timepoints,
-        centerline_root,
         node_features,
         num_connected_components,
+        feature_attr=_MODE_FEATURE_ATTR[node_mode],
+        edge_features=edge_features,
+        edge_feature_attr=_MODE_EDGE_FEATURE_ATTR.get(node_mode),
     )
     return data, stage_samples
 
@@ -430,20 +693,48 @@ class VanguardCenterlineDataset(InMemoryDataset):
         cases: Optional whitelist of case IDs to include.
         no_cache: Skip reading and writing the on-disk cache; always rebuild from
             source. Useful during development to avoid stale-cache surprises.
-        node_mode: Node granularity. Only ``"voxel"`` is implemented; ``"segment"``
-            raises :class:`NotImplementedError` as an explicit extension point.
-        node_features: Node-feature names, in ``data.x`` column order. Supported:
-            ``"peak_time"`` (normalized time-to-peak enhancement),
-            ``"peak_enhancement"``, ``"time_to_enhancement"`` (normalized arrival
-            time; ``NaN`` for nodes with no detected enhancement), ``"washin_slope"``,
-            ``"auc_positive"``, ``"radius"``, and ``"pcr_dummy"`` (the graph's ``pcr``
-            label broadcast onto every node -- a leakage-canary feature for pipeline
-            sanity checks only; opt-in, never included unless named explicitly here).
-            The kinetic features are all sampled from the raw DCE enhancement curve
-            (``curve = dce_4d[:, z, y, x]``, ``enhancement = curve - curve[0]``), using
-            the same conventions as ``features/kinematic.py`` -- see
-            ``_node_kinetic_features``.
-        id_column: Case-ID column in the labels file.
+        node_mode: Node granularity. ``"voxel"`` (default) keeps one node per
+            skeleton voxel; ``"segment"`` contracts each vessel segment to a single
+            node (line graph, see ``gnn.segment_graph``); ``"junction"`` keeps
+            junction/endpoint voxels as nodes and each segment as an edge carrying
+            the segment summary as ``edge_attr`` (segment-as-edge, Option A, see
+            ``gnn.junction_graph``). The mode selects the node (and, for junction,
+            edge) feature vocabulary and defaults. See ``gnn/DESIGN_segment_graph.md``.
+        node_features: Node-feature names, in ``data.x`` column order. ``None``
+            (default) resolves to the mode's default feature set. Supported names
+            depend on ``node_mode``:
+
+            - **voxel:** ``"peak_time"`` (normalized time-to-peak enhancement),
+              ``"peak_enhancement"``, ``"time_to_enhancement"`` (normalized arrival
+              time; ``NaN`` for nodes with no detected enhancement),
+              ``"washin_slope"``, ``"auc_positive"``, ``"radius"``, and
+              ``"pcr_dummy"`` (the graph's ``pcr`` label broadcast onto every node
+              -- a leakage-canary feature for pipeline sanity checks only; opt-in,
+              never included unless named explicitly). The kinetic features are
+              sampled from the raw DCE curve (``curve = dce_4d[:, z, y, x]``).
+              Vanguard UFAST uses its protocol baseline mean, relative signal
+              change, and physical seconds; legacy cohorts retain single-frame
+              absolute enhancement. See ``gnn.kinetics.node_kinetic_features``.
+            - **segment:** geometry (``"seg_length"``, ``"seg_tortuosity"``,
+              ``"seg_volume"``, ``"seg_radius_{mean,std,median,min,max}"``,
+              ``"seg_curvature_{mean,std,max}"``), the same per-voxel kinetics
+              summarized (mean/std) along the segment
+              (``"seg_{peak_time,peak_enhancement,time_to_enhancement,washin_slope,
+              auc_positive}_{mean,std}"``), and ``"seg_num_voxels"``. See
+              ``gnn.segment_graph.SEGMENT_FEATURE_ATTR``. (``"pcr_dummy"`` is
+              voxel-only for now.)
+            - **junction:** per-voxel signal at the junction voxel
+              (``"peak_time"``, ``"peak_enhancement"``, ``"time_to_enhancement"``,
+              ``"washin_slope"``, ``"auc_positive"``, ``"radius"``) plus
+              ``"degree"``. The segment summary goes on ``edge_features``, not
+              here. See ``gnn.junction_graph.JUNCTION_NODE_FEATURE_ATTR``.
+        edge_features: Edge-feature names, in ``data.edge_attr`` column order.
+            Only valid (and required) for ``node_mode="junction"``, where each
+            segment's summary rides on its edge -- the same ``seg_*`` vocabulary
+            segment mode uses for its nodes
+            (``gnn.junction_graph.JUNCTION_EDGE_FEATURE_ATTR``). ``None`` resolves
+            to the junction default; must be empty/unset for voxel and segment
+            mode (their graphs carry no edge features).
         label_column: Binary label column in the labels file.
         max_missing_label_frac: Maximum fraction of discovered cases allowed to
             be dropped for lacking a ``label_column`` value. Every drop is
@@ -464,6 +755,26 @@ class VanguardCenterlineDataset(InMemoryDataset):
             under different settings. Set this to ``True`` to explicitly
             override that check (e.g. you know the mismatch is benign) --
             never use it to paper over an unexplained mismatch.
+        breast_split_mode: ``None`` (default, current exam-level-graph
+            behavior, fully backward compatible) or ``"single"`` to harmonize
+            bilateral cases down to their tumor-bearing breast (see
+            ``gnn.breast_split``, ``gnn.build_single_breast_skeletons``).
+            Native unilateral cases are always used unchanged -- there is
+            nothing to split. Requires ``breast_split_skeleton_root`` and a
+            clinical source (``patient_info_dir`` or ``clinical_excel``) to
+            look up each case's ``bilateral`` flag.
+        breast_split_skeleton_root: Root of precomputed single-breast
+            skeletons (``<root>/<dataset>/<case_id>/<case_id>_skeleton_4d_single_breast_mask.npy``),
+            written by ``gnn.build_single_breast_skeletons``. Required when
+            ``breast_split_mode="single"``.
+        max_missing_breast_split_frac: Maximum fraction of discovered cases
+            allowed to be dropped because they're bilateral but were excluded
+            by the splitter (unknown tumor side, tumor straddling both
+            sides, ...) or have no clinical row to determine laterality from.
+            Every drop is logged regardless; exceeding this fraction raises
+            ``RuntimeError`` instead of silently training on a
+            harmonized-cohort-mismatched cohort. Default 0.1 (10%), only
+            consulted when ``breast_split_mode`` is set.
     """
 
     def __init__(
@@ -475,14 +786,22 @@ class VanguardCenterlineDataset(InMemoryDataset):
         cache_dir: str | Path | None = None,
         cases: Sequence[str] | None = None,
         no_cache: bool = False,
-        node_mode: str = "voxel",
-        node_features: Sequence[str] = _DEFAULT_NODE_FEATURES,
+        node_mode: str = _VOXEL_MODE,
+        node_features: Sequence[str] | None = None,
+        edge_features: Sequence[str] | None = None,
+        graph_features: Sequence[str] | None = None,
+        patient_info_dir: str | Path | None = None,
+        clinical_excel: str | Path | None = None,
+        max_missing_clinical_frac: float = 0.1,
         id_column: str = "case_id",
         label_column: str = "pcr",
         max_missing_label_frac: float = 0.1,
         profile: bool = False,
         num_workers: int = 1,
         allow_manifest_mismatch: bool = False,
+        breast_split_mode: str | None = None,
+        breast_split_skeleton_root: str | Path | None = None,
+        max_missing_breast_split_frac: float = 0.1,
         transform: object = None,
         pre_transform: object = None,
     ) -> None:
@@ -493,21 +812,105 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 "dce_root is required; kinetic node features are sampled from the "
                 "raw DCE series, not the vessel-segmentation NPZ timepoints."
             )
-        if node_mode != "voxel":
+        if node_mode not in _IMPLEMENTED_NODE_MODES:
             raise NotImplementedError(
-                f"node_mode={node_mode!r} is not implemented yet; use 'voxel'."
+                f"node_mode={node_mode!r} is not implemented; use one of "
+                f"{list(_IMPLEMENTED_NODE_MODES)}. ('junction' / segment-as-edge "
+                "is planned next -- see gnn/DESIGN_segment_graph.md.)"
             )
-        unknown = [f for f in node_features if f not in _FEATURE_ATTR]
+        feature_attr = _MODE_FEATURE_ATTR[node_mode]
+        # Each mode has its own default and vocabulary: voxel-mode features are
+        # not valid segment-mode features and vice versa, so a None here resolves
+        # to the *mode's* default rather than a single global one.
+        if node_features is None:
+            node_features = _MODE_DEFAULT_FEATURES[node_mode]
+        unknown = [f for f in node_features if f not in feature_attr]
         if unknown:
             raise ValueError(
-                f"Unknown node_features {unknown}; supported: {sorted(_FEATURE_ATTR)}"
+                f"Unknown node_features {unknown} for node_mode={node_mode!r}; "
+                f"supported: {sorted(feature_attr)}"
             )
+        # Edge features exist only for junction mode (segment-as-edge). Resolve a
+        # None to the mode's default there; require it be empty everywhere else,
+        # since voxel/segment graphs carry no edge features.
+        edge_feature_attr = _MODE_EDGE_FEATURE_ATTR.get(node_mode)
+        if edge_feature_attr is None:
+            if edge_features:
+                raise ValueError(
+                    f"edge_features are only supported for node_mode='junction', "
+                    f"not {node_mode!r}; got {list(edge_features)}."
+                )
+            edge_features = ()
+        else:
+            if edge_features is None:
+                edge_features = _MODE_DEFAULT_EDGE_FEATURES[node_mode]
+            if not edge_features:
+                raise ValueError(
+                    "node_mode='junction' requires at least one edge feature "
+                    "(the segment summary rides on the edges)."
+                )
+            unknown_edges = [f for f in edge_features if f not in edge_feature_attr]
+            if unknown_edges:
+                raise ValueError(
+                    f"Unknown edge_features {unknown_edges} for "
+                    f"node_mode={node_mode!r}; supported: {sorted(edge_feature_attr)}"
+                )
         if not 0.0 <= max_missing_label_frac <= 1.0:
             raise ValueError(
                 f"max_missing_label_frac must be in [0, 1], got {max_missing_label_frac}"
             )
         if num_workers < 1:
             raise ValueError(f"num_workers must be >= 1, got {num_workers}")
+        graph_features = tuple(graph_features) if graph_features else ()
+        # graph_features spans three independent vocabularies -- clinical
+        # (external, joined by case_id), graph-derived (already on the built
+        # Data object), and morphometry (per-case JSON) -- so a name's source
+        # is resolved by membership, not by which mechanism the caller
+        # intended. See gnn.clinical / gnn.graph_derived / gnn.morphometry.
+        _ALL_GRAPH_FEATURE_COLUMNS = (
+            ALL_CLINICAL_COLUMNS | set(GRAPH_DERIVED_COLUMNS) | set(MORPHOMETRY_COLUMNS)
+        )
+        unknown_graph = [
+            f for f in graph_features if f not in _ALL_GRAPH_FEATURE_COLUMNS
+        ]
+        if unknown_graph:
+            raise ValueError(
+                f"Unknown graph_features {unknown_graph}; supported: "
+                f"{sorted(_ALL_GRAPH_FEATURE_COLUMNS)}"
+            )
+        _requests_clinical = any(f in ALL_CLINICAL_COLUMNS for f in graph_features)
+        if _requests_clinical and not (patient_info_dir or clinical_excel):
+            raise ValueError(
+                "graph_features includes clinical column(s), which require "
+                "patient_info_dir or clinical_excel (a clinical data source) "
+                "to be set."
+            )
+        if not 0.0 <= max_missing_clinical_frac <= 1.0:
+            raise ValueError(
+                f"max_missing_clinical_frac must be in [0, 1], got "
+                f"{max_missing_clinical_frac}"
+            )
+        if breast_split_mode is not None:
+            if breast_split_mode != "single":
+                raise ValueError(
+                    f"breast_split_mode={breast_split_mode!r} is not supported; "
+                    "only 'single' (or None to disable) is implemented."
+                )
+            if breast_split_skeleton_root is None:
+                raise ValueError(
+                    "breast_split_mode='single' requires breast_split_skeleton_root "
+                    "(see gnn.build_single_breast_skeletons)."
+                )
+            if not (patient_info_dir or clinical_excel):
+                raise ValueError(
+                    "breast_split_mode='single' requires patient_info_dir or "
+                    "clinical_excel to look up each case's bilateral flag."
+                )
+        if not 0.0 <= max_missing_breast_split_frac <= 1.0:
+            raise ValueError(
+                f"max_missing_breast_split_frac must be in [0, 1], got "
+                f"{max_missing_breast_split_frac}"
+            )
 
         self._centerline_root = Path(root)
         self._labels_path = Path(labels_path)
@@ -517,14 +920,33 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._data_list_cache: list[Data] | None = None
         self._node_mode = node_mode
         self._node_features = tuple(node_features)
+        self._edge_features = tuple(edge_features)
+        self._graph_features = graph_features
+        self._patient_info_dir = Path(patient_info_dir) if patient_info_dir else None
+        self._clinical_excel = Path(clinical_excel) if clinical_excel else None
+        self._max_missing_clinical_frac = max_missing_clinical_frac
         self._id_column = id_column
         self._label_column = label_column
         self._max_missing_label_frac = max_missing_label_frac
         self._profile = profile
         self._num_workers = num_workers
         self._allow_manifest_mismatch = allow_manifest_mismatch
+        self._breast_split_mode = breast_split_mode
+        self._breast_split_skeleton_root = (
+            Path(breast_split_skeleton_root) if breast_split_skeleton_root else None
+        )
+        self._max_missing_breast_split_frac = max_missing_breast_split_frac
         self._timings = _StageTimings()
         self.dropped_case_ids: list[str] = []
+        # Populated by _check_cache_manifest() from cache_manifest.json; used by
+        # _reslice_for_requested_features() to narrow a cached feature superset
+        # down to what was actually requested (see both methods' docstrings).
+        self._cached_node_features: list[str] | None = None
+        self._cached_edge_features: list[str] | None = None
+        # Raw graph-level feature inputs held in memory for no_cache runs; on a
+        # cached build they are written to / read from _GRAPH_FEATURE_INPUTS_NAME
+        # instead (see _write_graph_feature_inputs / load_graph_feature_inputs).
+        self._graph_feature_inputs: pd.DataFrame | None = None
 
         resolved_cache = (
             Path(cache_dir)
@@ -573,15 +995,38 @@ class VanguardCenterlineDataset(InMemoryDataset):
         else:
             self._check_cache_manifest()
             self.data, self.slices = torch.load(self.processed_paths[0])
+            self._reslice_for_requested_features()
             self._reload_dropped_manifest()
+
+    def _reslice_for_requested_features(self) -> None:
+        """Narrow ``data.x``/``data.edge_attr`` to the requested feature subset.
+
+        ``_check_cache_manifest`` allows ``node_features``/``edge_features`` to
+        be any *subset* of what the cache was built with (see its docstring),
+        so a cache built once with a feature superset can serve any narrower
+        request without a rebuild -- this is the other half of that contract:
+        the tensors loaded from disk still have every cached column, so a
+        genuine subset request needs an explicit column-index reslice here.
+        No-op when the request matches the cache exactly (the common case), or
+        when no cached feature list is known (e.g. a pre-manifest cache loaded
+        via ``allow_manifest_mismatch``).
+        """
+        cached_nf = self._cached_node_features
+        if cached_nf is not None and list(self._node_features) != cached_nf:
+            keep_idx = [cached_nf.index(name) for name in self._node_features]
+            self.data.x = self.data.x[:, keep_idx]
+        cached_ef = self._cached_edge_features
+        if cached_ef and list(self._edge_features) != cached_ef:
+            keep_idx = [cached_ef.index(name) for name in self._edge_features]
+            self.data.edge_attr = self.data.edge_attr[:, keep_idx]
 
     def _reload_dropped_manifest(self) -> None:
         """Restore and re-log dropped-case bookkeeping on a cache hit.
 
         ``process()`` only runs once per cache; every later load of the same
         cache still goes through here, so this is what keeps missing-label
-        drops visible instead of only being logged the one time the cache was
-        built.
+        (and missing-clinical) drops visible instead of only being logged the
+        one time the cache was built.
         """
         manifest_path = Path(self.processed_dir) / _DROPPED_MANIFEST_NAME
         if not manifest_path.exists():
@@ -589,14 +1034,21 @@ class VanguardCenterlineDataset(InMemoryDataset):
         manifest = json.loads(manifest_path.read_text())
         self.dropped_case_ids = manifest["dropped_case_ids"]
         if self.dropped_case_ids:
+            # dropped_reasons is absent on caches built before graph_features
+            # existed; fall back to the original label-only phrasing so old
+            # caches still log sensibly.
+            reasons = manifest.get("dropped_reasons")
+            reason_text = (
+                dict(Counter(reasons.values()))
+                if reasons
+                else f"missing {manifest['label_column']!r} label"
+            )
             logging.warning(
-                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped for "
-                "missing %r label in %s: %s",
+                "GNN dataset (cached): %d/%d case(s) (%.1f%%) were dropped (%s): %s",
                 len(self.dropped_case_ids),
                 manifest["num_discovered"],
                 manifest["dropped_frac"] * 100,
-                manifest["label_column"],
-                manifest["labels_path"],
+                reason_text,
                 self.dropped_case_ids,
             )
 
@@ -610,7 +1062,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         ``max_missing_label_frac``) are deliberately excluded: they don't
         change what ends up in the cache, only how it's built.
         """
-        return {
+        settings: dict[str, object] = {
             "centerline_root": str(self._centerline_root),
             "dce_root": str(self._dce_root),
             "labels_path": str(self._labels_path),
@@ -621,6 +1073,37 @@ class VanguardCenterlineDataset(InMemoryDataset):
             "node_features": list(self._node_features),
             "feature_source": _FEATURE_SOURCE,
         }
+        # Only junction mode has edge features. Recording the key only when it's
+        # non-empty keeps voxel/segment manifests (and the caches already built
+        # under them) schema-compatible -- a pre-edge_features cache has no such
+        # key and must still validate against a voxel/segment request.
+        if self._edge_features:
+            settings["edge_features"] = list(self._edge_features)
+        # graph_features (clinical covariates) are opt-in and, unlike
+        # node_features/edge_features, are NOT eligible for the subset-request
+        # reslice (see _check_cache_manifest's subset_keys) -- the raw
+        # graph-feature-input sidecar only stores the columns that were
+        # requested at build time, so a "narrower" request still needs its own
+        # sidecar. Requesting a different graph_features list always requires a
+        # rebuild (or a sidecar regeneration -- see regenerate_graph_feature_inputs).
+        if self._graph_features:
+            settings["graph_features"] = list(self._graph_features)
+            settings["clinical_source"] = str(
+                self._patient_info_dir or self._clinical_excel
+            )
+        # breast_split_mode changes which skeleton backs a bilateral case's
+        # graph (see _resolve_breast_split_paths) -- a cache built with it
+        # must never be silently reused as if it were the unsplit cohort, or
+        # vice versa. Always recorded (even as None) so a mismatch is caught
+        # in *both* directions: unlike graph_features/edge_features below,
+        # there's no valid "narrower request" reading of a missing
+        # breast_split_mode against a cache that was actually built with one.
+        settings["breast_split_mode"] = self._breast_split_mode
+        if self._breast_split_mode is not None:
+            settings["breast_split_skeleton_root"] = str(
+                self._breast_split_skeleton_root
+            )
+        return settings
 
     def _check_cache_manifest(self) -> None:
         """Fail loudly if an on-disk cache was built under different settings.
@@ -632,6 +1115,15 @@ class VanguardCenterlineDataset(InMemoryDataset):
         (a cache built before this check existed) or if any recorded setting
         differs from what's currently requested, unless
         ``allow_manifest_mismatch=True`` was passed.
+
+        ``node_features``/``edge_features`` are the one exception to "differs
+        means raise": a request for a *subset* of the cached feature list is
+        allowed even without ``allow_manifest_mismatch``, since
+        ``_reslice_for_requested_features`` narrows the loaded tensors down to
+        exactly that subset afterwards. This lets a cache built once with a
+        feature superset serve any narrower request (e.g. leave-one-covariate
+        LOCO sweeps) without a rebuild. Every other setting (roots, labels,
+        node_mode, ...) still requires exact equality.
         """
         manifest_path = Path(self.processed_dir) / _CACHE_MANIFEST_NAME
         if not manifest_path.exists() and not self._allow_manifest_mismatch:
@@ -647,11 +1139,17 @@ class VanguardCenterlineDataset(InMemoryDataset):
             return
         manifest = json.loads(manifest_path.read_text())
         requested = self._manifest_settings()
-        mismatched = {
-            key: {"cached": manifest.get(key), "requested": value}
-            for key, value in requested.items()
-            if manifest.get(key) != value
-        }
+        self._cached_node_features = list(manifest.get("node_features") or [])
+        self._cached_edge_features = list(manifest.get("edge_features") or [])
+        subset_keys = {"node_features", "edge_features"}
+        mismatched: dict[str, object] = {}
+        for key, value in requested.items():
+            cached_value = manifest.get(key)
+            if key in subset_keys:
+                if not set(value) <= set(cached_value or []):
+                    mismatched[key] = {"cached": cached_value, "requested": value}
+            elif cached_value != value:
+                mismatched[key] = {"cached": cached_value, "requested": value}
         if mismatched and not self._allow_manifest_mismatch:
             raise RuntimeError(
                 f"Cache at {self.processed_dir} was built with different "
@@ -695,18 +1193,64 @@ class VanguardCenterlineDataset(InMemoryDataset):
         """Discover cases, build one labeled graph each, and collate the cache."""
         labels = self._load_label_map()
         discovered = self._discover_cases()
+        total_discovered = len(discovered)
         logging.info(
             "GNN build: %d candidate case(s) under %s",
-            len(discovered),
+            total_discovered,
             self._centerline_root,
         )
 
+        # graph_features spans three independent vocabularies -- see
+        # gnn.clinical / gnn.graph_derived / gnn.morphometry and
+        # _build_graph_feature_inputs's docstring.
+        requested_clinical, requested_graph_derived, requested_morphometry = (
+            self._requested_graph_feature_groups()
+        )
+        # Computed from the pre-breast-split discovery: morphometry/graph_qc
+        # always resolve against the original exam-level study directory,
+        # even for a case whose *skeleton* gets substituted below.
+        case_id_to_study_dir = {
+            case_id: mask_path.parent for case_id, mask_path in discovered
+        }
+
         dropped: list[str] = []
+        dropped_reasons: dict[str, str] = {}
+        if self._breast_split_mode == "single":
+            resolved_paths, breast_split_dropped = self._resolve_breast_split_paths(
+                discovered
+            )
+            dropped.extend(breast_split_dropped)
+            dropped_reasons.update(breast_split_dropped)
+            discovered = [
+                (case_id, resolved_paths[case_id])
+                for case_id, _ in discovered
+                if case_id in resolved_paths
+            ]
+
+        # Clinical covariates need the clinical source loaded upfront: a case
+        # with no clinical row is dropped before the expensive per-case graph
+        # build runs, the same way a missing label is -- not as a post-build
+        # filter, so we don't waste compute on cases we'll drop. Graph-derived
+        # and morphometry features need no such upfront drop (graph-derived is
+        # always present on a built graph; morphometry is present for 100% of
+        # the real cohort and hard-fails instead, see
+        # _resolve_morphometry_paths).
+        clinical_df: pd.DataFrame | None = None
+        clinical_case_ids: set[str] | None = None
+        if requested_clinical:
+            clinical_df = self._load_clinical_df()
+            clinical_case_ids = set(clinical_df["case_id"])
+
         tasks: list[tuple[str, Path, int]] = []
         for case_id, mask_path in discovered:
             label = labels.get(case_id)
             if label is None:
                 dropped.append(case_id)
+                dropped_reasons[case_id] = "missing_label"
+                continue
+            if clinical_case_ids is not None and case_id not in clinical_case_ids:
+                dropped.append(case_id)
+                dropped_reasons[case_id] = "missing_clinical"
                 continue
             tasks.append((case_id, mask_path, label))
 
@@ -716,31 +1260,76 @@ class VanguardCenterlineDataset(InMemoryDataset):
             data_list.append(data)
 
         self.dropped_case_ids = dropped
-        self._write_dropped_manifest(dropped, len(discovered))
+        self._write_dropped_manifest(dropped, dropped_reasons, total_discovered)
         if dropped:
-            dropped_frac = len(dropped) / len(discovered)
+            dropped_frac = len(dropped) / total_discovered
+            by_reason = dict(Counter(dropped_reasons.values()))
             logging.warning(
-                "GNN build: dropped %d/%d case(s) (%.1f%%) with no %r label in %s: %s",
+                "GNN build: dropped %d/%d case(s) (%.1f%%): %s: %s",
                 len(dropped),
-                len(discovered),
+                total_discovered,
                 dropped_frac * 100,
-                self._label_column,
-                self._labels_path,
+                by_reason,
                 dropped,
             )
-            if dropped_frac > self._max_missing_label_frac:
-                raise RuntimeError(
-                    f"{len(dropped)}/{len(discovered)} cases ({dropped_frac:.1%}) "
-                    f"are missing a {self._label_column!r} label in "
-                    f"{self._labels_path}, exceeding max_missing_label_frac="
-                    f"{self._max_missing_label_frac}. Fix the labels file, or "
-                    "pass a higher max_missing_label_frac if this many missing "
-                    "labels is expected."
-                )
+            missing_label = [
+                c for c in dropped if dropped_reasons[c] == "missing_label"
+            ]
+            if missing_label:
+                label_frac = len(missing_label) / total_discovered
+                if label_frac > self._max_missing_label_frac:
+                    raise RuntimeError(
+                        f"{len(missing_label)}/{total_discovered} cases "
+                        f"({label_frac:.1%}) are missing a {self._label_column!r} "
+                        f"label in {self._labels_path}, exceeding "
+                        f"max_missing_label_frac={self._max_missing_label_frac}. "
+                        "Fix the labels file, or pass a higher "
+                        "max_missing_label_frac if this many missing labels is "
+                        "expected."
+                    )
+            missing_clinical = [
+                c for c in dropped if dropped_reasons[c] == "missing_clinical"
+            ]
+            if missing_clinical:
+                clinical_frac = len(missing_clinical) / total_discovered
+                if clinical_frac > self._max_missing_clinical_frac:
+                    raise RuntimeError(
+                        f"{len(missing_clinical)}/{total_discovered} cases "
+                        f"({clinical_frac:.1%}) have no clinical row for "
+                        f"graph_features={requested_clinical}, exceeding "
+                        f"max_missing_clinical_frac={self._max_missing_clinical_frac}. "
+                        "Check the clinical data source, or pass a higher "
+                        "max_missing_clinical_frac if this many missing records "
+                        "is expected."
+                    )
+            breast_split_dropped_cases = [
+                c
+                for c in dropped
+                if dropped_reasons[c]
+                in ("breast_split_excluded", "breast_split_unknown_laterality")
+            ]
+            if breast_split_dropped_cases:
+                breast_split_frac = len(breast_split_dropped_cases) / total_discovered
+                if breast_split_frac > self._max_missing_breast_split_frac:
+                    raise RuntimeError(
+                        f"{len(breast_split_dropped_cases)}/{total_discovered} cases "
+                        f"({breast_split_frac:.1%}) were dropped for "
+                        "breast_split_mode='single' (excluded by the splitter or "
+                        "missing a clinical row for laterality), exceeding "
+                        f"max_missing_breast_split_frac={self._max_missing_breast_split_frac}. "
+                        "Check gnn.build_single_breast_skeletons's manifest, or pass "
+                        "a higher max_missing_breast_split_frac if this many "
+                        "exclusions is expected."
+                    )
 
         if not data_list:
             raise RuntimeError(
                 "No graphs were built; check the centerline tree and labels file."
+            )
+
+        if self._graph_features:
+            self._write_graph_feature_inputs(
+                data_list, clinical_df, case_id_to_study_dir
             )
 
         self._write_feature_summary(data_list)
@@ -749,12 +1338,225 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._save_processed(data_list)
 
         logging.info(
-            "GNN build complete: %d graphs built, %d dropped for missing label",
+            "GNN build complete: %d graphs built, %d dropped",
             len(data_list),
             len(dropped),
         )
         if self._profile:
             self._timings.log_summary()
+
+    def _load_clinical_df(self) -> pd.DataFrame:
+        """Load clinical metadata, preferring ``patient_info_dir`` over ``clinical_excel``.
+
+        Mirrors ``clinical_features.get_clinical_features``'s preference order,
+        without requiring the caller to build a full training ``config`` object.
+        """
+        if self._patient_info_dir is not None:
+            return load_clinical_from_patient_info(self._patient_info_dir)
+        return load_clinical_from_excel(self._clinical_excel)
+
+    def _resolve_morphometry_paths(
+        self, data_list: list[Data], case_id_to_study_dir: dict[str, Path]
+    ) -> dict[str, Path]:
+        """Read each surviving case's ``morphometry_path`` out of ``run_summary.json``.
+
+        ``morphometry_path`` is present for 100% of the real MAMA-MIA cohort
+        (see ``gnn/morphometry.py``'s module docstring) -- a missing summary,
+        missing key, or nonexistent file is treated as a hard failure (fail
+        loudly), not a third drop-threshold mechanism like
+        ``max_missing_clinical_frac``, since this is not an observed
+        real-world case and a build-time regression here should surface
+        immediately rather than silently shrinking the cohort.
+        """
+        paths: dict[str, Path] = {}
+        for data in data_list:
+            case_id = str(data.case_id)
+            summary_path = case_id_to_study_dir[case_id] / _RUN_SUMMARY_NAME
+            summary = json.loads(summary_path.read_text())
+            morphometry_path = summary.get("morphometry_path")
+            if not morphometry_path:
+                raise KeyError(
+                    f"case={case_id}: run_summary.json missing 'morphometry_path' "
+                    "-- expected present for every case (see gnn/morphometry.py)."
+                )
+            resolved = Path(morphometry_path)
+            if not resolved.exists():
+                raise FileNotFoundError(
+                    f"case={case_id}: morphometry_path {resolved} does not exist"
+                )
+            paths[case_id] = resolved
+        return paths
+
+    def _requested_graph_feature_groups(self) -> tuple[list[str], list[str], list[str]]:
+        """Split the requested ``graph_features`` into their three vocabularies.
+
+        ``graph_features`` spans three independent sources -- clinical
+        (``gnn.clinical``), graph-derived (``gnn.graph_derived``), and
+        morphometry (``gnn.morphometry``). Membership resolves each name's
+        source, and each group preserves the requested order. This is the
+        single source of truth for the group split, used both when writing the
+        raw-input sidecar and by ``graph_feature_groups`` for the per-fold
+        transform in ``gnn.train``.
+        """
+        clinical = [f for f in self._graph_features if f in ALL_CLINICAL_COLUMNS]
+        graph_derived = [f for f in self._graph_features if f in GRAPH_DERIVED_COLUMNS]
+        morphometry = [f for f in self._graph_features if f in MORPHOMETRY_COLUMNS]
+        return clinical, graph_derived, morphometry
+
+    def graph_feature_groups(self) -> tuple[list[str], list[str], list[str]]:
+        """Public: requested (clinical, graph_derived, morphometry) names, in order.
+
+        The per-fold transform in ``gnn.train`` uses this to know which columns
+        of :meth:`load_graph_feature_inputs` get a clinical impute+one-hot
+        transformer, which get a morphometry imputer, and which pass through
+        (graph-derived), and to rebuild the graph-feature vector in the same
+        fixed source order the sidecar columns are laid out in.
+        """
+        return self._requested_graph_feature_groups()
+
+    def _build_graph_feature_inputs(
+        self,
+        data_list: list[Data],
+        clinical_df: pd.DataFrame | None,
+        case_id_to_study_dir: dict[str, Path],
+    ) -> pd.DataFrame:
+        """Assemble the RAW (un-imputed, un-encoded) graph-level feature inputs.
+
+        One row per case (indexed by ``case_id``), columns laid out in a fixed
+        source order -- clinical, then graph-derived, then morphometry --
+        regardless of how the caller interleaved names in ``gnn_graph_features``
+        (each name's source is always recoverable by vocabulary membership).
+
+        This is the Option-1 cross-validation-leakage fix: rather than fitting
+        the clinical imputer/one-hot encoder and the morphometry imputer once
+        over the whole cohort here and baking the transformed vector into each
+        graph, we cache only the raw inputs and defer every cross-case fit to
+        per-fold code in ``gnn.train`` (see module-level
+        ``_GRAPH_FEATURE_INPUTS_NAME``). Clinical values are normalized
+        (deterministic per case, no fit) and morphometry scalars are read raw
+        with their ``NaN``s intact; graph-derived features are pure per-graph
+        reads (never missing, no cross-case fit) and pass through as-is.
+
+        Every case in ``data_list`` is already confirmed present in
+        ``clinical_df`` (the clinical drop happens in ``process()`` before the
+        graph build), so this is a pure read, not a further filter.
+        """
+        clinical_cols, graph_derived_cols, morphometry_cols = (
+            self._requested_graph_feature_groups()
+        )
+        case_ids = [str(data.case_id) for data in data_list]
+        index = pd.Index(case_ids, name="case_id")
+        blocks: list[pd.DataFrame] = []
+        if clinical_cols:
+            blocks.append(
+                normalize_clinical_frame(clinical_df, case_ids, clinical_cols)
+            )
+        if graph_derived_cols:
+            graph_derived = build_graph_derived_feature_matrix(
+                data_list, graph_derived_cols
+            )
+            blocks.append(
+                pd.DataFrame(
+                    graph_derived, columns=list(graph_derived_cols), index=index
+                )
+            )
+        if morphometry_cols:
+            morphometry_paths_by_case = self._resolve_morphometry_paths(
+                data_list, case_id_to_study_dir
+            )
+            blocks.append(
+                extract_morphometry_frame(
+                    morphometry_paths_by_case, case_ids, morphometry_cols
+                )
+            )
+        return pd.concat(blocks, axis=1)
+
+    def _write_graph_feature_inputs(
+        self,
+        data_list: list[Data],
+        clinical_df: pd.DataFrame | None,
+        case_id_to_study_dir: dict[str, Path],
+    ) -> None:
+        """Persist (or, for ``no_cache``, hold in memory) the raw graph-feature inputs."""
+        frame = self._build_graph_feature_inputs(
+            data_list, clinical_df, case_id_to_study_dir
+        )
+        if self._no_cache:
+            self._graph_feature_inputs = frame
+            return
+        frame.to_csv(Path(self.processed_dir) / _GRAPH_FEATURE_INPUTS_NAME)
+
+    def load_graph_feature_inputs(self) -> pd.DataFrame | None:
+        """Return the cached raw graph-level feature inputs (index=case_id), or None.
+
+        ``None`` when no ``graph_features`` were requested. The per-fold
+        transform in ``gnn.train`` fits the clinical/morphometry preprocessing
+        on the training split of this frame and transforms the validation
+        split -- so the imputer means/modes and one-hot vocabulary never see
+        validation cases.
+
+        Raises if ``graph_features`` were requested but the sidecar is absent
+        -- e.g. a cache built before this leakage fix, which baked the
+        whole-cohort-transformed vector into the graphs instead. Rebuild
+        (``--force-rebuild``) or regenerate the sidecar
+        (``gnn.build_dataset --regenerate-graph-feature-inputs``) rather than
+        silently falling back to the old leaky features.
+        """
+        if not self._graph_features:
+            return None
+        if self._no_cache:
+            if self._graph_feature_inputs is None:
+                raise RuntimeError(
+                    "no_cache=True but process() has not produced graph feature "
+                    "inputs yet"
+                )
+            return self._graph_feature_inputs
+        path = Path(self.processed_dir) / _GRAPH_FEATURE_INPUTS_NAME
+        if not path.exists():
+            raise RuntimeError(
+                f"graph_features were requested but {path} is missing. This cache "
+                "predates the per-fold graph-feature preprocessing fix (it baked "
+                "whole-cohort-fit features into the graphs, leaking the validation "
+                "distribution into training). Rebuild with --force-rebuild, or "
+                "regenerate the raw-input sidecar without a full rebuild via "
+                "`python -m gnn.build_dataset --regenerate-graph-feature-inputs ...`."
+            )
+        frame = pd.read_csv(path, index_col="case_id")
+        frame.index = frame.index.astype(str)
+        return frame
+
+    def regenerate_graph_feature_inputs(self) -> Path:
+        """Rebuild the raw graph-feature-input sidecar for an already-built cache.
+
+        Lightweight migration for caches built before the cross-validation
+        leakage fix: the raw inputs depend only on the surviving cases, the
+        clinical source, and the morphometry JSONs -- none of the expensive
+        raw-DCE graph construction -- so they are recomputed from the cached
+        graphs without a full rebuild. Returns the sidecar path.
+        """
+        if not self._graph_features:
+            raise ValueError(
+                "dataset was built without graph_features; nothing to regenerate."
+            )
+        if self._no_cache:
+            raise ValueError(
+                "regenerate_graph_feature_inputs is for on-disk caches; a "
+                "no_cache dataset holds its raw inputs in memory already."
+            )
+        data_list = [self[i] for i in range(len(self))]
+        discovered = self._discover_cases()
+        case_id_to_study_dir = {
+            case_id: mask_path.parent for case_id, mask_path in discovered
+        }
+        clinical_cols, _, _ = self._requested_graph_feature_groups()
+        clinical_df = self._load_clinical_df() if clinical_cols else None
+        frame = self._build_graph_feature_inputs(
+            data_list, clinical_df, case_id_to_study_dir
+        )
+        path = Path(self.processed_dir) / _GRAPH_FEATURE_INPUTS_NAME
+        frame.to_csv(path)
+        logging.info("Regenerated %s (%d cases)", path, len(frame))
+        return path
 
     def _build_cases(
         self, tasks: list[tuple[str, Path, int]]
@@ -783,9 +1585,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     case_id,
                     mask_path,
                     label,
-                    centerline_root=self._centerline_root,
                     dce_root=self._dce_root,
                     node_features=self._node_features,
+                    node_mode=self._node_mode,
+                    edge_features=self._edge_features,
                 )
                 self._timings.merge(stage_samples)
                 logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
@@ -807,9 +1610,10 @@ class VanguardCenterlineDataset(InMemoryDataset):
                         case_id,
                         mask_path,
                         label,
-                        centerline_root=self._centerline_root,
                         dce_root=self._dce_root,
                         node_features=self._node_features,
+                        node_mode=self._node_mode,
+                        edge_features=self._edge_features,
                     )
                     for case_id, mask_path, label in batch
                 ]
@@ -820,12 +1624,18 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
                     yield case_id, data
 
-    def _write_dropped_manifest(self, dropped: list[str], num_discovered: int) -> None:
+    def _write_dropped_manifest(
+        self,
+        dropped: list[str],
+        dropped_reasons: dict[str, str],
+        num_discovered: int,
+    ) -> None:
         """Persist dropped-case bookkeeping so cache hits can re-surface it."""
         if self._no_cache:
             return
         manifest = {
             "dropped_case_ids": dropped,
+            "dropped_reasons": dropped_reasons,
             "num_discovered": num_discovered,
             "dropped_frac": len(dropped) / num_discovered if num_discovered else 0.0,
             "label_column": self._label_column,
@@ -922,9 +1732,14 @@ class VanguardCenterlineDataset(InMemoryDataset):
         count). ``mean_degree`` (``num_edges / num_nodes``) is the correct
         average node degree under that same doubled convention.
         ``missing_feature_count`` counts every non-finite (NaN or inf) entry
-        in ``data.x``; ``nan_feature_count`` is the NaN-only subset of that,
-        distinguishing "no signal detected" (NaN, e.g. ``time_to_enhancement``
-        with no arrival) from a genuine inf.
+        in ``data.x``; ``nan_feature_count`` is the NaN-only subset of that.
+        Because time-to-enhancement no-arrival and junction no-bifurcation NaNs
+        are sentinel-filled before ``data.x`` is finalized (see
+        ``_sentinel_fill``), both are normally ``0``; the "no signal detected"
+        counts are instead carried explicitly by ``tte_no_arrival_count`` and
+        ``no_bifurcation_count`` (cells across ``data.x`` and, in junction
+        mode, ``data.edge_attr``). A non-zero ``nan_feature_count`` here
+        therefore signals an unexpected NaN, not a missing arrival/bifurcation.
 
         Also writes ``processed/graph_qc_plots/`` (via
         ``gnn.graph_qc_plots.write_build_time_plots``): num_nodes vs pcr,
@@ -952,6 +1767,8 @@ class VanguardCenterlineDataset(InMemoryDataset):
                 "mean_degree": float(data.num_edges) / float(data.num_nodes),
                 "missing_feature_count": int((~finite).sum()),
                 "nan_feature_count": int(np.isnan(x).sum()),
+                "tte_no_arrival_count": int(getattr(data, "tte_no_arrival_count", 0)),
+                "no_bifurcation_count": int(getattr(data, "no_bifurcation_count", 0)),
             }
             for i, name in enumerate(self._node_features):
                 column = x[:, i]
@@ -986,6 +1803,50 @@ class VanguardCenterlineDataset(InMemoryDataset):
             str(case_id): int(value)
             for case_id, value in zip(frame["case_id"], frame[self._label_column])
         }
+
+    def _resolve_breast_split_paths(
+        self, discovered: list[tuple[str, Path]]
+    ) -> tuple[dict[str, Path], dict[str, str]]:
+        """Map each discovered case to the skeleton path ``breast_split_mode="single"`` should use.
+
+        Native unilateral cases (``bilateral=False``) keep their original
+        exam-level skeleton unchanged -- there is nothing to split, per the
+        harmonized-cohort plan. Bilateral cases are substituted with their
+        precomputed single-breast skeleton
+        (``gnn.build_single_breast_skeletons``) when one exists; a bilateral
+        case with no precomputed skeleton (excluded by the splitter -- e.g.
+        unknown tumor side or a tumor straddling both sides) or with no
+        clinical row to determine laterality from at all is dropped, not
+        silently kept with its original mixed-breast skeleton, which would
+        defeat the point of the harmonized cohort.
+
+        Returns:
+            ``(resolved_paths, drop_reasons)`` -- ``resolved_paths`` maps
+            every case that should still be built to the skeleton path to
+            use; ``drop_reasons`` maps every other case to why it's excluded.
+        """
+        clinical_df = self._load_clinical_df()
+        bilateral_by_case = dict(zip(clinical_df["case_id"], clinical_df["bilateral"]))
+
+        resolved_paths: dict[str, Path] = {}
+        drop_reasons: dict[str, str] = {}
+        for case_id, mask_path in discovered:
+            bilateral = bilateral_by_case.get(case_id)
+            if bilateral is None:
+                drop_reasons[case_id] = "breast_split_unknown_laterality"
+                continue
+            if not bilateral:
+                resolved_paths[case_id] = mask_path
+                continue
+            dataset = case_id.split("_")[0]
+            single_breast_path = single_breast_skeleton_path(
+                self._breast_split_skeleton_root, dataset, case_id
+            )
+            if single_breast_path.exists():
+                resolved_paths[case_id] = single_breast_path
+            else:
+                drop_reasons[case_id] = "breast_split_excluded"
+        return resolved_paths, drop_reasons
 
     def _discover_cases(self) -> list[tuple[str, Path]]:
         """Find ``(case_id, mask_path)`` pairs under the centerline tree."""
