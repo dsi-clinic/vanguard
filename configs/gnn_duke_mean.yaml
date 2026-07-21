@@ -1,0 +1,55 @@
+# Tier-0 "optimization hygiene" arm for the GNN centerline pipeline.
+# Same cohort / cache / features / architecture as the frozen baseline
+# (configs/gnn.yaml, decision D0.6) -- the ONLY differences are training-loop
+# knobs, so any paired ΔAUC vs. gnn.yaml is attributable to optimization, not
+# to representation or architecture (PLAN_advanced_modeling.md, Tier 0 / D5).
+#
+# Turned on here vs. the frozen baseline:
+#   - loss: weighted_bce           (D1.3) up-weight the minority pCR class
+#   - weight_decay: 1e-4           (D1.4) L2 regularization
+#   - max_grad_norm: 1.0           (D1.4) gradient clipping
+#   - lr_scheduler: plateau        (D1.5) ReduceLROnPlateau on val loss
+#   - early_stopping_patience: 10  (D1.2) stop after 10 stale epochs
+#   - restore_best_epoch: true     (D1.1) report best-val-loss epoch, not final
+#   - epochs: 100                  raised ceiling so patience, not the ceiling,
+#                                  ends most folds (baseline used a fixed 25)
+
+experiment_setup:
+  name: "gnn_duke_mean"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  group_col: "site"
+  stratum_col: null
+  split_mode: "random" # frozen-fold parity with gnn.yaml (D0.2)
+  split_col: "fold"
+  batch_size: 8
+  epochs: 100
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features: ["peak_time", "radius"]
+  # Tier-0 training knobs (the only deltas vs. configs/gnn.yaml).
+  loss: "weighted_bce"
+  weight_decay: 1.0e-4
+  max_grad_norm: 1.0
+  lr_scheduler: "plateau"
+  lr_scheduler_factor: 0.5
+  lr_scheduler_patience: 5
+  early_stopping_patience: 10
+  restore_best_epoch: true
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/metadata/pcr_labels.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_tier0_sweep"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: ["DUKE"]
