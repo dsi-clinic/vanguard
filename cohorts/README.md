@@ -45,8 +45,10 @@ not hardcoded), then call:
 One class for all four MAMA-MIA cohorts (`duke`/`ispy1`/`ispy2`/`nact`), because
 they are ~95% identical. The `cohort` argument sets a discovery filter (so one
 instance represents one cohort) and identifies the DUKE radiologist-annotation
-special case. **No pipeline method is overridden** — it is the base class with a
-cohort label.
+special case; `cohort=None` means no filter (`discover_cases()` returns all
+four cohorts combined, matching `find_nii_files`' old unfiltered behavior —
+needed by imaging Slurm jobs that process the whole MAMA-MIA tree in one run).
+**No pipeline method is overridden** — it is the base class with a cohort label.
 
 > Note: `case_dataset_name()` reads the cohort off the case-id prefix
 > (`"ISPY2_045" -> "ISPY2"`), which is independent of the `cohort` argument. So
@@ -106,8 +108,10 @@ directory (decision 5) doesn't leave it pointing at a stale location.
 These functions are the only seams that read run config:
 
 - `build_adapter_from_config(config)` reads the `dataset:` block and returns the
-  right adapter, or **`None`** when no dataset is configured (so callers fall
-  back to today's behavior).
+  right adapter, or **`None`** when no dataset is configured.
+- `require_adapter_from_config(config)` / `require_imaging_adapter_from_config(config)`
+  wrap the above and raise a clear error instead of returning `None` — every
+  stage uses one of these (Step 5).
 - `resolve_split_policy(config, adapter)` applies the run-config `split_policy`
   knob (`auto`/`compute`/`provided`) on top of the adapter's default.
 - `resolve_folds(config, adapter)` ties the two together for the caller: it
@@ -116,12 +120,13 @@ These functions are the only seams that read run config:
   `provided` is asked of a dataset that ships no folds). This is parsing and
   validation only — see below for how (and whether) a run actually consumes it.
 
-The `dataset:` block in run config (`config.py` `DEFAULT_CONFIG`):
+The `dataset:` block in run config (`config.py` `DEFAULT_CONFIG`), now required
+on every run:
 
 ```yaml
 dataset:
-  name: mamamia        # "mamamia" | "uchicago"; null (default) => no adapter
-  cohort: ispy2        # mamamia only: duke | ispy1 | ispy2 | nact
+  name: mamamia        # "mamamia" | "uchicago"
+  cohort: ispy2         # mamamia only: duke | ispy1 | ispy2 | nact | null (all four)
   root: /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042
   split_policy: auto   # auto (use adapter default) | compute | provided
 ```
@@ -133,25 +138,30 @@ The dataset **root path** lives in run config (it can move on disk); everything
 
 ## How a pipeline stage uses an adapter
 
-A stage takes an **optional** adapter and falls back to today's behavior when
-it's `None`, so adoption is incremental and can't break existing runs:
+Every stage requires an adapter (Step 5 of the multi-dataset migration retired
+the `adapter=None` fallback that early steps used for incremental adoption):
 
 ```python
-adapter = build_adapter_from_config(config)   # None for every config w/o a dataset: block
-result = some_stage(config, adapter=adapter)   # adapter=None => byte-identical to before
+adapter = require_adapter_from_config(config)   # raises if no dataset: block
+result = some_stage(config, adapter=adapter)
 ```
 
-**Adopted so far — feature extraction.** `tabular/cohort.py`'s feature build
-takes an optional adapter and, when given, resolves a case's `dataset` identity
-via `case_dataset_name()` instead of the parent directory name. Both entry
-points wire it the same way: `tabular/train.py` (`run_pipeline_from_config`) and
-`modeling/ablation.py` (`_prepare_full_dataset`). The equivalence is guarded by
-`tests/test_feature_adapter_parity.py` (CI) and the full-data gate
-`scripts/validate_adapter_feature_parity.py` (byte-identical MAMA-MIA output with
-vs. without the adapter). Other stages still run the pre-adapter way and are
-migrated one at a time.
+`require_adapter_from_config` / `require_imaging_adapter_from_config` (in
+`cohorts/factory.py`) wrap `build_adapter_from_config` /
+`build_imaging_adapter_from_config` with a clear error when the config has no
+`dataset:` block. `MamaMiaDataset(cohort=None, root=...)` selects all four
+MAMA-MIA cohorts combined (no discovery filter) for runs that aren't scoped to
+one cohort.
 
-**Adopted so far — provided CV folds.** `tabular/train.py`'s
+**Feature extraction.** `tabular/cohort.py`'s feature build takes a required
+adapter and resolves a case's `dataset` identity via `case_dataset_name()`
+instead of the parent directory name. Both entry points wire it the same way:
+`tabular/train.py` (`run_pipeline_from_config`) and `modeling/ablation.py`
+(`_prepare_full_dataset`, which also mirrors `tabular/train.py`'s
+folds/grouping/`report_by` wiring). `tests/test_cohort_adapters.py` and
+`tests/test_qc_report_by.py` cover the identity/reporting seams CI-safely.
+
+**Provided CV folds.** `tabular/train.py`'s
 `run_pipeline_from_config` calls `resolve_folds(config, adapter)` and, when it
 returns a fold table, merges it onto the feature table as the
 `model_params.split_col` column (`_apply_provided_folds`). This makes the folds

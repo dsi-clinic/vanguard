@@ -23,12 +23,23 @@ STUDY_ID="${REL_PATH##*/}"
 INPUT_DIR="${INPUT_ROOT}/${SITE}"
 OUTPUT_DIR="${OUTPUT_ROOT}/${SITE}/${STUDY_ID}"
 
+# Dataset adapter (multi-dataset migration Step 5: required on every run).
+# DATASET_COHORT left unset by default -> all four MAMA-MIA cohorts combined,
+# matching this job's historical scope of processing sites across all cohorts.
+MAMAMIA_ROOT="${MAMAMIA_ROOT:-/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042}"
+DATASET_COHORT="${DATASET_COHORT:-}"
+
 ARGS=(
   python graph_extraction/run_skeleton_processing.py
-  --study-id "${STUDY_ID}"
+  --case-id "${STUDY_ID}"
   --input-dir "${INPUT_DIR}"
   --output-dir "${OUTPUT_DIR}"
+  --dataset-name mamamia
+  --dataset-root "${MAMAMIA_ROOT}"
 )
+if [[ -n "${DATASET_COHORT}" ]]; then
+  ARGS+=(--dataset-cohort "${DATASET_COHORT}")
+fi
 
 if [[ "${FEATURES_ONLY:-0}" == "1" ]]; then
   ARGS+=(--features-only)

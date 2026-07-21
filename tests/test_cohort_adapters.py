@@ -28,6 +28,8 @@ from cohorts import (
     UChicagoDataset,
     build_adapter_from_config,
     build_imaging_adapter_from_config,
+    require_adapter_from_config,
+    require_imaging_adapter_from_config,
     resolve_folds,
     resolve_split_policy,
 )
@@ -54,6 +56,25 @@ def test_mamamia_rejects_unknown_cohort() -> None:
     """An unknown cohort raises ValueError."""
     with pytest.raises(ValueError, match="Unknown MAMA-MIA cohort"):
         MamaMiaDataset(cohort="tcga", root=Path("/data/mamamia"))
+
+
+def test_mamamia_cohort_none_means_all_cohorts(tmp_path: Path) -> None:
+    """cohort=None applies no discovery filter.
+
+    Step 5: needed once the adapter is required for imaging Slurm jobs that
+    process the whole MAMA-MIA tree.
+    """
+    images_dir = tmp_path / "images"
+    for case_id in ("DUKE_001", "ISPY2_045", "NACT_007"):
+        (images_dir / case_id).mkdir(parents=True)
+
+    adapter = MamaMiaDataset(cohort=None, root=tmp_path)
+    assert adapter.cohort is None
+    assert adapter.discover_cases() == ["DUKE_001", "ISPY2_045", "NACT_007"]
+    # Identity resolution is unaffected by cohort (matches the docstring note
+    # on case_dataset_name): a cohort=None instance still resolves each case's
+    # own cohort correctly.
+    assert adapter.case_dataset_name("ISPY2_045") == "ISPY2"
 
 
 def test_mamamia_cohort_is_case_insensitive() -> None:
@@ -204,6 +225,48 @@ def test_factory_returns_none_when_unset() -> None:
         {"name": None, "cohort": None, "root": "", "split_policy": "auto"}
     )
     assert build_adapter_from_config(config) is None
+
+
+def test_require_adapter_from_config_returns_adapter_when_set() -> None:
+    """When a dataset is configured, require_* behaves exactly like build_*."""
+    config = _dataset_config(
+        {
+            "name": "mamamia",
+            "cohort": "ispy2",
+            "root": "/data/mm",
+            "split_policy": "auto",
+        }
+    )
+    adapter = require_adapter_from_config(config)
+    assert isinstance(adapter, MamaMiaDataset)
+    assert adapter.cohort == "ispy2"
+
+
+def test_require_adapter_from_config_raises_when_unset() -> None:
+    """Step 5: no dataset: block is an error, not a silent None."""
+    config = _dataset_config(
+        {"name": None, "cohort": None, "root": "", "split_policy": "auto"}
+    )
+    with pytest.raises(ValueError, match="requires a dataset adapter"):
+        require_adapter_from_config(config)
+
+
+def test_require_imaging_adapter_from_config_raises_when_unset() -> None:
+    """Same Step 5 requirement for the imaging-stage variant."""
+    config = _dataset_config(
+        {"name": None, "cohort": None, "root": "", "split_policy": "auto"}
+    )
+    with pytest.raises(ValueError, match="requires a dataset adapter"):
+        require_imaging_adapter_from_config(config)
+
+
+def test_require_imaging_adapter_from_config_still_rejects_uchicago() -> None:
+    """The imaging-route supersession check still applies to the required variant."""
+    config = _dataset_config(
+        {"name": "uchicago", "cohort": None, "root": "/data/uc", "split_policy": "auto"}
+    )
+    with pytest.raises(ValueError, match="preprocessing.pipeline"):
+        require_imaging_adapter_from_config(config)
 
 
 def test_factory_rejects_unknown_dataset() -> None:

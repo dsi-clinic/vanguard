@@ -106,26 +106,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dataset-name",
         type=str,
-        default=None,
+        required=True,
         help=(
-            "If set (mamamia), build a DatasetAdapter via cohorts.factory and "
-            "route per-timepoint segmentation discovery and the MIP-only flip "
-            "spec through it (Step 4), instead of the hardcoded MAMA-MIA "
-            "function/constant. 'uchicago' is rejected here: its skeleton comes "
-            "from the paired raw-DICOM pipeline (see preprocessing/README.md)."
+            "Build a DatasetAdapter via cohorts.factory and route "
+            "per-timepoint segmentation discovery and the MIP-only flip spec "
+            "through it (currently 'mamamia' only -- 'uchicago' is rejected "
+            "here: its skeleton comes from the paired raw-DICOM pipeline, see "
+            "preprocessing/README.md)."
         ),
     )
     parser.add_argument(
         "--dataset-root",
         type=str,
-        default=None,
-        help="Root path for --dataset-name (e.g. the UChicago manifest directory).",
+        required=True,
+        help="Root path for --dataset-name (e.g. the MAMA-MIA data root).",
     )
     parser.add_argument(
         "--dataset-cohort",
         type=str,
         default=None,
-        help="mamamia only: duke|ispy1|ispy2|nact.",
+        help="mamamia only: duke|ispy1|ispy2|nact, or omit for all four combined.",
     )
 
     return parser
@@ -137,27 +137,22 @@ def main() -> None:
     args = parser.parse_args()
     if args.features_only and args.force_skeleton:
         parser.error("`--features-only` cannot be combined with `--force-skeleton`.")
+    from cohorts.factory import require_imaging_adapter_from_config
+    from config import ConfigNode
     from graph_extraction.pipeline import run_study_pipeline
 
-    adapter = None
-    if args.dataset_name:
-        from cohorts.factory import build_imaging_adapter_from_config
-        from config import ConfigNode
-
-        if not args.dataset_root:
-            parser.error("--dataset-root is required when --dataset-name is set.")
-        dataset_config = ConfigNode._wrap(
-            {
-                "dataset": {
-                    "name": args.dataset_name,
-                    "cohort": args.dataset_cohort,
-                    "root": args.dataset_root,
-                    "split_policy": "auto",
-                }
+    dataset_config = ConfigNode._wrap(
+        {
+            "dataset": {
+                "name": args.dataset_name,
+                "cohort": args.dataset_cohort,
+                "root": args.dataset_root,
+                "split_policy": "auto",
             }
-        )
-        adapter = build_imaging_adapter_from_config(dataset_config)
-        print(f"Using dataset adapter: {type(adapter).__name__}")
+        }
+    )
+    adapter = require_imaging_adapter_from_config(dataset_config)
+    print(f"Using dataset adapter: {type(adapter).__name__}")
 
     start = time.perf_counter()
     result = run_study_pipeline(

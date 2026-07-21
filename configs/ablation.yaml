@@ -99,3 +99,15 @@ ablation_arms:
     selected_features: ["clinical", "tumor_size", "kinematic"]
   - name: "clinical_plus_tumor_size_plus_graph_plus_kinematic"
     selected_features: ["clinical", "tumor_size", "graph", "kinematic"]
+
+# Dataset-adapter selection (multi-dataset migration Step 5: required on every
+# run). This config's dataset_include already scopes rows to ISPY2, but that
+# filtering happens in feature_toggles, not via this adapter's cohort filter
+# -- tabular/cohort.py's feature build never calls adapter.discover_cases(),
+# so cohort here only needs to be a *valid* MAMA-MIA cohort, not necessarily
+# ISPY2 (see modularization-status.md item 5, open with Anna). Set to match
+# dataset_include for clarity.
+dataset:
+  name: mamamia
+  cohort: ispy2
+  root: /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042

@@ -16,11 +16,17 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from cohorts.factory import build_adapter_from_config
+from cohorts.base import DatasetAdapter
+from cohorts.factory import require_adapter_from_config
 from config import DEFAULT_ABLATION_ARMS, to_plain_data
 from features import FEATURE_BLOCK_DESCRIPTIONS, normalize_selected_features
 from tabular.cohort import build_modular_features, load_labels, select_features
-from tabular.train import run_evaluation_pipeline
+from tabular.train import (
+    _adapter_populates_group_col,
+    _apply_group_keys,
+    _apply_provided_folds,
+    run_evaluation_pipeline,
+)
 
 
 def _normalize_ablation_arms(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -144,7 +150,7 @@ def _prepare_full_dataset(
     base_config: dict[str, Any],
     arms: list[dict[str, Any]],
     outdir: Path,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, DatasetAdapter]:
     """Build the superset labeled dataset once for reuse across ablation arms."""
     full_config = deepcopy(base_config)
     toggles = full_config.feature_toggles
@@ -153,13 +159,12 @@ def _prepare_full_dataset(
         toggles.use_clinical = True
     toggles.pop("selected_features", None)
 
-    # Same adapter seam as tabular/train.py (Step 2): None for every config
-    # without a `dataset:` block, so this path stays byte-identical until a
-    # dataset is configured. Keeps the two feature-extraction entry points
-    # consistent rather than having one honor the adapter and the other ignore it.
-    adapter = build_adapter_from_config(full_config)
-    if adapter is not None:
-        logging.info("Using dataset adapter: %s", type(adapter).__name__)
+    # Same adapter seam as tabular/train.py: every run requires a `dataset:`
+    # block (multi-dataset migration Step 5). Keeps the two feature-extraction
+    # entry points consistent rather than having one honor the adapter and the
+    # other ignore it.
+    adapter = require_adapter_from_config(full_config)
+    logging.info("Using dataset adapter: %s", type(adapter).__name__)
     features_df = build_modular_features(full_config, adapter=adapter)
     features_df.to_csv(outdir / "features_full_raw.csv", index=False)
 
@@ -170,7 +175,7 @@ def _prepare_full_dataset(
     merged_df = features_df.merge(labels_df, on="case_id", how="inner")
     merged_df.to_csv(outdir / "features_full_labeled.csv", index=False)
     logging.info("Prepared full labeled dataset with shape %s", merged_df.shape)
-    return merged_df
+    return merged_df, adapter
 
 
 def _metrics_summary_row(
@@ -390,7 +395,7 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
     with (outdir / "ablation_matrix_meta.yaml").open("w", encoding="utf-8") as handle:
         yaml.safe_dump(matrix_meta, handle, sort_keys=False)
 
-    full_df = _prepare_full_dataset(config, arms, outdir)
+    full_df, adapter = _prepare_full_dataset(config, arms, outdir)
     label_col = config.data_paths.label_column
 
     runs_root = outdir / "runs"
@@ -409,6 +414,12 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
             label_col=label_col,
             explicit_model_columns=arm.get("explicit_model_columns"),
         )
+        # Provided CV folds (Step 5 parity with tabular/train.py): applied once
+        # per arm, after select_features (mirroring prepare_data ->
+        # run_pipeline_from_config's ordering) and before the family/mode loop,
+        # since split_policy doesn't vary by family/mode -- calling this again
+        # per mode would raise on the split_col collision it's guarding against.
+        arm_df = _apply_provided_folds(arm_df, config, adapter)
 
         for family in families:
             for mode in modes:
@@ -435,15 +446,35 @@ def run_ablation_matrix(config: dict[str, Any], outdir: Path) -> None:
                 arm_config.model_params.use_group_split = bool(mode["use_group_split"])
                 arm_config.model_params.update(mode.get("model_params_override", {}))
 
+                # Group-key population depends on use_group_split, which
+                # varies per split mode -- unlike folds, so this is resolved
+                # fresh for each (arm, family, mode) cell against arm_config.
+                # _apply_group_keys copies rather than mutates in place, so
+                # reusing arm_df as the base every time is safe.
+                group_col_from_adapter = _adapter_populates_group_col(
+                    arm_df, arm_config, adapter
+                )
+                run_df = (
+                    _apply_group_keys(arm_df, arm_config, adapter)
+                    if group_col_from_adapter
+                    else arm_df
+                )
+
                 run_dir = runs_root / run_name
                 run_dir.mkdir(parents=True, exist_ok=True)
-                arm_df.to_csv(run_dir / "features_engineered_labeled.csv", index=False)
+                run_df.to_csv(run_dir / "features_engineered_labeled.csv", index=False)
                 with (run_dir / "config_used.yaml").open(
                     "w", encoding="utf-8"
                 ) as handle:
                     yaml.safe_dump(to_plain_data(arm_config), handle, sort_keys=False)
 
-                run_evaluation_pipeline(arm_df, arm_config, runs_root)
+                run_evaluation_pipeline(
+                    run_df,
+                    arm_config,
+                    runs_root,
+                    report_by=adapter.report_by,
+                    group_col_from_adapter=group_col_from_adapter,
+                )
                 summary_rows.append(
                     _metrics_summary_row(
                         run_name=run_name,

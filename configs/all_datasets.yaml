@@ -87,3 +87,13 @@ data_paths:
   label_column: "pcr"
   id_column: "case_id"
   radiomics_csv: ""
+
+# Dataset-adapter selection (multi-dataset migration Step 5: required on every
+# run). cohort: null because this config spans multiple/all MAMA-MIA cohorts
+# and tabular/cohort.py's feature build never calls adapter.discover_cases()
+# (identity resolution is cohort-independent) -- see modularization-status.md
+# item 5, open with Anna re: whether cohort selection should move.
+dataset:
+  name: mamamia
+  cohort: null
+  root: /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042

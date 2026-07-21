@@ -69,15 +69,13 @@ def build_features_from_feature_jsons(morphometry_dir: Path) -> pd.DataFrame:
 
 
 def build_centerline_features(
-    config: dict[str, Any], adapter: DatasetAdapter | None = None
+    config: dict[str, Any], adapter: DatasetAdapter
 ) -> pd.DataFrame:
     """Build study-level vascular feature rows from saved centerline outputs.
 
-    When ``adapter`` is provided, each case's cohort identity (the ``dataset``
-    column) is resolved via ``adapter.case_dataset_name(case_id)`` instead of the
-    parent directory name — routing cohort identity through the adapter (Step 2
-    of the multi-dataset migration; see ``cohorts/README.md``).
-    When ``adapter`` is ``None`` the behavior is byte-for-byte unchanged.
+    Each case's cohort identity (the ``dataset`` column) is resolved via
+    ``adapter.case_dataset_name(case_id)`` instead of the parent directory name
+    — routing cohort identity through the adapter (see ``cohorts/README.md``).
     """
     data_paths = config.data_paths
     toggles = config.feature_toggles
@@ -152,25 +150,21 @@ def build_centerline_features(
     tumor_graph_loaded_count = 0
 
     study_dirs = [
-        (dataset_dir.name, study_dir)
+        study_dir
         for dataset_dir in sorted(centerline_root.iterdir())
         if dataset_dir.is_dir()
         for study_dir in sorted(dataset_dir.iterdir())
         if study_dir.is_dir()
     ]
 
-    for idx, (dir_dataset_name, study_dir) in enumerate(study_dirs, start=1):
+    for idx, study_dir in enumerate(study_dirs, start=1):
         case_id = study_dir.name
 
-        # Cohort identity: from the adapter when provided (one authoritative
-        # answer, see cohorts/README.md), else the parent directory name (today's
-        # behavior). For MAMA-MIA these agree, which the Step 2 parity gate
-        # verifies (scripts/validate_adapter_feature_parity.py).
-        dataset_name = (
-            adapter.case_dataset_name(case_id)
-            if adapter is not None
-            else dir_dataset_name
-        )
+        # Cohort identity: the adapter's answer is authoritative (see
+        # cohorts/README.md), not the parent directory name -- a case
+        # misfiled under the wrong directory would otherwise silently report
+        # the wrong dataset.
+        dataset_name = adapter.case_dataset_name(case_id)
 
         if dataset_allow is not None and str(dataset_name) not in dataset_allow:
             continue
@@ -341,12 +335,12 @@ def build_centerline_features(
 
 
 def build_modular_features(
-    config: dict[str, Any], adapter: DatasetAdapter | None = None
+    config: dict[str, Any], adapter: DatasetAdapter
 ) -> pd.DataFrame:
     """Build and merge the requested feature blocks into one case-level table.
 
     ``adapter`` is threaded to :func:`build_centerline_features` for cohort
-    identity (Step 2); ``None`` preserves today's behavior exactly.
+    identity.
     """
     toggles = config.feature_toggles
 
@@ -579,13 +573,11 @@ def select_features(
 
 
 def prepare_data(
-    config: dict[str, Any], outdir: Path, adapter: DatasetAdapter | None = None
+    config: dict[str, Any], outdir: Path, adapter: DatasetAdapter
 ) -> pd.DataFrame:
     """Load feature blocks, merge labels, and write the final labeled table.
 
-    ``adapter`` is optional (Step 2 of the multi-dataset migration): when given,
-    cohort identity flows through it; when ``None`` the output is identical to
-    the pre-adapter pipeline.
+    ``adapter`` routes cohort identity through :func:`build_modular_features`.
     """
     feats_df = build_modular_features(config, adapter=adapter)
     feats_df.to_csv(outdir / "features_raw.csv", index=False)
