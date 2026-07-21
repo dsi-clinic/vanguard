@@ -63,6 +63,14 @@ if str(_SEG_DIR) not in sys.path:
 # indexed identically -- no new sampling approach is introduced here.
 from batch_segmentation import build_output_path, find_nii_files  # noqa: E402
 
+from cohorts.mamamia import MamaMiaDataset  # noqa: E402
+
+# build_output_path now requires an adapter (Step 5 of the multi-dataset
+# migration); this frozen script never actually runs (see notice above), so a
+# module-level MAMA-MIA, all-cohorts adapter just keeps it syntactically
+# consistent rather than modeling a real run.
+_FROZEN_ADAPTER = MamaMiaDataset(cohort=None, root=Path("/unused"))
+
 # NOTE: post-consolidation these both resolve to the same file -- see the
 # FROZEN notice above. Kept only so the rest of this script still parses.
 OLD_SCRIPT = _SEG_DIR / "batch_segmentation.py"
@@ -284,8 +292,12 @@ def main() -> int:
         if fast_rc != 0:
             print(f"  FAST FAILED (rc={fast_rc}):\n{fast_out[-2000:]}")
 
-        old_npz = build_output_path(old_output_dir, case_id, base_name)
-        fast_npz = build_output_path(fast_output_dir, case_id, base_name)
+        old_npz = build_output_path(
+            old_output_dir, case_id, base_name, adapter=_FROZEN_ADAPTER
+        )
+        fast_npz = build_output_path(
+            fast_output_dir, case_id, base_name, adapter=_FROZEN_ADAPTER
+        )
 
         row = {
             "case": f"{case_id}/{base_name}",

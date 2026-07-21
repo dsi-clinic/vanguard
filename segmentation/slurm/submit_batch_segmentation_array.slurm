@@ -43,7 +43,11 @@ export PYTHONUNBUFFERED=1
 # is not reliably this repo checkout).
 PROJECT_ROOT="${PROJECT_ROOT:?PROJECT_ROOT must be set (submit via submit_batch_segmentation_array.sh, or pass PROJECT_ROOT=/path/to/vanguard explicitly)}"
 MAMAMIA_ROOT="${MAMAMIA_ROOT:-/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042}"
-IMAGES_DIR="${IMAGES_DIR:-${MAMAMIA_ROOT}/images}"
+# DATASET_COHORT left unset by default -> all four MAMA-MIA cohorts combined
+# (MamaMiaDataset(cohort=None, ...), matching this job's historical scope of
+# processing the whole images/ tree). Set it to duke|ispy1|ispy2|nact to scope
+# a run to one cohort.
+DATASET_COHORT="${DATASET_COHORT:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-/net/projects2/vanguard/vessel_segmentations}"
 BREAST_MODEL="${BREAST_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/breast_model.pth}"
 VESSEL_MODEL="${VESSEL_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/dv_model.pth}"
@@ -64,13 +68,19 @@ echo "Node: $(hostname)"
 echo "GPUs: ${CUDA_VISIBLE_DEVICES:-none}"
 echo "CPUs: ${SLURM_CPUS_PER_TASK}"
 echo "Memory: ${SLURM_MEM_PER_NODE}MB"
-echo "Images dir: ${IMAGES_DIR}"
+echo "MAMA-MIA root: ${MAMAMIA_ROOT}"
+echo "Dataset cohort: ${DATASET_COHORT:-<all four>}"
 echo "Output dir: ${OUTPUT_DIR}"
 echo "Date: $(date)"
 echo "========================================="
 
+DATASET_ARGS=(--dataset-name mamamia --dataset-root "${MAMAMIA_ROOT}")
+if [[ -n "${DATASET_COHORT}" ]]; then
+  DATASET_ARGS+=(--dataset-cohort "${DATASET_COHORT}")
+fi
+
 python -u "${PROJECT_ROOT}/segmentation/batch_segmentation.py" \
-  --images-dir         "${IMAGES_DIR}" \
+  "${DATASET_ARGS[@]}" \
   --output-dir         "${OUTPUT_DIR}" \
   --temp-dir           "${TMPDIR}" \
   --breast-model-path  "${BREAST_MODEL}" \

@@ -57,11 +57,16 @@ The wrapper discovers MRI volumes under `IMAGES_DIR` and submits array chunks th
 
 The Slurm wrappers default to shared cluster paths. Override these if needed:
 
-- `IMAGES_DIR`
+- `IMAGES_DIR` (used to size the array; discovery itself goes through the
+  dataset adapter, see below)
 - `OUTPUT_DIR`
 - `BREAST_MODEL`
 - `VESSEL_MODEL`
 - `FILES_PER_TASK`
+- `MAMAMIA_ROOT` / `DATASET_COHORT` — passed to `batch_segmentation.py` as
+  `--dataset-root`/`--dataset-cohort` (required alongside `--dataset-name`,
+  see `cohorts/README.md`); `DATASET_COHORT` unset means all four MAMA-MIA
+  cohorts combined.
 
 ## Outputs
 

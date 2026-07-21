@@ -8,11 +8,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from graph_extraction.constants import PROCESSING_VIZ_FLIP_SPEC
-from graph_extraction.core4d import (
-    discover_study_timepoints,
-    load_time_series_from_files,
-)
+from graph_extraction.core4d import load_time_series_from_files
 from graph_extraction.feature_stats import _repair_skeleton_support_consistency
 from graph_extraction.graph_outputs import build_graph_outputs_from_centerline
 from graph_extraction.masks import (
@@ -43,7 +39,7 @@ def run_study_pipeline(
     mip_dpi: int,
     radiologist_annotations_dir: Path,
     tumor_mask_dir: Path,
-    adapter: DatasetAdapter | None = None,
+    adapter: DatasetAdapter,
 ) -> dict[str, object]:
     """Run the full graph-extraction workflow for one study.
 
@@ -61,19 +57,14 @@ def run_study_pipeline(
     `run_summary.json`. It records which stages ran, how long they took,
     whether quality checks passed, and where the main outputs were written.
 
-    ``adapter`` is optional (Step 4 of the multi-dataset migration, see
-    cohorts/README.md): when given, per-timepoint segmentation discovery routes
-    through ``adapter.load_segmented_timepoints()`` and the MIP-only flip spec
-    through ``adapter.viz_flip_spec``, instead of the hardcoded MAMA-MIA
-    function/constant. When ``None`` (every caller today), behavior is
-    byte-for-byte unchanged.
+    ``adapter`` (see cohorts/README.md) routes per-timepoint segmentation
+    discovery through ``adapter.load_segmented_timepoints()`` and the MIP-only
+    flip spec through ``adapter.viz_flip_spec``.
     """
     start = time.perf_counter()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    viz_flip_spec = (
-        adapter.viz_flip_spec if adapter is not None else PROCESSING_VIZ_FLIP_SPEC
-    )
+    viz_flip_spec = adapter.viz_flip_spec
 
     skeleton_path = output_dir / f"{case_id}_skeleton_4d_exam_mask.npy"
     support_path = output_dir / f"{case_id}_skeleton_4d_exam_support_mask.npy"
@@ -118,16 +109,10 @@ def run_study_pipeline(
         skeleton_status = "loaded_existing"
     else:
         t0 = time.perf_counter()
-        if adapter is not None:
-            discovered_files, discovered_timepoints = adapter.load_segmented_timepoints(
-                input_dir=input_dir,
-                case_id=case_id,
-            )
-        else:
-            discovered_files, discovered_timepoints = discover_study_timepoints(
-                input_dir=input_dir,
-                case_id=case_id,
-            )
+        discovered_files, discovered_timepoints = adapter.load_segmented_timepoints(
+            input_dir=input_dir,
+            case_id=case_id,
+        )
         priority_4d = load_time_series_from_files(
             discovered_files,
         )
@@ -208,16 +193,10 @@ def run_study_pipeline(
                 }
             else:
                 try:
-                    if adapter is not None:
-                        k_files, k_timepoints = adapter.load_segmented_timepoints(
-                            input_dir=input_dir,
-                            case_id=case_id,
-                        )
-                    else:
-                        k_files, k_timepoints = discover_study_timepoints(
-                            input_dir=input_dir,
-                            case_id=case_id,
-                        )
+                    k_files, k_timepoints = adapter.load_segmented_timepoints(
+                        input_dir=input_dir,
+                        case_id=case_id,
+                    )
                     kinetic_priority_4d = load_time_series_from_files(k_files)
                     kinetic_timepoints = list(k_timepoints)
                     if discovered_files is None:

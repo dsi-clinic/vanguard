@@ -163,7 +163,10 @@ micromamba activate vanguard
 python graph_extraction/run_skeleton_processing.py \
   --case-id DUKE_041 \
   --input-dir /net/projects2/vanguard/vessel_segmentations/DUKE \
-  --output-dir /net/projects2/vanguard/centerlines_tc4d/studies/DUKE/DUKE_041
+  --output-dir /net/projects2/vanguard/centerlines_tc4d/studies/DUKE/DUKE_041 \
+  --dataset-name mamamia \
+  --dataset-root /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042 \
+  --dataset-cohort duke
 ```
 
 Feature-only recompute from existing centerline outputs:
@@ -174,6 +177,9 @@ python graph_extraction/run_skeleton_processing.py \
   --case-id DUKE_041 \
   --input-dir /net/projects2/vanguard/vessel_segmentations/DUKE \
   --output-dir /net/projects2/vanguard/centerlines_tc4d/studies/DUKE/DUKE_041 \
+  --dataset-name mamamia \
+  --dataset-root /gpfs/data/karczmar-lab/MAMA-MIA-syn60868042 \
+  --dataset-cohort duke \
   --features-only \
   --force-features \
   --strict-qc \

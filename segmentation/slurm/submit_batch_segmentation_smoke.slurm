@@ -34,7 +34,7 @@ export MKL_NUM_THREADS=2
 export PYTHONUNBUFFERED=1
 
 MAMAMIA_ROOT="${MAMAMIA_ROOT:-/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042}"
-IMAGES_DIR="${IMAGES_DIR:-${MAMAMIA_ROOT}/images}"
+DATASET_COHORT="${DATASET_COHORT:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-/ess/scratch/scratch1/t-9sbose/vessel_segmentations_fast_smoke}"
 BREAST_MODEL="${BREAST_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/breast_model.pth}"
 VESSEL_MODEL="${VESSEL_MODEL:-${PROJECT_ROOT}/vanguard-blood-vessel-segmentation/trained_models/dv_model.pth}"
@@ -49,11 +49,17 @@ trap 'rm -rf "${TMPDIR}" || true' EXIT
 echo "=== Batch Segmentation Smoke Test ==="
 echo "Node: $(hostname)  GPU: ${CUDA_VISIBLE_DEVICES:-?}  Date: $(date)"
 echo "Files: ${FILE_START}-${FILE_END}  batch_size=${BATCH_SIZE}"
+echo "MAMA-MIA root: ${MAMAMIA_ROOT}  Dataset cohort: ${DATASET_COHORT:-<all four>}"
 echo "Output: ${OUTPUT_DIR}"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 
+DATASET_ARGS=(--dataset-name mamamia --dataset-root "${MAMAMIA_ROOT}")
+if [[ -n "${DATASET_COHORT}" ]]; then
+  DATASET_ARGS+=(--dataset-cohort "${DATASET_COHORT}")
+fi
+
 python -u "${PROJECT_ROOT}/segmentation/batch_segmentation.py" \
-  --images-dir        "${IMAGES_DIR}" \
+  "${DATASET_ARGS[@]}" \
   --output-dir        "${OUTPUT_DIR}" \
   --temp-dir          "${TMPDIR}" \
   --breast-model-path "${BREAST_MODEL}" \

@@ -24,6 +24,8 @@ from batch_segmentation import (  # noqa: E402
     preprocess_parallel,
 )
 
+from cohorts.mamamia import MamaMiaDataset  # noqa: E402
+
 
 def main() -> int:
     """Run the parallel-vs-serial preprocessing equivalence check."""
@@ -46,18 +48,21 @@ def main() -> int:
             )
 
         files = sorted(find_nii_files(str(images_dir)), key=lambda x: (x[0], str(x[1])))
+        adapter = MamaMiaDataset(cohort=None, root=tmp)
 
         # Parallel (the feature under test)
         par_dir = tmp / "par"
         par_dir.mkdir()
-        base_to_case, failed = preprocess_parallel(files, par_dir, workers=3)
+        base_to_case, failed = preprocess_parallel(
+            files, par_dir, workers=3, adapter=adapter
+        )
 
         # Serial reference
         ser_dir = tmp / "ser"
         ser_dir.mkdir()
         for _cid, fp in files:
             base = Path(fp).name.replace(".nii.gz", "")
-            preprocess_image(fp, ser_dir / f"{base}.npy")
+            preprocess_image(fp, ser_dir / f"{base}.npy", adapter=adapter)
 
         ok = len(failed) == 0 and len(base_to_case) == len(files)
         for base in base_to_case:
