@@ -43,7 +43,6 @@ from sklearn.preprocessing import StandardScaler
 
 from evaluation import Evaluator, FoldResults
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 THIS_DIR = Path(__file__).resolve().parent
 DEFAULT_INPUT = (
@@ -61,6 +60,10 @@ MODEL_NAME = "asymmetry_predictions_v.2"
 PREVIOUS_MODEL_NAME = "asymmetry_predictions_v.1"
 RANDOM_STATE = 42
 NUISANCE_THRESHOLD = 0.25
+MIN_FEATURE_COMPLETENESS = 0.75
+MIN_UNIQUE_VALUES = 2
+N_SPLITS = 5
+PREDICTION_THRESHOLD = 0.5
 NUISANCE_COLS = ("xy_spacing_mm", "z_spacing_mm", "tumor_size_tumor_voxels")
 VESSEL_PREFIXES = (
     "ipsilateral_",
@@ -73,6 +76,7 @@ VESSEL_PREFIXES = (
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the v2 asymmetry model run."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--spacing", type=Path, default=DEFAULT_SPACING)
@@ -82,53 +86,72 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_input(input_path: Path, spacing_path: Path) -> pd.DataFrame:
-    df = pd.read_csv(input_path)
-    df["case_id"] = df["case_id"].astype(str)
-    df = df[df["pcr"].isin([0, 1, 0.0, 1.0])].copy()
+    """Load the pCR feature table and merge scanner spacing nuisance variables."""
+    feature_table = pd.read_csv(input_path)
+    feature_table["case_id"] = feature_table["case_id"].astype(str)
+    labeled_table = feature_table[feature_table["pcr"].isin([0, 1, 0.0, 1.0])].copy()
 
     spacing = pd.read_csv(spacing_path).rename(columns={"patient_id": "case_id"})
     spacing["case_id"] = spacing["case_id"].astype(str)
-    keep = [col for col in ["case_id", "xy_spacing_mm", "z_spacing_mm"] if col in spacing]
-    return df.merge(spacing[keep], on="case_id", how="left", validate="one_to_one")
+    keep = [
+        col for col in ["case_id", "xy_spacing_mm", "z_spacing_mm"] if col in spacing
+    ]
+    return labeled_table.merge(
+        spacing[keep], on="case_id", how="left", validate="one_to_one"
+    )
 
 
 def is_vessel_feature(column: str) -> bool:
+    """Return whether a column is one of the vessel asymmetry predictors."""
     return column.startswith(VESSEL_PREFIXES)
 
 
-def preprocess_vessel_features(df: pd.DataFrame) -> pd.DataFrame:
-    cols = [col for col in df.columns if is_vessel_feature(col)]
-    X = df[cols].apply(pd.to_numeric, errors="coerce")
+def preprocess_vessel_features(feature_table: pd.DataFrame) -> pd.DataFrame:
+    """Build the numeric vessel feature matrix used before nuisance filtering."""
+    columns = [col for col in feature_table.columns if is_vessel_feature(col)]
+    features = feature_table[columns].apply(pd.to_numeric, errors="coerce")
 
-    raw_ratio_cols = [col for col in X.columns if col.startswith("ic_ratio_")]
+    raw_ratio_cols = [col for col in features.columns if col.startswith("ic_ratio_")]
     for col in raw_ratio_cols:
-        values = X[col].where(X[col] > 0.0)
-        X[f"log2_{col}"] = np.log2(values)
+        values = features[col].where(features[col] > 0.0)
+        features[f"log2_{col}"] = np.log2(values)
     if raw_ratio_cols:
-        X = X.drop(columns=raw_ratio_cols)
+        features = features.drop(columns=raw_ratio_cols)
 
-    X = X.replace([np.inf, -np.inf], np.nan)
-    X = X.loc[:, X.notna().mean(axis=0) >= 0.75]
-    X = X.loc[:, X.nunique(dropna=True) > 1]
-    return X
+    features = features.replace([np.inf, -np.inf], np.nan)
+    features = features.loc[
+        :, features.notna().mean(axis=0) >= MIN_FEATURE_COMPLETENESS
+    ]
+    non_constant = features.apply(
+        lambda column: len(column.dropna().unique()) >= MIN_UNIQUE_VALUES
+    )
+    return features.loc[:, non_constant]
 
 
 def spearman(x: pd.Series, y: pd.Series, min_n: int = 20) -> tuple[float, float, int]:
+    """Compute Spearman correlation after dropping invalid paired values."""
     paired = pd.DataFrame({"x": x, "y": y}).replace([np.inf, -np.inf], np.nan).dropna()
     n = int(len(paired))
-    if n < min_n or paired["x"].nunique() < 2 or paired["y"].nunique() < 2:
+    if (
+        n < min_n
+        or paired["x"].nunique() < MIN_UNIQUE_VALUES
+        or paired["y"].nunique() < MIN_UNIQUE_VALUES
+    ):
         return np.nan, np.nan, n
     result = stats.spearmanr(paired["x"], paired["y"])
     return float(result.statistic), float(result.pvalue), n
 
 
-def nuisance_scores(df: pd.DataFrame, X: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def nuisance_scores(
+    feature_table: pd.DataFrame, features: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Calculate feature correlations to configured nuisance variables."""
     rows = []
-    for feature in X.columns:
-        values = pd.to_numeric(X[feature], errors="coerce")
+    for feature in features.columns:
+        values = pd.to_numeric(features[feature], errors="coerce")
         abs_rs = []
         for target in NUISANCE_COLS:
-            target_values = pd.to_numeric(df[target], errors="coerce")
+            target_values = pd.to_numeric(feature_table[target], errors="coerce")
             r, p, n = spearman(values, target_values)
             abs_rs.append(abs(r) if np.isfinite(r) else np.nan)
             rows.append(
@@ -152,14 +175,16 @@ def nuisance_scores(df: pd.DataFrame, X: pd.DataFrame) -> tuple[pd.DataFrame, pd
     long_df = pd.DataFrame(rows)
     max_df = (
         long_df[long_df["target"] == "max_abs_nuisance_r"]
-        .rename(columns={"spearman_r": "max_abs_nuisance_r"})
-        [["feature", "max_abs_nuisance_r", "n"]]
+        .rename(columns={"spearman_r": "max_abs_nuisance_r"})[
+            ["feature", "max_abs_nuisance_r", "n"]
+        ]
         .sort_values("max_abs_nuisance_r", ascending=False)
     )
     return long_df, max_df
 
 
 def make_model() -> Pipeline:
+    """Create the balanced logistic regression pipeline for pCR prediction."""
     return Pipeline(
         [
             ("imputer", SimpleImputer(strategy="median")),
@@ -177,15 +202,18 @@ def make_model() -> Pipeline:
     )
 
 
-def run_cv(X: pd.DataFrame, y: pd.Series, case_ids: pd.Series) -> tuple[pd.DataFrame, pd.DataFrame]:
+def run_cv(
+    features: pd.DataFrame, y: pd.Series, case_ids: pd.Series
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Run 5-fold cross-validation and return metrics plus out-of-fold predictions."""
     evaluator = Evaluator(
-        X=X,
+        X=features,
         y=y,
         case_ids=case_ids,
         model_name=MODEL_NAME,
         random_state=RANDOM_STATE,
     )
-    splits = evaluator.create_kfold_splits(n_splits=5)
+    splits = evaluator.create_kfold_splits(n_splits=N_SPLITS)
     model = make_model()
     fold_results: list[FoldResults] = []
     metric_rows: list[dict[str, Any]] = []
@@ -195,9 +223,9 @@ def run_cv(X: pd.DataFrame, y: pd.Series, case_ids: pd.Series) -> tuple[pd.DataF
         clf = clone(model)
         train_idx = split.train_indices
         test_idx = split.val_indices
-        clf.fit(X.iloc[train_idx], y.iloc[train_idx])
-        y_prob = clf.predict_proba(X.iloc[test_idx])[:, 1]
-        y_pred = (y_prob >= 0.5).astype(int)
+        clf.fit(features.iloc[train_idx], y.iloc[train_idx])
+        y_prob = clf.predict_proba(features.iloc[test_idx])[:, 1]
+        y_pred = (y_prob >= PREDICTION_THRESHOLD).astype(int)
         y_test = y.iloc[test_idx].to_numpy()
         pred_df = pd.DataFrame(
             {
@@ -235,19 +263,28 @@ def run_cv(X: pd.DataFrame, y: pd.Series, case_ids: pd.Series) -> tuple[pd.DataF
                 "fold": stat_name,
                 "n_test": int(len(y)),
                 "auc": results.aggregated_metrics["auc"].get(stat_name, float("nan")),
-                "average_precision": results.aggregated_metrics["ap"].get(stat_name, float("nan")),
+                "average_precision": results.aggregated_metrics["ap"].get(
+                    stat_name, float("nan")
+                ),
             }
         )
     return pd.DataFrame(metric_rows), pd.DataFrame(prediction_rows)
 
 
 def plot_auc(metrics: pd.DataFrame, out_path: Path) -> None:
+    """Save a compact AUC summary plot for the v2 pCR model."""
     fold_df = metrics[~metrics["fold"].astype(str).isin(["mean", "std"])].copy()
     mean_row = metrics[metrics["fold"].astype(str) == "mean"].iloc[0]
     std_row = metrics[metrics["fold"].astype(str) == "std"].iloc[0]
     fig, ax = plt.subplots(figsize=(4.5, 5))
     ax.bar([0], [mean_row["auc"]], yerr=[std_row["auc"]], color="#4c78a8", capsize=5)
-    ax.scatter(np.linspace(-0.08, 0.08, len(fold_df)), fold_df["auc"], color="black", s=24, zorder=3)
+    ax.scatter(
+        np.linspace(-0.08, 0.08, len(fold_df)),
+        fold_df["auc"],
+        color="black",
+        s=24,
+        zorder=3,
+    )
     ax.axhline(0.5, color="black", linestyle="--", linewidth=1)
     ax.set_xticks([0], ["asymmetry\npredictions v.2"])
     ax.set_ylim(0.0, 0.8)
@@ -265,6 +302,7 @@ def plot_nuisance_heatmap(
     removed: pd.DataFrame,
     out_path: Path,
 ) -> None:
+    """Save the before/after nuisance-correlation heatmap."""
     before = before_scores[before_scores["target"].isin(NUISANCE_COLS)]
     after = after_scores[after_scores["target"].isin(NUISANCE_COLS)]
     before_matrix = before.pivot_table(
@@ -331,6 +369,7 @@ def plot_nuisance_heatmap(
 
 
 def write_readme(outdir: Path, metadata: dict[str, Any], metrics: pd.DataFrame) -> None:
+    """Write a short provenance README describing the v2 model artifacts."""
     mean_row = metrics[metrics["fold"].astype(str) == "mean"].iloc[0]
     std_row = metrics[metrics["fold"].astype(str) == "std"].iloc[0]
     lines = [
@@ -377,38 +416,52 @@ def write_readme(outdir: Path, metadata: dict[str, Any], metrics: pd.DataFrame) 
 
 
 def main() -> None:
+    """Run feature filtering, model evaluation, and artifact export."""
     args = parse_args()
     if args.outdir.exists() and any(args.outdir.iterdir()) and not args.overwrite:
         allowed_existing = {Path(__file__).resolve()}
-        existing = [p for p in args.outdir.iterdir() if p.resolve() not in allowed_existing]
+        existing = [
+            p for p in args.outdir.iterdir() if p.resolve() not in allowed_existing
+        ]
         if existing:
-            raise FileExistsError(f"Output directory exists and is non-empty: {args.outdir}")
+            raise FileExistsError(
+                f"Output directory exists and is non-empty: {args.outdir}"
+            )
     args.outdir.mkdir(parents=True, exist_ok=True)
 
-    df = load_input(args.input, args.spacing)
-    y = df["pcr"].astype(int)
-    case_ids = df["case_id"].astype(str)
-    full_X = preprocess_vessel_features(df)
-    score_long, score_max = nuisance_scores(df, full_X)
+    feature_table = load_input(args.input, args.spacing)
+    y = feature_table["pcr"].astype(int)
+    case_ids = feature_table["case_id"].astype(str)
+    full_features = preprocess_vessel_features(feature_table)
+    score_long, score_max = nuisance_scores(feature_table, full_features)
     removed = score_max[score_max["max_abs_nuisance_r"] >= NUISANCE_THRESHOLD].copy()
-    kept_cols = [col for col in full_X.columns if col not in set(removed["feature"])]
-    updated_X = full_X[kept_cols].copy()
+    kept_cols = [
+        col for col in full_features.columns if col not in set(removed["feature"])
+    ]
+    updated_features = full_features[kept_cols].copy()
 
-    metrics, predictions = run_cv(updated_X, y, case_ids)
+    metrics, predictions = run_cv(updated_features, y, case_ids)
     updated_table = pd.concat(
-        [df[["case_id", "dataset", "pcr"]].reset_index(drop=True), updated_X.reset_index(drop=True)],
+        [
+            feature_table[["case_id", "dataset", "pcr"]].reset_index(drop=True),
+            updated_features.reset_index(drop=True),
+        ],
         axis=1,
     )
 
-    updated_table.to_csv(args.outdir / "asymmetry_predictions_v2_features.csv", index=False)
+    updated_table.to_csv(
+        args.outdir / "asymmetry_predictions_v2_features.csv", index=False
+    )
     removed.to_csv(args.outdir / "removed_nuisance_features.csv", index=False)
     score_long.to_csv(args.outdir / "all_feature_nuisance_scores.csv", index=False)
     metrics.to_csv(args.outdir / "cv_metrics.csv", index=False)
     predictions.to_csv(args.outdir / "oof_predictions.csv", index=False)
     plot_auc(metrics, args.outdir / "auc_asymmetry_predictions_v2.png")
 
-    after_score_long, after_score_max = nuisance_scores(df, updated_X)
-    after_score_long.to_csv(args.outdir / "filtered_feature_nuisance_scores.csv", index=False)
+    after_score_long, after_score_max = nuisance_scores(feature_table, updated_features)
+    after_score_long.to_csv(
+        args.outdir / "filtered_feature_nuisance_scores.csv", index=False
+    )
     plot_nuisance_heatmap(
         score_long,
         after_score_long,
@@ -423,13 +476,15 @@ def main() -> None:
         "previous_model_name": PREVIOUS_MODEL_NAME,
         "previous_model_definition": "Original all-feature vessel asymmetry logreg_all model.",
         "nuisance_threshold": NUISANCE_THRESHOLD,
-        "n_labeled_cases": int(len(df)),
+        "n_labeled_cases": int(len(feature_table)),
         "n_pcr_positive": int(y.sum()),
         "n_pcr_negative": int((y == 0).sum()),
-        "n_features_original": int(full_X.shape[1]),
-        "n_features_kept": int(updated_X.shape[1]),
+        "n_features_original": int(full_features.shape[1]),
+        "n_features_kept": int(updated_features.shape[1]),
         "n_features_removed": int(len(removed)),
-        "max_abs_nuisance_r_after_filtering": float(after_score_max["max_abs_nuisance_r"].max()),
+        "max_abs_nuisance_r_after_filtering": float(
+            after_score_max["max_abs_nuisance_r"].max()
+        ),
         "kept_features": kept_cols,
         "removed_features": list(removed["feature"]),
     }
@@ -441,7 +496,9 @@ def main() -> None:
 
     print(f"Wrote {MODEL_NAME} artifacts to {args.outdir}")
     print(metrics.to_string(index=False))
-    print(f"Removed {len(removed)} features; kept {updated_X.shape[1]} features.")
+    print(
+        f"Removed {len(removed)} features; kept {updated_features.shape[1]} features."
+    )
 
 
 if __name__ == "__main__":
