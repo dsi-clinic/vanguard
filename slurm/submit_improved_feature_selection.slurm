@@ -28,10 +28,12 @@ fi
 echo "=== Step 1: Build features with clinical columns ==="
 PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" python -c "
 from tabular.cohort import prepare_data
+from cohorts.factory import require_adapter_from_config
 from config import load_config
 from pathlib import Path
 config = load_config('${CONFIG}')
-prepare_data(config, Path('${EXPERIMENT_DIR}'))
+adapter = require_adapter_from_config(config)
+prepare_data(config, Path('${EXPERIMENT_DIR}'), adapter=adapter)
 "
 
 echo ""

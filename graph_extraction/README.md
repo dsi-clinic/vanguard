@@ -72,9 +72,10 @@ The Deep Sets dataset builder always consumes the **skeleton** mask and can also
 Set paths first:
 
 ```bash
-export STUDY_ID=DUKE_041
+export CASE_ID=DUKE_041
 export SEG_ROOT=/net/projects2/vanguard/vessel_segmentations/DUKE
-export OUTDIR=/net/projects2/vanguard/centerlines_tc4d/studies/DUKE/${STUDY_ID}
+export OUTDIR=/net/projects2/vanguard/centerlines_tc4d/studies/DUKE/${CASE_ID}
+export MAMAMIA_ROOT=/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042
 ```
 
 Full centerline extraction plus feature generation:
@@ -82,9 +83,12 @@ Full centerline extraction plus feature generation:
 ```bash
 micromamba activate vanguard
 python graph_extraction/run_skeleton_processing.py \
-  --study-id "${STUDY_ID}" \
+  --case-id "${CASE_ID}" \
   --input-dir "${SEG_ROOT}" \
-  --output-dir "${OUTDIR}"
+  --output-dir "${OUTDIR}" \
+  --dataset-name mamamia \
+  --dataset-root "${MAMAMIA_ROOT}" \
+  --dataset-cohort duke
 ```
 
 Fast iteration on graph and tumor features only, reusing existing centerline outputs:
@@ -92,14 +96,20 @@ Fast iteration on graph and tumor features only, reusing existing centerline out
 ```bash
 micromamba activate vanguard
 python graph_extraction/run_skeleton_processing.py \
-  --study-id "${STUDY_ID}" \
+  --case-id "${CASE_ID}" \
   --input-dir "${SEG_ROOT}" \
   --output-dir "${OUTDIR}" \
+  --dataset-name mamamia \
+  --dataset-root "${MAMAMIA_ROOT}" \
+  --dataset-cohort duke \
   --features-only \
   --force-features \
   --strict-qc \
   --no-render-mip
 ```
+
+`--dataset-name`/`--dataset-root` are required (`--dataset-cohort` is optional --
+omit it to combine all four MAMA-MIA cohorts). See `cohorts/README.md`.
 
 `--features-only` requires these existing files in `OUTDIR`:
 
