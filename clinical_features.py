@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 
-def _load_clinical_from_patient_info(patient_info_dir: Path) -> pd.DataFrame:
+def load_clinical_from_patient_info(patient_info_dir: Path) -> pd.DataFrame:
     """Load case-level clinical/imaging metadata from patient_info JSON files."""
     rows = []
     for fp in sorted(patient_info_dir.glob("*.json")):
@@ -41,7 +41,7 @@ def _load_clinical_from_patient_info(patient_info_dir: Path) -> pd.DataFrame:
     return clinical_df
 
 
-def _load_clinical_from_excel(excel_path: Path) -> pd.DataFrame:
+def load_clinical_from_excel(excel_path: Path) -> pd.DataFrame:
     """Load clinical metadata from Excel with basic column normalization."""
     clinical_df = pd.read_excel(excel_path)
     rename_map = {
@@ -94,13 +94,13 @@ def get_clinical_features(config: dict) -> pd.DataFrame:
     if patient_info_dir:
         patient_info_path = Path(patient_info_dir)
         if patient_info_path.exists():
-            return _load_clinical_from_patient_info(patient_info_path)
+            return load_clinical_from_patient_info(patient_info_path)
 
     clinical_excel = data_paths.clinical_excel
     if clinical_excel:
         excel_path = Path(clinical_excel)
         if excel_path.exists():
-            return _load_clinical_from_excel(excel_path)
+            return load_clinical_from_excel(excel_path)
 
     msg = (
         "No clinical source found. Set data_paths.patient_info_dir or "

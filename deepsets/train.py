@@ -24,7 +24,7 @@ from deepsets.data import (
 )
 from deepsets.model import DeepSetsClassifier
 from deepsets.runtime import stage_timer
-from evaluation import FoldResults
+from evaluation import FoldResults, KFoldResults
 from evaluation.build_splits import create_splits_for_dataframe
 from evaluation.kfold import FoldSplit
 from evaluation.utils import prepare_predictions_df
@@ -119,11 +119,20 @@ def load_deepsets_manifest(config: dict[str, Any]) -> pd.DataFrame:
 
 
 def build_deepsets_dataset(
-    manifest_df: pd.DataFrame, config: dict[str, Any]
+    manifest_df: pd.DataFrame,
+    config: dict[str, Any],
+    *,
+    keep_features: list[str] | None = None,
 ) -> SavedSetLookup:
-    """Create a lazy lookup over serialized case point sets."""
+    """Create a lazy lookup over serialized case point sets.
+
+    ``keep_features``, if given, is forwarded to ``SavedSetLookup`` so every
+    downstream consumer (splits, standardization, model ``input_dim``
+    inference, training) sees the narrowed column set -- see LOCO's DeepSets
+    adapter (``evaluation/loco_deepsets.py``).
+    """
     _ = config
-    return SavedSetLookup(manifest_df)
+    return SavedSetLookup(manifest_df, keep_features=keep_features)
 
 
 def infer_deepsets_feature_names(dataset: SavedSetLookup, case_id: str) -> list[str]:
@@ -549,8 +558,16 @@ def fit_predict_one_fold(
     )
 
 
-def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
+def run_deepsets_pipeline(
+    config: dict[str, Any], outdir: Path, *, keep_features: list[str] | None = None
+) -> KFoldResults:
     """Run the Deep Sets training/evaluation pipeline.
+
+    ``keep_features``, if given, is forwarded to ``build_deepsets_dataset`` so
+    training runs on that column subset of whatever regime the manifest was
+    built with (used by LOCO's DeepSets adapter, ``evaluation/loco_deepsets.py``,
+    against a manifest built with ``deepsets_point_feature_set: loco_superset``).
+    Default ``None`` preserves existing behavior (use every cached column).
 
     Outputs saved to ``<outdir>/<model_name>/``:
 
@@ -606,7 +623,9 @@ def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
         label_col = config.data_paths.deepsets_label_column
         manifest_df[label_col] = manifest_df[label_col].astype(int)
 
-        dataset = build_deepsets_dataset(manifest_df, config)
+        dataset = build_deepsets_dataset(
+            manifest_df, config, keep_features=keep_features
+        )
         y = manifest_df[label_col].astype(int)
         case_ids = manifest_df["case_id"].astype(str)
         split_frame = manifest_df.copy()
@@ -716,6 +735,7 @@ def run_deepsets_pipeline(config: dict[str, Any], outdir: Path) -> None:
             json.dumps(probability_summary, indent=2),
             encoding="utf-8",
         )
+    return kfold_results
 
 
 def main() -> None:

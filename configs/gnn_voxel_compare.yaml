@@ -1,0 +1,60 @@
+# VOXEL arm of the matched graph-representation comparison (v1).
+# node_mode="voxel": one node per skeleton voxel. See
+# gnn/DESIGN_segment_graph.md and experiments/graph_repr_compare_v1/README.md.
+#
+# This is one of three arms (voxel / segment / junction) that share an identical
+# cohort, identical folds, and the identical set of 6 underlying signals
+# (peak_time, peak_enhancement, time_to_enhancement, washin_slope, auc_positive,
+# radius), each placed on that representation's natural carrier -- so any AUC
+# difference reflects the graph representation, not the inputs.
+#
+# Folds are frozen up front (split_mode: predefined, split_col: fold) from
+# pcr_labels_folded.csv, which is generated once by:
+#   python -m gnn.make_fold_assignments --labels-path <pcr_labels.csv> \
+#       --out <workspace>/pcr_labels_folded.csv
+# Build the matching cache first (both build and train must use the SAME folded
+# labels file -- the cache manifest records labels_path):
+#   python -m gnn.build_dataset --node-mode voxel \
+#       --labels-path <workspace>/pcr_labels_folded.csv \
+#       --cache-dir <workspace>/gnn_cache_voxel_compare \
+#       --node-features peak_time,peak_enhancement,time_to_enhancement,washin_slope,auc_positive,radius
+# NOTE: /gpfs/data/karczmar-lab quota is exhausted; actual runs use scratch
+# override configs (paths flipped to /ess/scratch/...), same as recent GNN work.
+
+experiment_setup:
+  name: "gnn_voxel_compare"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "predefined"
+  split_col: "fold"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "voxel"
+  gnn_node_features:
+    - "peak_time"
+    - "peak_enhancement"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "auc_positive"
+    - "radius"
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/pcr_labels_folded.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_voxel_compare"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null

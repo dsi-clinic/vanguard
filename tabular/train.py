@@ -114,6 +114,7 @@ def run_evaluation_pipeline(
     print("\n" + "=" * 48)
     print(f"Plots saved in: {outdir / context['evaluator'].model_name / 'plots'}")
     print("=" * 48 + "\n")
+    return kfold_results
 
 
 def prepare_evaluation_context(

@@ -1,0 +1,55 @@
+# Smoke-test config for the GNN pipeline in JUNCTION mode (node_mode="junction",
+# segment-as-edge -- Option A in gnn/DESIGN_segment_graph.md). Exercise
+# build -> train end-to-end fast on an interactive node against an 8-case
+# junction cache. Results are NOT meaningful.
+#
+# Build the matching cache first (its own dir -- caches for different node_modes
+# cannot share one, the manifest check enforces this):
+#   python -m gnn.build_dataset --node-mode junction \
+#       --cache-dir /gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_junction_smoke \
+#       --cases DUKE_001,DUKE_002,ISPY1_1001,ISPY1_1002,ISPY2_100899,ISPY2_102011,NACT_01,NACT_02 \
+#       --node-features peak_time,radius,degree \
+#       --edge-features seg_length,seg_tortuosity,seg_radius_mean,seg_peak_time_mean,seg_peak_enhancement_mean,seg_washin_slope_mean,seg_auc_positive_mean
+
+experiment_setup:
+  name: "gnn_junction_smoke"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 2
+  random_state: 0
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "random"
+  split_col: "fold"
+  batch_size: 4
+  epochs: 3
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "junction"
+  gnn_node_features:
+    - "peak_time"
+    - "radius"
+    - "degree"
+  gnn_edge_features:
+    - "seg_length"
+    - "seg_tortuosity"
+    - "seg_radius_mean"
+    - "seg_peak_time_mean"
+    - "seg_peak_enhancement_mean"
+    - "seg_washin_slope_mean"
+    - "seg_auc_positive_mean"
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_junction_smoke"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: ["DUKE_001", "DUKE_002", "ISPY1_1001", "ISPY1_1002", "ISPY2_100899", "ISPY2_102011", "NACT_01", "NACT_02"]
+  gnn_dataset_include: null

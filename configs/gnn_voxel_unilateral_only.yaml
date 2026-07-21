@@ -1,0 +1,57 @@
+# Arm 3 (native-unilateral-only reference) of the harmonized single-breast
+# dataset minimal experiment -- see LAB_NOTEBOOK.md 2026-07-14 and
+# AUDITING_RESULTS.md. Voxel mode only, same features/hyperparameters as
+# arms 1/2, but a DIFFERENT (smaller, non-case-matched) cohort: only cases
+# that were natively unilateral to begin with (no splitting involved at
+# all). This is a ceiling/sanity-check arm, not the primary comparison --
+# it answers "does arm 2 approach arm 3," not "is arm 2 better than arm 1"
+# (that's the paired arm1-vs-arm2 comparison). Its dataset composition is
+# necessarily different from arms 1/2 (bilateral cases are ~94% DUKE after
+# the breast-splitter's tumor-mask-availability constraint, so arm 3 is
+# comparatively DUKE-poor / ISPY1+ISPY2+NACT-heavy) -- report this arm's
+# results stratified by dataset, not just pooled.
+#
+# Build:
+#   python -m gnn.build_dataset --node-mode voxel \
+#       --labels-path <scratch>/pcr_labels_folded_unilateral_only.csv \
+#       --cache-dir <scratch>/gnn_cache_voxel_unilateral_only \
+#       --node-features peak_time,peak_enhancement,time_to_enhancement,washin_slope,auc_positive,radius
+
+experiment_setup:
+  name: "gnn_voxel_unilateral_only"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "predefined"
+  split_col: "fold"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "voxel"
+  gnn_node_features:
+    - "peak_time"
+    - "peak_enhancement"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "auc_positive"
+    - "radius"
+  gnn_breast_split_mode: null
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/ess/scratch/scratch1/t-9svena/gnn_caches/pcr_labels_folded_unilateral_only.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/gnn_cache_voxel_unilateral_only"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
