@@ -1465,3 +1465,71 @@ def test_breast_split_rejects_unknown_mode() -> None:
             breast_split_mode="both",
             breast_split_skeleton_root=Path("/nonexistent/breast_split_skeletons"),
         )
+
+
+def test_kinetic_override_changes_contract_without_run_summary_policy(
+    tmp_path: Path,
+) -> None:
+    """The config knob applies the ultrafast contract when run_summary omits it.
+
+    Sarit's UChicago run_summary.json carries only study_timepoints (+ a times
+    sidecar), no kinetic_feature_policy -- so without the override the loader uses
+    legacy absolute enhancement. Building the same case with
+    kinetic_baseline_frame_count/relative set must change the computed node
+    features, proving the config-driven contract is applied per case.
+    """
+    case_id = "uch_nac_1_3_xyz"
+    studies = tmp_path / "studies"
+    case_dir = studies / "uch_nac" / case_id
+    case_dir.mkdir(parents=True)
+
+    skeleton = np.zeros(VOLUME_SHAPE, dtype=np.uint8)
+    for x in SKELETON_XS:
+        skeleton[SKELETON_Z, SKELETON_Y, x] = 1
+    np.save(case_dir / f"{case_id}_skeleton_4d_exam_mask.npy", skeleton)
+    support = np.zeros(VOLUME_SHAPE, dtype=np.uint8)
+    support[
+        SKELETON_Z - 1 : SKELETON_Z + 2,
+        SKELETON_Y - 1 : SKELETON_Y + 2,
+        min(SKELETON_XS) - 1 : max(SKELETON_XS) + 2,
+    ] = 1
+    np.save(case_dir / f"{case_id}_skeleton_4d_exam_support_mask.npy", support)
+
+    # Non-degenerate curve so relative enhancement (S-S0)/S0 is well defined.
+    dce_case_dir = tmp_path / "dce" / case_id
+    dce_case_dir.mkdir(parents=True)
+    for t in range(NUM_TIMEPOINTS):
+        phase = np.full(VOLUME_SHAPE, 10.0 + float(t), dtype=np.float32)
+        sitk.WriteImage(
+            sitk.GetImageFromArray(phase),
+            str(dce_case_dir / f"{case_id}_{t:04d}.nii.gz"),
+        )
+    # Physical-times sidecar, as Sarit's dce/ ships -- relative enhancement needs it.
+    np.save(dce_case_dir / "ufast_times_seconds.npy", np.array([0.0, 5.0, 50.0]))
+    # run_summary carries no kinetic_feature_policy -- exactly Sarit's layout.
+    (case_dir / "run_summary.json").write_text(
+        json.dumps({"study_timepoints": list(range(NUM_TIMEPOINTS))})
+    )
+
+    labels_csv = tmp_path / "labels.csv"
+    labels_csv.write_text(f"case_id,pcr\n{case_id},1\n")
+
+    def build(cache_name: str, **kinetic: object) -> torch.Tensor:
+        ds = VanguardCenterlineDataset(
+            root=studies,
+            labels_path=labels_csv,
+            dce_root=tmp_path / "dce",
+            cache_dir=tmp_path / cache_name,
+            node_features=("peak_enhancement",),
+            **kinetic,
+        )
+        return ds[0].x.clone()
+
+    legacy = build("cache_legacy")
+    override = build(
+        "cache_override",
+        kinetic_baseline_frame_count=1,
+        kinetic_relative_enhancement=True,
+    )
+    # Absolute vs relative enhancement over baseline S0=10 must differ.
+    assert not torch.allclose(legacy, override)

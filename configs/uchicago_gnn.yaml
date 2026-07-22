@@ -1,0 +1,48 @@
+# GNN training on the UChicago internal ultrafast DCE cohort (gnn/train.py).
+#
+# Uses the standard loader with no dataset adapter: Sarit's preprocessing output
+# is already in the layout the loader expects --
+#   centerlines: <root>/<sub-source>/<exam_id>/<exam_id>_skeleton_4d_exam_mask.npy
+#   raw DCE:     <dce_root>/<exam_id>/<exam_id>_NNNN.nii.gz  (+ ufast_times_seconds.npy)
+# and the DCE is the correct raw-signal, motion-corrected contract
+# (vanguard_spgr_raw_signal_v2), so no manifest / tar extraction is involved.
+#
+# The one UChicago-specific bit is the ultrafast kinetic contract, set below as
+# two config knobs (5 precontrast frames, relative signal change). node_mode
+# defaults to voxel; override model_params.gnn_node_mode for segment/junction.
+
+experiment_setup:
+  name: "gnn_uchicago"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  # Manifest's shipped folds (patient-grouped, pcr-stratified), merged from the
+  # labels CSV's `fold` column.
+  split_mode: "predefined"
+  split_col: "fold"
+  use_group_split: false
+  n_splits: 5
+  random_state: 42
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features: ["peak_time", "radius"]
+  # UChicago ultrafast contract (verified uniform across all 181 exams).
+  gnn_kinetic_baseline_frame_count: 5
+  gnn_kinetic_relative_enhancement: true
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/preprocessing_out/centerlines"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/preprocessing_out/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/gnn_cache_voxel"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
+
+# Smoke-test a few exams first via gnn_cases: [<exam_id>, ...] or --cases.

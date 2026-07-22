@@ -162,6 +162,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # gnn/DESIGN_segment_graph.md.
         "gnn_node_mode": "voxel",
         "gnn_node_features": ["peak_time", "radius"],
+        # Dataset-wide ultrafast kinetic contract. gnn_kinetic_baseline_frame_count
+        # (e.g. 5 for UChicago) + gnn_kinetic_relative_enhancement=True make every
+        # case use relative signal change (S-S0)/S0 over that precontrast baseline,
+        # overriding each run_summary.json. None (default) keeps the per-case
+        # run_summary/legacy behavior (MAMA-MIA). See gnn/data_loader.py.
+        "gnn_kinetic_baseline_frame_count": None,
+        "gnn_kinetic_relative_enhancement": False,
         # Edge features for node_mode="junction" (segment-as-edge, Option A):
         # the segment summary rides on the edges there. Empty for voxel/segment
         # mode, which carry no edge features. Uses the seg_* vocabulary (see
