@@ -1,9 +1,9 @@
 # Plan: Improving GNN Baseline Performance with More Advanced Modeling
 
 **Scope:** the vessel-centerline **GNN** pCR classifier only (`gnn/model.py`,
-`gnn/train.py`). Not the tabular or Deep Sets tracks. Derived from `NOTES.md`
-("Look into more sophisticated modeling approaches" + "This Week" items) and the
-diagnosis recorded in `LAB_NOTEBOOK.md` (2026-07-15 entries).
+`gnn/train.py`). Not the tabular or Deep Sets tracks. This plan consolidates the
+GNN modeling backlog and the 2026-07-15 baseline diagnosis (§1) into auditable
+decisions.
 
 **Author intent (from the task):** come up with a plan to improve baseline model
 performance using more advanced modeling techniques, and *record every decision
@@ -18,7 +18,7 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done ·
 
 ## 1. Where the baseline actually is (grounded facts, not assumptions)
 
-Read directly from the code and notebook on 2026-07-20:
+Read directly from the code on 2026-07-20:
 
 **Current architecture (`gnn/model.py`):**
 - `GCNClassifier`: 2× `GCNConv` → ReLU → dropout, then **global mean pool**, then
@@ -33,7 +33,7 @@ Read directly from the code and notebook on 2026-07-20:
 - Optimizer: plain `Adam`, `lr=0.001`. **No weight decay, no LR scheduler, no
   gradient clipping.**
 - Loss: plain `BCEWithLogitsLoss`. **No `pos_weight`** (pCR is the minority
-  class, fold pCR rates 0.09–0.48 per the notebook).
+  class, fold pCR rates 0.09–0.48).
 - **Fixed 25 epochs, no early stopping.** The model used for prediction is the
   **final-epoch** model (line 480, right after the loop) — there is **no
   best-validation-epoch selection**. A fold that peaks at epoch 10 and decays is
@@ -45,7 +45,7 @@ Read directly from the code and notebook on 2026-07-20:
 Richer `seg_*` geometry, degree, washout, bifurcation-angle, and clinical
 covariates exist in the loader but were **not** used in the latest experiments.
 
-**Current performance (`LAB_NOTEBOOK.md`, 2026-07-15):**
+**Current performance (baseline diagnosis, measured 2026-07-15):**
 - GNN val AUC ≈ **0.51**, near chance, **unstable across folds** (fold-only
   std ≈ 0.038). Fold ranking is consistent across seeds (Spearman 0.9–1.0):
   fold 0 always worst (~0.45), fold 2 always best (~0.55).
@@ -74,9 +74,9 @@ but not all — naming which is which is the most important decision here.
 2. **Lossy representation / readout.** XGBoost beats the GNN using *quantiles* of
    the same node features, while the GNN sees only the **mean** (global mean
    pool). Distributional tails (max enhancement, quantiles) are exactly what
-   mean-pooling destroys, and the notebook already flags mean-pool signal-washout
-   as a concern. Attention/multi-statistic readout and a stronger conv operator
-   target this directly. **Advanced modeling helps here — highest-value lever.**
+   mean-pooling destroys, and mean-pool signal-washout is a known concern here.
+   Attention/multi-statistic readout and a stronger conv operator target this
+   directly. **Advanced modeling helps here — highest-value lever.**
 
 3. **Possibly-weak intrinsic signal + cohort confound.** ISPY1 below chance, a
    DUKE-dominated cohort, and seed-stable fold ranking all point to a
@@ -88,16 +88,16 @@ but not all — naming which is which is the most important decision here.
 **Honest ceiling statement:** at ~0.51–0.54 AUC we cannot assume a large gain is
 available. The plan is therefore designed to *fail cheaply and informatively* —
 each tier has a pre-registered stop rule, matching the lab's existing practice
-(the single-breast experiment's pre-registered stop rule, `LAB_NOTEBOOK.md`).
+(the single-breast experiment used the same pre-registered-stop-rule design).
 
 ---
 
 ## 3. Guiding principles (constraints this plan must respect)
 
-From `AGENTS.md`, `agents.local.md`, and `~/.claude/CLAUDE.md`:
+From `AGENTS.md` and the project's working conventions:
 
-- **Simplicity first** (`agents.local.md`): start with the cheapest change that
-  could move the needle; add complexity only after it earns its place.
+- **Simplicity first:** start with the cheapest change that could move the
+  needle; add complexity only after it earns its place.
 - **Fail fast, few fallbacks.** No defensive try/except, no "try it multiple
   ways" chains. One interface per choice; break loudly on mismatch.
 - **Reuse before writing.** Check the shared package first; match existing style.
@@ -105,8 +105,8 @@ From `AGENTS.md`, `agents.local.md`, and `~/.claude/CLAUDE.md`:
 - **No heavy compute on the head node.** Every training run goes through Slurm
   (`gnn/slurm/`, `tier1q`, account `karczmar-lab`).
 - **Reproducible + audited.** Every new results dir gets a `README.md` (command,
-  config, git commit, inputs) *before* the result is reported; every session
-  appends to `LAB_NOTEBOOK.md`.
+  config, git commit, inputs) *before* the result is reported; every session is
+  recorded in the project lab notebook.
 - **Don't silently change cohort/splits.** Fold definitions are frozen; changing
   them is an explicit, separate decision (see D1 and Open Question OQ-1).
 
@@ -127,23 +127,22 @@ is uninterpretable. These are locked for the whole plan.
 - **Decision D0.2 — Frozen folds, shared across arms.** Every arm uses the *same*
   split definition as the current baseline (`split_mode`, `random_state=42`, same
   `n_splits=5`). No arm may change folds and architecture at once.
-  *Why:* the notebook already caught the "frozen-fold check proves cohort parity,
-  not representation isolation" subtlety; we keep folds identical so a ΔAUC is
+  *Why:* an earlier frozen-fold check already surfaced the "cohort parity is not
+  representation isolation" subtlety; we keep folds identical so a ΔAUC is
   attributable to the *model*, not the split. *Rejected:* re-freezing folds
   stratified by dataset — that is a real idea but a **separate** experiment
   (OQ-1), not bundled in here.
 
 - **Decision D0.3 — ≥5 seeds per arm; separate fold variance from run variance.**
   Report the GNN's fold-only std *and* run-only std separately.
-  *Why:* the notebook showed tabular models were deterministic (pure fold std)
-  while the GNN mixes fold + training-run noise; conflating them misled the first
-  std comparison. *Rejected:* 3 seeds (what prior runs used) — too few to trust a
-  small ΔAUC.
+  *Why:* tabular models were deterministic (pure fold std) while the GNN mixes
+  fold + training-run noise; conflating them misled the first std comparison.
+  *Rejected:* 3 seeds (what prior runs used) — too few to trust a small ΔAUC.
 
 - **Decision D0.4 — Report OOF AUC broken out by `dataset` (and ISPY2 laterality).**
   A gain that only appears on DUKE (94% of cohort) is a cohort artifact, not a
-  method win. Reuse the existing per-dataset OOF breakdown already in
-  `analysis/`. *Rejected:* pooled-only reporting — hides the confound.
+  method win. Report the per-dataset OOF breakdown. *Rejected:* pooled-only
+  reporting — hides the confound.
 
 - **Decision D0.5 — Keep the leakage canary and confound plots every run.**
   `pcr_dummy` learnability check + `prediction_vs_num_nodes.png` stay on, so a
@@ -165,9 +164,9 @@ attack diagnosis-problems #1 and #2 (the fixable ones). Tiers 2–3 are expensiv
 shows the signal is capturable. **Do not start a tier until the prior tier's gate
 passes.**
 
-### Tier 0 — Optimization hygiene (cheapest; directly from `NOTES.md` TODO)
+### Tier 0 — Optimization hygiene (cheapest)
 
-`NOTES.md` explicitly lists: early stopping, clipping, LR scheduling. Add
+The optimization backlog is: early stopping, clipping, LR scheduling. Add
 imbalance handling and best-epoch selection alongside, because they are the same
 size of change and address diagnosis-problem #1.
 
@@ -200,14 +199,11 @@ from the historical GNN runs, so `configs/gnn.yaml` and `gnn_smoke.yaml` now
 **pin** the historical values explicitly (D0.6) rather than silently inheriting
 the new defaults. No fallback chains.
 
-**Status: code + configs landed on branch `feat/gnn-tier0-training`, validated
-end-to-end on the 8-case smoke cache.** The real 5-fold run (baseline
-`gnn.yaml` vs `gnn_tier0.yaml`, ≥5 seeds, D0 protocol, via Slurm) is the next
-action and is **blocked** on a data-path issue found during verification:
-`pcr_labels.csv` has moved from `.../saritbose/pcr_labels.csv` to
-`.../saritbose/metadata/pcr_labels.csv` (the committed configs and
-`agents.local.md` still point at the old path). Resolve that path decision
-before submitting (see §7 / Open Questions).
+**Status: code + configs implemented and validated end-to-end on the 8-case
+smoke cache.** The `pcr_labels.csv` path was relocated to
+`.../saritbose/metadata/pcr_labels.csv` and every config updated to match. The
+real 5-fold run (baseline `gnn.yaml` vs `gnn_tier0.yaml`, ≥5 seeds, D0 protocol,
+via Slurm) is the next action.
 
 - **Gate G0 (pre-registered):** run baseline + Tier-0 stack under the D0 protocol.
   **Proceed to Tier 1 only if** mean paired ΔAUC > 0 with the paired distribution
@@ -232,7 +228,7 @@ evidence (quantiles beat mean) points straight at it.
 - **[ ] D2.2 — Attention readout (`GlobalAttention` / `Set2Set`).** A learned,
   node-weighted pooling. *Why:* if some vessels/segments carry the pCR signal and
   most are noise, attention can up-weight them — and the attention weights double
-  as **saliency maps** (a separate `NOTES.md` TODO). *Gated behind D2.1:* only if
+  as **saliency maps** (a separate saliency goal). *Gated behind D2.1:* only if
   multi-stat readout shows a signal worth refining.
 - **[ ] D2.3 — Stronger conv operator: `GraphSAGE` or `GATConv`.** Swap `GCNConv`
   for one alternative (pick **one**, not a sweep-of-everything — start with
@@ -252,10 +248,10 @@ evidence (quantiles beat mean) points straight at it.
 - **Also settle the features confound here (D2.5).** Before crediting architecture
   for any gain, run **one** arm that gives the *current* `GCNClassifier` the
   richer `seg_*`/geometry/degree feature set that the latest experiments omitted.
-  *Why:* the notebook explicitly flags that the richer feature set was never
-  tested and could change the picture; if features alone close the gap, we should
-  know before attributing it to architecture. This is a feature arm, not an
-  architecture arm — keep it labeled as such.
+  *Why:* the richer feature set was never tested and could change the picture; if
+  features alone close the gap, we should know before attributing it to
+  architecture. This is a feature arm, not an architecture arm — keep it labeled
+  as such.
 
 - **Gate G1 (pre-registered):** best Tier-1 arm vs. best Tier-0 model, D0 protocol.
   **Proceed to Tier 2 only if** the best architecture reaches an absolute OOF AUC
@@ -266,8 +262,7 @@ evidence (quantiles beat mean) points straight at it.
 
 ### Tier 2 — Self-supervised pretraining (already prototyped; high ceiling)
 
-`NOTES.md` "This Week: Pretraining task"; a contrast-forecasting pilot already
-exists (`gnn/pretrain/`, `project_contrast_forecasting_pilot` memory). This is
+A contrast-forecasting SSL pilot already exists (`gnn/pretrain/`). This is
 where the currently-discarded **temporal** DCE signal re-enters the model.
 
 - **[ ] D3.1 — Pretrain the encoder on node-level contrast forecasting (SSL),
@@ -282,11 +277,11 @@ where the currently-discarded **temporal** DCE signal re-enters the model.
   already ships `PerNodeForecaster` (graph-free, same temporal head). Carry that
   ablation into fine-tuning: if the graph-free pretrained encoder fine-tunes as
   well as the GNN one, the message-passing is not what's helping — a falsifier we
-  want kept live (matches the design doc §7.ii).
-- **Open decisions inherited from the pilot** (`project_contrast_forecasting_pilot`
-  memory, unresolved): **Q1** variable-T handling across cohorts; **Q2** target
-  normalization for the forecasting loss. These must be settled *before* a
-  real-cohort pretrain run — flagged here so they are not silently defaulted.
+  want kept live.
+- **Open decisions inherited from the pilot** (unresolved): **Q1** variable-T
+  handling across cohorts; **Q2** target normalization for the forecasting loss.
+  These must be settled *before* a real-cohort pretrain run — flagged here so
+  they are not silently defaulted.
 
 - **Gate G2:** fine-tuned-from-pretrained vs. best Tier-1 from-scratch, D0
   protocol. Proceed to invest further in pretraining only if it beats
@@ -294,12 +289,11 @@ where the currently-discarded **temporal** DCE signal re-enters the model.
 
 ### Tier 3 — Explicit temporal encoding in the classifier (most speculative)
 
-`NOTES.md` "This Week: Encode the temporal structure from contrast." Currently the
-temporal axis is collapsed to scalars (`peak_time`, `washin_slope`, …). A per-node
-temporal encoder (GRU/TCN over frames) inside the classifier — reusing the
-`_TemporalForecastHead`-style encoder from `pretrain/` — would keep the dynamics
-the loader is told to preserve (`AGENTS.md`: "Do not discard dynamic/kinematic
-information").
+Currently the temporal axis is collapsed to scalars (`peak_time`,
+`washin_slope`, …). A per-node temporal encoder (GRU/TCN over frames) inside the
+classifier — reusing the `_TemporalForecastHead`-style encoder from `pretrain/` —
+would keep the dynamics the loader is told to preserve (`AGENTS.md`: "Do not
+discard dynamic/kinematic information").
 
 - **[ ] D4.1 — Per-node GRU/TCN over raw frames → GNN, end-to-end for pCR.**
   Only pursue if Tier 2 shows the temporal signal carries pCR information (Tier 2
@@ -313,31 +307,31 @@ information").
 
 - **Decision D5 — One change per arm.** Never combine a readout change, a conv
   change, and a loss change in one arm and call the delta "the architecture."
-  Ablate one axis at a time against the frozen baseline. *Why:* the notebook's
-  own methodological correction (junction arm changed representation *and*
-  architecture, muddying attribution) is the mistake this rule prevents.
+  Ablate one axis at a time against the frozen baseline. *Why:* an earlier
+  junction arm changed representation *and* architecture at once, muddying
+  attribution — the mistake this rule prevents.
 - **Decision D6 — Config-driven, no new parallel scripts.** Every knob above is a
   `model_params`/config field consumed by the existing `gnn/train.py`, matching
-  the repo's "extend the CLI/config, don't fork one-off scripts" preference
-  (`prefer_config_over_new_scripts` memory). New model *classes* go in
-  `gnn/model.py`; new training *behavior* goes in `train.py` behind config.
+  the repo's "extend the CLI/config, don't fork one-off scripts" preference.
+  New model *classes* go in `gnn/model.py`; new training *behavior* goes in
+  `train.py` behind config.
 - **Decision D7 — Graph mode held fixed at voxel for Tiers 0–1.** Establish the
   modeling wins on the already-validated voxel baseline first; only revisit
   segment/junction modes (D2.4's longer paths) once a voxel-mode win exists.
   *Why:* changing mode + architecture at once re-introduces the confound D5 bans.
-- **Decision D8 — Every arm writes a results `README.md` + `LAB_NOTEBOOK.md`
-  entry** with the exact command, config snapshot, git commit, and the paired
-  ΔAUC table, per repo policy — *before* the result is reported anywhere.
+- **Decision D8 — Every arm writes a results `README.md` and a project
+  lab-notebook entry** with the exact command, config snapshot, git commit, and
+  the paired ΔAUC table, per repo policy — *before* the result is reported anywhere.
 
 ---
 
 ## 7. Open questions to resolve with the human (not silently defaulted)
 
-- **OQ-1 — Re-freeze folds stratified jointly by dataset?** The notebook found
-  fold pCR rates swing 0.09–0.48; joint dataset-stratification might cut fold
-  variance. But it changes the frozen split, so it is a **separate, explicit**
-  decision and would reset the D0.6 baseline. Recommend running it as its own
-  A/B *after* Tier 0, not folding it into the modeling tiers.
+- **OQ-1 — Re-freeze folds stratified jointly by dataset?** Fold pCR rates swing
+  0.09–0.48; joint dataset-stratification might cut fold variance. But it changes
+  the frozen split, so it is a **separate, explicit** decision and would reset the
+  D0.6 baseline. Recommend running it as its own A/B *after* Tier 0, not folding
+  it into the modeling tiers.
 - **OQ-2 — Is 0.54 (XGBoost) the bar, or is there a target AUC from the clinical
   side?** The gate G1 uses 0.540 as the "earn your complexity" threshold; if the
   team has a different clinically-meaningful bar, it changes the stop rules.
