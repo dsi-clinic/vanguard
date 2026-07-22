@@ -80,6 +80,8 @@ Derived outputs should go in clearly named output folders with enough provenance
 - Prefer saved CSVs, plots, QC panels, and short README/provenance notes for important outputs.
 - Document split/CV policy when training or evaluating models.
 - Do not change cohort definitions, labels, or train/test splits without making the change explicit.
+- Do not commit evolving or personal working docs — migration plans, scratch notes, study guides, TODO/roadmap files. These clutter branches and PRs and go stale. Keep them in a gitignored location (`docs/design/`, `agents.local.md`, or an untracked scratch path), not in `docs/` or the repo root.
+- Committed docs must be durable references others rely on: READMEs, data-layout/policy docs, provenance/results write-ups (e.g. `docs/issue*.md`), and **decision records that code or configs point to** (e.g. `gnn/DESIGN_segment_graph.md` and `gnn/PLAN_advanced_modeling.md`, which `config.py` cites by name). A "plan" or "design" file earns a committed spot only as a stable decision record referenced from code — not as a work-in-progress roadmap.
 
 ## Local Preferences
 If `agents.local.md` exists, read it after this file.
