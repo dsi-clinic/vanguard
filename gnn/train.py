@@ -22,6 +22,7 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.model_selection import StratifiedKFold
 from torch import nn
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
@@ -43,6 +44,9 @@ import matplotlib.pyplot as plt
 
 _MIN_STD = 1e-6
 _DECISION_THRESHOLD = 0.5
+# Smallest usable StratifiedKFold: fewer than 2 folds (or 2 of either class)
+# can't hold out a stratified inner-validation split -- see _stratified_inner_split.
+_MIN_INNER_SPLIT_FOLDS = 2
 
 
 def parse_args() -> argparse.Namespace:
@@ -496,6 +500,39 @@ def build_fold_prediction_table(
     return pred_df
 
 
+def _stratified_inner_split(
+    graphs: list[Data], *, random_state: int, val_fraction: float
+) -> tuple[list[Data], list[Data]]:
+    """Split a fold's training graphs into stratified inner-train / inner-val.
+
+    Stratified on the binary pCR label and used to drive early stopping, the LR
+    scheduler, and best-epoch selection off data that is never the outer
+    held-out fold, so the reported OOF AUC is not biased by the held-out labels
+    influencing which checkpoint is kept. Fails loudly on a fold too small or
+    too class-skewed to hold out a stratified split -- that is a broken fold,
+    not something to paper over with a silent fallback.
+    """
+    labels = np.array([int(graph.y.item()) for graph in graphs])
+    positives = int(labels.sum())
+    negatives = len(labels) - positives
+    n_splits = min(round(1.0 / val_fraction), positives, negatives)
+    if n_splits < _MIN_INNER_SPLIT_FOLDS:
+        raise ValueError(
+            "Cannot form a stratified inner early-stopping split: this fold has "
+            f"{positives} positive / {negatives} negative training cases, too few "
+            "to hold out a stratified inner-validation split (need >=2 of each). "
+            "Disable early stopping / the LR scheduler for this run or use a "
+            "larger training split."
+        )
+    splitter = StratifiedKFold(
+        n_splits=n_splits, shuffle=True, random_state=random_state
+    )
+    inner_train_idx, inner_val_idx = next(splitter.split(labels, labels))
+    inner_train = [graphs[i] for i in inner_train_idx]
+    inner_val = [graphs[i] for i in inner_val_idx]
+    return inner_train, inner_val
+
+
 def fit_predict_one_fold(
     *,
     dataset: VanguardCenterlineDataset,
@@ -506,6 +543,16 @@ def fit_predict_one_fold(
     graph_feature_groups: tuple[list[str], list[str], list[str]] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
     """Train a fresh GCNClassifier for one fold and return validation predictions.
+
+    When any model-selection control is active (LR scheduler, early stopping, or
+    best-epoch restore), a stratified inner-validation split is carved out of
+    this fold's OWN training cases and drives every selection signal, so the
+    outer held-out fold (``split.val_indices``) is untouched until the final
+    OOF prediction. Without that split the held-out labels would choose the
+    reported checkpoint and bias the CV AUC upward. When no control is active
+    (the frozen baseline) there is nothing to select on, so the model trains on
+    the full fold and reports its final epoch, reproducing the historical
+    behavior exactly.
 
     ``graph_feature_inputs`` (the raw graph-feature-input frame from
     ``dataset.load_graph_feature_inputs``) and ``graph_feature_groups`` (from
@@ -574,8 +621,38 @@ def fit_predict_one_fold(
         graph_dim = 0
 
     batch_size = int(params.batch_size)
-    train_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=True)
-    train_eval_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=False)
+
+    # Model-selection controls, resolved up front because they decide whether we
+    # train on the full fold or on an inner-train split (see below).
+    scheduler_name = str(params.get("lr_scheduler", "none")).lower()
+    epochs = int(params.epochs)
+    patience = int(params.get("early_stopping_patience", 0))
+    restore_best_epoch = bool(params.get("restore_best_epoch", False))
+    selection_active = scheduler_name != "none" or patience > 0 or restore_best_epoch
+
+    # When any selection control is active, hold out a stratified inner-validation
+    # split from this fold's OWN training cases and drive all selection signals
+    # (scheduler / early stopping / best epoch) off it; the outer fold stays
+    # untouched until the final prediction. When nothing selects, train on the
+    # full fold and report the final epoch (historical frozen-baseline behavior).
+    if selection_active:
+        fit_graphs, selection_graphs = _stratified_inner_split(
+            train_graphs,
+            random_state=int(params.random_state) + int(split.fold_idx),
+            val_fraction=float(params.get("inner_val_fraction", 0.2)),
+        )
+    else:
+        fit_graphs, selection_graphs = train_graphs, val_graphs
+
+    train_loader = DataLoader(fit_graphs, batch_size=batch_size, shuffle=True)
+    train_eval_loader = DataLoader(fit_graphs, batch_size=batch_size, shuffle=False)
+    # Selection signal (val_loss for scheduler / early stopping / best epoch):
+    # the inner split when active, else the outer fold (logging-only, never
+    # selected on in the frozen baseline).
+    selection_loader = DataLoader(
+        selection_graphs, batch_size=batch_size, shuffle=False
+    )
+    # Outer held-out fold -- touched only for the final OOF prediction below.
     val_loader = DataLoader(val_graphs, batch_size=batch_size, shuffle=False)
 
     if is_edge_mode:
@@ -603,10 +680,12 @@ def fit_predict_one_fold(
     )
 
     # Loss: weighted_bce (default) up-weights the minority pCR class using the
-    # train split's own class balance; unweighted_bce reproduces the historical
+    # training split's own class balance; unweighted_bce reproduces the historical
     # plain BCEWithLogitsLoss; focal uses focal_alpha/gamma. See build_loss_fn.
-    positive_count = sum(int(graph.y.item()) for graph in train_graphs)
-    negative_count = len(train_graphs) - positive_count
+    # Uses fit_graphs (the inner-train split when selection is active) so the
+    # class weighting matches the data the model actually optimizes over.
+    positive_count = sum(int(graph.y.item()) for graph in fit_graphs)
+    negative_count = len(fit_graphs) - positive_count
     logging.info(
         "fold %d class balance: positives=%d negatives=%d loss=%s",
         split.fold_idx,
@@ -616,10 +695,10 @@ def fit_predict_one_fold(
     )
     criterion = build_loss_fn(params, positive_count, negative_count, device)
 
-    scheduler_name = str(params.get("lr_scheduler", "none")).lower()
     scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
-    epochs = int(params.epochs)
-    if scheduler_name == "cosine":
+    if scheduler_name == "none":
+        scheduler = None
+    elif scheduler_name == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     elif scheduler_name == "plateau":
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -628,15 +707,20 @@ def fit_predict_one_fold(
             factor=float(params.get("lr_scheduler_factor", 0.5)),
             patience=int(params.get("lr_scheduler_patience", 5)),
         )
+    else:
+        raise ValueError(
+            f"Unrecognized lr_scheduler {scheduler_name!r}; expected one of "
+            "'none', 'cosine', 'plateau'. A typo must fail loudly, not silently "
+            "run with no scheduler."
+        )
 
     # Best-epoch selection + early stopping. The signal is validation *loss*
     # (not val AUC), matching deepsets.train.fit_predict_one_fold -- loss is
     # smoother than AUC on these small, imbalanced folds, and keeping the two
     # tracks consistent matters more than the plan's original "best val AUC"
     # wording. restore_best_epoch=False + patience=0 reproduces the historical
-    # behavior of reporting the final-epoch model.
-    patience = int(params.get("early_stopping_patience", 0))
-    restore_best_epoch = bool(params.get("restore_best_epoch", False))
+    # behavior of reporting the final-epoch model. patience / restore_best_epoch
+    # / scheduler_name were resolved above (they gate the inner-split decision).
     track_best_state = patience > 0 or restore_best_epoch
     best_val_loss = float("inf")
     best_epoch = 0
@@ -649,7 +733,9 @@ def fit_predict_one_fold(
             model, train_loader, optimizer, criterion, device, max_grad_norm
         )
         train_metrics = evaluate(model, train_eval_loader, criterion, device)
-        val_metrics = evaluate(model, val_loader, criterion, device)
+        # val_* columns track the SELECTION set (inner split when active), never
+        # the outer held-out fold -- that is what keeps the outer fold clean.
+        val_metrics = evaluate(model, selection_loader, criterion, device)
         val_loss = val_metrics["loss"]
         history.append(
             {
