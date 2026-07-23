@@ -5,17 +5,19 @@ Model naming convention:
 
 - asymmetry_predictions_v.1: original all-feature vessel asymmetry model,
   previously reported as ``logreg_all``.
-- asymmetry_predictions_v.2: nuisance-filtered vessel asymmetry model built by
-  this script.
+- asymmetry_predictions_v.2: lower maximum marginal feature_confounder
+  correlation vessel asymmetry model built by this script.
 
 This is the PR-ready selected asymmetry feature update:
 
 - start from the shared 273-case DUKE tumor/vessel comparison input table
 - keep vessel/asymmetry features only
-- compute each feature's maximum absolute Spearman correlation to nuisance
+- compute each feature's maximum absolute Spearman correlation to audited
   variables: xy spacing, z spacing, and tumor size
-- remove features with max nuisance |r| >= 0.25
+- remove features with max audited covariate |r| >= 0.25
 - train the same balanced logistic pCR model used in the earlier comparisons
+- audit out-of-fold predicted probabilities against xy spacing, z spacing, and
+  tumor size
 
 Outputs are written next to this script by default.
 """
@@ -23,6 +25,7 @@ Outputs are written next to this script by default.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -52,6 +55,10 @@ DEFAULT_INPUT = (
     / "inputs"
     / "tumor_size_plus_vessel_asymmetry.csv"
 )
+SHARED_FEATURE_INPUT_COPY = Path(
+    "/gpfs/data/karczmar-lab/workspaces/aakrithiram/"
+    "asymmetry_predictions_v2_inputs/tumor_size_plus_vessel_asymmetry.csv"
+)
 DEFAULT_SPACING = Path(
     "/gpfs/data/karczmar-lab/workspaces/saritbose/outputs/data_viz/spacing_by_hospital.csv"
 )
@@ -64,7 +71,10 @@ MIN_FEATURE_COMPLETENESS = 0.75
 MIN_UNIQUE_VALUES = 2
 N_SPLITS = 5
 PREDICTION_THRESHOLD = 0.5
-NUISANCE_COLS = ("xy_spacing_mm", "z_spacing_mm", "tumor_size_tumor_voxels")
+TECHNICAL_CONFOUNDER_COLS = ("xy_spacing_mm", "z_spacing_mm")
+BIOLOGICAL_COVARIATE_COLS = ("tumor_size_tumor_voxels",)
+AUDITED_COVARIATE_COLS = TECHNICAL_CONFOUNDER_COLS + BIOLOGICAL_COVARIATE_COLS
+NUISANCE_COLS = AUDITED_COVARIATE_COLS
 VESSEL_PREFIXES = (
     "ipsilateral_",
     "contralateral_",
@@ -73,6 +83,20 @@ VESSEL_PREFIXES = (
     "log2_ic_ratio_",
     "ic_ratio_",
 )
+RUN_COMMAND = (
+    "micromamba run -n vanguard python "
+    "asymmetry_predictions_v.2/run_asymmetry_predictions_v2.py --overwrite"
+)
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _covariate_category(column: str) -> str:
+    if column in TECHNICAL_CONFOUNDER_COLS:
+        return "technical_confounder"
+    return "biological_clinical_covariate"
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,7 +110,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_input(input_path: Path, spacing_path: Path) -> pd.DataFrame:
-    """Load the pCR feature table and merge scanner spacing nuisance variables."""
+    """Load the pCR feature table and merge scanner spacing covariates."""
     feature_table = pd.read_csv(input_path)
     feature_table["case_id"] = feature_table["case_id"].astype(str)
     labeled_table = feature_table[feature_table["pcr"].isin([0, 1, 0.0, 1.0])].copy()
@@ -107,7 +131,7 @@ def is_vessel_feature(column: str) -> bool:
 
 
 def preprocess_vessel_features(feature_table: pd.DataFrame) -> pd.DataFrame:
-    """Build the numeric vessel feature matrix used before nuisance filtering."""
+    """Build the numeric vessel feature matrix used before covariate filtering."""
     columns = [col for col in feature_table.columns if is_vessel_feature(col)]
     features = feature_table[columns].apply(pd.to_numeric, errors="coerce")
 
@@ -145,12 +169,12 @@ def spearman(x: pd.Series, y: pd.Series, min_n: int = 20) -> tuple[float, float,
 def nuisance_scores(
     feature_table: pd.DataFrame, features: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Calculate feature correlations to configured nuisance variables."""
+    """Calculate feature correlations to configured audited covariates."""
     rows = []
     for feature in features.columns:
         values = pd.to_numeric(features[feature], errors="coerce")
         abs_rs = []
-        for target in NUISANCE_COLS:
+        for target in AUDITED_COVARIATE_COLS:
             target_values = pd.to_numeric(feature_table[target], errors="coerce")
             r, p, n = spearman(values, target_values)
             abs_rs.append(abs(r) if np.isfinite(r) else np.nan)
@@ -271,6 +295,36 @@ def run_cv(
     return pd.DataFrame(metric_rows), pd.DataFrame(prediction_rows)
 
 
+def model_covariate_audit(
+    feature_table: pd.DataFrame, predictions: pd.DataFrame
+) -> pd.DataFrame:
+    """Correlate out-of-fold predicted pCR probability with audited covariates."""
+    audit_table = predictions.merge(
+        feature_table[["case_id", *AUDITED_COVARIATE_COLS]],
+        on="case_id",
+        how="left",
+        validate="one_to_one",
+    )
+    rows = []
+    for covariate in AUDITED_COVARIATE_COLS:
+        r, p, n = spearman(
+            audit_table["y_prob"],
+            pd.to_numeric(audit_table[covariate], errors="coerce"),
+        )
+        rows.append(
+            {
+                "model_output": "oof_y_prob",
+                "covariate": covariate,
+                "covariate_category": _covariate_category(covariate),
+                "spearman_r": r,
+                "abs_spearman_r": abs(r) if np.isfinite(r) else np.nan,
+                "p_value": p,
+                "n": n,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def plot_auc(metrics: pd.DataFrame, out_path: Path) -> None:
     """Save a compact AUC summary plot for the v2 pCR model."""
     fold_df = metrics[~metrics["fold"].astype(str).isin(["mean", "std"])].copy()
@@ -303,8 +357,8 @@ def plot_nuisance_heatmap(
     out_path: Path,
 ) -> None:
     """Save the before/after nuisance-correlation heatmap."""
-    before = before_scores[before_scores["target"].isin(NUISANCE_COLS)]
-    after = after_scores[after_scores["target"].isin(NUISANCE_COLS)]
+    before = before_scores[before_scores["target"].isin(AUDITED_COVARIATE_COLS)]
+    after = after_scores[after_scores["target"].isin(AUDITED_COVARIATE_COLS)]
     before_matrix = before.pivot_table(
         index="feature",
         columns="target",
@@ -321,7 +375,7 @@ def plot_nuisance_heatmap(
     top_features = max_abs_before.sort_values(ascending=False).head(35).index.tolist()
 
     heatmap_df = pd.DataFrame(index=top_features)
-    for target in NUISANCE_COLS:
+    for target in AUDITED_COVARIATE_COLS:
         heatmap_df[f"Before {target}"] = before_matrix.reindex(top_features)[target]
         heatmap_df[f"After {target}"] = (
             after_matrix.reindex(top_features)[target].fillna(0.0)
@@ -358,7 +412,7 @@ def plot_nuisance_heatmap(
         cbar_kws={"label": "Spearman r"},
         ax=ax,
     )
-    ax.set_title("Nuisance correlations before vs after filtering")
+    ax.set_title("Audited covariate correlations before vs after filtering")
     ax.set_xlabel("")
     ax.set_ylabel("Top pre-filter nuisance-sensitive features")
     ax.set_yticklabels(yticklabels, rotation=0, fontsize=8)
@@ -368,15 +422,25 @@ def plot_nuisance_heatmap(
     plt.close(fig)
 
 
-def write_readme(outdir: Path, metadata: dict[str, Any], metrics: pd.DataFrame) -> None:
+def write_readme(
+    outdir: Path,
+    metadata: dict[str, Any],
+    metrics: pd.DataFrame,
+    model_audit: pd.DataFrame,
+) -> None:
     """Write a short provenance README describing the v2 model artifacts."""
     mean_row = metrics[metrics["fold"].astype(str) == "mean"].iloc[0]
     std_row = metrics[metrics["fold"].astype(str) == "std"].iloc[0]
+    xy_audit = model_audit[model_audit["covariate"] == "xy_spacing_mm"].iloc[0]
+    z_audit = model_audit[model_audit["covariate"] == "z_spacing_mm"].iloc[0]
+    tumor_audit = model_audit[
+        model_audit["covariate"] == "tumor_size_tumor_voxels"
+    ].iloc[0]
     lines = [
         "# asymmetry_predictions_v.2",
         "",
-        "`asymmetry_predictions_v.2` is the selected nuisance-filtered DUKE",
-        "vessel/asymmetry pCR model.",
+        "`asymmetry_predictions_v.2` is the selected DUKE vessel/asymmetry pCR",
+        "model with lower maximum marginal feature_confounder correlation.",
         "",
         "`asymmetry_predictions_v.1` refers to the original all-feature vessel",
         "asymmetry model previously reported as `logreg_all`.",
@@ -384,7 +448,15 @@ def write_readme(outdir: Path, metadata: dict[str, Any], metrics: pd.DataFrame) 
         "## Selection Rule",
         "",
         f"Remove vessel features with max absolute Spearman correlation >= `{NUISANCE_THRESHOLD}`",
-        "to any of: `xy_spacing_mm`, `z_spacing_mm`, `tumor_size_tumor_voxels`.",
+        "to any audited covariate. The technical confounders are `xy_spacing_mm`",
+        "and `z_spacing_mm`. `tumor_size_tumor_voxels` is treated separately as a",
+        "biological/clinical covariate used to test whether vessel signal is",
+        "independent of tumor extent.",
+        "",
+        "This supports the narrower claim of lower maximum marginal",
+        "feature_confounder correlation for retained features. It does not prove",
+        "that the multivariate model has lower technical-confounder sensitivity or",
+        "will generalize outside Duke.",
         "",
         "## Result",
         "",
@@ -393,23 +465,80 @@ def write_readme(outdir: Path, metadata: dict[str, Any], metrics: pd.DataFrame) 
         f"- Features removed: `{metadata['n_features_removed']}`",
         f"- Mean AUC: `{mean_row['auc']:.3f} +/- {std_row['auc']:.3f}`",
         f"- Mean AP: `{mean_row['average_precision']:.3f} +/- {std_row['average_precision']:.3f}`",
-        f"- Max nuisance |r| after filtering: `{metadata['max_abs_nuisance_r_after_filtering']:.3f}`",
+        "- Max marginal feature/covariate |r| after filtering:",
+        f"  `{metadata['max_abs_audited_covariate_r_after_filtering']:.3f}`",
+        "- Max marginal feature/technical-confounder |r| after filtering:",
+        f"  `{metadata['max_abs_technical_confounder_r_after_filtering']:.3f}`",
+        "- Max marginal feature/tumor-size |r| after filtering:",
+        f"  `{metadata['max_abs_biological_covariate_r_after_filtering']:.3f}`",
+        "",
+        "## OOF Model-Level Covariate Audit",
+        "",
+        "Out-of-fold predicted pCR probabilities were correlated with the audited",
+        "covariates as a small model-level check.",
+        "",
+        f"- `y_prob` vs `xy_spacing_mm`: Spearman r `{xy_audit['spearman_r']:.3f}`",
+        f"  (`n={int(xy_audit['n'])}`)",
+        f"- `y_prob` vs `z_spacing_mm`: Spearman r `{z_audit['spearman_r']:.3f}`",
+        f"  (`n={int(z_audit['n'])}`)",
+        "- `y_prob` vs `tumor_size_tumor_voxels`",
+        f"  (biological/clinical covariate): Spearman r `{tumor_audit['spearman_r']:.3f}`",
+        f"  (`n={int(tumor_audit['n'])}`)",
+        "",
+        "See `oof_prediction_covariate_audit.csv` for p-values and absolute",
+        "correlations.",
+        "",
+        "## Derived Inputs",
+        "",
+        "### Tumor Size Plus Vessel Asymmetry Feature Table",
+        "",
+        "- Contains: 273 shared DUKE cases with `case_id`, `dataset`, `pcr`, 11",
+        "  tumor-size features, and 115 vessel/asymmetry features before v2",
+        "  filtering.",
+        "- Produced by: the shared 273-case DUKE tumor/vessel comparison workflow",
+        "  documented in",
+        "  `vessel_tumor_comparisons/shared_273_case_comparison/README.md`, using",
+        "  `tabular/duke_final_vessel_asymmetry_features.csv` plus",
+        "  `vessel_tumor_comparisons/duke_tumor_size_only_ablation/runs/tumor_size_only/features_engineered_labeled.csv`.",
+        f"- Local source path: `{metadata['input']}`",
+        f"- Durable shared copy: `{metadata['shared_feature_input_copy']}`",
+        f"- SHA256: `{metadata['input_sha256']}`",
+        "",
+        "### Spacing Table",
+        "",
+        "- Contains: per-case scanner spacing covariates, including",
+        "  `xy_spacing_mm` and `z_spacing_mm` after `patient_id` is renamed to",
+        "  `case_id`.",
+        "- Produced by: Sarit's data-visualization spacing export workflow.",
+        f"- Shared path: `{metadata['spacing']}`",
+        f"- SHA256: `{metadata['spacing_sha256']}`",
+        "",
+        "## Exact Command",
+        "",
+        "```bash",
+        metadata["run_command"],
+        "```",
         "",
         "## Files",
         "",
         "- `run_asymmetry_predictions_v2.py`: build/evaluate script.",
         "- `asymmetry_predictions_v2_features.csv`: filtered model input table.",
-        "- `removed_nuisance_features.csv`: removed features and nuisance scores.",
-        "- `all_feature_nuisance_scores.csv`: full nuisance audit.",
-        "- `filtered_feature_nuisance_scores.csv`: nuisance audit after filtering.",
+        "- `removed_nuisance_features.csv`: removed features and audited",
+        "  covariate scores.",
+        "- `all_feature_nuisance_scores.csv`: full feature/covariate audit.",
+        "- `filtered_feature_nuisance_scores.csv`: feature/covariate audit after",
+        "  filtering.",
         "- `cv_metrics.csv`: fold-level and mean/std pCR metrics.",
         "- `oof_predictions.csv`: out-of-fold predictions.",
+        "- `oof_prediction_covariate_audit.csv`: model-level OOF y_prob",
+        "  correlation audit against spacing and tumor size.",
         "- `auc_asymmetry_predictions_v2.png`: AUC plot.",
-        "- `nuisance_before_after_heatmap.png`: nuisance before/after heatmap.",
-        "- `asymmetry_predictions_v1_nuisance_heatmap.png`: nuisance heatmap for",
-        "  `asymmetry_predictions_v.1`.",
-        "- `asymmetry_predictions_v2_nuisance_heatmap.png`: matching nuisance heatmap",
-        "  for `asymmetry_predictions_v.2`.",
+        "- `nuisance_before_after_heatmap.png`: audited covariate before/after",
+        "  heatmap.",
+        "- `asymmetry_predictions_v1_nuisance_heatmap.png`: covariate heatmap for",
+        "  `asymmetry_predictions_v.1`; separately generated exploratory artifact.",
+        "- `asymmetry_predictions_v2_nuisance_heatmap.png`: matching covariate heatmap",
+        "  for `asymmetry_predictions_v.2`; separately generated exploratory artifact.",
         "- `run_metadata.json`: exact paths and feature counts.",
     ]
     (outdir / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -441,6 +570,7 @@ def main() -> None:
     updated_features = full_features[kept_cols].copy()
 
     metrics, predictions = run_cv(updated_features, y, case_ids)
+    model_audit = model_covariate_audit(feature_table, predictions)
     updated_table = pd.concat(
         [
             feature_table[["case_id", "dataset", "pcr"]].reset_index(drop=True),
@@ -456,6 +586,7 @@ def main() -> None:
     score_long.to_csv(args.outdir / "all_feature_nuisance_scores.csv", index=False)
     metrics.to_csv(args.outdir / "cv_metrics.csv", index=False)
     predictions.to_csv(args.outdir / "oof_predictions.csv", index=False)
+    model_audit.to_csv(args.outdir / "oof_prediction_covariate_audit.csv", index=False)
     plot_auc(metrics, args.outdir / "auc_asymmetry_predictions_v2.png")
 
     after_score_long, after_score_max = nuisance_scores(feature_table, updated_features)
@@ -470,21 +601,44 @@ def main() -> None:
     )
     metadata = {
         "input": str(args.input),
+        "shared_feature_input_copy": str(SHARED_FEATURE_INPUT_COPY),
         "spacing": str(args.spacing),
         "outdir": str(args.outdir),
+        "run_command": RUN_COMMAND,
         "model_name": MODEL_NAME,
         "previous_model_name": PREVIOUS_MODEL_NAME,
         "previous_model_definition": "Original all-feature vessel asymmetry logreg_all model.",
         "nuisance_threshold": NUISANCE_THRESHOLD,
+        "input_sha256": _sha256(args.input),
+        "shared_feature_input_copy_sha256": _sha256(SHARED_FEATURE_INPUT_COPY),
+        "spacing_sha256": _sha256(args.spacing),
         "n_labeled_cases": int(len(feature_table)),
         "n_pcr_positive": int(y.sum()),
         "n_pcr_negative": int((y == 0).sum()),
         "n_features_original": int(full_features.shape[1]),
         "n_features_kept": int(updated_features.shape[1]),
         "n_features_removed": int(len(removed)),
+        "max_abs_audited_covariate_r_after_filtering": float(
+            after_score_max["max_abs_nuisance_r"].max()
+        ),
         "max_abs_nuisance_r_after_filtering": float(
             after_score_max["max_abs_nuisance_r"].max()
         ),
+        "max_abs_technical_confounder_r_after_filtering": float(
+            after_score_long[
+                after_score_long["target"].isin(TECHNICAL_CONFOUNDER_COLS)
+            ]["spearman_r"]
+            .abs()
+            .max()
+        ),
+        "max_abs_biological_covariate_r_after_filtering": float(
+            after_score_long[
+                after_score_long["target"].isin(BIOLOGICAL_COVARIATE_COLS)
+            ]["spearman_r"]
+            .abs()
+            .max()
+        ),
+        "oof_prediction_covariate_audit": model_audit.to_dict(orient="records"),
         "kept_features": kept_cols,
         "removed_features": list(removed["feature"]),
     }
@@ -492,7 +646,7 @@ def main() -> None:
         json.dumps(metadata, indent=2) + "\n",
         encoding="utf-8",
     )
-    write_readme(args.outdir, metadata, metrics)
+    write_readme(args.outdir, metadata, metrics, model_audit)
 
     print(f"Wrote {MODEL_NAME} artifacts to {args.outdir}")
     print(metrics.to_string(index=False))

@@ -1,18 +1,55 @@
 {
   "input": "/ess/home/home1/aakrithiram/vanguard/vessel_tumor_comparisons/shared_273_case_comparison/inputs/tumor_size_plus_vessel_asymmetry.csv",
+  "shared_feature_input_copy": "/gpfs/data/karczmar-lab/workspaces/aakrithiram/asymmetry_predictions_v2_inputs/tumor_size_plus_vessel_asymmetry.csv",
   "spacing": "/gpfs/data/karczmar-lab/workspaces/saritbose/outputs/data_viz/spacing_by_hospital.csv",
   "outdir": "/ess/home/home1/aakrithiram/vanguard/asymmetry_predictions_v.2",
+  "run_command": "micromamba run -n vanguard python asymmetry_predictions_v.2/run_asymmetry_predictions_v2.py --overwrite",
   "model_name": "asymmetry_predictions_v.2",
   "previous_model_name": "asymmetry_predictions_v.1",
   "previous_model_definition": "Original all-feature vessel asymmetry logreg_all model.",
   "nuisance_threshold": 0.25,
+  "input_sha256": "3d8dfff4399d967af21050a11290c47cd54bfaf1ab5fd3b6974156a81496f2f6",
+  "shared_feature_input_copy_sha256": "3d8dfff4399d967af21050a11290c47cd54bfaf1ab5fd3b6974156a81496f2f6",
+  "spacing_sha256": "2003a83518c558ed8d3954c4ba9d68a4537b505682c4a96183bb6817a2f4fe49",
   "n_labeled_cases": 273,
   "n_pcr_positive": 64,
   "n_pcr_negative": 209,
   "n_features_original": 115,
   "n_features_kept": 104,
   "n_features_removed": 11,
+  "max_abs_audited_covariate_r_after_filtering": 0.22838307020106083,
   "max_abs_nuisance_r_after_filtering": 0.22838307020106083,
+  "max_abs_technical_confounder_r_after_filtering": 0.22838307020106083,
+  "max_abs_biological_covariate_r_after_filtering": 0.20503211834289997,
+  "oof_prediction_covariate_audit": [
+    {
+      "model_output": "oof_y_prob",
+      "covariate": "xy_spacing_mm",
+      "covariate_category": "technical_confounder",
+      "spearman_r": 0.014173034749533154,
+      "abs_spearman_r": 0.014173034749533154,
+      "p_value": 0.8156727508091962,
+      "n": 273
+    },
+    {
+      "model_output": "oof_y_prob",
+      "covariate": "z_spacing_mm",
+      "covariate_category": "technical_confounder",
+      "spearman_r": -0.10180157773579439,
+      "abs_spearman_r": 0.10180157773579439,
+      "p_value": 0.09321363792971751,
+      "n": 273
+    },
+    {
+      "model_output": "oof_y_prob",
+      "covariate": "tumor_size_tumor_voxels",
+      "covariate_category": "biological_clinical_covariate",
+      "spearman_r": 0.0197881259153765,
+      "abs_spearman_r": 0.0197881259153765,
+      "p_value": 0.7448139051114632,
+      "n": 273
+    }
+  ],
   "kept_features": [
     "ipsilateral_vessel_voxel_count",
     "contralateral_vessel_voxel_count",

@@ -1,0 +1,4 @@
+model_output,covariate,covariate_category,spearman_r,abs_spearman_r,p_value,n
+oof_y_prob,xy_spacing_mm,technical_confounder,0.014173034749533154,0.014173034749533154,0.8156727508091962,273
+oof_y_prob,z_spacing_mm,technical_confounder,-0.10180157773579439,0.10180157773579439,0.09321363792971751,273
+oof_y_prob,tumor_size_tumor_voxels,biological_clinical_covariate,0.0197881259153765,0.0197881259153765,0.7448139051114632,273
