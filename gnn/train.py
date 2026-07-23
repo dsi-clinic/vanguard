@@ -22,6 +22,7 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.model_selection import StratifiedKFold
 from torch import nn
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
@@ -43,6 +44,9 @@ import matplotlib.pyplot as plt
 
 _MIN_STD = 1e-6
 _DECISION_THRESHOLD = 0.5
+# Smallest usable StratifiedKFold: fewer than 2 folds (or 2 of either class)
+# can't hold out a stratified inner-validation split -- see _stratified_inner_split.
+_MIN_INNER_SPLIT_FOLDS = 2
 
 
 def parse_args() -> argparse.Namespace:
@@ -313,14 +317,87 @@ def _apply_pcr_dummy_noise(
         graph.x[:, col] = class_mean + noise_by_index[index]
 
 
+class FocalWithLogitsLoss(nn.Module):
+    """Sigmoid focal loss for class-imbalanced binary classification.
+
+    Applies a modulating factor (1 - p_t)^gamma to down-weight easy examples,
+    with an optional alpha balancing term. Mirrors
+    ``deepsets.train.FocalWithLogitsLoss`` (reimplemented rather than imported
+    to avoid coupling the GNN track to the Deep Sets one -- the two are kept
+    independent everywhere else too).
+    """
+
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0) -> None:
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Return the mean focal loss over the batch."""
+        bce = torch.nn.functional.binary_cross_entropy_with_logits(
+            logits, targets, reduction="none"
+        )
+        probs = torch.sigmoid(logits)
+        p_t = targets * probs + (1.0 - targets) * (1.0 - probs)
+        alpha_t = targets * self.alpha + (1.0 - targets) * (1.0 - self.alpha)
+        focal_weight = alpha_t * (1.0 - p_t) ** self.gamma
+        return (focal_weight * bce).mean()
+
+
+LOSS_CHOICES = ("weighted_bce", "unweighted_bce", "focal")
+
+
+def build_loss_fn(
+    params: Any,
+    positive_count: int,
+    negative_count: int,
+    device: torch.device,
+) -> nn.Module:
+    """Instantiate the training loss from ``model_params``.
+
+    ``weighted_bce`` (the config default) sets ``BCEWithLogitsLoss``'s
+    ``pos_weight`` to ``negative_count / positive_count`` computed on the
+    fold's *train* split only, so the minority (pCR-positive) class is
+    up-weighted; ``unweighted_bce`` reproduces the historical GNN loss
+    exactly; ``focal`` uses ``focal_alpha`` / ``focal_gamma``. Parallels
+    ``deepsets.train.build_loss_fn`` (same three choices, same pos_weight
+    convention) -- kept as a small local copy rather than a cross-track import.
+    A fold with zero training positives is a broken split, not something to
+    paper over, so pos_weight falls back to 1.0 only in that degenerate case
+    (matching Deep Sets) and the class balance is logged by the caller.
+    """
+    loss_name = str(params.get("loss", "weighted_bce"))
+    if loss_name not in LOSS_CHOICES:
+        raise ValueError(f"Unknown loss {loss_name!r}. Choose from {LOSS_CHOICES}.")
+    if loss_name == "weighted_bce":
+        pos_weight_value = (
+            float(negative_count) / float(positive_count) if positive_count > 0 else 1.0
+        )
+        return nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor(
+                [pos_weight_value], dtype=torch.float32, device=device
+            )
+        )
+    if loss_name == "unweighted_bce":
+        return nn.BCEWithLogitsLoss()
+    alpha = float(params.get("focal_alpha", 0.25))
+    gamma = float(params.get("focal_gamma", 2.0))
+    return FocalWithLogitsLoss(alpha=alpha, gamma=gamma)
+
+
 def train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     device: torch.device,
+    max_grad_norm: float = 0.0,
 ) -> float:
-    """Run one training epoch; return the mean per-graph loss."""
+    """Run one training epoch; return the mean per-graph loss.
+
+    ``max_grad_norm > 0`` clips the global gradient norm before each optimizer
+    step (``0.0`` disables clipping, reproducing the historical behavior).
+    """
     model.train()
     total_loss = 0.0
     num_graphs = 0
@@ -330,6 +407,8 @@ def train_one_epoch(
         logits = _model_forward(model, batch)
         loss = criterion(logits, batch.y.float())
         loss.backward()
+        if max_grad_norm > 0.0:
+            nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
         optimizer.step()
         total_loss += loss.item() * batch.num_graphs
         num_graphs += batch.num_graphs
@@ -421,6 +500,39 @@ def build_fold_prediction_table(
     return pred_df
 
 
+def _stratified_inner_split(
+    graphs: list[Data], *, random_state: int, val_fraction: float
+) -> tuple[list[Data], list[Data]]:
+    """Split a fold's training graphs into stratified inner-train / inner-val.
+
+    Stratified on the binary pCR label and used to drive early stopping, the LR
+    scheduler, and best-epoch selection off data that is never the outer
+    held-out fold, so the reported OOF AUC is not biased by the held-out labels
+    influencing which checkpoint is kept. Fails loudly on a fold too small or
+    too class-skewed to hold out a stratified split -- that is a broken fold,
+    not something to paper over with a silent fallback.
+    """
+    labels = np.array([int(graph.y.item()) for graph in graphs])
+    positives = int(labels.sum())
+    negatives = len(labels) - positives
+    n_splits = min(round(1.0 / val_fraction), positives, negatives)
+    if n_splits < _MIN_INNER_SPLIT_FOLDS:
+        raise ValueError(
+            "Cannot form a stratified inner early-stopping split: this fold has "
+            f"{positives} positive / {negatives} negative training cases, too few "
+            "to hold out a stratified inner-validation split (need >=2 of each). "
+            "Disable early stopping / the LR scheduler for this run or use a "
+            "larger training split."
+        )
+    splitter = StratifiedKFold(
+        n_splits=n_splits, shuffle=True, random_state=random_state
+    )
+    inner_train_idx, inner_val_idx = next(splitter.split(labels, labels))
+    inner_train = [graphs[i] for i in inner_train_idx]
+    inner_val = [graphs[i] for i in inner_val_idx]
+    return inner_train, inner_val
+
+
 def fit_predict_one_fold(
     *,
     dataset: VanguardCenterlineDataset,
@@ -432,6 +544,16 @@ def fit_predict_one_fold(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict[str, float]]]:
     """Train a fresh GCNClassifier for one fold and return validation predictions.
 
+    When any model-selection control is active (LR scheduler, early stopping, or
+    best-epoch restore), a stratified inner-validation split is carved out of
+    this fold's OWN training cases and drives every selection signal, so the
+    outer held-out fold (``split.val_indices``) is untouched until the final
+    OOF prediction. Without that split the held-out labels would choose the
+    reported checkpoint and bias the CV AUC upward. When no control is active
+    (the frozen baseline) there is nothing to select on, so the model trains on
+    the full fold and reports its final epoch, reproducing the historical
+    behavior exactly.
+
     ``graph_feature_inputs`` (the raw graph-feature-input frame from
     ``dataset.load_graph_feature_inputs``) and ``graph_feature_groups`` (from
     ``dataset.graph_feature_groups``) are passed through when
@@ -442,6 +564,7 @@ def fit_predict_one_fold(
     """
     params = config.model_params
     device = _resolve_device(str(params.device))
+    max_grad_norm = float(params.get("max_grad_norm", 0.0))
     torch.manual_seed(int(params.random_state) + int(split.fold_idx))
 
     train_graph_idx = cohort_df.iloc[split.train_indices]["graph_index"].tolist()
@@ -498,8 +621,38 @@ def fit_predict_one_fold(
         graph_dim = 0
 
     batch_size = int(params.batch_size)
-    train_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=True)
-    train_eval_loader = DataLoader(train_graphs, batch_size=batch_size, shuffle=False)
+
+    # Model-selection controls, resolved up front because they decide whether we
+    # train on the full fold or on an inner-train split (see below).
+    scheduler_name = str(params.get("lr_scheduler", "none")).lower()
+    epochs = int(params.epochs)
+    patience = int(params.get("early_stopping_patience", 0))
+    restore_best_epoch = bool(params.get("restore_best_epoch", False))
+    selection_active = scheduler_name != "none" or patience > 0 or restore_best_epoch
+
+    # When any selection control is active, hold out a stratified inner-validation
+    # split from this fold's OWN training cases and drive all selection signals
+    # (scheduler / early stopping / best epoch) off it; the outer fold stays
+    # untouched until the final prediction. When nothing selects, train on the
+    # full fold and report the final epoch (historical frozen-baseline behavior).
+    if selection_active:
+        fit_graphs, selection_graphs = _stratified_inner_split(
+            train_graphs,
+            random_state=int(params.random_state) + int(split.fold_idx),
+            val_fraction=float(params.get("inner_val_fraction", 0.2)),
+        )
+    else:
+        fit_graphs, selection_graphs = train_graphs, val_graphs
+
+    train_loader = DataLoader(fit_graphs, batch_size=batch_size, shuffle=True)
+    train_eval_loader = DataLoader(fit_graphs, batch_size=batch_size, shuffle=False)
+    # Selection signal (val_loss for scheduler / early stopping / best epoch):
+    # the inner split when active, else the outer fold (logging-only, never
+    # selected on in the frozen baseline).
+    selection_loader = DataLoader(
+        selection_graphs, batch_size=batch_size, shuffle=False
+    )
+    # Outer held-out fold -- touched only for the final OOF prediction below.
     val_loader = DataLoader(val_graphs, batch_size=batch_size, shuffle=False)
 
     if is_edge_mode:
@@ -518,16 +671,72 @@ def fit_predict_one_fold(
             num_layers=int(params.num_layers),
             dropout=float(params.dropout),
             graph_dim=graph_dim,
+            pooling=str(params.get("gnn_pooling", "mean")),
         ).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=float(params.learning_rate))
-    criterion = nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=float(params.learning_rate),
+        weight_decay=float(params.weight_decay),
+    )
+
+    # Loss: weighted_bce (default) up-weights the minority pCR class using the
+    # training split's own class balance; unweighted_bce reproduces the historical
+    # plain BCEWithLogitsLoss; focal uses focal_alpha/gamma. See build_loss_fn.
+    # Uses fit_graphs (the inner-train split when selection is active) so the
+    # class weighting matches the data the model actually optimizes over.
+    positive_count = sum(int(graph.y.item()) for graph in fit_graphs)
+    negative_count = len(fit_graphs) - positive_count
+    logging.info(
+        "fold %d class balance: positives=%d negatives=%d loss=%s",
+        split.fold_idx,
+        positive_count,
+        negative_count,
+        str(params.get("loss", "weighted_bce")),
+    )
+    criterion = build_loss_fn(params, positive_count, negative_count, device)
+
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
+    if scheduler_name == "none":
+        scheduler = None
+    elif scheduler_name == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    elif scheduler_name == "plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=float(params.get("lr_scheduler_factor", 0.5)),
+            patience=int(params.get("lr_scheduler_patience", 5)),
+        )
+    else:
+        raise ValueError(
+            f"Unrecognized lr_scheduler {scheduler_name!r}; expected one of "
+            "'none', 'cosine', 'plateau'. A typo must fail loudly, not silently "
+            "run with no scheduler."
+        )
+
+    # Best-epoch selection + early stopping. The signal is validation *loss*
+    # (not val AUC), matching deepsets.train.fit_predict_one_fold -- loss is
+    # smoother than AUC on these small, imbalanced folds, and keeping the two
+    # tracks consistent matters more than the plan's original "best val AUC"
+    # wording. restore_best_epoch=False + patience=0 reproduces the historical
+    # behavior of reporting the final-epoch model. patience / restore_best_epoch
+    # / scheduler_name were resolved above (they gate the inner-split decision).
+    track_best_state = patience > 0 or restore_best_epoch
+    best_val_loss = float("inf")
+    best_epoch = 0
+    best_state_dict: dict[str, torch.Tensor] | None = None
+    epochs_without_improvement = 0
 
     history: list[dict[str, float]] = []
-    epochs = int(params.epochs)
     for epoch in range(1, epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
+        train_loss = train_one_epoch(
+            model, train_loader, optimizer, criterion, device, max_grad_norm
+        )
         train_metrics = evaluate(model, train_eval_loader, criterion, device)
-        val_metrics = evaluate(model, val_loader, criterion, device)
+        # val_* columns track the SELECTION set (inner split when active), never
+        # the outer held-out fold -- that is what keeps the outer fold clean.
+        val_metrics = evaluate(model, selection_loader, criterion, device)
+        val_loss = val_metrics["loss"]
         history.append(
             {
                 "fold": float(split.fold_idx),
@@ -535,9 +744,10 @@ def fit_predict_one_fold(
                 "train_loss": train_loss,
                 "train_error_rate": train_metrics["error_rate"],
                 "train_auc": train_metrics.get("auc", float("nan")),
-                "val_loss": val_metrics["loss"],
+                "val_loss": val_loss,
                 "val_error_rate": val_metrics["error_rate"],
                 "val_auc": val_metrics.get("auc", float("nan")),
+                "lr": float(optimizer.param_groups[0]["lr"]),
             }
         )
         logging.info(
@@ -548,8 +758,39 @@ def fit_predict_one_fold(
             epochs,
             train_loss,
             train_metrics.get("auc", float("nan")),
-            val_metrics["loss"],
+            val_loss,
             val_metrics.get("auc", float("nan")),
+        )
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_epoch = epoch
+            if track_best_state:
+                best_state_dict = {k: v.clone() for k, v in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+
+        if scheduler is not None:
+            if scheduler_name == "plateau":
+                scheduler.step(val_loss)
+            else:
+                scheduler.step()
+
+        if patience > 0 and epochs_without_improvement >= patience:
+            logging.info(
+                "fold %d early stopping at epoch %d (best epoch %d, val_loss %.4f)",
+                split.fold_idx,
+                epoch,
+                best_epoch,
+                best_val_loss,
+            )
+            break
+
+    if restore_best_epoch and best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+        logging.info(
+            "fold %d restored best model from epoch %d", split.fold_idx, best_epoch
         )
 
     y_true, y_prob = _predict_loader(model, val_loader, device)

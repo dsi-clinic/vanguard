@@ -26,11 +26,47 @@ from __future__ import annotations
 
 import torch
 from torch import nn
-from torch_geometric.nn import GCNConv, MessagePassing, global_mean_pool
+from torch_geometric.nn import (
+    GCNConv,
+    MessagePassing,
+    global_add_pool,
+    global_max_pool,
+    global_mean_pool,
+)
+
+# Readout variants for the whole-graph pooling step. A GCNConv stack followed by
+# global_mean_pool collapses every node to its *average*, which discards the
+# distributional tails (peak/extreme per-node signal) -- the Tier-0 sweep found
+# a tabular model on node-feature *quantiles* still beats the mean-pool GNN, so
+# concatenating max (and optionally sum) restores that information. See
+# gnn/PLAN_advanced_modeling.md decision D2.1. Values are the number of pooled
+# vectors concatenated, which scales the classifier's input width.
+POOLING_WIDTHS: dict[str, int] = {"mean": 1, "mean_max": 2, "mean_max_sum": 3}
+
+
+def _graph_readout(
+    h: torch.Tensor, batch_index: torch.Tensor, pooling: str
+) -> torch.Tensor:
+    """Concatenate the pooled node embeddings selected by ``pooling``.
+
+    ``"mean"`` reproduces the original single ``global_mean_pool`` readout;
+    ``"mean_max"``/``"mean_max_sum"`` append global max (and add) pools so the
+    graph embedding keeps extreme/aggregate node signal, not just the average.
+    """
+    parts = [global_mean_pool(h, batch_index)]
+    if pooling in ("mean_max", "mean_max_sum"):
+        parts.append(global_max_pool(h, batch_index))
+    if pooling == "mean_max_sum":
+        parts.append(global_add_pool(h, batch_index))
+    return torch.cat(parts, dim=1)
 
 
 class GCNClassifier(nn.Module):
-    """GCNConv stack -> global mean pool -> linear head, one logit per graph."""
+    """GCNConv stack -> graph readout -> linear head, one logit per graph.
+
+    ``pooling`` selects the readout (see ``POOLING_WIDTHS``); the default
+    ``"mean"`` is the original single mean-pool, fully backward compatible.
+    """
 
     def __init__(
         self,
@@ -40,6 +76,7 @@ class GCNClassifier(nn.Module):
         num_layers: int = 2,
         dropout: float = 0.2,
         graph_dim: int = 0,
+        pooling: str = "mean",
     ) -> None:
         super().__init__()
         if input_dim <= 0:
@@ -48,14 +85,20 @@ class GCNClassifier(nn.Module):
             raise ValueError("num_layers must be at least 1")
         if graph_dim < 0:
             raise ValueError("graph_dim must be >= 0")
+        if pooling not in POOLING_WIDTHS:
+            raise ValueError(
+                f"Unknown pooling {pooling!r}. Choose from {sorted(POOLING_WIDTHS)}."
+            )
         self.graph_dim = graph_dim
+        self.pooling = pooling
         self.convs = nn.ModuleList()
         in_dim = input_dim
         for _ in range(num_layers):
             self.convs.append(GCNConv(in_dim, hidden_dim))
             in_dim = hidden_dim
         self.dropout = nn.Dropout(p=dropout)
-        self.classifier = nn.Linear(hidden_dim + graph_dim, 1)
+        pooled_dim = hidden_dim * POOLING_WIDTHS[pooling]
+        self.classifier = nn.Linear(pooled_dim + graph_dim, 1)
 
     def forward(
         self,
@@ -74,7 +117,7 @@ class GCNClassifier(nn.Module):
             h = conv(h, edge_index)
             h = torch.relu(h)
             h = self.dropout(h)
-        pooled = global_mean_pool(h, batch_index)
+        pooled = _graph_readout(h, batch_index, self.pooling)
         if self.graph_dim > 0:
             if graph_features is None:
                 raise ValueError("graph_features is required when graph_dim > 0")
