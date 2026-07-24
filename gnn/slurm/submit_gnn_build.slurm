@@ -62,11 +62,6 @@ PATIENT_INFO_DIR="${PATIENT_INFO_DIR:-}"
 CLINICAL_EXCEL="${CLINICAL_EXCEL:-}"
 MAX_MISSING_CLINICAL_FRAC="${MAX_MISSING_CLINICAL_FRAC:-0.1}"
 MAX_MISSING_LABEL_FRAC="${MAX_MISSING_LABEL_FRAC:-0.1}"
-# Dataset-wide ultrafast kinetic contract (e.g. UChicago: 5 precontrast frames,
-# relative signal change). Empty KINETIC_BASELINE_FRAME_COUNT keeps the per-case
-# run_summary/legacy behavior (MAMA-MIA).
-KINETIC_BASELINE_FRAME_COUNT="${KINETIC_BASELINE_FRAME_COUNT:-}"
-KINETIC_RELATIVE_ENHANCEMENT="${KINETIC_RELATIVE_ENHANCEMENT:-0}"
 NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
 
 mkdir -p "${CACHE_DIR}"
@@ -101,12 +96,6 @@ if [[ -n "${CLINICAL_EXCEL:-}" ]]; then
   ARGS+=(--clinical-excel "${CLINICAL_EXCEL}")
 fi
 
-if [[ -n "${KINETIC_BASELINE_FRAME_COUNT:-}" ]]; then
-  ARGS+=(--kinetic-baseline-frame-count "${KINETIC_BASELINE_FRAME_COUNT}")
-fi
-if [[ "${KINETIC_RELATIVE_ENHANCEMENT:-0}" == "1" ]]; then
-  ARGS+=(--kinetic-relative-enhancement)
-fi
 if [[ -n "${CASES:-}" ]]; then
   ARGS+=(--cases "${CASES}")
 fi

@@ -518,7 +518,6 @@ def _build_case(
     node_features: tuple[str, ...],
     node_mode: str,
     edge_features: tuple[str, ...] = (),
-    kinetic_override: tuple[int, bool] | None = None,
 ) -> tuple[Data, dict[str, list[float]]]:
     """Build one labeled :class:`Data` graph for ``case_id`` in ``node_mode``.
 
@@ -527,11 +526,10 @@ def _build_case(
     graph depends only on its own files, so there is no cross-case state to
     share.
 
-    ``kinetic_override``, when given, replaces the ``(baseline_frame_count,
-    relative_enhancement)`` the case's ``run_summary.json`` would otherwise
-    supply. It's the config-driven way to declare a dataset-wide ultrafast
-    contract (e.g. UChicago: 5 precontrast frames, relative signal change) without
-    every ``run_summary.json`` restating it. ``None`` keeps the run_summary value.
+    The kinetic contract (baseline frame count, relative vs. absolute
+    enhancement) comes entirely from the case's ``run_summary.json`` via
+    ``_load_study_metadata`` -- it's acquisition metadata (the v5 Vanguard
+    preprocessing writes ``kinetic_feature_policy`` per case), not a build knob.
 
     ``node_mode="voxel"`` keeps one node per skeleton voxel with per-voxel
     features; ``node_mode="segment"`` contracts each vessel segment to a single
@@ -578,8 +576,6 @@ def _build_case(
         baseline_frame_count,
         relative_enhancement,
     ) = _load_study_metadata(case_id, study_dir)
-    if kinetic_override is not None:
-        baseline_frame_count, relative_enhancement = kinetic_override
     with _stage_timer(stage_samples, "timeseries_load"):
         dce_paths = discover_raw_dce_paths(dce_root, case_id, study_timepoints)
         dce_4d = load_raw_dce_series(dce_paths, expected_shape_zyx=support.shape)
@@ -795,8 +791,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
         cache_dir: str | Path | None = None,
         cases: Sequence[str] | None = None,
         no_cache: bool = False,
-        kinetic_baseline_frame_count: int | None = None,
-        kinetic_relative_enhancement: bool = False,
         node_mode: str = _VOXEL_MODE,
         node_features: Sequence[str] | None = None,
         edge_features: Sequence[str] | None = None,
@@ -926,14 +920,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._centerline_root = Path(root)
         self._labels_path = Path(labels_path)
         self._dce_root = Path(dce_root)
-        # Config-driven ultrafast contract: when a baseline count is given, every
-        # case uses (baseline, relative) instead of its run_summary.json value.
-        # None keeps the per-case run_summary/legacy behavior (MAMA-MIA).
-        self._kinetic_override: tuple[int, bool] | None = (
-            (int(kinetic_baseline_frame_count), bool(kinetic_relative_enhancement))
-            if kinetic_baseline_frame_count is not None
-            else None
-        )
         self._cases = set(cases) if cases is not None else None
         self._no_cache = no_cache
         self._data_list_cache: list[Data] | None = None
@@ -1084,13 +1070,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
         settings: dict[str, object] = {
             "centerline_root": str(self._centerline_root),
             "dce_root": str(self._dce_root),
-            # list (not tuple) so it round-trips through JSON and compares equal
-            # on cache-manifest reload; None for legacy/MAMA-MIA builds.
-            "kinetic_override": (
-                list(self._kinetic_override)
-                if self._kinetic_override is not None
-                else None
-            ),
             "labels_path": str(self._labels_path),
             "id_column": self._id_column,
             "label_column": self._label_column,
@@ -1615,7 +1594,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     node_features=self._node_features,
                     node_mode=self._node_mode,
                     edge_features=self._edge_features,
-                    kinetic_override=self._kinetic_override,
                 )
                 self._timings.merge(stage_samples)
                 logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
@@ -1641,7 +1619,6 @@ class VanguardCenterlineDataset(InMemoryDataset):
                         node_features=self._node_features,
                         node_mode=self._node_mode,
                         edge_features=self._edge_features,
-                        kinetic_override=self._kinetic_override,
                     )
                     for case_id, mask_path, label in batch
                 ]

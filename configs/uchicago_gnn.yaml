@@ -31,15 +31,20 @@ model_params:
   dropout: 0.2
   learning_rate: 0.001
   gnn_node_features: ["peak_time", "radius"]
-  # UChicago ultrafast contract (verified uniform across all 181 exams).
-  gnn_kinetic_baseline_frame_count: 5
-  gnn_kinetic_relative_enhancement: true
+  # The ultrafast kinetic contract (baseline=5 precontrast frames, relative
+  # signal change over physical seconds) is NOT set here: it's acquisition
+  # metadata written per-case into run_summary.json by the v5 Vanguard
+  # preprocessing (kinetic_feature_policy), which the loader reads and enforces
+  # (with the alignment_qc_status gate). See gnn/data_loader.py.
 
 data_paths:
-  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/preprocessing_out/centerlines"
-  gnn_dce_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/preprocessing_out/dce"
+  # v5-regenerated UChicago preprocessing (run_summary.json carries the kinetic
+  # policy + alignment approval). On scratch for now; move to the labshare once
+  # storage is resolved, then update these two paths.
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
   gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
-  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/gnn_cache_voxel"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_voxel"
   gnn_id_column: "case_id"
   gnn_label_column: "pcr"
   gnn_cases: null

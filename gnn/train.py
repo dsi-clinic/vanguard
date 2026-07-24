@@ -588,8 +588,6 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> KFoldResults:
         dce_root=data_paths.gnn_dce_root,
         cache_dir=data_paths.gnn_cache_dir,
         cases=list(data_paths.gnn_cases) if data_paths.gnn_cases else None,
-        kinetic_baseline_frame_count=params.gnn_kinetic_baseline_frame_count,
-        kinetic_relative_enhancement=bool(params.gnn_kinetic_relative_enhancement),
         node_mode=str(params.gnn_node_mode),
         node_features=tuple(params.gnn_node_features),
         edge_features=(

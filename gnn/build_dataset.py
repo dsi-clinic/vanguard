@@ -54,21 +54,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--id-column", type=str, default="case_id")
     parser.add_argument("--label-column", type=str, default="pcr")
     parser.add_argument(
-        "--kinetic-baseline-frame-count",
-        type=int,
-        default=None,
-        help="Dataset-wide precontrast frame count (e.g. 5 for UChicago ultrafast). "
-        "When set, overrides each case's run_summary.json contract; None keeps the "
-        "per-case run_summary/legacy behavior (MAMA-MIA).",
-    )
-    parser.add_argument(
-        "--kinetic-relative-enhancement",
-        action="store_true",
-        help="Compute relative signal change (S-S0)/S0 instead of absolute "
-        "enhancement. Pair with --kinetic-baseline-frame-count for ultrafast "
-        "(e.g. UChicago raw-signal DCE).",
-    )
-    parser.add_argument(
         "--node-mode",
         type=str,
         default="voxel",
@@ -270,8 +255,6 @@ def main() -> None:
         cache_dir=args.cache_dir,
         cases=cases,
         no_cache=args.no_cache,
-        kinetic_baseline_frame_count=args.kinetic_baseline_frame_count,
-        kinetic_relative_enhancement=args.kinetic_relative_enhancement,
         node_mode=args.node_mode,
         node_features=node_features,
         edge_features=edge_features,
