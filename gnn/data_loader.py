@@ -697,6 +697,9 @@ def _build_case(
         # the same ``time_axis`` the kinetic path uses, so forecasting sees the
         # real (irregular) UFAST cadence rather than frame indices.
         data.node_times = torch.tensor(time_axis, dtype=torch.float)
+        # Protocol baseline length, so the forecasting tiler can drop precontrast
+        # baseline frames from its windows (issue 3b) while still using them for S0.
+        data.baseline_frame_count = int(baseline_frame_count)
     return data, stage_samples
 
 

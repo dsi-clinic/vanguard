@@ -39,7 +39,7 @@ from gnn.data_loader import (
     _build_case,
     _git_commit,
 )
-from gnn.pretrain.forecast import ForecastHorizon, split_forecast_window
+from gnn.pretrain.forecast import ForecastHorizon, tile_forecast_windows
 from gnn.pretrain.train import ForecastGraph, run_pretrain_gates
 
 
@@ -88,16 +88,19 @@ def discover_forecast_tasks(
     return tasks
 
 
-def data_to_forecast_graph(data: object, horizon: ForecastHorizon) -> ForecastGraph:
-    """Split a built ``Data``'s ``node_series`` into a ``ForecastGraph``.
+def data_to_forecast_graphs(
+    data: object, horizon: ForecastHorizon, *, keep_baseline_context: int = 1
+) -> list[ForecastGraph]:
+    """Tile a built ``Data``'s ``node_series`` into non-overlapping ``ForecastGraph``s.
 
-    ``data.node_series`` (shape ``(N, T)``, attached by
-    ``_build_case(attach_node_series=True)``) is cut at the horizon; the input
-    horizon becomes ``x_seq`` with a trailing channel dim (the single enhancement
-    channel), the following frames become ``target``. ``data.node_times`` (shape
-    ``(T,)``, the physical acquisition seconds) is cut the same way and rebased to
-    the window's first input frame, so the model sees elapsed seconds (issue 3a).
-    Fails loudly if either is absent -- the build must have attached them.
+    ``data.node_series`` ``(N, T)`` and ``data.node_times`` ``(T,)`` (attached by
+    ``_build_case(attach_node_series=True)``) are tiled by ``tile_forecast_windows``
+    over the post-baseline region: the leading baseline frames (``data.baseline_frame_count``,
+    all but ``keep_baseline_context`` of them) are dropped as windows so the pretext
+    task is dominated by contrast dynamics rather than flat baseline (issue 3b).
+    Each tile becomes one ``ForecastGraph`` (same ``edge_index`` -- anatomy is
+    static within a scan) carrying its own baseline-relative signal and per-tile
+    elapsed times. Fails loudly if any required attribute is absent.
     """
     node_series = getattr(data, "node_series", None)
     if node_series is None:
@@ -105,17 +108,28 @@ def data_to_forecast_graph(data: object, horizon: ForecastHorizon) -> ForecastGr
     node_times = getattr(data, "node_times", None)
     if node_times is None:
         raise ValueError("data has no node_times; build with attach_node_series=True")
-    inputs, target = split_forecast_window(node_series, horizon)
-    window_times = node_times[: horizon.window] - node_times[0]
-    input_times = window_times[: horizon.input_len]
-    target_times = window_times[horizon.input_len : horizon.window]
-    return ForecastGraph(
-        x_seq=inputs.unsqueeze(-1),
-        target=target,
-        edge_index=data.edge_index,
-        input_times=input_times,
-        target_times=target_times,
+    baseline_frame_count = getattr(data, "baseline_frame_count", None)
+    if baseline_frame_count is None:
+        raise ValueError(
+            "data has no baseline_frame_count; build with attach_node_series=True"
+        )
+    tiles = tile_forecast_windows(
+        node_series,
+        node_times,
+        horizon,
+        baseline_frame_count=int(baseline_frame_count),
+        keep_baseline_context=keep_baseline_context,
     )
+    return [
+        ForecastGraph(
+            x_seq=inputs.unsqueeze(-1),
+            target=target,
+            edge_index=data.edge_index,
+            input_times=input_times,
+            target_times=target_times,
+        )
+        for inputs, target, input_times, target_times in tiles
+    ]
 
 
 def build_case_data(
@@ -332,11 +346,16 @@ def main(argv: list[str] | None = None) -> None:
         horizon.input_len,
         horizon.target_len,
     )
-    graphs = [data_to_forecast_graph(d, horizon) for d in built]
+    # One case (patient) -> several non-overlapping tiles.
+    per_case_graphs = [data_to_forecast_graphs(d, horizon) for d in built]
+    tile_counts = [len(g) for g in per_case_graphs]
+    logging.info("tiles per case: %s (total %d)", tile_counts, sum(tile_counts))
 
-    # Graph-level split: last --val-cases held out (order = --cases order).
-    split = len(graphs) - args.val_cases
-    train_graphs, val_graphs = graphs[:split], graphs[split:]
+    # Patient-level split: ALL tiles of the last --val-cases cases are held out,
+    # so no patient's tiles straddle train and val (avoids subject leakage).
+    split = len(per_case_graphs) - args.val_cases
+    train_graphs = [g for case_tiles in per_case_graphs[:split] for g in case_tiles]
+    val_graphs = [g for case_tiles in per_case_graphs[split:] for g in case_tiles]
     train_ids = [t[0] for t in tasks[:split]]
     val_ids = [t[0] for t in tasks[split:]]
 

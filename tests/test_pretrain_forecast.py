@@ -19,7 +19,11 @@ from gnn.pretrain.baselines import (  # noqa: E402
     last_frame_forecast,
     temporal_mean_forecast,
 )
-from gnn.pretrain.forecast import ForecastHorizon, split_forecast_window  # noqa: E402
+from gnn.pretrain.forecast import (  # noqa: E402
+    ForecastHorizon,
+    split_forecast_window,
+    tile_forecast_windows,
+)
 from gnn.pretrain.loss import masked_mae  # noqa: E402
 from gnn.pretrain.model import ContrastForecastGNN, PerNodeForecaster  # noqa: E402
 from gnn.pretrain.node_series import (  # noqa: E402
@@ -242,6 +246,73 @@ def test_forecast_horizon_validates() -> None:
         ForecastHorizon(input_len=0, target_len=1)
     with pytest.raises(ValueError, match="target_len"):
         ForecastHorizon(input_len=1, target_len=0)
+
+
+# --------------------------------------------------------------------------- #
+# non-overlapping tiling (issue 3b)
+# --------------------------------------------------------------------------- #
+def test_tile_forecast_windows_non_overlapping_count_and_offsets() -> None:
+    """Tiles are consecutive, non-overlapping windows over the tileable region."""
+    series = torch.arange(2 * 8, dtype=torch.float32).reshape(2, 8)
+    times = torch.arange(8, dtype=torch.float32)
+    horizon = ForecastHorizon(input_len=2, target_len=2)  # window 4
+    tiles = tile_forecast_windows(series, times, horizon, baseline_frame_count=1)
+    # start = 1 - 1 = 0; window 4 over T=8 -> offsets 0 and 4 (no overlap).
+    expected_tile_count = 2
+    assert len(tiles) == expected_tile_count
+    torch.testing.assert_close(tiles[0][0], series[:, 0:2])  # tile 0 inputs
+    torch.testing.assert_close(tiles[1][0], series[:, 4:6])  # tile 1 inputs
+    torch.testing.assert_close(tiles[1][1], series[:, 6:8])  # tile 1 target
+
+
+def test_tile_forecast_windows_drops_baseline_but_keeps_context() -> None:
+    """Baseline frames are dropped as windows except keep_baseline_context of them."""
+    series = torch.arange(1 * 8, dtype=torch.float32).reshape(1, 8)
+    times = torch.arange(8, dtype=torch.float32)
+    horizon = ForecastHorizon(input_len=2, target_len=2)
+    # baseline_frame_count=3, keep 1 -> start=2; frames 0,1 never tiled.
+    tiles = tile_forecast_windows(
+        series, times, horizon, baseline_frame_count=3, keep_baseline_context=1
+    )
+    assert len(tiles) == 1
+    torch.testing.assert_close(
+        tiles[0][0], series[:, 2:4]
+    )  # first input frame is idx 2
+
+
+def test_tile_forecast_windows_rebases_times_per_tile() -> None:
+    """Each tile's times are rebased to its own first input frame (elapsed)."""
+    series = torch.zeros(1, 8)
+    times = torch.tensor([0.0, 2.0, 4.0, 6.0, 20.0, 24.0, 28.0, 32.0])  # irregular
+    horizon = ForecastHorizon(input_len=2, target_len=2)
+    tiles = tile_forecast_windows(series, times, horizon, baseline_frame_count=1)
+    # tile 1 starts at frame 4 (t=20): rebased input_times = [0, 4], target = [8, 12].
+    _, _, input_times, target_times = tiles[1]
+    torch.testing.assert_close(input_times, torch.tensor([0.0, 4.0]))
+    torch.testing.assert_close(target_times, torch.tensor([8.0, 12.0]))
+
+
+def test_tile_forecast_windows_raises_when_region_too_short() -> None:
+    """A post-baseline region too short for one window fails loudly (no padding)."""
+    series = torch.zeros(1, 5)
+    times = torch.arange(5, dtype=torch.float32)
+    horizon = ForecastHorizon(input_len=2, target_len=2)  # window 4
+    # baseline 3, keep 1 -> start=2; only 3 frames left < window 4.
+    with pytest.raises(ValueError, match="post-baseline region"):
+        tile_forecast_windows(
+            series, times, horizon, baseline_frame_count=3, keep_baseline_context=1
+        )
+
+
+def test_tile_forecast_windows_rejects_bad_keep_context() -> None:
+    """keep_baseline_context must be within [0, baseline_frame_count]."""
+    series = torch.zeros(1, 8)
+    times = torch.arange(8, dtype=torch.float32)
+    horizon = ForecastHorizon(input_len=2, target_len=2)
+    with pytest.raises(ValueError, match="keep_baseline_context"):
+        tile_forecast_windows(
+            series, times, horizon, baseline_frame_count=2, keep_baseline_context=3
+        )
 
 
 # --------------------------------------------------------------------------- #

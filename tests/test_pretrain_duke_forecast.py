@@ -20,7 +20,7 @@ from torch_geometric.data import Data  # noqa: E402
 from torch_geometric.utils import from_networkx  # noqa: E402
 
 from gnn.pretrain.duke_forecast import (  # noqa: E402
-    data_to_forecast_graph,
+    data_to_forecast_graphs,
     discover_forecast_tasks,
     resolve_smoke_horizon,
 )
@@ -97,60 +97,62 @@ def test_discover_forecast_tasks_raises_on_missing_case(tmp_path: Path) -> None:
         discover_forecast_tasks(studies, labels, cases=["DUKE_001", "DUKE_002"])
 
 
-def test_data_to_forecast_graph_splits_series_and_times() -> None:
-    """A Data with node_series (N,T) + node_times (T,) becomes a timed ForecastGraph.
-
-    The physical times are cut like the series and rebased to the window's first
-    input frame, so the model sees real (irregular) elapsed seconds (issue 3a).
-    """
-    num_nodes, num_frames = 4, 5
+def _forecast_data(node_times: list[float], baseline_frame_count: int) -> Data:
+    num_nodes, t = 3, len(node_times)
     data = Data(
-        edge_index=torch.tensor([[0, 1, 2, 3], [1, 0, 3, 2]]),
-        node_series=torch.arange(num_nodes * num_frames, dtype=torch.float).reshape(
-            num_nodes, num_frames
+        edge_index=torch.tensor([[0, 1, 2], [1, 2, 0]]),
+        node_series=torch.arange(num_nodes * t, dtype=torch.float).reshape(
+            num_nodes, t
         ),
-        node_times=torch.tensor([0.0, 5.0, 15.0, 20.0, 40.0]),  # irregular cadence
+        node_times=torch.tensor(node_times),
     )
-    horizon = ForecastHorizon(input_len=3, target_len=2)
-    fg = data_to_forecast_graph(data, horizon)
-    assert fg.x_seq.shape == (num_nodes, 3, 1)
-    assert fg.target.shape == (num_nodes, 2)
-    torch.testing.assert_close(fg.edge_index, data.edge_index)
-    # x_seq is the first 3 frames; target the next 2.
-    torch.testing.assert_close(fg.x_seq[:, :, 0], data.node_series[:, :3])
-    torch.testing.assert_close(fg.target, data.node_series[:, 3:5])
-    # Times split at input_len and rebased to the window start.
-    torch.testing.assert_close(fg.input_times, torch.tensor([0.0, 5.0, 15.0]))
-    torch.testing.assert_close(fg.target_times, torch.tensor([20.0, 40.0]))
+    data.baseline_frame_count = baseline_frame_count
+    return data
 
 
-def test_data_to_forecast_graph_rebases_nonzero_start_time() -> None:
-    """A window that doesn't start at t=0 is rebased so input_times[0] == 0."""
-    data = Data(
-        edge_index=torch.tensor([[0, 1], [1, 0]]),
-        node_series=torch.zeros(2, 4),
-        node_times=torch.tensor([100.0, 103.0, 110.0, 130.0]),
+def test_data_to_forecast_graphs_tiles_with_times() -> None:
+    """A built Data becomes several non-overlapping timed ForecastGraphs (tiles)."""
+    # T=8, baseline_frame_count=1, keep 1 -> start 0; window 4 -> tiles at 0 and 4.
+    data = _forecast_data([0.0, 2.0, 4.0, 6.0, 20.0, 22.0, 24.0, 26.0], 1)
+    graphs = data_to_forecast_graphs(data, ForecastHorizon(input_len=2, target_len=2))
+    expected_tile_count = 2
+    assert len(graphs) == expected_tile_count
+    for fg in graphs:
+        assert fg.x_seq.shape == (3, 2, 1)
+        assert fg.target.shape == (3, 2)
+        torch.testing.assert_close(fg.edge_index, data.edge_index)
+        torch.testing.assert_close(fg.input_times[0], torch.tensor(0.0))  # rebased
+    # Tile 1 (offset 4, t=20): rebased input times [0, 2].
+    torch.testing.assert_close(graphs[1].input_times, torch.tensor([0.0, 2.0]))
+
+
+def test_data_to_forecast_graphs_drops_baseline_windows() -> None:
+    """Leading baseline frames are not tiled (except the kept context frame)."""
+    data = _forecast_data([float(i) for i in range(8)], baseline_frame_count=3)
+    graphs = data_to_forecast_graphs(
+        data, ForecastHorizon(input_len=2, target_len=2), keep_baseline_context=1
     )
-    fg = data_to_forecast_graph(data, ForecastHorizon(input_len=2, target_len=2))
-    torch.testing.assert_close(fg.input_times, torch.tensor([0.0, 3.0]))
-    torch.testing.assert_close(fg.target_times, torch.tensor([10.0, 30.0]))
+    # start = 3 - 1 = 2 -> single window; first input frame is series column 2.
+    assert len(graphs) == 1
+    torch.testing.assert_close(graphs[0].x_seq[:, :, 0], data.node_series[:, 2:4])
 
 
-def test_data_to_forecast_graph_requires_node_series() -> None:
+def test_data_to_forecast_graphs_requires_node_series() -> None:
     """Missing node_series fails loudly (the build must have attached it)."""
     data = Data(edge_index=torch.tensor([[0, 1], [1, 0]]))
     with pytest.raises(ValueError, match="node_series"):
-        data_to_forecast_graph(data, ForecastHorizon(input_len=1, target_len=1))
+        data_to_forecast_graphs(data, ForecastHorizon(input_len=1, target_len=1))
 
 
-def test_data_to_forecast_graph_requires_node_times() -> None:
-    """Missing node_times fails loudly too (the time axis is part of the contract)."""
+def test_data_to_forecast_graphs_requires_baseline_frame_count() -> None:
+    """Missing baseline_frame_count fails loudly (needed to drop baseline windows)."""
     data = Data(
         edge_index=torch.tensor([[0, 1], [1, 0]]),
-        node_series=torch.zeros(2, 4),
+        node_series=torch.zeros(2, 8),
+        node_times=torch.arange(8, dtype=torch.float),
     )
-    with pytest.raises(ValueError, match="node_times"):
-        data_to_forecast_graph(data, ForecastHorizon(input_len=2, target_len=2))
+    with pytest.raises(ValueError, match="baseline_frame_count"):
+        data_to_forecast_graphs(data, ForecastHorizon(input_len=2, target_len=2))
 
 
 def test_resolve_smoke_horizon_unchanged_when_fits() -> None:
