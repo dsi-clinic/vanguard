@@ -693,6 +693,10 @@ def _build_case(
                 f"attach_node_series=True: unknown node_mode {node_mode!r}."
             )
         data.node_series = torch.tensor(node_series, dtype=torch.float)
+        # Physical acquisition seconds for the forecasting time axis (issue 3a):
+        # the same ``time_axis`` the kinetic path uses, so forecasting sees the
+        # real (irregular) UFAST cadence rather than frame indices.
+        data.node_times = torch.tensor(time_axis, dtype=torch.float)
     return data, stage_samples
 
 

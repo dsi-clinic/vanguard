@@ -39,11 +39,19 @@ from gnn.pretrain.model import ContrastForecastGNN, PerNodeForecaster
 
 @dataclass
 class ForecastGraph:
-    """A single graph's forecasting tensors (input horizon, target, adjacency)."""
+    """A single graph's forecasting tensors (input horizon, target, adjacency, times).
+
+    ``input_times`` / ``target_times`` are the elapsed acquisition seconds of the
+    input and target frames, measured from the window's first input frame and
+    shared across nodes. They carry the irregular UFAST cadence into the model
+    (design review issue 3a) so adjacent frames are not treated as equally spaced.
+    """
 
     x_seq: torch.Tensor  # (N, input_len, C)
     target: torch.Tensor  # (N, target_len)
     edge_index: torch.Tensor  # (2, E)
+    input_times: torch.Tensor  # (input_len,) elapsed seconds from window start
+    target_times: torch.Tensor  # (target_len,) elapsed seconds from window start
 
 
 def build_synthetic_forecast_graphs(
@@ -61,6 +69,9 @@ def build_synthetic_forecast_graphs(
     along the vessel and (through the shared adjacency) to its neighbours' phase.
     Baseline-subtracted (frame 0 -> 0), matching ``gnn.pretrain.node_series``. A
     little Gaussian noise keeps the trivial baselines from being exactly perfect.
+    Frames are equally spaced here (unit cadence), so the elapsed-time axis is
+    just the frame index -- the fixture exercises the timed model interface
+    without claiming anything about real (irregular) UFAST cadence.
     This is a plumbing fixture only -- it is *not* a claim about real vasculature.
     """
     generator = torch.Generator().manual_seed(seed)
@@ -74,6 +85,9 @@ def build_synthetic_forecast_graphs(
     dst = list(range(1, num_nodes)) + list(range(num_nodes - 1))
     edge_index = torch.tensor([src, dst], dtype=torch.long)
 
+    input_times = t[: horizon.input_len]
+    target_times = t[horizon.input_len : horizon.window]
+
     graphs: list[ForecastGraph] = []
     for _ in range(num_graphs):
         series = base + noise_std * torch.randn(base.shape, generator=generator)
@@ -81,7 +95,11 @@ def build_synthetic_forecast_graphs(
         target = series[:, horizon.input_len : horizon.window]
         graphs.append(
             ForecastGraph(
-                x_seq=inputs.unsqueeze(-1), target=target, edge_index=edge_index
+                x_seq=inputs.unsqueeze(-1),
+                target=target,
+                edge_index=edge_index,
+                input_times=input_times,
+                target_times=target_times,
             )
         )
     return graphs
@@ -101,7 +119,12 @@ def _mean_graph_mae(
 def evaluate_gnn(model: ContrastForecastGNN, graphs: list[ForecastGraph]) -> float:
     """Node-weighted held-out MAE of the GNN forecaster over ``graphs``."""
     model.eval()
-    errs = [masked_mae(model(g.x_seq, g.edge_index), g.target) for g in graphs]
+    errs = [
+        masked_mae(
+            model(g.x_seq, g.edge_index, g.input_times, g.target_times), g.target
+        )
+        for g in graphs
+    ]
     return _mean_graph_mae(errs, [g.x_seq.shape[0] for g in graphs])
 
 
@@ -109,7 +132,10 @@ def evaluate_gnn(model: ContrastForecastGNN, graphs: list[ForecastGraph]) -> flo
 def evaluate_per_node(model: PerNodeForecaster, graphs: list[ForecastGraph]) -> float:
     """Node-weighted held-out MAE of the graph-free forecaster over ``graphs``."""
     model.eval()
-    errs = [masked_mae(model(g.x_seq), g.target) for g in graphs]
+    errs = [
+        masked_mae(model(g.x_seq, g.input_times, g.target_times), g.target)
+        for g in graphs
+    ]
     return _mean_graph_mae(errs, [g.x_seq.shape[0] for g in graphs])
 
 
@@ -151,7 +177,11 @@ def train_forecaster(
         epoch_errs: list[torch.Tensor] = []
         for g in train_graphs:
             optimizer.zero_grad()
-            pred = model(g.x_seq, g.edge_index) if uses_graph else model(g.x_seq)
+            pred = (
+                model(g.x_seq, g.edge_index, g.input_times, g.target_times)
+                if uses_graph
+                else model(g.x_seq, g.input_times, g.target_times)
+            )
             loss = masked_mae(pred, g.target)
             loss.backward()
             optimizer.step()
@@ -187,7 +217,6 @@ def run_pretrain_gates(
     gnn = ContrastForecastGNN(
         in_channels=in_channels,
         hidden_dim=hidden_dim,
-        target_len=horizon.target_len,
         num_layers=num_layers,
         dropout=dropout,
     )
@@ -197,7 +226,6 @@ def run_pretrain_gates(
     per_node = PerNodeForecaster(
         in_channels=in_channels,
         hidden_dim=hidden_dim,
-        target_len=horizon.target_len,
         num_layers=num_layers,
         dropout=dropout,
     )

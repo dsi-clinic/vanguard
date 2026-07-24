@@ -97,14 +97,19 @@ def test_discover_forecast_tasks_raises_on_missing_case(tmp_path: Path) -> None:
         discover_forecast_tasks(studies, labels, cases=["DUKE_001", "DUKE_002"])
 
 
-def test_data_to_forecast_graph_splits_series() -> None:
-    """A Data with node_series (N,T) becomes a ForecastGraph with the right shapes."""
+def test_data_to_forecast_graph_splits_series_and_times() -> None:
+    """A Data with node_series (N,T) + node_times (T,) becomes a timed ForecastGraph.
+
+    The physical times are cut like the series and rebased to the window's first
+    input frame, so the model sees real (irregular) elapsed seconds (issue 3a).
+    """
     num_nodes, num_frames = 4, 5
     data = Data(
         edge_index=torch.tensor([[0, 1, 2, 3], [1, 0, 3, 2]]),
         node_series=torch.arange(num_nodes * num_frames, dtype=torch.float).reshape(
             num_nodes, num_frames
         ),
+        node_times=torch.tensor([0.0, 5.0, 15.0, 20.0, 40.0]),  # irregular cadence
     )
     horizon = ForecastHorizon(input_len=3, target_len=2)
     fg = data_to_forecast_graph(data, horizon)
@@ -114,6 +119,21 @@ def test_data_to_forecast_graph_splits_series() -> None:
     # x_seq is the first 3 frames; target the next 2.
     torch.testing.assert_close(fg.x_seq[:, :, 0], data.node_series[:, :3])
     torch.testing.assert_close(fg.target, data.node_series[:, 3:5])
+    # Times split at input_len and rebased to the window start.
+    torch.testing.assert_close(fg.input_times, torch.tensor([0.0, 5.0, 15.0]))
+    torch.testing.assert_close(fg.target_times, torch.tensor([20.0, 40.0]))
+
+
+def test_data_to_forecast_graph_rebases_nonzero_start_time() -> None:
+    """A window that doesn't start at t=0 is rebased so input_times[0] == 0."""
+    data = Data(
+        edge_index=torch.tensor([[0, 1], [1, 0]]),
+        node_series=torch.zeros(2, 4),
+        node_times=torch.tensor([100.0, 103.0, 110.0, 130.0]),
+    )
+    fg = data_to_forecast_graph(data, ForecastHorizon(input_len=2, target_len=2))
+    torch.testing.assert_close(fg.input_times, torch.tensor([0.0, 3.0]))
+    torch.testing.assert_close(fg.target_times, torch.tensor([10.0, 30.0]))
 
 
 def test_data_to_forecast_graph_requires_node_series() -> None:
@@ -121,6 +141,16 @@ def test_data_to_forecast_graph_requires_node_series() -> None:
     data = Data(edge_index=torch.tensor([[0, 1], [1, 0]]))
     with pytest.raises(ValueError, match="node_series"):
         data_to_forecast_graph(data, ForecastHorizon(input_len=1, target_len=1))
+
+
+def test_data_to_forecast_graph_requires_node_times() -> None:
+    """Missing node_times fails loudly too (the time axis is part of the contract)."""
+    data = Data(
+        edge_index=torch.tensor([[0, 1], [1, 0]]),
+        node_series=torch.zeros(2, 4),
+    )
+    with pytest.raises(ValueError, match="node_times"):
+        data_to_forecast_graph(data, ForecastHorizon(input_len=2, target_len=2))
 
 
 def test_resolve_smoke_horizon_unchanged_when_fits() -> None:

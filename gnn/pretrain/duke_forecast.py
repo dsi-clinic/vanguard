@@ -94,15 +94,27 @@ def data_to_forecast_graph(data: object, horizon: ForecastHorizon) -> ForecastGr
     ``data.node_series`` (shape ``(N, T)``, attached by
     ``_build_case(attach_node_series=True)``) is cut at the horizon; the input
     horizon becomes ``x_seq`` with a trailing channel dim (the single enhancement
-    channel), the following frames become ``target``. Fails loudly if the series
-    is absent -- the build must have attached it.
+    channel), the following frames become ``target``. ``data.node_times`` (shape
+    ``(T,)``, the physical acquisition seconds) is cut the same way and rebased to
+    the window's first input frame, so the model sees elapsed seconds (issue 3a).
+    Fails loudly if either is absent -- the build must have attached them.
     """
     node_series = getattr(data, "node_series", None)
     if node_series is None:
         raise ValueError("data has no node_series; build with attach_node_series=True")
+    node_times = getattr(data, "node_times", None)
+    if node_times is None:
+        raise ValueError("data has no node_times; build with attach_node_series=True")
     inputs, target = split_forecast_window(node_series, horizon)
+    window_times = node_times[: horizon.window] - node_times[0]
+    input_times = window_times[: horizon.input_len]
+    target_times = window_times[horizon.input_len : horizon.window]
     return ForecastGraph(
-        x_seq=inputs.unsqueeze(-1), target=target, edge_index=data.edge_index
+        x_seq=inputs.unsqueeze(-1),
+        target=target,
+        edge_index=data.edge_index,
+        input_times=input_times,
+        target_times=target_times,
     )
 
 
@@ -243,7 +255,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=_VOXEL_MODE,
         help="Graph node definition: 'voxel', 'segment', or 'junction'.",
     )
-    parser.add_argument("--input-len", type=int, default=3)
+    # Placeholder default horizon (2/2), NOT tuned -- a horizon-validation sweep
+    # is a committed follow-up (see docs/design/contrast_pretraining_params.md).
+    parser.add_argument("--input-len", type=int, default=2)
     parser.add_argument("--target-len", type=int, default=2)
     parser.add_argument(
         "--min-frames-policy",
