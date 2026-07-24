@@ -1,15 +1,14 @@
 # GNN training on the UChicago internal ultrafast DCE cohort (gnn/train.py).
 #
-# Uses the standard loader with no dataset adapter: Sarit's preprocessing output
-# is already in the layout the loader expects --
+# The Vanguard preprocessing output is in the layout the loader expects, so it
+# feeds the standard loader with no dataset adapter:
 #   centerlines: <root>/<sub-source>/<exam_id>/<exam_id>_skeleton_4d_exam_mask.npy
 #   raw DCE:     <dce_root>/<exam_id>/<exam_id>_NNNN.nii.gz  (+ ufast_times_seconds.npy)
-# and the DCE is the correct raw-signal, motion-corrected contract
-# (vanguard_spgr_raw_signal_v2), so no manifest / tar extraction is involved.
+# The DCE is the raw-signal, motion-corrected contract
+# (vanguard_spgr_raw_signal_v5), so no manifest / tar extraction is involved.
 #
-# The one UChicago-specific bit is the ultrafast kinetic contract, set below as
-# two config knobs (5 precontrast frames, relative signal change). node_mode
-# defaults to voxel; override model_params.gnn_node_mode for segment/junction.
+# node_mode defaults to voxel; override model_params.gnn_node_mode for
+# segment/junction.
 
 experiment_setup:
   name: "gnn_uchicago"
@@ -31,11 +30,9 @@ model_params:
   dropout: 0.2
   learning_rate: 0.001
   gnn_node_features: ["peak_time", "radius"]
-  # The ultrafast kinetic contract (baseline=5 precontrast frames, relative
-  # signal change over physical seconds) is NOT set here: it's acquisition
-  # metadata written per-case into run_summary.json by the v5 Vanguard
-  # preprocessing (kinetic_feature_policy), which the loader reads and enforces
-  # (with the alignment_qc_status gate). See gnn/data_loader.py.
+  # The kinetic contract (baseline frame count, relative signal change) is
+  # acquisition metadata: the loader reads it per case from run_summary.json's
+  # kinetic_feature_policy and gates on alignment_qc_status. See gnn/data_loader.py.
 
 data_paths:
   # v5-regenerated UChicago preprocessing (run_summary.json carries the kinetic
