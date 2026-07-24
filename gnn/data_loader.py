@@ -536,6 +536,10 @@ def _build_case(
     graph depends only on its own files, so there is no cross-case state to
     share.
 
+    The kinetic contract (baseline frame count, relative vs. absolute
+    enhancement) is acquisition metadata, read per case from the case's
+    ``run_summary.json`` (``kinetic_feature_policy``) via ``_load_study_metadata``.
+
     ``node_mode="voxel"`` keeps one node per skeleton voxel with per-voxel
     features; ``node_mode="segment"`` contracts each vessel segment to a single
     node via ``gnn.segment_graph.build_segment_line_graph`` (Option B, line

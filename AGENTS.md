@@ -77,9 +77,12 @@ Derived outputs should go in clearly named output folders with enough provenance
 
 ## Project Conventions
 - Keep scripts and outputs named clearly enough that another student can understand what they are for.
+- Write comments and docstrings for a newcomer reading the code as it is now, in the present tense: state what the code does and why it is shaped this way. Do not narrate the change that produced it ("now we…", "no longer…", "instead of the old…", "removed X", "backward compatible with…") or reference prior approaches. That transitional rationale belongs in the commit message, lab notebook, and agent memory — in the code it bloats and goes stale. If a comment only makes sense to someone who saw the diff, it does not belong in the code.
 - Prefer saved CSVs, plots, QC panels, and short README/provenance notes for important outputs.
 - Document split/CV policy when training or evaluating models.
 - Do not change cohort definitions, labels, or train/test splits without making the change explicit.
+- Do not commit evolving or personal working docs — migration plans, scratch notes, study guides, TODO/roadmap files. These clutter branches and PRs and go stale. Keep them in a gitignored location (`docs/design/`, `agents.local.md`, or an untracked scratch path), not in `docs/` or the repo root.
+- Committed docs must be durable references others rely on: READMEs, data-layout/policy docs, provenance/results write-ups (e.g. `docs/issue*.md`), and **decision records that code or configs point to** (e.g. `gnn/DESIGN_segment_graph.md` and `gnn/PLAN_advanced_modeling.md`, which `config.py` cites by name). A "plan" or "design" file earns a committed spot only as a stable decision record referenced from code — not as a work-in-progress roadmap.
 
 ## Local Preferences
 If `agents.local.md` exists, read it after this file.
