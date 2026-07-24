@@ -33,7 +33,17 @@ def masked_mae(
     abs_err = (pred - target).abs()
     if mask is None:
         return abs_err.mean()
-    mask = mask.to(abs_err.dtype)
+    # Broadcast the mask to the error's full shape -- and onto its device/dtype --
+    # once, then use that single tensor for both numerator and denominator. A mask
+    # shaped e.g. (N, 1) otherwise inflates the loss: it broadcasts across
+    # target_len inside ``abs_err * mask`` (numerator), but ``mask.sum()`` on the
+    # un-broadcast (N, 1) tensor counts each node only once, so the mean comes out
+    # target_len times too large. The device move also lets a CPU mask apply to a
+    # CUDA prediction instead of raising a device mismatch.
+    mask = torch.broadcast_to(
+        mask.to(device=abs_err.device, dtype=abs_err.dtype),
+        abs_err.shape,
+    )
     denom = mask.sum()
     if denom.item() == 0:
         raise ValueError("mask selects zero elements; nothing to compute a loss over")
