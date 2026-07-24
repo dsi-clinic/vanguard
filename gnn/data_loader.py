@@ -526,6 +526,11 @@ def _build_case(
     graph depends only on its own files, so there is no cross-case state to
     share.
 
+    The kinetic contract (baseline frame count, relative vs. absolute
+    enhancement) comes entirely from the case's ``run_summary.json`` via
+    ``_load_study_metadata`` -- it's acquisition metadata (the v5 Vanguard
+    preprocessing writes ``kinetic_feature_policy`` per case), not a build knob.
+
     ``node_mode="voxel"`` keeps one node per skeleton voxel with per-voxel
     features; ``node_mode="segment"`` contracts each vessel segment to a single
     node via ``gnn.segment_graph.build_segment_line_graph`` (Option B, line
