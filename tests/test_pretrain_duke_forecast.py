@@ -83,6 +83,39 @@ def test_discover_forecast_tasks_raises_on_missing_label(tmp_path: Path) -> None
         discover_forecast_tasks(studies, labels, cases=["DUKE_001"])
 
 
+def test_discover_forecast_tasks_label_free(tmp_path: Path) -> None:
+    """labels_path=None discovers masks with label None, requiring no labels CSV.
+
+    This is the label-free pretraining path (issue 2): the large unlabeled
+    uc-uf-pretrain cohort must build forecasting cases without any clinical label.
+    """
+    from gnn.data_loader import _CENTERLINE_SUFFIX
+
+    studies = tmp_path / "studies"
+    for case in ["UC_001", "UC_002"]:
+        d = studies / "UC" / case
+        d.mkdir(parents=True)
+        (d / f"{case}{_CENTERLINE_SUFFIX}").touch()
+
+    tasks = discover_forecast_tasks(studies, None, cases=["UC_001", "UC_002"])
+    assert [case_id for case_id, _, _ in tasks] == ["UC_001", "UC_002"]
+    assert all(label is None for _, _, label in tasks)
+    for _, mask_path, _ in tasks:
+        assert mask_path.name.endswith(_CENTERLINE_SUFFIX)
+
+
+def test_discover_forecast_tasks_label_free_still_requires_mask(tmp_path: Path) -> None:
+    """Even label-free, a missing skeleton mask fails loudly (not a silent drop)."""
+    from gnn.data_loader import _CENTERLINE_SUFFIX
+
+    studies = tmp_path / "studies"
+    (studies / "UC" / "UC_001").mkdir(parents=True)
+    (studies / "UC" / "UC_001" / f"UC_001{_CENTERLINE_SUFFIX}").touch()
+
+    with pytest.raises(ValueError, match="no skeleton mask"):
+        discover_forecast_tasks(studies, None, cases=["UC_001", "UC_404"])
+
+
 def test_discover_forecast_tasks_raises_on_missing_case(tmp_path: Path) -> None:
     """A whitelisted case whose skeleton mask is absent fails loudly."""
     from gnn.data_loader import _CENTERLINE_SUFFIX

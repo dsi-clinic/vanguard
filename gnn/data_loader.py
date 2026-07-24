@@ -345,7 +345,7 @@ def _attach_node_features(
     time_axis: np.ndarray,
     baseline_frame_count: int,
     relative_enhancement: bool,
-    label: int,
+    label: int | None,
     node_features: tuple[str, ...],
 ) -> None:
     """Set ``radius`` and the DCE-derived kinetic features on every node.
@@ -366,6 +366,11 @@ def _attach_node_features(
     if not duration_seconds > 0.0:
         duration_seconds = float(_SINGLE_TIMEPOINT)
     include_pcr_dummy = "pcr_dummy" in node_features
+    if include_pcr_dummy and label is None:
+        raise ValueError(
+            "node feature 'pcr_dummy' requires a label, but none was provided "
+            "(label-free pretraining build). Drop 'pcr_dummy' for unlabeled cases."
+        )
     for node in graph.nodes():
         x, y, z = int(node[0]), int(node[1]), int(node[2])
         curve = dce_4d[:, z, y, x]
@@ -439,7 +444,7 @@ def _raise_on_unexpected_nan(matrix: torch.Tensor) -> None:
 def _finalize_data(
     data: Data,
     case_id: str,
-    label: int,
+    label: int | None,
     num_timepoints: int,
     node_features: tuple[str, ...],
     num_connected_components: int,
@@ -492,7 +497,11 @@ def _finalize_data(
         _raise_on_unexpected_nan(data.edge_attr)
     data.tte_no_arrival_count = no_arrival
     data.no_bifurcation_count = no_bifurcation
-    data.y = torch.tensor([int(label)], dtype=torch.long)
+    # Label-free pretraining (design review issue 2): unlabeled cases build a
+    # forecasting graph with no ``data.y``. The classification path always passes
+    # a label, so its ``data.y`` is unchanged.
+    if label is not None:
+        data.y = torch.tensor([int(label)], dtype=torch.long)
     data.case_id = case_id
     data.num_timepoints = num_timepoints
     data.num_connected_components = num_connected_components
@@ -512,7 +521,7 @@ def _finalize_data(
 def _build_case(
     case_id: str,
     mask_path: Path,
-    label: int,
+    label: int | None = None,
     *,
     dce_root: Path,
     node_features: tuple[str, ...],

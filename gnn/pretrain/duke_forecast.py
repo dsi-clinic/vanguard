@@ -45,20 +45,25 @@ from gnn.pretrain.train import ForecastGraph, run_pretrain_gates
 
 def discover_forecast_tasks(
     centerline_root: Path,
-    labels_path: Path,
+    labels_path: Path | None,
     cases: list[str],
     *,
     id_column: str = "case_id",
     label_column: str = "pcr",
-) -> list[tuple[str, Path, int]]:
+) -> list[tuple[str, Path, int | None]]:
     """Resolve each whitelisted case to ``(case_id, skeleton_mask_path, label)``.
 
     Globs ``centerline_root`` for ``*{_CENTERLINE_SUFFIX}`` masks (identical to
     ``VanguardCenterlineDataset._discover_cases``), keeping only ``cases``, then
-    joins the pCR label from ``labels_path``. Fails loudly -- rather than silently
-    dropping -- if a whitelisted case has no skeleton mask or no label row, since
-    the whitelist is explicit and a miss means a wrong id or a stale labels file.
-    Returns tasks in the order of ``cases``.
+    joins the pCR label from ``labels_path`` **when one is given**. Fails loudly --
+    rather than silently dropping -- if a whitelisted case has no skeleton mask, or
+    (when labels are supplied) no label row, since the whitelist is explicit and a
+    miss means a wrong id or a stale labels file.
+
+    ``labels_path=None`` is the **label-free pretraining** mode (design review
+    issue 2): the large unlabeled ``uc-uf-pretrain`` cohort is the whole reason for
+    self-supervision, so no clinical label is required to build a forecasting case.
+    Each task's label is then ``None``. Returns tasks in the order of ``cases``.
     """
     wanted = list(dict.fromkeys(cases))  # de-dupe, preserve order
     mask_by_case: dict[str, Path] = {}
@@ -67,24 +72,30 @@ def discover_forecast_tasks(
         if case_id in wanted and case_id not in mask_by_case:
             mask_by_case[case_id] = mask_path
 
-    labels_df = pd.read_csv(labels_path)
-    label_by_case = dict(
-        zip(labels_df[id_column].astype(str), labels_df[label_column], strict=True)
-    )
+    label_by_case: dict[str, object] = {}
+    if labels_path is not None:
+        labels_df = pd.read_csv(labels_path)
+        label_by_case = dict(
+            zip(labels_df[id_column].astype(str), labels_df[label_column], strict=True)
+        )
 
-    tasks: list[tuple[str, Path, int]] = []
+    tasks: list[tuple[str, Path, int | None]] = []
     for case_id in wanted:
         if case_id not in mask_by_case:
             raise ValueError(
                 f"case {case_id!r} has no skeleton mask "
                 f"(*{_CENTERLINE_SUFFIX}) under {centerline_root}"
             )
-        if case_id not in label_by_case:
+        if labels_path is None:
+            label: int | None = None
+        elif case_id not in label_by_case:
             raise ValueError(
                 f"case {case_id!r} has no label in {labels_path} "
                 f"(column {label_column!r})"
             )
-        tasks.append((case_id, mask_by_case[case_id], int(label_by_case[case_id])))
+        else:
+            label = int(label_by_case[case_id])
+        tasks.append((case_id, mask_by_case[case_id], label))
     return tasks
 
 
@@ -135,20 +146,21 @@ def data_to_forecast_graphs(
 def build_case_data(
     case_id: str,
     mask_path: Path,
-    label: int,
+    label: int | None = None,
     *,
     dce_root: Path,
     node_features: tuple[str, ...],
     node_mode: str = _VOXEL_MODE,
 ) -> object:
-    """Build one Duke case's ``Data`` (carrying ``node_series``) for ``node_mode``.
+    """Build one case's ``Data`` (carrying ``node_series``) for ``node_mode``.
 
     Split into build-vs-window (rather than returning a ``ForecastGraph``
     directly) so the caller can inspect every case's frame count ``T`` before
-    committing a horizon -- Duke's ``T`` varies across cases (see
+    committing a horizon -- ``T`` varies across cases (see
     ``resolve_smoke_horizon``), so the horizon can only be fixed once all series
     lengths are known. ``node_mode`` is ``"voxel"``, ``"segment"``, or
-    ``"junction"``.
+    ``"junction"``. ``label=None`` builds a label-free forecasting case (issue 2);
+    forecasting never reads ``data.y``, so an unlabeled case is fully usable.
     """
     data, _ = _build_case(
         case_id,
@@ -258,7 +270,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--centerline-root", type=Path, required=True)
     parser.add_argument("--dce-root", type=Path, required=True)
-    parser.add_argument("--labels-path", type=Path, required=True)
+    parser.add_argument(
+        "--labels-path",
+        type=Path,
+        default=None,
+        help=(
+            "pCR labels CSV. Optional: omit for label-free pretraining (issue 2) "
+            "-- forecasting never reads the label, so unlabeled cohorts "
+            "(e.g. uc-uf-pretrain) build fine without it."
+        ),
+    )
     parser.add_argument(
         "--cases", type=str, required=True, help="Comma-separated Duke case ids"
     )
@@ -386,10 +407,13 @@ def main(argv: list[str] | None = None) -> None:
 
 def _argv_for_readme(args: argparse.Namespace) -> list[str]:
     """Reconstruct a readable command line from parsed args (for the README)."""
+    labels_flag = (
+        [f"--labels-path {args.labels_path}"] if args.labels_path is not None else []
+    )
     return [
         f"--centerline-root {args.centerline_root}",
         f"--dce-root {args.dce_root}",
-        f"--labels-path {args.labels_path}",
+        *labels_flag,
         f"--cases {args.cases}",
         f"--outdir {args.outdir}",
         f"--node-mode {args.node_mode}",
