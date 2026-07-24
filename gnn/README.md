@@ -272,11 +272,15 @@ each case has many timepoints.
 
 ## Model + training
 
-`gnn/model.py` provides `GCNClassifier`: a stack of `GCNConv` layers, a global
-mean-pool readout to one embedding per graph, and a linear head producing one
-logit per graph. No edge features, attention, or segment-level pooling yet --
-those are deliberate next steps once this MVP is validated end-to-end, not
-omissions.
+`gnn/model.py` provides `GCNClassifier`: a stack of `GCNConv` layers, a
+configurable graph readout, and a linear head producing one logit per graph.
+The readout is set by `model_params.gnn_pooling` (Tier 1, decision D2.1):
+`"mean"` (default, the original single `global_mean_pool` -- backward
+compatible), `"mean_max"`, or `"mean_max_sum"`, which concatenate global
+max/add pools so the graph embedding keeps the distributional tails mean-pool
+discards (`gnn/model.py` `POOLING_WIDTHS` / `_graph_readout`). Junction mode
+(`EdgeGNNClassifier`) still mean-pools only. Attention readout and stronger
+conv operators are the next Tier-1 steps (see `gnn/PLAN_advanced_modeling.md`).
 
 Outline of `gnn/train.py`:
 
@@ -295,11 +299,42 @@ Outline of `gnn/train.py`:
    `evaluation/kfold.py` (`create_predefined_splits`), so any model family can
    opt into the same fold definition.
 4. Train a fresh `GCNClassifier` per fold (`fit_predict_one_fold`):
-   node-feature standardization fit on that fold's train split only, plain
-   `BCEWithLogitsLoss`, metrics via `evaluation.metrics.compute_binary_metrics`.
+   node-feature standardization fit on that fold's train split only, a
+   config-selected loss (`build_loss_fn`), metrics via
+   `evaluation.metrics.compute_binary_metrics`.
 5. Aggregate fold predictions with `evaluator.aggregate_kfold_results` and
    save with `evaluator.save_results` -- the same `metrics.json` /
    `predictions.csv` / ROC-PR plots convention every other model family uses.
+
+### Training knobs (Tier 0)
+
+`fit_predict_one_fold` honors the same `model_params` training knobs as
+`deepsets/train.py` (their implementations are deliberately parallel; see
+`gnn/PLAN_advanced_modeling.md`, Tier 0). All default to reproducing the
+historical plain-Adam / final-epoch behavior *except* the two shared config
+defaults noted below, so **`configs/gnn.yaml` pins them explicitly** to stay a
+faithful baseline reference (decision D0.6):
+
+- `loss` -- `weighted_bce` (default; `pos_weight = n_neg/n_pos` from the fold's
+  train split, up-weighting the minority pCR class), `unweighted_bce` (the
+  historical plain `BCEWithLogitsLoss`), or `focal` (`focal_alpha`/`focal_gamma`).
+  A fold with zero training positives falls back to `pos_weight=1.0` and logs
+  its class balance -- a degenerate split, not a silent default.
+- `weight_decay` -- Adam L2 penalty (shared default `1e-4`).
+- `max_grad_norm` -- global grad-norm clip before each step (`0.0` disables).
+- `lr_scheduler` -- `none` (default), `cosine` (`CosineAnnealingLR`), or
+  `plateau` (`ReduceLROnPlateau` on val loss, with `lr_scheduler_factor` /
+  `lr_scheduler_patience`).
+- `early_stopping_patience` -- stop after N epochs with no val-loss improvement
+  (`0` disables). Raise `epochs` so patience, not the ceiling, ends most folds.
+- `restore_best_epoch` -- report the best-**val-loss** epoch's weights instead of
+  the final epoch's. (Val loss, not val AUC, matches `deepsets/train.py` and is
+  smoother on these small imbalanced folds.) `loss_history.csv` gains an `lr`
+  column so the schedule is auditable.
+
+The Tier-0 arm that turns these on lives in `configs/gnn_tier0.yaml` (identical
+to `gnn.yaml` except the training knobs, so a paired ΔAUC is attributable to
+optimization, not representation).
 
 Config-driven, like `tabular/train.py` and `deepsets/train.py`:
 

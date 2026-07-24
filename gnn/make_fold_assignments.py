@@ -42,7 +42,7 @@ from evaluation.kfold import create_kfold_splits
 from tabular.cohort import load_labels
 
 _DEFAULT_LABELS_PATH = Path(
-    "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+    "/gpfs/data/karczmar-lab/workspaces/saritbose/metadata/pcr_labels.csv"
 )
 _DEFAULT_OUT = Path("/ess/scratch/scratch1/t-9svena/gnn_caches/pcr_labels_folded.csv")
 
