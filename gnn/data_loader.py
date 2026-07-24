@@ -668,11 +668,26 @@ def _build_case(
         )
 
         if node_mode == _VOXEL_MODE:
-            node_series = voxel_node_series(dce_4d, list(voxel_graph.nodes()))
+            node_series = voxel_node_series(
+                dce_4d,
+                list(voxel_graph.nodes()),
+                baseline_frame_count=baseline_frame_count,
+                relative_enhancement=relative_enhancement,
+            )
         elif node_mode == _SEGMENT_MODE:
-            node_series = segment_node_series(voxel_graph, dce_4d)
+            node_series = segment_node_series(
+                voxel_graph,
+                dce_4d,
+                baseline_frame_count=baseline_frame_count,
+                relative_enhancement=relative_enhancement,
+            )
         elif node_mode == _JUNCTION_MODE:
-            node_series = junction_node_series(dce_4d, data.pos.numpy())
+            node_series = junction_node_series(
+                dce_4d,
+                data.pos.numpy(),
+                baseline_frame_count=baseline_frame_count,
+                relative_enhancement=relative_enhancement,
+            )
         else:
             raise ValueError(
                 f"attach_node_series=True: unknown node_mode {node_mode!r}."
