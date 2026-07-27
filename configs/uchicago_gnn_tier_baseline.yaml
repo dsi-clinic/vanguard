@@ -1,0 +1,58 @@
+# UChicago tier ladder -- BASELINE arm (PLAN_advanced_modeling.md D0.6 frozen
+# historical behavior), replicated on the UChicago v5 ultrafast cohort.
+#
+# This is the reference the Tier-0/Tier-1 arms are paired against. It pins the
+# knobs to the HISTORICAL pre-hygiene behavior (unweighted BCE, no weight decay,
+# no scheduler, no early stopping, final-epoch model), so it reproduces the plain
+# GCN exactly -- the same posture as configs/gnn_tier0_sweep_baseline.yaml, but
+# on UChicago data with the 7-feature voxel set held fixed across the whole ladder.
+#
+# Differences vs. the Duke sweep baseline (both forced by the cohort, see
+# LAB_NOTEBOOK 2026-07-26): split_mode is "predefined" (UChicago ships patient-
+# grouped, pcr-stratified folds and exposes no patient column, so random reshuffle
+# would risk leakage -- folds are frozen, seeds vary torch init only), and the
+# node feature set is the full 7-feature voxel set instead of [peak_time, radius].
+
+experiment_setup:
+  name: "uchicago_gnn_tier_baseline"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  split_mode: "predefined"
+  split_col: "fold"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features:
+    - "peak_time"
+    - "peak_enhancement"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "washout_slope"
+    - "auc_positive"
+    - "radius"
+  # Frozen historical baseline (D0.6): pin to pre-hygiene behavior.
+  weight_decay: 0.0
+  loss: "unweighted_bce"
+  lr_scheduler: "none"
+  max_grad_norm: 0.0
+  early_stopping_patience: 0
+  restore_best_epoch: false
+  gnn_pooling: "mean"
+
+data_paths:
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_voxel_richfeat"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
