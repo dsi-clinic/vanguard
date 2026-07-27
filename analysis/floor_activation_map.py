@@ -175,6 +175,90 @@ def main() -> None:
         args.case_id,
         args.out_dir / f"floor_active_zproj_{args.case_id[:24]}.png",
     )
+    _mechanism_plot(
+        dce_4d,
+        baseline,
+        active_mask,
+        support,
+        baseline_frame_count,
+        z,
+        args.case_id,
+        args.out_dir / f"floor_mechanism_{args.case_id[:24]}_z{z}.png",
+    )
+
+
+def _mechanism_plot(
+    dce_4d: np.ndarray,
+    baseline: np.ndarray,
+    active_mask: np.ndarray,
+    support: np.ndarray,
+    baseline_frame_count: int,
+    z: int,
+    case_id: str,
+    out_path: Path,
+) -> None:
+    """Why S0~0 voxels are still visible: black precontrast, bright postcontrast.
+
+    Overlays the same problematic voxels on the precontrast S0 frame (where they
+    are ~black) and the post-contrast peak frame (where they are bright), then
+    plots the actual per-voxel S(t) curves -- problematic voxels start near 0 and
+    rise to a real peak (numerator real, denominator ~0 -> the ratio explodes),
+    healthy voxels start at a substantial baseline. The exploding quantity is the
+    derived (S-S0)/S0 feature, never the raw signal shown in grayscale.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
+
+    supp = support[z]
+    pre = baseline[z]
+    post = dce_4d[baseline_frame_count:].max(axis=0)[z]
+    active_z = active_mask[z]
+    red = ListedColormap([(1, 0, 0, 0), (1, 0, 0, 0.9)])
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    pre_hi = np.percentile(pre[supp], 99) if supp.any() else 1.0
+    post_hi = np.percentile(post[supp], 99) if supp.any() else 1.0
+    axes[0].imshow(pre, cmap="gray", vmin=0, vmax=max(pre_hi, _EPS))
+    axes[0].imshow(np.where(active_z, 1.0, np.nan), cmap=red, vmin=0, vmax=1)
+    axes[0].set_title(f"PRECONTRAST S0 (z={z})\nred voxels are ~black here (S0~0)")
+    axes[1].imshow(post, cmap="gray", vmin=0, vmax=max(post_hi, _EPS))
+    axes[1].imshow(np.where(active_z, 1.0, np.nan), cmap=red, vmin=0, vmax=1)
+    axes[1].set_title("POSTCONTRAST peak\nsame voxels are bright (real enhancement)")
+    for ax in axes[:2]:
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    # S(t) for the most-extreme problematic voxels vs. near-median healthy voxels.
+    t = np.arange(dce_4d.shape[0])
+    coords = np.argwhere(active_mask)
+    s0_active = baseline[active_mask]
+    n = min(6, len(coords))
+    for i in np.argsort(s0_active)[:n]:
+        zz, yy, xx = coords[i]
+        axes[2].plot(t, dce_4d[:, zz, yy, xx], color="red", alpha=0.6, lw=1)
+    healthy = support & ~active_mask
+    hcoords = np.argwhere(healthy)
+    hs0 = baseline[healthy]
+    for i in np.argsort(np.abs(hs0 - np.median(hs0)))[:n]:
+        zz, yy, xx = hcoords[i]
+        axes[2].plot(t, dce_4d[:, zz, yy, xx], color="steelblue", alpha=0.6, lw=1)
+    axes[2].axvspan(-0.5, baseline_frame_count - 0.5, color="gray", alpha=0.15)
+    axes[2].axhline(0, color="k", lw=0.5)
+    axes[2].plot([], [], color="red", label="problematic (S0~0)")
+    axes[2].plot([], [], color="steelblue", label="healthy")
+    axes[2].axvspan(0, 0, color="gray", alpha=0.15, label="precontrast frames")
+    axes[2].legend(fontsize=8)
+    axes[2].set_xlabel("DCE frame (t)")
+    axes[2].set_ylabel("raw signal S(t)")
+    axes[2].set_title("both enhance; only the starting baseline differs")
+    fig.suptitle(f"Why S0~0 voxels are still visible — {case_id[:32]}")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"wrote {out_path}")
 
 
 def _isolation_plot(
