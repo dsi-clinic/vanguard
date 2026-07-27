@@ -52,6 +52,11 @@ LABEL_COLUMN="${LABEL_COLUMN:-pcr}"
 # build fall back to the mode's own default feature set.
 NODE_MODE="${NODE_MODE:-voxel}"
 NODE_FEATURES="${NODE_FEATURES:-peak_time,radius}"
+# Floor the relative-enhancement denominator at this fraction of each voxel's
+# own peak signal (gnn/kinetics.py). 0 = historical behavior; e.g. 0.05 caps
+# peak relative enhancement at ~20x to kill divide-by-near-zero-baseline
+# artifacts. Voxel mode only.
+KINETIC_BASELINE_FLOOR_FRAC="${KINETIC_BASELINE_FLOOR_FRAC:-0}"
 # Only used by --node-mode junction (segment-as-edge): the segment summary rides
 # on the edges there. Empty for voxel/segment mode.
 EDGE_FEATURES="${EDGE_FEATURES:-}"
@@ -75,6 +80,7 @@ ARGS=(
   --id-column "${ID_COLUMN}"
   --label-column "${LABEL_COLUMN}"
   --node-mode "${NODE_MODE}"
+  --kinetic-baseline-floor-frac "${KINETIC_BASELINE_FLOOR_FRAC}"
   --max-missing-label-frac "${MAX_MISSING_LABEL_FRAC}"
   --max-missing-clinical-frac "${MAX_MISSING_CLINICAL_FRAC}"
   --num-workers "${NUM_WORKERS}"

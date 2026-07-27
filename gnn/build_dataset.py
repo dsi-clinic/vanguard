@@ -54,6 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--id-column", type=str, default="case_id")
     parser.add_argument("--label-column", type=str, default="pcr")
     parser.add_argument(
+        "--kinetic-baseline-floor-frac",
+        type=float,
+        default=0.0,
+        help="Floor the relative-enhancement denominator at this fraction of "
+        "each voxel's own peak |signal|, so a near-void baseline can't inflate "
+        "(S-S0)/S0 into a divide-by-noise artifact. 0.0 (default) preserves the "
+        "historical behavior (exact-zero guard only); e.g. 0.05 caps peak "
+        "relative enhancement at ~20x. Voxel mode only. See gnn/kinetics.py.",
+    )
+    parser.add_argument(
         "--node-mode",
         type=str,
         default="voxel",
@@ -265,6 +275,7 @@ def main() -> None:
         id_column=args.id_column,
         label_column=args.label_column,
         max_missing_label_frac=args.max_missing_label_frac,
+        kinetic_baseline_floor_frac=args.kinetic_baseline_floor_frac,
         profile=not args.no_profile,
         num_workers=args.num_workers,
         allow_manifest_mismatch=args.allow_manifest_mismatch,
