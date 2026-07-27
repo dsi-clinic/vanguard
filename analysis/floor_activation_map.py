@@ -166,14 +166,22 @@ def main() -> None:
         z,
         args.floor_frac,
         args.case_id,
+        "max-over-time",
         args.out_dir / f"floor_activation_{args.case_id[:24]}_z{z}.png",
     )
-    _isolation_plot(
-        active_mask,
+    # Single-panel overlay on the PRECONTRAST slice: red floor-active voxels on
+    # the raw precontrast image (where they sit on the dark near-void regions).
+    # Uses the slice carrying the most floor-active voxels so they're visible.
+    z_best = int((active_mask & support).sum(axis=(1, 2)).argmax())
+    _precontrast_overlay_plot(
+        baseline,
         support,
-        dce_4d.max(axis=0),
+        active_mask,
+        skeleton,
+        z_best,
         args.case_id,
-        args.out_dir / f"floor_active_zproj_{args.case_id[:24]}.png",
+        args.out_dir
+        / f"floor_active_precontrast_overlay_{args.case_id[:24]}_z{z_best}.png",
     )
     _mechanism_plot(
         dce_4d,
@@ -193,6 +201,50 @@ def main() -> None:
         args.case_id,
         args.out_dir / f"precontrast_{args.case_id[:24]}_z{z}.png",
     )
+
+
+def _precontrast_overlay_plot(
+    baseline: np.ndarray,
+    support: np.ndarray,
+    active_mask: np.ndarray,
+    skeleton: np.ndarray,
+    z: int,
+    case_id: str,
+    out_path: Path,
+) -> None:
+    """Single panel: floor-active voxels (red) on the raw PRECONTRAST slice.
+
+    Background is the precontrast baseline image (not max-over-time), so the red
+    problematic voxels visibly land on the dark near-void regions. Cyan = vessel
+    support outline, yellow = skeleton.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
+
+    supp = support[z]
+    pre = baseline[z]
+    active = active_mask[z] & supp
+    red = ListedColormap([(1, 0, 0, 0), (1, 0, 0, 1.0)])
+
+    fig, ax = plt.subplots(figsize=(6.5, 6))
+    hi = np.percentile(pre[supp], 99) if supp.any() else 1.0
+    ax.imshow(pre, cmap="gray", vmin=0, vmax=max(hi, _EPS))
+    ax.contour(supp, levels=[0.5], colors="cyan", linewidths=0.5)
+    ax.contour(skeleton[z], levels=[0.5], colors="yellow", linewidths=0.4)
+    ax.imshow(np.where(active, 1.0, np.nan), cmap=red, vmin=0, vmax=1)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title(
+        f"Floor-active voxels on PRECONTRAST slice z={z} (n={int(active.sum())})\n"
+        f"red = floor-active (S0~0); cyan = support; yellow = skeleton — {case_id[:28]}"
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"wrote {out_path}")
 
 
 def _precontrast_plot(
@@ -369,16 +421,22 @@ def _isolation_plot(
 def _plot(
     baseline: np.ndarray,
     signal_scale: np.ndarray,
-    mip: np.ndarray,
+    anatomy: np.ndarray,
     support: np.ndarray,
     skeleton: np.ndarray,
     floor_active: np.ndarray,
     z: int,
     frac: float,
     case_id: str,
+    anatomy_label: str,
     out_path: Path,
 ) -> None:
-    """Three-panel top-down slice: baseline S0, baseline/scale ratio, anatomy+red overlay."""
+    """Three-panel top-down slice: baseline S0, baseline/scale ratio, anatomy+red overlay.
+
+    ``anatomy`` is the grayscale background for the overlay panel -- pass the
+    precontrast baseline to see the floor-active voxels land on the dark regions,
+    or the max-over-time image to see them on the enhancing anatomy.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -387,14 +445,14 @@ def _plot(
 
     supp = support[z]
     b = baseline[z]
-    mip_z = mip[z]
+    anat_z = anatomy[z]
     active = floor_active[z] & supp
     ratio = np.full_like(b, np.nan)
     np.divide(b, signal_scale[z], out=ratio, where=signal_scale[z] > _EPS)
 
     # Windows from the in-support distribution (one shared window per panel).
     b_hi = np.percentile(b[supp], 99) if supp.any() else 1.0
-    mip_hi = np.percentile(mip_z[supp], 99) if supp.any() else 1.0
+    anat_hi = np.percentile(anat_z[supp], 99) if supp.any() else 1.0
     red = ListedColormap([(1, 0, 0, 0), (1, 0, 0, 0.85)])
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5.4))
@@ -407,12 +465,12 @@ def _plot(
     axes[1].set_title(f"baseline / max|S|  (red contour < {frac})")
     fig.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
 
-    axes[2].imshow(mip_z, cmap="gray", vmin=0, vmax=max(mip_hi, _EPS))
+    axes[2].imshow(anat_z, cmap="gray", vmin=0, vmax=max(anat_hi, _EPS))
     axes[2].imshow(np.where(active, 1.0, np.nan), cmap=red, vmin=0, vmax=1)
     axes[2].contour(skeleton[z], levels=[0.5], colors="yellow", linewidths=0.4)
     n_active = int(active.sum())
     axes[2].set_title(
-        f"max-over-time + floor-active (red, n={n_active})\nyellow = skeleton"
+        f"{anatomy_label} + floor-active (red, n={n_active})\nyellow = skeleton"
     )
 
     for ax in axes:
