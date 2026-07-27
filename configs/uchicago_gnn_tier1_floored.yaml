@@ -1,0 +1,59 @@
+# UChicago tier ladder -- TIER-1 arm (readout: mean+max pooling).
+#
+# Only delta vs. uchicago_gnn_tier0.yaml is gnn_pooling: mean -> mean_max
+# (PLAN_advanced_modeling.md Tier 1, decision D2.1 -- the first readout change,
+# the highest-value lever on the Duke cohort where mean+max was the first arm to
+# clear the tabular baseline). Everything else (Tier-0 hygiene stack, 7-feature
+# set, folds, conv, depth) is held identical, so the paired comparison isolates
+# the readout change (D5). Reuses the same cache -- readout is a model change, no
+# rebuild.
+
+experiment_setup:
+  name: "uchicago_gnn_tier1_floored"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  split_mode: "predefined"
+  split_col: "fold"
+  # Declares the cache was built with the kinetics.py baseline floor (0.05);
+  # must match the cache manifest's kinetic_baseline_floor_frac.
+  gnn_kinetic_baseline_floor_frac: 0.05
+  batch_size: 8
+  epochs: 100
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features:
+    - "peak_time"
+    - "peak_enhancement"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "washout_slope"
+    - "auc_positive"
+    - "radius"
+  loss: "weighted_bce"
+  weight_decay: 1.0e-4
+  max_grad_norm: 1.0
+  lr_scheduler: "plateau"
+  lr_scheduler_factor: 0.5
+  lr_scheduler_patience: 5
+  early_stopping_patience: 10
+  restore_best_epoch: true
+  inner_val_fraction: 0.2
+  # Tier-1 readout change (the only delta vs. the Tier-0 arm).
+  gnn_pooling: "mean_max"
+
+data_paths:
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_voxel_richfeat_floored"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
