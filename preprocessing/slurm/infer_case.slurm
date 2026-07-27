@@ -5,8 +5,12 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --output=logs/slurm/vanguard-vessel-%j.out
+# infer now runs breast+vessel model inference twice per case (HR route,
+# then the UFAST-direct route -- UFAST typically has several times more
+# temporal phases than HR, e.g. 24 vs 5 for a representative exam), so the
+# original 4h HR-only budget is doubled here for headroom.
 
 set -euo pipefail
 
