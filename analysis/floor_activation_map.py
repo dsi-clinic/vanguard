@@ -177,7 +177,6 @@ def main() -> None:
         baseline,
         support,
         active_mask,
-        skeleton,
         z_best,
         args.case_id,
         args.out_dir
@@ -207,44 +206,39 @@ def _precontrast_overlay_plot(
     baseline: np.ndarray,
     support: np.ndarray,
     active_mask: np.ndarray,
-    skeleton: np.ndarray,
     z: int,
     case_id: str,
     out_path: Path,
 ) -> None:
-    """Single panel: floor-active voxels (red) on the raw PRECONTRAST slice.
+    """Precontrast + red floor-active voxels, beside the pure precontrast slice.
 
-    Background is the precontrast baseline image (not max-over-time), so the red
-    problematic voxels visibly land on the dark near-void regions. Cyan = vessel
-    support outline, yellow = skeleton.
+    Same slice and window on both panels, so the red voxels can be checked
+    against the pure image -- they should land where it is black (S0 ~ 0).
     """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.colors import ListedColormap
 
-    supp = support[z]
     pre = baseline[z]
-    active = active_mask[z] & supp
-    red = ListedColormap([(1, 0, 0, 0), (1, 0, 0, 1.0)])
+    supp = support[z]
+    ys, xs = np.where(active_mask[z] & supp)
+    vmax = max(np.percentile(pre[supp], 99) if supp.any() else 1.0, _EPS)
 
-    fig, ax = plt.subplots(figsize=(6.5, 6))
-    hi = np.percentile(pre[supp], 99) if supp.any() else 1.0
-    ax.imshow(pre, cmap="gray", vmin=0, vmax=max(hi, _EPS))
-    ax.contour(supp, levels=[0.5], colors="cyan", linewidths=0.5)
-    ax.contour(skeleton[z], levels=[0.5], colors="yellow", linewidths=0.4)
-    ax.imshow(np.where(active, 1.0, np.nan), cmap=red, vmin=0, vmax=1)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_title(
-        f"Floor-active voxels on PRECONTRAST slice z={z} (n={int(active.sum())})\n"
-        f"red = floor-active (S0~0); cyan = support; yellow = skeleton — {case_id[:28]}"
-    )
+    fig, axes = plt.subplots(1, 2, figsize=(13, 6.5))
+    axes[0].imshow(pre, cmap="gray", vmin=0, vmax=vmax)
+    axes[0].scatter(xs, ys, c="red", s=16, marker="s", linewidths=0)
+    axes[0].set_title(f"precontrast + floor-active (red, n={len(xs)})")
+    axes[1].imshow(pre, cmap="gray", vmin=0, vmax=vmax)
+    axes[1].set_title("pure precontrast (same slice)")
+    for ax in axes:
+        ax.set_xticks([])
+        ax.set_yticks([])
+    fig.suptitle(f"z={z} — {case_id[:36]}")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
-    print(f"wrote {out_path}")
+    print(f"wrote {out_path} ({len(xs)} red voxels)")
 
 
 def _precontrast_plot(
