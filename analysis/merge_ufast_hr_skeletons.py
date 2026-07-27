@@ -27,6 +27,21 @@ Merge policy (HR is authoritative; UFAST only adds, never overrides):
     large (reusing ``analysis.segment_ufast_vessels``'s existing noise-vs-real
     threshold) -- this drops UFAST-only noise specks before they can pollute
     the merge.
+  - A UFAST-only component that fails the size filter gets a second, additive
+    chance (``--enable-kinetics-filter``, on by default): it's kept anyway if
+    its mean per-voxel contrast-enhancement peak-SNR (computed directly from
+    the raw motion-corrected UFAST signal, same ``peak_snr`` concept
+    ``analysis.bolus_arrival_time`` already validates and gates bolus-arrival
+    detection on) clears ``--kinetics-min-peak-snr``, AND it's spatially
+    continuous with already-trusted vasculature (HR skeleton or a
+    size-qualifying UFAST component) within ``--kinetics-adjacency-radius-voxels``.
+    Both conditions are required: prototyping found that amplitude alone
+    (peak-SNR) is a weak discriminator in this data -- typical background
+    tissue commonly shows peak-SNR of 3-4+ under this per-voxel metric, so a
+    bare amplitude threshold lets in components with no real relationship to
+    known vasculature. Spatial continuity is the condition doing the real
+    work of keeping this trustworthy. This path is strictly additive to the
+    size filter (never removes anything the size filter already accepted).
   - The candidate mask (HR | qualifying UFAST-only) is re-cleaned with TC4D's
     own internal topology finalization (``graph_extraction.tc4d._finalize_exam_mask_topology``)
     so any UFAST-only/repair additions are a proper single-voxel-wide,
@@ -65,38 +80,31 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy.ndimage as ndi
 
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from analysis.segment_ufast_vessels import (  # noqa: E402
-    VESSEL_LIKE_MIN_VOXELS,
-    connectivity_stats,
-)
+from analysis.segment_ufast_vessels import connectivity_stats  # noqa: E402
 from analysis.skeletonize_ufast_vessels import (  # noqa: E402
     find_hr_mapped_skeleton,
     is_tc4d_complete,
 )
-from graph_extraction.tc4d import _finalize_exam_mask_topology  # noqa: E402
 from preprocessing.dicom import DicomGeometry  # noqa: E402
+from preprocessing.merge import (  # noqa: E402
+    DEFAULT_DILATION_RADIUS_VOXELS,
+    DEFAULT_KINETICS_ADJACENCY_RADIUS_VOXELS,
+    DEFAULT_KINETICS_MIN_PEAK_SNR,
+    LABEL_CONFIRMED_BOTH,
+    LABEL_HR_ONLY,
+    LABEL_KINETICS_ADJACENCY_ADDED,
+    LABEL_REPAIR_BRIDGE_ADDED,
+    LABEL_UFAST_ONLY_ADDED,
+    VESSEL_LIKE_MIN_VOXELS,
+    merge_skeletons,
+)
 from preprocessing.spatial import physical_points_from_zyx  # noqa: E402
-
-#: Voxel-radius proximity match for "does this UFAST voxel land near an HR
-#: voxel" -- exact voxel equality under-counts real agreement because the
-#: HR-mapped skeleton is a nearest-voxel *rasterization* of a different grid,
-#: not an interpolation, so real shared vessels are typically off by a voxel
-#: or two even when both routes see the same structure.
-DEFAULT_DILATION_RADIUS_VOXELS = 2
-
-#: Provenance codes for merged_provenance_label_zyx.npy.
-LABEL_BACKGROUND = 0
-LABEL_HR_ONLY = 1
-LABEL_CONFIRMED_BOTH = 2
-LABEL_UFAST_ONLY_ADDED = 3
-LABEL_REPAIR_BRIDGE_ADDED = 4
 
 
 def find_hr_mapped_support(preprocessing_root: Path, exam_id: str) -> Path:
@@ -132,58 +140,6 @@ def load_skeleton_pair(
     return hr_skeleton, hr_support, ufast_skeleton, ufast_support
 
 
-def classify_overlap(
-    hr_mask: np.ndarray, ufast_mask: np.ndarray, *, dilation_radius_voxels: int
-) -> dict[str, np.ndarray]:
-    """Split UFAST-direct voxels into "confirmed by HR proximity" vs "UFAST-only".
-
-    Asymmetric by design: HR is dilated and tested against UFAST, not the
-    other way around, since HR is the authoritative source -- every HR voxel
-    is kept regardless of what UFAST does, so it never needs a "confirmed"
-    label of its own.
-    """
-    structure = ndi.generate_binary_structure(3, 3)
-    hr_dilated = ndi.binary_dilation(
-        hr_mask, structure=structure, iterations=dilation_radius_voxels
-    )
-    confirmed_ufast = ufast_mask & hr_dilated
-    ufast_only_candidate = ufast_mask & ~hr_dilated
-    return {
-        "confirmed_ufast_mask": confirmed_ufast,
-        "ufast_only_candidate_mask": ufast_only_candidate,
-    }
-
-
-def filter_vessel_like_components(
-    mask: np.ndarray, *, min_voxels: int = VESSEL_LIKE_MIN_VOXELS
-) -> tuple[np.ndarray, dict[str, int]]:
-    """Keep only connected components (26-connectivity) at least ``min_voxels`` large.
-
-    Reuses ``analysis.segment_ufast_vessels``'s existing noise-vs-real-vessel
-    threshold rather than inventing a new one, so this merge's aggressiveness
-    is consistent with the mentor-facing connectivity stats already reported
-    for UFAST-only detections.
-    """
-    if not np.any(mask):
-        return mask, {
-            "n_components_total": 0,
-            "n_components_kept": 0,
-            "voxels_dropped_as_noise": 0,
-        }
-    structure = ndi.generate_binary_structure(3, 3)
-    labeled, n_components = ndi.label(mask, structure=structure)
-    sizes = np.bincount(labeled.ravel())
-    keep_ids = np.flatnonzero(sizes >= min_voxels)
-    keep_ids = keep_ids[keep_ids != 0]
-    kept = np.isin(labeled, keep_ids)
-    stats = {
-        "n_components_total": int(n_components),
-        "n_components_kept": int(len(keep_ids)),
-        "voxels_dropped_as_noise": int(mask.sum() - kept.sum()),
-    }
-    return kept, stats
-
-
 def merge_exam(
     preprocessing_root: Path,
     output_root: Path,
@@ -191,6 +147,9 @@ def merge_exam(
     *,
     dilation_radius_voxels: int = DEFAULT_DILATION_RADIUS_VOXELS,
     vessel_like_min_voxels: int = VESSEL_LIKE_MIN_VOXELS,
+    enable_kinetics_filter: bool = True,
+    kinetics_min_peak_snr: float = DEFAULT_KINETICS_MIN_PEAK_SNR,
+    kinetics_adjacency_radius_voxels: int = DEFAULT_KINETICS_ADJACENCY_RADIUS_VOXELS,
 ) -> Path:
     """Merge one exam's HR-mapped and UFAST-direct skeletons. Returns the merge output dir."""
     merge_dir = output_root / exam_id / "merged_tc4d"
@@ -204,96 +163,29 @@ def merge_exam(
         preprocessing_root, output_root, exam_id
     )
 
-    overlap = classify_overlap(
-        hr_skeleton, ufast_skeleton, dilation_radius_voxels=dilation_radius_voxels
+    merged_skeleton, merged_support, provenance, provenance_label = merge_skeletons(
+        preprocessing_root=preprocessing_root,
+        exam_id=exam_id,
+        hr_skeleton=hr_skeleton,
+        hr_support=hr_support,
+        ufast_skeleton=ufast_skeleton,
+        ufast_support=ufast_support,
+        dilation_radius_voxels=dilation_radius_voxels,
+        vessel_like_min_voxels=vessel_like_min_voxels,
+        enable_kinetics_filter=enable_kinetics_filter,
+        kinetics_min_peak_snr=kinetics_min_peak_snr,
+        kinetics_adjacency_radius_voxels=kinetics_adjacency_radius_voxels,
     )
-    ufast_only_candidate = overlap["ufast_only_candidate_mask"]
-    ufast_added_mask, filter_stats = filter_vessel_like_components(
-        ufast_only_candidate, min_voxels=vessel_like_min_voxels
+    provenance["route"] = (
+        "hr_ufast_skeleton_merge (exploratory, HR-authoritative + filtered UFAST additions)"
     )
-
-    candidate_merged = hr_skeleton | ufast_added_mask
-
-    # Reconstruct a pseudo temporal-support count: neither route persists the
-    # raw integer count TC4D's cleanup stage was designed around, only a
-    # thresholded boolean. Summing the two boolean supports gives values in
-    # {0,1,2} -- voxels backed by neither/one/both routes -- which preserves
-    # the intended *ordinal* "more agreement -> more supported" signal that
-    # the reused cleanup's component scoring depends on.
-    support_count_zyx = hr_support.astype(np.int32) + ufast_support.astype(np.int32)
-
-    cleaned_candidate = _finalize_exam_mask_topology(
-        candidate_merged, support_count_zyx=support_count_zyx
-    )
-    # _finalize_exam_mask_topology is TC4D's own from-scratch skeleton-
-    # derivation pipeline (component support-score filtering, full
-    # EDT+thinning re-skeletonization, repair, more filtering, micro-
-    # component pruning) -- it is NOT a no-op on voxels already in
-    # hr_skeleton, and has no mechanism to preserve them. Left alone, it can
-    # (and does) drop real HR-only vessel branches whose reconstructed
-    # support_count_zyx score (an ordinal {0,1,2} stand-in, not the real
-    # integer temporal-support count this scoring was tuned for) falls below
-    # its automatic per-component Otsu threshold. HR is supposed to be
-    # authoritative (see module docstring), so re-union the raw HR skeleton
-    # back in unconditionally: cleanup only gets to decide what UFAST-only/
-    # repair-bridge additions survive on top, never whether an HR voxel
-    # stays.
-    hr_voxels_rescued = int((hr_skeleton & ~cleaned_candidate).sum())
-    merged_skeleton = hr_skeleton | cleaned_candidate
-    merged_support = hr_support | ufast_support | merged_skeleton
-    wall_seconds = float(time.perf_counter() - t_start)
-
-    # Per-voxel provenance over the FINAL merged skeleton's voxel set:
-    # merged_skeleton is now a guaranteed superset of hr_skeleton (see above),
-    # so hr_only_final/confirmed_final together always cover all of it.
-    # Cleanup can still drop pre-merge UFAST-only candidate voxels (filtered/
-    # pruned) and can add a handful of brand-new "repair bridge" voxels
-    # (_repair_exam_skeleton_components) that belong to neither original
-    # source -- those get their own label rather than being folded into
-    # "UFAST-only-added", since they aren't actually UFAST detections.
-    confirmed_final = merged_skeleton & overlap["confirmed_ufast_mask"]
-    hr_only_final = merged_skeleton & hr_skeleton & ~confirmed_final
-    ufast_added_final = merged_skeleton & ufast_added_mask & ~hr_skeleton
-    repair_bridge_final = merged_skeleton & ~(hr_skeleton | ufast_skeleton)
-
-    provenance_label = np.zeros(merged_skeleton.shape, dtype=np.uint8)
-    provenance_label[hr_only_final] = LABEL_HR_ONLY
-    provenance_label[confirmed_final] = LABEL_CONFIRMED_BOTH
-    provenance_label[ufast_added_final] = LABEL_UFAST_ONLY_ADDED
-    provenance_label[repair_bridge_final] = LABEL_REPAIR_BRIDGE_ADDED
+    provenance["wall_seconds"] = float(time.perf_counter() - t_start)
 
     merge_dir.mkdir(parents=True)
     try:
         np.save(merge_dir / "merged_skeleton_zyx.npy", merged_skeleton.astype(np.uint8))
         np.save(merge_dir / "merged_support_zyx.npy", merged_support.astype(np.uint8))
         np.save(merge_dir / "provenance_label_zyx.npy", provenance_label)
-        provenance = {
-            "exam_id": exam_id,
-            "route": "hr_ufast_skeleton_merge (exploratory, HR-authoritative + filtered UFAST additions)",
-            "dilation_radius_voxels": dilation_radius_voxels,
-            "vessel_like_min_voxels": vessel_like_min_voxels,
-            "support_count_reconstruction": "hr_support.astype(int) + ufast_support.astype(int) -> {0,1,2}",
-            "hr_skeleton_voxels": int(hr_skeleton.sum()),
-            "ufast_skeleton_voxels": int(ufast_skeleton.sum()),
-            "confirmed_ufast_voxels": int(overlap["confirmed_ufast_mask"].sum()),
-            "ufast_only_candidate_voxels": int(ufast_only_candidate.sum()),
-            "ufast_added_voxels_pre_cleanup": int(ufast_added_mask.sum()),
-            "filter_stats": filter_stats,
-            "merged_voxels_pre_cleanup": int(candidate_merged.sum()),
-            "hr_voxels_rescued_from_cleanup": hr_voxels_rescued,
-            "merged_voxels_final": int(merged_skeleton.sum()),
-            "label_voxel_counts": {
-                "hr_only": int((provenance_label == LABEL_HR_ONLY).sum()),
-                "confirmed_both": int((provenance_label == LABEL_CONFIRMED_BOTH).sum()),
-                "ufast_only_added": int(
-                    (provenance_label == LABEL_UFAST_ONLY_ADDED).sum()
-                ),
-                "repair_bridge_added": int(
-                    (provenance_label == LABEL_REPAIR_BRIDGE_ADDED).sum()
-                ),
-            },
-            "wall_seconds": wall_seconds,
-        }
         (merge_dir / "merge_provenance.json").write_text(
             json.dumps(provenance, indent=2)
         )
@@ -346,12 +238,15 @@ def _mip_label_rgb(provenance_label: np.ndarray) -> np.ndarray:
 
     Same green/magenta/white convention already used elsewhere in this
     exploration (HR=green, UFAST=magenta, overlap=white), plus cyan for the
-    cleanup stage's own repair-bridge voxels, which belong to neither source.
+    cleanup stage's own repair-bridge voxels (belong to neither source) and
+    orange for the kinetics-adjacency additive filter's own voxels (belong to
+    UFAST but were rejected by the plain size filter).
     """
     colors = {
         LABEL_HR_ONLY: (0.18, 0.80, 0.25),  # green
         LABEL_CONFIRMED_BOTH: (1.0, 1.0, 1.0),  # white
         LABEL_UFAST_ONLY_ADDED: (0.77, 0.31, 0.81),  # magenta
+        LABEL_KINETICS_ADJACENCY_ADDED: (1.0, 0.55, 0.10),  # orange
         LABEL_REPAIR_BRIDGE_ADDED: (0.20, 0.85, 0.85),  # cyan
     }
     projected_label = np.zeros(provenance_label.shape[1:], dtype=np.uint8)
@@ -359,6 +254,7 @@ def _mip_label_rgb(provenance_label: np.ndarray) -> np.ndarray:
         LABEL_HR_ONLY,
         LABEL_CONFIRMED_BOTH,
         LABEL_UFAST_ONLY_ADDED,
+        LABEL_KINETICS_ADJACENCY_ADDED,
         LABEL_REPAIR_BRIDGE_ADDED,
     ):
         present = np.any(provenance_label == label_value, axis=0)
@@ -380,7 +276,7 @@ def save_merge_overlay_mip(output_root: Path, exam_id: str) -> Path:
     ax.imshow(np.transpose(rgb, (1, 0, 2)), origin="lower")
     ax.set_title(
         f"{exam_id}\nMerged skeleton -- green=HR only, white=confirmed by both, "
-        f"magenta=UFAST added, cyan=repair bridge",
+        f"magenta=UFAST added (size filter), orange=kinetics-adjacency added, cyan=repair bridge",
         fontsize=8,
         wrap=True,
     )
@@ -449,7 +345,8 @@ def write_merge_interactive_html(
     traces = []
     for label_value, seed, color, name, size in (
         (LABEL_HR_ONLY, 0, "#2ecc40", "HR only", 1.6),
-        (LABEL_UFAST_ONLY_ADDED, 1, "#c44ecf", "UFAST added", 1.8),
+        (LABEL_UFAST_ONLY_ADDED, 1, "#c44ecf", "UFAST added (size filter)", 1.8),
+        (LABEL_KINETICS_ADJACENCY_ADDED, 4, "#ff8c1a", "kinetics-adjacency added", 1.9),
         (LABEL_CONFIRMED_BOTH, 2, "#ffffff", "confirmed (both)", 2.0),
         (LABEL_REPAIR_BRIDGE_ADDED, 3, "#33d9d9", "repair bridge", 2.2),
     ):
@@ -475,8 +372,9 @@ def write_merge_interactive_html(
             "text": (
                 f"<b>{exam_id}</b> -- merged HR/UFAST-direct skeleton<br>"
                 f"<span style='font-size:13px'>"
-                f"green = HR only · white = confirmed by both · magenta = UFAST added · "
-                f"cyan = repair bridge · drag to rotate, click legend to toggle"
+                f"green = HR only · white = confirmed by both · magenta = UFAST added (size filter) · "
+                f"orange = kinetics-adjacency added · cyan = repair bridge · "
+                f"drag to rotate, click legend to toggle"
                 f"</span>"
             ),
             "x": 0.02,
@@ -561,6 +459,23 @@ def main() -> None:
         "--dilation-radius-voxels", type=int, default=DEFAULT_DILATION_RADIUS_VOXELS
     )
     p.add_argument("--vessel-like-min-voxels", type=int, default=VESSEL_LIKE_MIN_VOXELS)
+    p.add_argument(
+        "--disable-kinetics-filter",
+        action="store_true",
+        help=(
+            "Skip the additive kinetics-adjacency filter (peak-SNR + spatial "
+            "continuity to trusted vasculature) and use only the plain size "
+            "filter, matching pre-kinetics-filter behavior."
+        ),
+    )
+    p.add_argument(
+        "--kinetics-min-peak-snr", type=float, default=DEFAULT_KINETICS_MIN_PEAK_SNR
+    )
+    p.add_argument(
+        "--kinetics-adjacency-radius-voxels",
+        type=int,
+        default=DEFAULT_KINETICS_ADJACENCY_RADIUS_VOXELS,
+    )
     p.add_argument(
         "--mip-only",
         action="store_true",
@@ -661,6 +576,9 @@ def main() -> None:
                 exam_id,
                 dilation_radius_voxels=args.dilation_radius_voxels,
                 vessel_like_min_voxels=args.vessel_like_min_voxels,
+                enable_kinetics_filter=not args.disable_kinetics_filter,
+                kinetics_min_peak_snr=args.kinetics_min_peak_snr,
+                kinetics_adjacency_radius_voxels=args.kinetics_adjacency_radius_voxels,
             )
             save_merge_overlay_mip(args.output_root, exam_id)
         except Exception as exc:  # noqa: BLE001 - log and continue a long unattended batch job
