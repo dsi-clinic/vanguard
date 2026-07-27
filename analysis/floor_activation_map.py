@@ -124,6 +124,32 @@ def main() -> None:
         f"(floor threshold = {args.floor_frac})"
     )
 
+    # Isolate the problematic voxels and confirm the "S0 ~ 0" claim in ABSOLUTE
+    # terms (not just the relative floor trigger): their precontrast S0 should be
+    # a tiny fraction of the healthy in-support S0, while their peak signal max|S|
+    # stays comparable -- dark before contrast, real peak after -> blowup.
+    active_mask = floor_active & support
+    med_support_s0 = float(np.median(baseline[support]))
+    if active_mask.any():
+        s0_active = baseline[active_mask]
+        print(
+            f"floor-active S0 (absolute): median={np.median(s0_active):.2f} "
+            f"p90={np.percentile(s0_active, 90):.2f}  vs in-support median S0="
+            f"{med_support_s0:.2f}  (ratio={np.median(s0_active) / med_support_s0:.3f})"
+        )
+        print(
+            f"floor-active max|S| (absolute): median={np.median(signal_scale[active_mask]):.2f} "
+            f"vs in-support median max|S|={np.median(signal_scale[support]):.2f} "
+            "-> near-0 baseline but real peak (the blowup)"
+        )
+    mask_path_out = args.out_dir / f"floor_active_mask_{args.case_id[:24]}.npy"
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    np.save(mask_path_out, active_mask)
+    print(
+        f"wrote isolated problematic-voxel mask {mask_path_out} "
+        f"({int(active_mask.sum())} voxels)"
+    )
+
     # Center axial slice of the vessel-support z-extent (top-down view).
     z_support = np.where(support.any(axis=(1, 2)))[0]
     z = args.z if args.z is not None else int((z_support.min() + z_support.max()) // 2)
@@ -142,6 +168,55 @@ def main() -> None:
         args.case_id,
         args.out_dir / f"floor_activation_{args.case_id[:24]}_z{z}.png",
     )
+    _isolation_plot(
+        active_mask,
+        support,
+        dce_4d.max(axis=0),
+        args.case_id,
+        args.out_dir / f"floor_active_zproj_{args.case_id[:24]}.png",
+    )
+
+
+def _isolation_plot(
+    active_mask: np.ndarray,
+    support: np.ndarray,
+    mip: np.ndarray,
+    case_id: str,
+    out_path: Path,
+) -> None:
+    """Top-down (max-over-z) projection isolating ALL floor-active voxels.
+
+    Collapses the volume along z so every problematic voxel at any depth shows in
+    one axial view, over the vessel-support footprint and a faint anatomy MIP --
+    reveals whether they cluster at the breast/mask periphery (expected for
+    near-void baselines) or sit inside the vasculature.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
+
+    active_proj = active_mask.any(axis=0)
+    supp_proj = support.any(axis=0)
+    mip_proj = mip.max(axis=0)
+    red = ListedColormap([(1, 0, 0, 0), (1, 0, 0, 1.0)])
+
+    fig, ax = plt.subplots(figsize=(6.5, 6))
+    hi = np.percentile(mip_proj[supp_proj], 99) if supp_proj.any() else 1.0
+    ax.imshow(mip_proj, cmap="gray", vmin=0, vmax=max(hi, _EPS))
+    ax.contour(supp_proj, levels=[0.5], colors="cyan", linewidths=0.5)
+    ax.imshow(np.where(active_proj, 1.0, np.nan), cmap=red, vmin=0, vmax=1)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title(
+        f"Problematic voxels (S0~0), all depths — {case_id[:32]}\n"
+        f"red = floor-active (n={int(active_mask.sum())}); cyan = vessel support"
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"wrote {out_path}")
 
 
 def _plot(
