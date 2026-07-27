@@ -70,3 +70,16 @@ convention = "google"
   "S112",                         # intentional try/except/continue over transforms
   "UP031",                        # legacy %-format string left as-is
 ]
+# Faithful Python port of the MATLAB SegVessel/Jerman vessel-segmentation pipeline
+# (matlab-conv-2/vessel_pipeline, validated there against the production merged
+# skeleton across 6 UChicago exams). Variable/constant names intentionally mirror
+# the MATLAB source (I, BW1, aspectDYN, ...) and magic numbers are cited MATLAB
+# literals (documented per-line in constants/docstrings) -- relax the purely
+# stylistic rules here rather than risk a transcription bug rewriting
+# numerically-validated code, same rationale as interactive_annotation_htmls/*.py above.
+"segmentation/matlab_vessel_segmentation/*.py" = [
+  "ANN001", "ANN201", "ANN202",  # type annotations not required for this port
+  "D205", "D402",                 # relaxed docstring requirements
+  "E741",                         # allow single-letter MATLAB-mirroring names (I, ...)
+  "PLR2004",                      # magic numbers are cited MATLAB constants, see docstrings
+]
