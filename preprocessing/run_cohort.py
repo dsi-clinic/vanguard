@@ -12,6 +12,7 @@ from preprocessing.cases import CaseRecord, read_case_manifest
 from preprocessing.model import model_subject_id
 from preprocessing.pipeline import (
     POLICY_NAME,
+    complement_case,
     infer_case,
     map_case,
     prepare_case,
@@ -202,6 +203,24 @@ def _stage_complete(stage: str, case_root: Path) -> bool:
                 stage=stage,
             )
         return complete
+    if stage == "complement":
+        complete = "complement" in provenance
+        if complete:
+            output_dir = (
+                case_root.parents[1]
+                / "centerlines"
+                / str(provenance["case"]["dataset"])
+                / case_root.name
+            )
+            _require_files(
+                [
+                    output_dir
+                    / f"{case_root.name}_skeleton_4d_exam_mask_hr_ufast_merge_only.npy",
+                    output_dir / "complement_provenance.json",
+                ],
+                stage=stage,
+            )
+        return complete
     if stage == "qc":
         return (
             "mapping" in provenance
@@ -214,7 +233,10 @@ def _stage_complete(stage: str, case_root: Path) -> bool:
             ).exists()
         )
     if stage == "postprocess":
-        return all(_stage_complete(item, case_root) for item in ("tc4d", "map", "qc"))
+        return all(
+            _stage_complete(item, case_root)
+            for item in ("tc4d", "map", "complement", "qc")
+        )
     raise ValueError(f"unknown pipeline stage: {stage}")
 
 
@@ -260,10 +282,12 @@ def run_stage(
         tc4d_case(case_root=case_root)
     elif stage == "map":
         map_case(case_root=case_root)
+    elif stage == "complement":
+        complement_case(case_root=case_root)
     elif stage == "qc":
         qc_case(case_root=case_root)
     elif stage == "postprocess":
-        for item in ("tc4d", "map", "qc"):
+        for item in ("tc4d", "map", "complement", "qc"):
             if not _stage_complete(item, case_root):
                 run_stage(
                     stage=item,
@@ -284,7 +308,8 @@ def main() -> None:
     """Resolve a Slurm array index and run one exact reviewed case."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "stage", choices=("prepare", "infer", "tc4d", "map", "qc", "postprocess")
+        "stage",
+        choices=("prepare", "infer", "tc4d", "map", "complement", "qc", "postprocess"),
     )
     parser.add_argument("--inventory", required=True, type=Path)
     parser.add_argument("--case-manifest", required=True, type=Path)

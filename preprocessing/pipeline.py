@@ -13,6 +13,7 @@ import numpy as np
 import SimpleITK as sitk
 
 from preprocessing.cases import CaseRecord, select_case
+from preprocessing.complement import LABEL_MATLAB_COMPLEMENT_ADDED, complement_exam
 from preprocessing.dicom import (
     DicomGeometry,
     geometry_alignment_checks,
@@ -691,6 +692,60 @@ def map_case(*, case_root: Path) -> None:
     _write_json(provenance_path, provenance)
 
 
+def complement_case(*, case_root: Path) -> None:
+    """Add MATLAB-route (SegVessel/Jerman) complement voxels to the merged skeleton.
+
+    Runs after ``map_case()``: loads the merged skeleton it just wrote, adds real,
+    quality-gated complement voxels from the ported MATLAB pipeline (see
+    ``preprocessing.complement``), and overwrites
+    ``<exam_id>_skeleton_4d_exam_mask.npy`` -- the file every downstream consumer
+    reads -- with the more complete result. The pre-complement merge is preserved
+    alongside as ``<exam_id>_skeleton_4d_exam_mask_hr_ufast_merge_only.npy``, the same
+    "never silently discard" pattern this module already uses for the HR-only skeleton.
+    """
+    provenance_path = case_root / "preprocessing_provenance.json"
+    provenance = json.loads(provenance_path.read_text())
+    output_root = case_root.parents[1]
+    dataset = str(provenance["case"]["dataset"])
+    exam_id = case_root.name
+    output_dir = output_root / "centerlines" / dataset / exam_id
+
+    merge_only_path = (
+        output_dir / f"{exam_id}_skeleton_4d_exam_mask_hr_ufast_merge_only.npy"
+    )
+    if merge_only_path.exists() or "complement" in provenance:
+        raise FileExistsError(
+            f"refusing to overwrite existing complement result: {merge_only_path}"
+        )
+
+    merged_skeleton = np.load(
+        output_dir / f"{exam_id}_skeleton_4d_exam_mask.npy"
+    ).astype(bool)
+
+    final_skeleton, kept_complement, complement_provenance = complement_exam(
+        preprocessing_root=output_root,
+        case_root=case_root,
+        exam_id=exam_id,
+        merged_skeleton_zyx=merged_skeleton,
+    )
+
+    np.save(
+        output_dir / f"{exam_id}_skeleton_4d_exam_mask_hr_ufast_merge_only.npy",
+        merged_skeleton,
+    )
+    np.save(output_dir / f"{exam_id}_skeleton_4d_exam_mask.npy", final_skeleton)
+
+    provenance_label_path = output_dir / f"{exam_id}_merge_provenance_label_zyx.npy"
+    if provenance_label_path.exists():
+        provenance_label = np.load(provenance_label_path)
+        provenance_label[kept_complement] = LABEL_MATLAB_COMPLEMENT_ADDED
+        np.save(provenance_label_path, provenance_label)
+
+    _write_json(output_dir / "complement_provenance.json", complement_provenance)
+    provenance["complement"] = complement_provenance
+    _write_json(provenance_path, provenance)
+
+
 def qc_case(*, case_root: Path) -> Path:
     """Write shared-window visual checks of the mapped skeleton and the raw UFAST series.
 
@@ -738,7 +793,7 @@ def qc_case(*, case_root: Path) -> Path:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "stage", choices=("prepare", "infer", "tc4d", "map", "qc", "all")
+        "stage", choices=("prepare", "infer", "tc4d", "map", "complement", "qc", "all")
     )
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--exam-id", required=True)
@@ -783,6 +838,8 @@ def main() -> None:
         tc4d_case(case_root=case_root)
     if args.stage in {"map", "all"}:
         map_case(case_root=case_root)
+    if args.stage in {"complement", "all"}:
+        complement_case(case_root=case_root)
     if args.stage in {"qc", "all"}:
         qc_case(case_root=case_root)
 
