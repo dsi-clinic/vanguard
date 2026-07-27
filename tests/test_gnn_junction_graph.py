@@ -31,6 +31,12 @@ CENTRE_DEGREE_Y = 3.0
 CENTRE_DEGREE_X = 4.0
 TIP_DEGREE = 1.0
 
+# Baseline-floor cap check: a 0.01 baseline vs. a floor of 0.05*peak(2.0)=0.1
+# shrinks the relative-enhancement denominator exactly 10x; the unfloored peak
+# is far above physiological (~0-5), confirming the divide-by-near-zero pathology.
+FLOOR_DENOM_RATIO = 10.0
+PATHOLOGICAL_PEAK_MIN = 100.0
+
 
 def _make_graph(edges: list[tuple[tuple, tuple]]) -> nx.Graph:
     graph = nx.Graph()
@@ -49,6 +55,31 @@ def _uniform_inputs(graph: nx.Graph) -> tuple[dict, np.ndarray]:
     for t in range(NUM_TIMEPOINTS):
         dce_4d[t] = float(t)
     return radius_map, dce_4d
+
+
+def test_baseline_floor_caps_junction_relative_enhancement() -> None:
+    """Baseline floor threads into junction node kinetics, capping a void baseline."""
+    coords = [(x, 5, 0) for x in range(1, 6)]
+    graph = _make_graph(_line(coords))
+    radius_map = dict.fromkeys(graph.nodes(), 1.0)
+    dce_4d = np.empty((NUM_TIMEPOINTS, *VOLUME_ZYX), dtype=np.float32)
+    dce_4d[0], dce_4d[1], dce_4d[2] = 0.01, 1.0, 2.0
+
+    def junction_peak(floor: float) -> float:
+        data = build_junction_graph(
+            graph,
+            radius_map,
+            dce_4d,
+            TIME_AXIS,
+            relative_enhancement=True,
+            baseline_floor_frac=floor,
+        )
+        return float(data.peak_enhancement.max())
+
+    unfloored = junction_peak(0.0)
+    floored = junction_peak(0.05)
+    assert unfloored > PATHOLOGICAL_PEAK_MIN
+    assert unfloored == pytest.approx(floored * FLOOR_DENOM_RATIO, rel=1e-3)
 
 
 def test_straight_vessel_two_nodes_one_segment_edge() -> None:

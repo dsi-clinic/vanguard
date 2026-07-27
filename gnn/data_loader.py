@@ -555,16 +555,15 @@ def _build_case(
     ``_finalize_data``. ``edge_features`` is non-empty only for junction mode.
     """
     stage_samples: dict[str, list[float]] = {}
-    # The baseline floor is currently threaded only through the voxel kinetic
-    # path (_attach_node_features). Segment/junction builds and the forecasting
-    # node-series path still call baseline_relative_curve with the default
-    # (unfloored) denominator, so refuse rather than silently half-apply it.
-    if baseline_floor_frac > 0.0 and (node_mode != _VOXEL_MODE or attach_node_series):
+    # The baseline floor is threaded through the voxel, segment, and junction
+    # kinetic paths. The forecasting node-series path (attach_node_series) still
+    # calls baseline_relative_curve with the default (unfloored) denominator, so
+    # refuse rather than silently half-apply it there.
+    if baseline_floor_frac > 0.0 and attach_node_series:
         raise NotImplementedError(
-            "baseline_floor_frac > 0 is only wired into voxel-mode kinetic "
-            f"features (got node_mode={node_mode!r}, attach_node_series="
-            f"{attach_node_series}). Thread it through the segment/junction/"
-            "node-series paths before using it there."
+            "baseline_floor_frac > 0 is not yet wired into the forecasting "
+            "node-series path (attach_node_series=True). Thread it through "
+            "gnn/pretrain/node_series.py before using it there."
         )
     study_dir = mask_path.parent
 
@@ -627,6 +626,7 @@ def _build_case(
                 time_axis,
                 baseline_frame_count=baseline_frame_count,
                 relative_enhancement=relative_enhancement,
+                baseline_floor_frac=baseline_floor_frac,
             )
         num_connected_components = int(data.num_connected_components)
     else:
@@ -639,6 +639,7 @@ def _build_case(
                     time_axis,
                     baseline_frame_count=baseline_frame_count,
                     relative_enhancement=relative_enhancement,
+                    baseline_floor_frac=baseline_floor_frac,
                 )
         else:
             with _stage_timer(stage_samples, "peak_time"):
