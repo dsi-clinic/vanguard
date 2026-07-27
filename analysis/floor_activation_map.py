@@ -185,6 +185,69 @@ def main() -> None:
         args.case_id,
         args.out_dir / f"floor_mechanism_{args.case_id[:24]}_z{z}.png",
     )
+    _precontrast_plot(
+        baseline,
+        support,
+        active_mask,
+        z,
+        args.case_id,
+        args.out_dir / f"precontrast_{args.case_id[:24]}_z{z}.png",
+    )
+
+
+def _precontrast_plot(
+    baseline: np.ndarray,
+    support: np.ndarray,
+    active_mask: np.ndarray,
+    z: int,
+    case_id: str,
+    out_path: Path,
+) -> None:
+    """Show that most precontrast voxels are NOT ~0.
+
+    Left: the raw precontrast S0 image (mean of the precontrast frames) at the
+    center slice -- normal grayscale anatomy, not a black frame. Right: the
+    in-support S0 distribution, with the floor-active voxels overlaid: the bulk
+    of vessel voxels sit at a healthy baseline, and only a small tail is near 0.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    b = baseline[z]
+    supp_s0 = baseline[support]
+    active_s0 = baseline[active_mask]
+    med = float(np.median(supp_s0))
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
+    hi = np.percentile(b[b > 0], 99) if (b > 0).any() else 1.0
+    im = axes[0].imshow(b, cmap="gray", vmin=0, vmax=max(hi, _EPS))
+    axes[0].set_xticks([])
+    axes[0].set_yticks([])
+    axes[0].set_title(
+        f"Raw precontrast S0 (z={z})\nin-support median S0={med:.1f} (not 0)"
+    )
+    fig.colorbar(im, ax=axes[0], fraction=0.046, pad=0.04)
+
+    axes[1].hist(
+        supp_s0, bins=80, color="steelblue", alpha=0.8, label="all vessel voxels"
+    )
+    if active_s0.size:
+        axes[1].hist(
+            active_s0, bins=80, color="red", alpha=0.9, label="floor-active (S0~0)"
+        )
+    axes[1].axvline(med, color="k", ls="--", lw=1, label=f"median {med:.1f}")
+    axes[1].set_yscale("log")
+    axes[1].set_xlabel("precontrast S0")
+    axes[1].set_ylabel("voxel count (log)")
+    axes[1].set_title("Vessel-voxel S0 distribution\nhealthy bulk + a tiny near-0 tail")
+    axes[1].legend(fontsize=8)
+    fig.suptitle(f"Are all precontrast voxels 0? No — {case_id[:32]}")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"wrote {out_path}")
 
 
 def _mechanism_plot(
