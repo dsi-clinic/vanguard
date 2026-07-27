@@ -26,7 +26,7 @@ from preprocessing.motion import (
     correct_phase,
     correlation_in_support,
 )
-from preprocessing.qc import write_mapping_qc
+from preprocessing.qc import write_mapping_qc, write_temporal_mip
 from preprocessing.spatial import (
     isotropic_geometry,
     rasterize_skeleton_identity,
@@ -692,7 +692,15 @@ def map_case(*, case_root: Path) -> None:
 
 
 def qc_case(*, case_root: Path) -> Path:
-    """Write a shared-window visual check of the mapped UFAST skeleton."""
+    """Write shared-window visual checks of the mapped skeleton and the raw UFAST series.
+
+    ``mapping_qc.png`` overlays the merged skeleton on UFAST phase 0.
+    ``temporal_mip.png`` is a skeleton-free MIP across every UFAST phase, so a
+    reviewer can compare the merged skeleton against what's actually visible
+    in the raw signal -- e.g. to check for a UFAST-only vessel added a few
+    voxels off from a real HR vessel (see ``preprocessing.merge`` module
+    docstring) rather than a genuinely new one.
+    """
     provenance = json.loads((case_root / "preprocessing_provenance.json").read_text())
     output_root = case_root.parents[1]
     exam_id = case_root.name
@@ -711,6 +719,17 @@ def qc_case(*, case_root: Path) -> Path:
         phase0_nifti=output_root / "dce" / exam_id / f"{exam_id}_0000.nii.gz",
         skeleton_zyx=skeleton,
         output_path=output_path,
+        shared_window=window,
+    )
+    temporal_mip_path = centerline_dir / "temporal_mip.png"
+    if temporal_mip_path.exists():
+        raise FileExistsError(
+            f"refusing to overwrite existing QC panel: {temporal_mip_path}"
+        )
+    write_temporal_mip(
+        dce_dir=output_root / "dce" / exam_id,
+        exam_id=exam_id,
+        output_path=temporal_mip_path,
         shared_window=window,
     )
     return output_path
