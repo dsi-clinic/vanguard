@@ -347,6 +347,8 @@ def _attach_node_features(
     relative_enhancement: bool,
     label: int | None,
     node_features: tuple[str, ...],
+    *,
+    baseline_floor_frac: float = 0.0,
 ) -> None:
     """Set ``radius`` and the DCE-derived kinetic features on every node.
 
@@ -379,6 +381,7 @@ def _attach_node_features(
             time_axis,
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
+            baseline_floor_frac=baseline_floor_frac,
         )
         tte_idx = kinetic["tte_idx"]
 
@@ -528,6 +531,7 @@ def _build_case(
     node_mode: str,
     edge_features: tuple[str, ...] = (),
     attach_node_series: bool = False,
+    baseline_floor_frac: float = 0.0,
 ) -> tuple[Data, dict[str, list[float]]]:
     """Build one labeled :class:`Data` graph for ``case_id`` in ``node_mode``.
 
@@ -551,6 +555,17 @@ def _build_case(
     ``_finalize_data``. ``edge_features`` is non-empty only for junction mode.
     """
     stage_samples: dict[str, list[float]] = {}
+    # The baseline floor is currently threaded only through the voxel kinetic
+    # path (_attach_node_features). Segment/junction builds and the forecasting
+    # node-series path still call baseline_relative_curve with the default
+    # (unfloored) denominator, so refuse rather than silently half-apply it.
+    if baseline_floor_frac > 0.0 and (node_mode != _VOXEL_MODE or attach_node_series):
+        raise NotImplementedError(
+            "baseline_floor_frac > 0 is only wired into voxel-mode kinetic "
+            f"features (got node_mode={node_mode!r}, attach_node_series="
+            f"{attach_node_series}). Thread it through the segment/junction/"
+            "node-series paths before using it there."
+        )
     study_dir = mask_path.parent
 
     with _stage_timer(stage_samples, "mask_load"):
@@ -636,6 +651,7 @@ def _build_case(
                     relative_enhancement,
                     label,
                     node_features,
+                    baseline_floor_frac=baseline_floor_frac,
                 )
             graph = voxel_graph
 
@@ -863,6 +879,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         id_column: str = "case_id",
         label_column: str = "pcr",
         max_missing_label_frac: float = 0.1,
+        kinetic_baseline_floor_frac: float = 0.0,
         profile: bool = False,
         num_workers: int = 1,
         allow_manifest_mismatch: bool = False,
@@ -995,6 +1012,9 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._id_column = id_column
         self._label_column = label_column
         self._max_missing_label_frac = max_missing_label_frac
+        if kinetic_baseline_floor_frac < 0.0:
+            raise ValueError("kinetic_baseline_floor_frac must be >= 0")
+        self._kinetic_baseline_floor_frac = float(kinetic_baseline_floor_frac)
         self._profile = profile
         self._num_workers = num_workers
         self._allow_manifest_mismatch = allow_manifest_mismatch
@@ -1140,6 +1160,12 @@ class VanguardCenterlineDataset(InMemoryDataset):
             "node_features": list(self._node_features),
             "feature_source": _FEATURE_SOURCE,
         }
+        # Kinetic baseline floor: recorded only when active so pre-floor caches
+        # (which have no such key) stay schema-compatible. _check_cache_manifest
+        # normalizes a missing cached value to 0.0, so a floored cache never
+        # silently serves an unfloored request or vice versa.
+        if self._kinetic_baseline_floor_frac > 0.0:
+            settings["kinetic_baseline_floor_frac"] = self._kinetic_baseline_floor_frac
         # Only junction mode has edge features. Recording the key only when it's
         # non-empty keeps voxel/segment manifests (and the caches already built
         # under them) schema-compatible -- a pre-edge_features cache has no such
@@ -1217,6 +1243,18 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     mismatched[key] = {"cached": cached_value, "requested": value}
             elif cached_value != value:
                 mismatched[key] = {"cached": cached_value, "requested": value}
+        # Kinetic baseline floor is recorded only when active, so it may be
+        # absent from either side; compare it explicitly with absent==0.0 so a
+        # floored cache can't serve an unfloored request (or vice versa) even
+        # though the key is missing from the requested settings.
+        floor_key = "kinetic_baseline_floor_frac"
+        cached_floor = manifest.get(floor_key) or 0.0
+        requested_floor = requested.get(floor_key) or 0.0
+        if cached_floor != requested_floor:
+            mismatched[floor_key] = {
+                "cached": cached_floor,
+                "requested": requested_floor,
+            }
         if mismatched and not self._allow_manifest_mismatch:
             raise RuntimeError(
                 f"Cache at {self.processed_dir} was built with different "
@@ -1656,6 +1694,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     node_features=self._node_features,
                     node_mode=self._node_mode,
                     edge_features=self._edge_features,
+                    baseline_floor_frac=self._kinetic_baseline_floor_frac,
                 )
                 self._timings.merge(stage_samples)
                 logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
@@ -1681,6 +1720,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                         node_features=self._node_features,
                         node_mode=self._node_mode,
                         edge_features=self._edge_features,
+                        baseline_floor_frac=self._kinetic_baseline_floor_frac,
                     )
                     for case_id, mask_path, label in batch
                 ]

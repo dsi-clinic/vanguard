@@ -163,6 +163,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # gnn/DESIGN_segment_graph.md.
         "gnn_node_mode": "voxel",
         "gnn_node_features": ["peak_time", "radius"],
+        # Kinetic baseline floor the cache was built with (gnn/kinetics.py). A
+        # build-time property of the cache; declared here so the train-time
+        # dataset load requests the same value and the cache-manifest check
+        # matches (0.0 = historical/unfloored; e.g. 0.05 for a floored cache).
+        "gnn_kinetic_baseline_floor_frac": 0.0,
         # Whole-graph readout for GCNClassifier (voxel/segment): "mean"
         # (default, the original single global_mean_pool -- fully backward
         # compatible), "mean_max", or "mean_max_sum". Concatenating max/sum

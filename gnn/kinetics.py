@@ -52,6 +52,7 @@ def baseline_relative_curve(
     *,
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
+    baseline_floor_frac: float = 0.0,
 ) -> np.ndarray:
     """Baseline-reference a DCE curve (or stack of curves) along the time axis.
 
@@ -77,17 +78,32 @@ def baseline_relative_curve(
     n_timepoints = arr.shape[-1]
     if not 1 <= baseline_frame_count < n_timepoints:
         raise ValueError("baseline_frame_count must be in [1, n_timepoints)")
+    if baseline_floor_frac < 0.0:
+        raise ValueError("baseline_floor_frac must be >= 0")
     baseline = arr[..., :baseline_frame_count].mean(axis=-1, keepdims=True)
     difference = arr - baseline
     if not relative_enhancement:
         return difference
-    # Divide only where the baseline is usable; rows with a non-finite or
-    # <= float32-eps baseline stay zero (matches the kinetic path). Using
+    # Denominator for the relative transform. By default it is the raw baseline
+    # (historical behavior, only the exact-zero guard below). When
+    # ``baseline_floor_frac > 0`` the denominator is floored at that fraction of
+    # each row's OWN signal scale (max |S| over time), so a near-void baseline
+    # can't turn ``(S - S0)/S0`` into a divide-by-noise artifact: a voxel whose
+    # baseline is a tiny fraction of its own peak signal would otherwise report
+    # relative enhancement in the thousands-to-millions (physiological is ~0-5).
+    # The floor caps peak relative enhancement at ~1/baseline_floor_frac and
+    # leaves normal voxels (baseline >> floor) untouched. See AUDITING_RESULTS.md.
+    denom = baseline
+    if baseline_floor_frac > 0.0:
+        signal_scale = np.max(np.abs(arr), axis=-1, keepdims=True)
+        denom = np.maximum(baseline, baseline_floor_frac * signal_scale)
+    # Divide only where the denominator is usable; rows with a non-finite or
+    # <= float32-eps denominator stay zero (matches the kinetic path). Using
     # ``np.divide(where=...)`` skips the invalid division entirely rather than
     # computing it and masking afterwards, so no divide-by-zero warning fires.
-    usable = np.isfinite(baseline) & (baseline > np.finfo(np.float32).eps)
+    usable = np.isfinite(denom) & (denom > np.finfo(np.float32).eps)
     enhancement = np.zeros_like(difference)
-    np.divide(difference, baseline, out=enhancement, where=usable)
+    np.divide(difference, denom, out=enhancement, where=usable)
     return enhancement
 
 
@@ -97,6 +113,7 @@ def node_kinetic_features(
     *,
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
+    baseline_floor_frac: float = 0.0,
 ) -> dict[str, object]:
     """Derive kinetic features from one voxel's unscaled DCE signal curve.
 
@@ -118,6 +135,7 @@ def node_kinetic_features(
             signal,
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
+            baseline_floor_frac=baseline_floor_frac,
         ),
         dtype=float,
     )
