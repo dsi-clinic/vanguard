@@ -208,12 +208,26 @@ def filter_complement(
 
     # Seed connectivity with the confirmed voxels too, so a gated candidate branch
     # attached to an already-trusted vessel survives the component-size floor.
+    #
+    # A gated component must satisfy BOTH conditions, not just one:
+    #   1. it actually TOUCHES a confirmed (on_merged) voxel -- i.e. shares a label with
+    #      on_merged after joint labeling, not just co-existing in the same seed array.
+    #   2. its own gated-voxel count (not the size of the joint label, which balloons
+    #      once it's merged with a large confirmed tree) is >= min_component_voxels.
+    # An earlier version only checked the joint label's total size, which let large
+    # (100s of voxels), fully isolated candidate blobs -- with zero on_merged voxels
+    # anywhere nearby -- through purely because they were big enough on their own,
+    # exactly contradicting the "attached to an already-trusted vessel" intent above.
+    # QC on 25 real exams found two with a single such isolated blob making up 58-71%
+    # of that exam's raw additions (45-58 voxels from the nearest real vessel).
     seed = gated | on_merged
     labeled, _ = ndi.label(seed, structure=np.ones((3, 3, 3)))
+    touching_confirmed = set(np.unique(labeled[on_merged])) - {0}
+    gated_labels, gated_counts = np.unique(labeled[gated], return_counts=True)
     keep_labels = {
         label
-        for label in np.unique(labeled[gated])
-        if label and (labeled == label).sum() >= min_component_voxels
+        for label, count in zip(gated_labels, gated_counts)
+        if label and label in touching_confirmed and count >= min_component_voxels
     }
     kept = gated & np.isin(labeled, list(keep_labels))
 
