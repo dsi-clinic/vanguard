@@ -55,7 +55,7 @@ NODE_FEATURES="${NODE_FEATURES:-peak_time,radius}"
 # Floor the relative-enhancement denominator at this fraction of each voxel's
 # own peak signal (gnn/kinetics.py). 0 = historical behavior; e.g. 0.05 caps
 # peak relative enhancement at ~20x to kill divide-by-near-zero-baseline
-# artifacts. Voxel mode only.
+# artifacts. Applies to voxel, segment, and junction modes.
 KINETIC_BASELINE_FLOOR_FRAC="${KINETIC_BASELINE_FLOOR_FRAC:-0}"
 # Only used by --node-mode junction (segment-as-edge): the segment summary rides
 # on the edges there. Empty for voxel/segment mode.
