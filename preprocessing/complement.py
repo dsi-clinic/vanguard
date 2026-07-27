@@ -11,20 +11,35 @@ Combine policy (additive only, same "never override" contract as ``preprocessing
     an independent Jerman-vesselness skeleton (the "MATLAB route").
   - A MATLAB-route voxel already near the merged skeleton (within
     ``tc_tolerance_voxels``) is "confirmed" -- both routes agree, so it adds no new
-    coverage, but its enhancement and Jerman-vesselness values become the CALIBRATION
-    reference for the quality gate below (the voxels already known to be real vessel).
-  - A MATLAB-route voxel far from the merged skeleton is a complement candidate. It's
-    kept only if its peak enhancement AND Jerman vesselness are both >=
-    ``quality_percentile``-th percentile of the confirmed voxels' own values, it's
-    interior to the breast mask (>= ``edge_margin_voxels`` from the boundary), and it
-    belongs to a connected component (seeded together with the confirmed voxels, so a
-    candidate branch attached to a confirmed vessel survives) >=
-    ``min_component_voxels`` large.
-  - This is the exact method validated in
-    ``matlab-conv-2/vessel_pipeline/complement_filter.py`` (operating point q=15):
-    97-640 added voxels/exam, ~0% of them within 2 voxels of the breast-mask boundary,
-    visually confirmed to thread through real vessel structure rather than form blobs
-    or track the chest wall/mask edge.
+    coverage, but it becomes part of the CALIBRATION reference for the quality gate
+    below (the vessel segments already known to be real).
+  - A MATLAB-route voxel far from the merged skeleton is a complement candidate. Candidates
+    are NOT required to touch the existing tree -- the merged skeleton is known to be
+    incomplete, and a genuinely new, spatially separate vessel is exactly the kind of
+    finding this stage exists to recover. Instead, each candidate connected component
+    (>= ``min_component_voxels``, interior to the breast mask) is judged on its own
+    merits against two independent per-component statistics, both calibrated against
+    real confirmed vessel segments (the connected components of the "confirmed" voxels
+    above, not individual voxels):
+      1. Mean Jerman vesselness over the component. Per-voxel vesselness at a
+         1-voxel-wide skeletonized centerline is sparse/noisy (>50% of confirmed real
+         vessel voxels have exactly 0 response in practice -- calibrating per-voxel
+         percentiles against that distribution floors to 0 and filters nothing), but
+         averaged over a whole candidate segment it is a real, well-behaved signal
+         (component means for confirmed vessel segments span roughly 0.03-0.3, zero
+         components at exactly 0 in the exam checked during design).
+      2. Elongation: PCA on the component's physical (mm) coordinates, ratio of the
+         largest to second-largest spread eigenvalue. A real vessel segment is long
+         and thin (one dominant axis); a noise blob is compact in all three directions
+         (eigenvalues closer to equal). This directly operationalises "tubular, not
+         blobby" -- the actual claim the Jerman filter is designed to make, and the
+         reason this MATLAB pipeline exists rather than a plain intensity threshold.
+  - This design supersedes an earlier version validated in
+    ``matlab-conv-2/vessel_pipeline/complement_filter.py`` (operating point q=15) that
+    required touching the existing tree and gated per-voxel; that version passed large,
+    fully isolated noise blobs whenever they happened to be big enough (or later,
+    attached by a single-voxel toehold) -- see git history on this file for both bugs
+    and the isolated-component QC that found them.
 """
 
 from __future__ import annotations
@@ -46,14 +61,21 @@ from segmentation.matlab_vessel_segmentation import SegVessel
 #: (LABEL_BACKGROUND=0 .. LABEL_KINETICS_ADJACENCY_ADDED=5).
 LABEL_MATLAB_COMPLEMENT_ADDED = 6
 
-#: Quality-gate operating point: keep a complement voxel only if its enhancement and
-#: Jerman vesselness are >= this percentile of the confirmed (on-merged-skeleton)
-#: voxels' own values. Validated in matlab-conv-2 across 6 UChicago exams (both
-#: tc4d-dense and tc4d-sparse): q=15 was the recommended balance of yield vs purity.
-DEFAULT_QUALITY_PERCENTILE = 15.0
+#: Quality-gate operating point: keep a candidate component only if its per-component
+#: enhancement, mean vesselness, and elongation are all >= this percentile of the
+#: confirmed segments' own per-component values. Lower = looser (more kept, more risk).
+#: Swept 5/10/15/25/35/50 on 5 exams with the new per-component/elongation design
+#: (2026-07-27): pct=5 let a blob through on one exam (elongation_threshold collapsed
+#: to 2.84 there, vs. 4-10 everywhere else -- visually confirmed as a dense non-tubular
+#: mass, not vessels); pct=10 roughly doubled yield over pct=15 with no such collapse
+#: on any of the 5 exams and visually clean (thin, branching additions). Not yet
+#: validated at the same n=25 scale as the original q=15 -- re-check before trusting
+#: cohort-wide numbers built on this default.
+DEFAULT_QUALITY_PERCENTILE = 10.0
 
 #: A MATLAB-route voxel within this many voxels of the merged skeleton counts as
-#: "confirmed" (both routes agree) rather than a complement candidate.
+#: "confirmed" (both routes agree), and its connected components become the
+#: calibration reference below.
 DEFAULT_TC_TOLERANCE_VOXELS = 2
 
 #: A complement candidate within this many voxels of the breast-mask boundary is
@@ -62,18 +84,31 @@ DEFAULT_TC_TOLERANCE_VOXELS = 2
 #: vessels (matlab-conv-2's "toward chest not breast" finding).
 DEFAULT_EDGE_MARGIN_VOXELS = 3
 
-#: Minimum connected-component size (26-connectivity, seeded together with confirmed
-#: voxels so a real complement branch attached to a confirmed vessel survives) for a
-#: gated candidate to be kept.
+#: Minimum connected-component size (26-connectivity) for a candidate component to be
+#: considered at all -- too few voxels for the elongation PCA to be meaningful, and
+#: not enough signal to trust a mean-vesselness/enhancement estimate.
 DEFAULT_MIN_COMPONENT_VOXELS = 8
 
 #: Breast-probability threshold applied to the mean HR breast-model output.
 BREAST_MASK_PROBABILITY_THRESHOLD = 0.5
 
-#: Below this many confirmed (on-merged-skeleton) voxels, the quality-gate percentile
-#: thresholds have too little data to calibrate against, so the complement filter bails
-#: out rather than gating on a handful of voxels' values.
+#: Below this many confirmed (on-merged-skeleton) voxels, there isn't enough data to
+#: decompose into a reliable calibration set of real vessel components, so the
+#: complement filter bails out rather than gating on a handful of segments.
 MIN_CONFIRMED_VOXELS_FOR_CALIBRATION = 20
+
+#: Below this many confirmed calibration COMPONENTS (as opposed to voxels), the
+#: per-component percentile thresholds (elongation, mean vesselness, mean enhancement)
+#: are too noisy to trust -- same bail-out rationale as
+#: MIN_CONFIRMED_VOXELS_FOR_CALIBRATION, at the component level.
+MIN_CONFIRMED_COMPONENTS_FOR_CALIBRATION = 5
+
+#: Elongation of a single-voxel-wide component is undefined (PCA needs >=3 non-
+#: collinear points to estimate a meaningful second axis); such components fall back
+#: to this value, which is below any realistic tube-vs-blob threshold, so they're
+#: rejected by the elongation gate rather than by a NaN/crash.
+_MIN_POINTS_FOR_ELONGATION = 3
+_UNDEFINED_ELONGATION = 0.0
 
 #: HR-branch subtraction is a single peak-minus-phase0 volume. HR model inputs are
 #: already z-scored (not raw signal) -- SegVessel's own contrast normalisation
@@ -159,6 +194,55 @@ def _breast_mask_ufast_yxz(case_root: Path, provenance: dict) -> np.ndarray:
     )  # (z,y,x) -> (y,x,z)
 
 
+def _component_elongation(coords_mm: np.ndarray) -> float:
+    """PCA-based tube-vs-blob score: ratio of the largest to second-largest spread axis.
+
+    Large for a component that's long and thin along one dominant direction (a real
+    vessel segment); close to 1 for a component with similar extent in all three
+    directions (a noise blob). ``coords_mm`` is the component's voxel centers in
+    physical (mm) coordinates, so this is spacing-aware (a component elongated only
+    because of anisotropic voxel spacing wouldn't fool it).
+    """
+    if len(coords_mm) < _MIN_POINTS_FOR_ELONGATION:
+        return _UNDEFINED_ELONGATION
+    centered = coords_mm - coords_mm.mean(axis=0)
+    cov = np.cov(centered.T)
+    eigvals = np.sort(np.linalg.eigvalsh(cov))  # ascending: smallest .. largest spread
+    return float(eigvals[2] / (eigvals[1] + 1e-6))
+
+
+def _per_component_stats(
+    mask: np.ndarray,
+    labeled: np.ndarray,
+    label_ids: np.ndarray,
+    vesselness_yxz: np.ndarray,
+    enhancement_yxz: np.ndarray,
+    spacing_yxz: tuple[float, float, float],
+) -> dict[int, dict[str, float]]:
+    """Per-component size, mean vesselness, mean enhancement, and elongation.
+
+    ``label_ids`` are the label values to summarise (restricted to components that
+    actually appear in ``mask`` -- e.g. only within the confirmed set, or only within
+    the candidate set -- even though ``labeled`` may have been produced from a
+    larger/different array).
+    """
+    spacing = np.asarray(spacing_yxz, dtype=np.float64)
+    stats: dict[int, dict[str, float]] = {}
+    for label in label_ids:
+        component = mask & (labeled == label)
+        size = int(component.sum())
+        if size == 0:
+            continue
+        coords_mm = np.argwhere(component).astype(np.float64) * spacing
+        stats[int(label)] = {
+            "size": size,
+            "mean_vesselness": float(vesselness_yxz[component].mean()),
+            "mean_enhancement": float(enhancement_yxz[component].mean()),
+            "elongation": _component_elongation(coords_mm),
+        }
+    return stats
+
+
 def filter_complement(
     *,
     matlab_skeleton_yxz: np.ndarray,
@@ -166,77 +250,108 @@ def filter_complement(
     enhancement_yxz: np.ndarray,
     merged_skeleton_yxz: np.ndarray,
     breast_mask_yxz: np.ndarray,
+    spacing_yxz: tuple[float, float, float],
     tc_tolerance_voxels: int = DEFAULT_TC_TOLERANCE_VOXELS,
     quality_percentile: float = DEFAULT_QUALITY_PERCENTILE,
     edge_margin_voxels: int = DEFAULT_EDGE_MARGIN_VOXELS,
     min_component_voxels: int = DEFAULT_MIN_COMPONENT_VOXELS,
 ) -> tuple[np.ndarray, dict[str, object]]:
-    """Quality-gated complement: keep MATLAB-route voxels as good as confirmed ones.
+    """Per-component quality-gated complement.
 
-    Direct port of matlab-conv-2/vessel_pipeline/complement_filter.py::filter_complement,
-    re-pointed at the production merged skeleton (preprocessing.merge) instead of the
-    exploratory combined_tc4d reference it was originally validated against.
+    Keep candidate segments that look like real vessel, independent of whether they
+    touch the existing skeleton.
+
+    Candidates are NOT required to be spatially connected to the merged skeleton --
+    see the module docstring for why (the merged skeleton is known to be incomplete,
+    and a genuinely new, separate vessel is exactly what this stage should recover).
+    Instead each candidate component is judged on its own per-component mean
+    vesselness, mean enhancement, and elongation (tube-vs-blob shape), each calibrated
+    against the same statistics computed over the confirmed segments' own components.
     """
     tc_near = ndi.binary_dilation(merged_skeleton_yxz, iterations=tc_tolerance_voxels)
-    on_merged = matlab_skeleton_yxz & tc_near  # confirmed by both routes
+    confirmed = matlab_skeleton_yxz & tc_near  # confirmed by both routes
     candidate = matlab_skeleton_yxz & ~tc_near  # complement candidates
 
-    if on_merged.sum() < MIN_CONFIRMED_VOXELS_FOR_CALIBRATION or not candidate.any():
-        return np.zeros_like(matlab_skeleton_yxz), {
-            "n_confirmed": int(on_merged.sum()),
-            "n_candidates": int(candidate.sum()),
-            "n_kept": 0,
-        }
+    empty_stats = {
+        "n_confirmed": int(confirmed.sum()),
+        "n_candidates": int(candidate.sum()),
+        "n_kept": 0,
+    }
+    if confirmed.sum() < MIN_CONFIRMED_VOXELS_FOR_CALIBRATION or not candidate.any():
+        return np.zeros_like(matlab_skeleton_yxz), empty_stats
+
+    # Calibration reference: the confirmed voxels' OWN connected components (not the
+    # confirmed voxels as a single pool) -- elongation is only meaningful computed per
+    # component, and per-component mean vesselness/enhancement is far better behaved
+    # than the per-voxel distribution (see module docstring).
+    confirmed_labeled, n_confirmed_components = ndi.label(
+        confirmed, structure=np.ones((3, 3, 3))
+    )
+    confirmed_stats = _per_component_stats(
+        confirmed,
+        confirmed_labeled,
+        np.arange(1, n_confirmed_components + 1),
+        vesselness_yxz,
+        enhancement_yxz,
+        spacing_yxz,
+    )
+    # Only components with enough voxels for the elongation PCA to mean anything
+    # should inform the calibration thresholds themselves.
+    calibration = [
+        s for s in confirmed_stats.values() if s["size"] >= _MIN_POINTS_FOR_ELONGATION
+    ]
+    if len(calibration) < MIN_CONFIRMED_COMPONENTS_FOR_CALIBRATION:
+        empty_stats["n_confirmed_components"] = len(calibration)
+        return np.zeros_like(matlab_skeleton_yxz), empty_stats
 
     vesselness_threshold = float(
-        np.percentile(vesselness_yxz[on_merged], quality_percentile)
+        np.percentile([s["mean_vesselness"] for s in calibration], quality_percentile)
     )
     enhancement_threshold = float(
-        np.percentile(enhancement_yxz[on_merged], quality_percentile)
+        np.percentile([s["mean_enhancement"] for s in calibration], quality_percentile)
     )
+    elongation_threshold = float(
+        np.percentile([s["elongation"] for s in calibration], quality_percentile)
+    )
+
     interior = (
         ndi.binary_erosion(breast_mask_yxz, iterations=edge_margin_voxels)
         if edge_margin_voxels > 0
         else breast_mask_yxz
     )
-    gated = (
-        candidate
-        & (vesselness_yxz >= vesselness_threshold)
-        & (enhancement_yxz >= enhancement_threshold)
-        & interior
-    )
+    candidate_interior = candidate & interior
 
-    # Seed connectivity with the confirmed voxels too, so a gated candidate branch
-    # attached to an already-trusted vessel survives the component-size floor.
-    #
-    # A gated component must satisfy BOTH conditions, not just one:
-    #   1. it actually TOUCHES a confirmed (on_merged) voxel -- i.e. shares a label with
-    #      on_merged after joint labeling, not just co-existing in the same seed array.
-    #   2. its own gated-voxel count (not the size of the joint label, which balloons
-    #      once it's merged with a large confirmed tree) is >= min_component_voxels.
-    # An earlier version only checked the joint label's total size, which let large
-    # (100s of voxels), fully isolated candidate blobs -- with zero on_merged voxels
-    # anywhere nearby -- through purely because they were big enough on their own,
-    # exactly contradicting the "attached to an already-trusted vessel" intent above.
-    # QC on 25 real exams found two with a single such isolated blob making up 58-71%
-    # of that exam's raw additions (45-58 voxels from the nearest real vessel).
-    seed = gated | on_merged
-    labeled, _ = ndi.label(seed, structure=np.ones((3, 3, 3)))
-    touching_confirmed = set(np.unique(labeled[on_merged])) - {0}
-    gated_labels, gated_counts = np.unique(labeled[gated], return_counts=True)
+    candidate_labeled, n_candidate_components = ndi.label(
+        candidate_interior, structure=np.ones((3, 3, 3))
+    )
+    candidate_stats = _per_component_stats(
+        candidate_interior,
+        candidate_labeled,
+        np.arange(1, n_candidate_components + 1),
+        vesselness_yxz,
+        enhancement_yxz,
+        spacing_yxz,
+    )
     keep_labels = {
         label
-        for label, count in zip(gated_labels, gated_counts)
-        if label and label in touching_confirmed and count >= min_component_voxels
+        for label, s in candidate_stats.items()
+        if s["size"] >= min_component_voxels
+        and s["mean_vesselness"] >= vesselness_threshold
+        and s["mean_enhancement"] >= enhancement_threshold
+        and s["elongation"] >= elongation_threshold
     }
-    kept = gated & np.isin(labeled, list(keep_labels))
+    kept = candidate_interior & np.isin(candidate_labeled, list(keep_labels))
 
     stats = {
-        "n_confirmed": int(on_merged.sum()),
+        "n_confirmed": int(confirmed.sum()),
+        "n_confirmed_components": len(calibration),
         "n_candidates": int(candidate.sum()),
+        "n_candidate_components": n_candidate_components,
         "n_kept": int(kept.sum()),
+        "n_kept_components": len(keep_labels),
         "vesselness_threshold": round(vesselness_threshold, 4),
         "enhancement_threshold": round(enhancement_threshold, 2),
+        "elongation_threshold": round(elongation_threshold, 3),
         "params": {
             "tc_tolerance_voxels": tc_tolerance_voxels,
             "quality_percentile": quality_percentile,
@@ -298,6 +413,7 @@ def complement_exam(
         enhancement_yxz=sub_dyn,
         merged_skeleton_yxz=merged_skeleton_yxz,
         breast_mask_yxz=breast_mask_yxz,
+        spacing_yxz=spacing_yxz,
         tc_tolerance_voxels=tc_tolerance_voxels,
         quality_percentile=quality_percentile,
         edge_margin_voxels=edge_margin_voxels,
