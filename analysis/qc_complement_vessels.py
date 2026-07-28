@@ -138,6 +138,39 @@ _GALLERY_MARGIN_INPLANE = 12
 _GALLERY_MARGIN_Z = 4
 
 
+def find_pre_complement_skeleton(preprocessing_root: Path, exam_id: str) -> Path:
+    """The skeleton this stage should be judged as ADDING TO, in (z,y,x).
+
+    ``complement_case`` overwrites ``<exam>_skeleton_4d_exam_mask.npy`` in place with
+    its own output and preserves the input beside it as
+    ``..._hr_ufast_merge_only.npy``. So once the stage has run for an exam, the
+    canonical filename is the stage's RESULT, not its input, and measuring "what does
+    the complement add" against it silently compares the stage to itself -- it will
+    report adding nothing, because everything it would add is already in there.
+
+    That is not hypothetical: a cohort-wide ``complement_case`` run landed midway
+    through a percentile sweep here (2026-07-28), so early exams were measured against
+    the pre-complement skeleton and later ones against the post-complement skeleton,
+    quietly invalidating the comparison.
+
+    Always prefer the explicit pre-complement sidecar when it exists.
+    """
+    exam_dirs = list((preprocessing_root / "centerlines").glob(f"*/{exam_id}"))
+    if not exam_dirs:
+        raise FileNotFoundError(f"no centerline directory for {exam_id}")
+    exam_dir = exam_dirs[0]
+
+    pre_complement = (
+        exam_dir / f"{exam_id}_skeleton_4d_exam_mask_hr_ufast_merge_only.npy"
+    )
+    if pre_complement.exists():
+        return pre_complement
+    canonical = exam_dir / f"{exam_id}_skeleton_4d_exam_mask.npy"
+    if canonical.exists():
+        return canonical
+    raise FileNotFoundError(f"no skeleton found for {exam_id} under {exam_dir}")
+
+
 def _load_signal_tzyx(preprocessing_root: Path, exam_id: str) -> np.ndarray:
     phases = find_ufast_phases(preprocessing_root, exam_id)
     return np.stack(
@@ -452,14 +485,9 @@ def qc_exam(preprocessing_root: Path, exam_id: str, output_dir: Path) -> dict:
         geometry.spacing_xyz_mm[2],
     )
 
-    skel_paths = sorted(
-        (preprocessing_root / "centerlines").glob(
-            f"*/{exam_id}/*skeleton_4d_exam_mask*.npy"
-        )
-    )
-    if not skel_paths:
-        raise FileNotFoundError(f"no centerline skeleton for {exam_id}")
-    merged = np.transpose(np.load(skel_paths[0]).astype(bool), (1, 2, 0))
+    skeleton_path = find_pre_complement_skeleton(preprocessing_root, exam_id)
+    print(f"  baseline skeleton: {skeleton_path.name}", flush=True)
+    merged = np.transpose(np.load(skeleton_path).astype(bool), (1, 2, 0))
 
     sub_dyn = _load_dyn_subtraction(preprocessing_root, exam_id, baseline_frame_count)
     sub_hr = _load_hr_subtraction(case_root, provenance)

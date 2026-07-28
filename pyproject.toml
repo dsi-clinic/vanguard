@@ -80,6 +80,13 @@ convention = "google"
 # Standalone QC/visualization script for the complement stage: same category as
 # interactive_annotation_htmls/*.py above -- matplotlib plumbing where per-argument
 # type hints and inline sizing constants add noise rather than safety.
+# Standalone sweep/QC scripts for the complement stage: same category as
+# interactive_annotation_htmls/*.py -- numpy/matplotlib plumbing where per-argument
+# type hints and inline constants add noise rather than safety.
+"analysis/sweep_complement_quality_percentile.py" = [
+  "ANN001", "ANN202",  # type annotations not required for these helpers
+  "PLR2004",           # allow inline magic numbers
+]
 "analysis/qc_complement_vessels.py" = [
   "ANN001", "ANN202",  # type annotations not required for plotting helpers
   "D103",              # relaxed docstring requirements on plotting helpers

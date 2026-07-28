@@ -63,16 +63,30 @@ from segmentation.matlab_vessel_segmentation import SegVessel
 #: (LABEL_BACKGROUND=0 .. LABEL_KINETICS_ADJACENCY_ADDED=5).
 LABEL_MATLAB_COMPLEMENT_ADDED = 6
 
-#: Quality-gate operating point: keep a candidate component only if its per-component
+#: Quality-gate operating point: keep a candidate branch only if its per-branch
 #: enhancement, mean vesselness, and elongation are all >= this percentile of the
-#: confirmed segments' own per-component values. Lower = looser (more kept, more risk).
-#: Swept 5/10/15/25/35/50 on 5 exams with the new per-component/elongation design
-#: (2026-07-27): pct=5 let a blob through on one exam (elongation_threshold collapsed
-#: to 2.84 there, vs. 4-10 everywhere else -- visually confirmed as a dense non-tubular
-#: mass, not vessels); pct=10 roughly doubled yield over pct=15 with no such collapse
-#: on any of the 5 exams and visually clean (thin, branching additions). Not yet
-#: validated at the same n=25 scale as the original q=15 -- re-check before trusting
-#: cohort-wide numbers built on this default.
+#: confirmed segments' own per-branch values. Lower = looser (more kept, more risk).
+#:
+#: Re-swept 2/5/10/15/25/40 on 4 exams (2026-07-28) after the gating unit changed from
+#: whole connected components to branches. That re-sweep was necessary, not routine: a
+#: percentile describes a distribution's shape, and the population went from 2-9
+#: components per exam to 55-569 branches, so the value inherited from the component-era
+#: sweep could not be assumed to still hold.
+#:
+#: Judged against the no-contrast negative control (analysis/qc_complement_vessels.py),
+#: which cannot contain vessels, so anything passing there is a false positive by
+#: construction. Pooled over the 4 exams:
+#:     pct= 2   2657 real vox / 124 null vox
+#:     pct= 5   2195 real vox /  17 null vox   <- already leaking
+#:     pct=10   1861 real vox /   0 null vox   <- loosest value with a clean control
+#:     pct=15   1544 real vox /   0 null vox
+#: 10.0 sits exactly at the boundary: loosening to 5 buys ~18% more yield but starts
+#: admitting structure from a vessel-free volume, on the same exam (simbiosys...1182)
+#: that the motion and visual checks independently flag as this cohort's worst case.
+#:
+#: Still only 4 exams, and the negative control uses adjacent baseline frames, so it
+#: sees less motion than the real subtraction -- it bounds the false-positive rate from
+#: below. Re-check before trusting cohort-wide numbers built on this default.
 DEFAULT_QUALITY_PERCENTILE = 10.0
 
 #: A MATLAB-route voxel within this many voxels of the merged skeleton counts as
