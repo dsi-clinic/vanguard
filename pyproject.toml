@@ -77,6 +77,14 @@ convention = "google"
 # literals (documented per-line in constants/docstrings) -- relax the purely
 # stylistic rules here rather than risk a transcription bug rewriting
 # numerically-validated code, same rationale as interactive_annotation_htmls/*.py above.
+# Standalone QC/visualization script for the complement stage: same category as
+# interactive_annotation_htmls/*.py above -- matplotlib plumbing where per-argument
+# type hints and inline sizing constants add noise rather than safety.
+"analysis/qc_complement_vessels.py" = [
+  "ANN001", "ANN202",  # type annotations not required for plotting helpers
+  "D103",              # relaxed docstring requirements on plotting helpers
+  "PLR2004",           # allow inline magic numbers in viz sizing
+]
 "segmentation/matlab_vessel_segmentation/*.py" = [
   "ANN001", "ANN201", "ANN202",  # type annotations not required for this port
   "D205", "D402",                 # relaxed docstring requirements
