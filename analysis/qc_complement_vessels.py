@@ -34,6 +34,35 @@ CHECK 3 -- MOTION-ARTIFACT PROXY
     do, that would be the signature of motion rather than vasculature. Reported as the
     baseline-image gradient magnitude at added voxels versus at confirmed vessel voxels.
 
+CHECK 4 -- SYNTHETIC MOTION-ONLY CONTROL
+    Check 1 uses two real, adjacent baseline frames, so the motion between them is
+    whatever the patient actually did in that fraction of a second -- usually small.
+    This check isolates motion as the SOLE variable: take one real baseline frame,
+    apply a synthetic in-plane rigid shift of a known magnitude (0.5 to 5 voxels, i.e.
+    sub-voxel up to a genuinely poor registration), subtract the shifted copy from the
+    original with the same clip-at-zero convention the real pipeline uses, and judge
+    the result against the SAME calibrated gate. Anything that passes is unambiguous:
+    a purely synthetic rigid shift cannot be a vessel, so a nonzero result at some
+    shift magnitude is the motion magnitude at which this stage would start being
+    fooled, worth knowing even if larger than what real registration residual is.
+
+WHAT THIS SCRIPT ALSO WRITES -- IMAGE-BASED VISUAL CHECKS
+    Two more things, added for a second, more direct question: do the additions show
+    up as real structures in the underlying images, independent of any derived
+    statistic?
+      * Whole-breast MIP panels of the raw UFAST peak signal and the raw HR peak signal
+        (not the enhancement subtraction, the actual acquired image), with the
+        additions overlaid, added to the main summary figure for context.
+      * A separate per-exam gallery, one row per added connected component (largest
+        first), with THIN-SLAB MIPs cropped to that component's own bounding box and
+        z-range (not the whole volume). This is the check that can actually answer the
+        question a whole-breast MIP cannot: a whole-volume MIP compresses every slice
+        onto one plane, so an addition can appear to sit on a bright structure that is
+        really at a different depth -- that ambiguity all but disappears once the MIP
+        is restricted to a thin slab around the addition's own slices and cropped
+        tightly around it, because there is little else left in the frame to coincide
+        with.
+
 Usage::
 
     micromamba run -n vanguard python -m analysis.qc_complement_vessels \\
@@ -80,17 +109,33 @@ from preprocessing.complement import (  # noqa: E402
 )
 from preprocessing.dicom import DicomGeometry  # noqa: E402
 from preprocessing.merge import find_ufast_phases  # noqa: E402
+from preprocessing.spatial import resample_to_geometry  # noqa: E402
 from segmentation.matlab_vessel_segmentation import SegVessel  # noqa: E402
 
 #: Neutral grey for reference populations, one accent for the thing under test. Colour
 #: is carrying "is this the population being judged?", nothing else.
 _ADDED_COLOUR = "#d1495b"
+_OTHER_ADDED_COLOUR = "#e8a0a8"
 _CONFIRMED_COLOUR = "#3f6f8f"
 _NEUTRAL = "#8d8d8d"
 _MUTED = "#c7c7c7"
 
 #: How many random in-breast voxels to sample for the "ordinary tissue" reference.
 _TISSUE_SAMPLE = 20000
+
+#: Synthetic in-plane rigid-shift magnitudes tested by Check 4, in voxels. Spans
+#: sub-voxel (0.5) up to a genuinely poor registration residual (5); the UFAST grid is
+#: 1 mm isotropic, so this range is directly readable as 0.5-5 mm.
+MOTION_SHIFT_MAGNITUDES_VOXELS = (0.5, 1.0, 2.0, 3.0, 5.0)
+
+#: How many of the largest added connected components get their own row in the
+#: per-component crop gallery.
+_MAX_GALLERY_COMPONENTS = 6
+
+#: In-plane / through-slice margin (voxels) added around a component's own bounding box
+#: before cropping, so the crop shows a little surrounding anatomy for context.
+_GALLERY_MARGIN_INPLANE = 12
+_GALLERY_MARGIN_Z = 4
 
 
 def _load_signal_tzyx(preprocessing_root: Path, exam_id: str) -> np.ndarray:
@@ -118,6 +163,37 @@ def _null_subtraction_yxz(
     pseudo_baseline = signal_tzyx[: baseline_frame_count - 1].mean(axis=0)
     null_zyx = np.clip(pseudo_peak - pseudo_baseline, 0, None)
     return np.transpose(null_zyx, (1, 2, 0))
+
+
+def _ufast_raw_peak_yxz(
+    signal_tzyx: np.ndarray, baseline_frame_count: int
+) -> np.ndarray:
+    """Raw UFAST peak signal, not baseline-subtracted -- the actual acquired image."""
+    peak_zyx = signal_tzyx[baseline_frame_count:].max(axis=0)
+    return np.transpose(peak_zyx, (1, 2, 0))
+
+
+def _hr_raw_peak_yxz(case_root: Path, provenance: dict) -> np.ndarray:
+    """Raw HR peak signal, resampled onto the UFAST grid, for visual QC only.
+
+    Mirrors preprocessing.complement._load_hr_subtraction's phase loading and
+    resampling, but keeps the raw per-voxel peak instead of peak-minus-baseline --
+    lets the additions be checked against the actual acquired HR image, not just the
+    subtraction that feeds SegVessel.
+    """
+    hr_dir = case_root / "hr_model_inputs"
+    paths = sorted(hr_dir.glob("hr_phase_*_id.npy"))
+    if not paths:
+        raise FileNotFoundError(f"no HR model inputs found under {hr_dir}")
+    peak_yxz = np.max([np.load(p).astype(np.float32) for p in paths], axis=0)
+    raw_zyx = np.transpose(peak_yxz, (2, 0, 1))  # (y,x,z) -> (z,y,x)
+
+    hr_geometry = DicomGeometry.from_dict(provenance["hr_source"]["geometry"])
+    ufast_geometry = DicomGeometry.from_dict(provenance["ufast_output_geometry"])
+    mapped_zyx = resample_to_geometry(
+        raw_zyx, hr_geometry, ufast_geometry, nearest=False
+    )
+    return np.transpose(mapped_zyx, (1, 2, 0))  # (z,y,x) -> (y,x,z)
 
 
 def _run_segvessel(sub_dyn, sub_hr, breast, spacing):
@@ -182,6 +258,53 @@ def _calibrated_thresholds(skeleton, vesselness, enhancement, spacing, merged) -
     }
 
 
+def _motion_injected_control(
+    signal_tzyx: np.ndarray,
+    baseline_frame_count: int,
+    breast: np.ndarray,
+    spacing,
+    thresholds: dict,
+    interior: np.ndarray,
+    shifts_voxels=MOTION_SHIFT_MAGNITUDES_VOXELS,
+    seed: int = 0,
+) -> list[dict]:
+    """Check 4: how much SYNTHETIC motion, alone, does it take to fool the gate?
+
+    Check 1 (the no-contrast control) already contains real motion, but only whatever
+    the patient did between two adjacent baseline frames -- usually small. This isolates
+    motion as the sole variable: one real baseline frame, shifted by a known rigid
+    in-plane amount, subtracted from its own unshifted self with the same clip-at-zero
+    convention the real pipeline uses. A purely synthetic rigid shift cannot be a
+    vessel, so any voxel that passes the real exam's own calibrated gate is a
+    demonstrated false positive at that specific, known motion magnitude.
+    """
+    frame_zyx = signal_tzyx[baseline_frame_count - 1]
+    rng = np.random.default_rng(seed)
+    rows = []
+    for shift in shifts_voxels:
+        angle = rng.uniform(0, 2 * np.pi)
+        dy, dx = shift * np.cos(angle), shift * np.sin(angle)
+        shifted = ndi.shift(frame_zyx, shift=(0.0, dy, dx), order=1, mode="nearest")
+        motion_zyx = np.clip(shifted - frame_zyx, 0, None)
+        motion_yxz = np.transpose(motion_zyx, (1, 2, 0))
+        skeleton, vesselness = _run_segvessel(motion_yxz, motion_yxz, breast, spacing)
+        if thresholds:
+            n_branches, n_pass, n_voxels, _mask = _branches_passing(
+                skeleton, vesselness, motion_yxz * breast, spacing, interior, thresholds
+            )
+        else:
+            n_branches = n_pass = n_voxels = 0
+        rows.append(
+            {
+                "shift_voxels": shift,
+                "n_branches": n_branches,
+                "n_passing_branches": n_pass,
+                "n_passing_voxels": n_voxels,
+            }
+        )
+    return rows
+
+
 def _percent_enhancement_curve(signal_tzyx, mask_yxz, baseline_frame_count):
     """Mean signal over a voxel set, as % change from its own pre-contrast baseline."""
     mask_zyx = np.transpose(mask_yxz, (2, 0, 1))
@@ -219,6 +342,103 @@ def _mip_panel(ax, volume_yxz, overlays, title):
     ax.set_title(title, fontsize=9)
     ax.set_xticks([])
     ax.set_yticks([])
+
+
+def _component_bbox(mask: np.ndarray, shape) -> tuple[int, int, int, int, int, int]:
+    """Bounding box of a mask, padded by the gallery margins and clipped to `shape`."""
+    ys, xs, zs = np.where(mask)
+    y_lo = max(int(ys.min()) - _GALLERY_MARGIN_INPLANE, 0)
+    y_hi = min(int(ys.max()) + _GALLERY_MARGIN_INPLANE + 1, shape[0])
+    x_lo = max(int(xs.min()) - _GALLERY_MARGIN_INPLANE, 0)
+    x_hi = min(int(xs.max()) + _GALLERY_MARGIN_INPLANE + 1, shape[1])
+    z_lo = max(int(zs.min()) - _GALLERY_MARGIN_Z, 0)
+    z_hi = min(int(zs.max()) + _GALLERY_MARGIN_Z + 1, shape[2])
+    return y_lo, y_hi, x_lo, x_hi, z_lo, z_hi
+
+
+def _write_component_gallery(
+    exam_id: str,
+    output_dir: Path,
+    enhancement: np.ndarray,
+    ufast_raw: np.ndarray,
+    hr_raw: np.ndarray,
+    merged: np.ndarray,
+    added: np.ndarray,
+    vesselness: np.ndarray,
+    spacing,
+) -> Path | None:
+    """One row per largest added component: thin-slab MIPs cropped to its own depth.
+
+    Restricted to the component's own z-range (plus a small margin) rather than the
+    whole volume, so this is a much harder test than the whole-breast MIPs in the main
+    figure -- there is little else left in a thin, tightly cropped slab to coincide
+    with by chance, so an addition that visibly rides a bright tubular structure here is
+    real evidence, not a projection artifact.
+    """
+    labeled, n_components = ndi.label(added, structure=np.ones((3, 3, 3)))
+    if n_components == 0:
+        return None
+
+    sizes = ndi.sum(added, labeled, index=np.arange(1, n_components + 1))
+    order = np.argsort(sizes)[::-1]
+    top_labels = (order + 1)[:_MAX_GALLERY_COMPONENTS]
+
+    stats = _per_component_stats(labeled, vesselness, enhancement, spacing)
+
+    n_rows = len(top_labels)
+    fig, axes = plt.subplots(n_rows, 3, figsize=(10.5, 3.0 * n_rows), squeeze=False)
+    modalities = (
+        ("UFAST enhancement", enhancement),
+        ("UFAST raw peak", ufast_raw),
+        ("HR raw peak", hr_raw),
+    )
+
+    for row, label in enumerate(top_labels):
+        comp_mask = labeled == label
+        other_added = added & ~comp_mask
+        y_lo, y_hi, x_lo, x_hi, z_lo, z_hi = _component_bbox(comp_mask, added.shape)
+
+        for col, (name, volume) in enumerate(modalities):
+            ax = axes[row, col]
+            crop = volume[y_lo:y_hi, x_lo:x_hi, z_lo:z_hi]
+            ax.imshow(crop.max(axis=2).T, cmap="gray", origin="lower")
+            for mask, colour, size in (
+                (merged[y_lo:y_hi, x_lo:x_hi, z_lo:z_hi], _MUTED, 3.0),
+                (
+                    other_added[y_lo:y_hi, x_lo:x_hi, z_lo:z_hi],
+                    _OTHER_ADDED_COLOUR,
+                    6.0,
+                ),
+                (comp_mask[y_lo:y_hi, x_lo:x_hi, z_lo:z_hi], _ADDED_COLOUR, 10.0),
+            ):
+                points = np.argwhere(mask.any(axis=2))
+                if len(points):
+                    ax.scatter(
+                        points[:, 0], points[:, 1], s=size, c=colour, linewidths=0
+                    )
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if row == 0:
+                ax.set_title(name, fontsize=9)
+
+        component_stats = stats.get(int(label), {})
+        axes[row, 0].set_ylabel(
+            f"component {row + 1}\n{int(comp_mask.sum())} vox\n"
+            f"vness={component_stats.get('mean_vesselness', 0.0):.2f}  "
+            f"elong={component_stats.get('elongation', 0.0):.1f}",
+            fontsize=7,
+        )
+
+    fig.suptitle(
+        f"Added-vessel crops, thin-slab MIP over each component's own depth — "
+        f"{exam_id[:44]}",
+        fontsize=10,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    out = output_dir / f"{exam_id}_added_component_crops.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out
 
 
 def qc_exam(preprocessing_root: Path, exam_id: str, output_dir: Path) -> dict:
@@ -260,8 +480,11 @@ def qc_exam(preprocessing_root: Path, exam_id: str, output_dir: Path) -> dict:
         skeleton, vesselness, sub_dyn * breast, spacing, merged
     )
 
-    # ---- CHECK 1: negative control -------------------------------------------------
     signal_tzyx = _load_signal_tzyx(preprocessing_root, exam_id)
+    ufast_raw = _ufast_raw_peak_yxz(signal_tzyx, baseline_frame_count)
+    hr_raw = _hr_raw_peak_yxz(case_root, provenance)
+
+    # ---- CHECK 1: negative control -------------------------------------------------
     null_sub = _null_subtraction_yxz(signal_tzyx, baseline_frame_count)
     print("  null-control SegVessel...", flush=True)
     null_skeleton, null_vesselness = _run_segvessel(null_sub, null_sub, breast, spacing)
@@ -314,6 +537,18 @@ def qc_exam(preprocessing_root: Path, exam_id: str, output_dir: Path) -> dict:
     grad_confirmed = gradient[confirmed] / scale if confirmed.any() else np.array([])
     grad_tissue = gradient[tissue] / scale if tissue.any() else np.array([])
 
+    # ---- CHECK 4: synthetic motion-only control -------------------------------------
+    print("  motion-injection sweep...", flush=True)
+    motion_rows = _motion_injected_control(
+        signal_tzyx, baseline_frame_count, breast, spacing, thresholds, interior
+    )
+    if output_dir is not None:
+        motion_csv = output_dir / f"{exam_id}_motion_injection_sweep.csv"
+        with motion_csv.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(motion_rows[0]))
+            writer.writeheader()
+            writer.writerows(motion_rows)
+
     # Persist the masks so the 3-D interactive viewer can be built from this same run
     # rather than paying for another SegVessel pass.
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -328,13 +563,29 @@ def qc_exam(preprocessing_root: Path, exam_id: str, output_dir: Path) -> dict:
         exam_id,
         output_dir,
         sub_dyn * breast,
+        ufast_raw,
+        hr_raw,
         merged,
         added,
         curves,
         baseline_frame_count,
         (grad_added, grad_confirmed, grad_tissue),
         (n_real_voxels, n_null_voxels),
+        motion_rows,
     )
+    gallery_path = _write_component_gallery(
+        exam_id,
+        output_dir,
+        sub_dyn * breast,
+        ufast_raw,
+        hr_raw,
+        merged,
+        added,
+        vesselness,
+        spacing,
+    )
+    if gallery_path is not None:
+        print(f"  wrote {gallery_path}", flush=True)
 
     peak_added = (
         float(np.median(curves["added"][baseline_frame_count:].max()))
@@ -352,6 +603,14 @@ def qc_exam(preprocessing_root: Path, exam_id: str, output_dir: Path) -> dict:
         else float("nan")
     )
 
+    motion_first_shift_with_pass = next(
+        (row["shift_voxels"] for row in motion_rows if row["n_passing_voxels"] > 0),
+        float("nan"),
+    )
+    motion_max_voxels_passing = max(
+        (row["n_passing_voxels"] for row in motion_rows), default=0
+    )
+
     return {
         "exam_id": exam_id,
         "merged_voxels": int(merged.sum()),
@@ -366,6 +625,8 @@ def qc_exam(preprocessing_root: Path, exam_id: str, output_dir: Path) -> dict:
         "false_positive_ratio": (
             round(n_null_voxels / n_real_voxels, 4) if n_real_voxels else float("nan")
         ),
+        "motion_first_shift_voxels_with_any_pass": motion_first_shift_with_pass,
+        "motion_max_voxels_passing_any_shift": motion_max_voxels_passing,
         "peak_pct_enhancement_added": round(peak_added, 1),
         "peak_pct_enhancement_confirmed": round(peak_conf, 1),
         "peak_pct_enhancement_tissue": round(peak_tissue, 1),
@@ -385,16 +646,19 @@ def _write_figures(
     exam_id,
     output_dir,
     enhancement,
+    ufast_raw,
+    hr_raw,
     merged,
     added,
     curves,
     baseline_frame_count,
     gradients,
     null_counts,
+    motion_rows,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
-    fig = plt.figure(figsize=(14, 8.5))
-    grid = fig.add_gridspec(2, 3, hspace=0.28, wspace=0.2)
+    fig = plt.figure(figsize=(14, 12.5))
+    grid = fig.add_gridspec(3, 3, hspace=0.38, wspace=0.2)
 
     ax = fig.add_subplot(grid[0, 0])
     _mip_panel(
@@ -468,7 +732,50 @@ def _write_figures(
     ax.set_title("Check 1: negative control", fontsize=9)
     ax.spines[["top", "right"]].set_visible(False)
 
-    ax = fig.add_subplot(grid[1, 1:])
+    ax = fig.add_subplot(grid[1, 1])
+    shift_labels = [str(row["shift_voxels"]) for row in motion_rows]
+    shift_voxels_passing = [row["n_passing_voxels"] for row in motion_rows]
+    ax.bar(shift_labels, shift_voxels_passing, color=_NEUTRAL)
+    for i, value in enumerate(shift_voxels_passing):
+        ax.annotate(str(value), xy=(i, value), ha="center", va="bottom", fontsize=8)
+    ax.axhline(real_voxels, color=_ADDED_COLOUR, linestyle="--", linewidth=1.2)
+    ax.annotate(
+        f"real added = {real_voxels}",
+        xy=(0, real_voxels),
+        xytext=(0, 3),
+        textcoords="offset points",
+        fontsize=7,
+        color=_ADDED_COLOUR,
+        va="bottom",
+    )
+    ax.set_xlabel("injected rigid shift (voxels)")
+    ax.set_ylabel("voxels passing the real gate")
+    ax.set_title("Check 4: synthetic motion-only control", fontsize=9)
+    ax.spines[["top", "right"]].set_visible(False)
+
+    ax = fig.add_subplot(grid[1, 2])
+    _mip_panel(
+        ax,
+        ufast_raw,
+        [
+            (merged, _MUTED, "merge (known)", 0.35),
+            (added, _ADDED_COLOUR, "complement added", 1.6),
+        ],
+        "Raw UFAST peak MIP with additions",
+    )
+
+    ax = fig.add_subplot(grid[2, 0])
+    _mip_panel(
+        ax,
+        hr_raw,
+        [
+            (merged, _MUTED, "merge (known)", 0.35),
+            (added, _ADDED_COLOUR, "complement added", 1.6),
+        ],
+        "Raw HR peak MIP with additions",
+    )
+
+    ax = fig.add_subplot(grid[2, 1:])
     _mip_panel(
         ax,
         enhancement,
@@ -476,7 +783,18 @@ def _write_figures(
         "Additions alone, on the enhancement MIP",
     )
 
-    fig.suptitle(f"Complement QC — {exam_id[:52]}", fontsize=11)
+    fig.text(
+        0.5,
+        0.965,
+        "Whole-breast MIP panels are context only: projecting away the depth axis can "
+        "make an addition look coincident with a bright structure at a different "
+        "depth -- see the per-component crop gallery for the check that controls for "
+        "this.",
+        ha="center",
+        fontsize=7.5,
+        style="italic",
+    )
+    fig.suptitle(f"Complement QC — {exam_id[:52]}", fontsize=11, y=0.995)
     out = output_dir / f"{exam_id}_complement_qc.png"
     fig.savefig(out, dpi=140, bbox_inches="tight")
     plt.close(fig)
@@ -510,7 +828,8 @@ def main() -> None:
             print(
                 f"  {row['exam_id'][:36]}  added={row['added_voxels']:5d}  "
                 f"null-passing={row['null_voxels_passing']:5d}  "
-                f"FP ratio={row['false_positive_ratio']}"
+                f"FP ratio={row['false_positive_ratio']}  "
+                f"motion-first-pass-at={row['motion_first_shift_voxels_with_any_pass']}vox"
             )
 
 
