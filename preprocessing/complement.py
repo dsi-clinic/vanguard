@@ -562,7 +562,7 @@ def complement_exam(
         )
 
     _vmask, morph = SegVessel(
-        sub_dyn, sub_hr, spacing_yxz, verbose=False, roi=normalisation_roi
+        sub_dyn, sub_hr, spacing_yxz, verbose=False, normalisation_roi=normalisation_roi
     )
     matlab_skeleton_yxz = morph["skel_label"] > 0
     vesselness_yxz = morph["vness_dyn"]
