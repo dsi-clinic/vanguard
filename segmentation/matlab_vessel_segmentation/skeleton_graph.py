@@ -58,12 +58,20 @@ def _branch_decompose(skel: np.ndarray):
     return lab, n, junction, endpoint, deg
 
 
-def _prune_short_leaves(skel: np.ndarray, thr: int) -> np.ndarray:
+def _prune_short_leaves(
+    skel: np.ndarray, thr: int, keep_isolated: bool = False
+) -> np.ndarray:
     """Iteratively delete leaf branches shorter than `thr` voxels.
 
     Mirrors Skel2Graph3D's rule: an endpoint-terminated (leaf) link is kept only if its
     length exceeds THR; node-to-node links are always kept. We repeat until stable,
     which reproduces Vessel_morph's "iterate until network length changes < 0.5%" loop.
+
+    `keep_isolated` spares chains that touch no junction at all, i.e. whole free-standing
+    components rather than spurs hanging off a tree. Those are the broken pieces of a
+    vessel that the gap-bridging step exists to reunite, so vessel_morph keeps them alive
+    until after bridging -- see vessel_morph for the measurement behind this. It has no
+    effect on genuine spurs, which do touch a junction.
     """
     if thr <= 0:
         return skel.astype(bool)
@@ -84,16 +92,15 @@ def _prune_short_leaves(skel: np.ndarray, thr: int) -> np.ndarray:
             length = int(comp.sum())
             if length >= thr:
                 continue
-            has_endpoint = bool((comp & endpoint).any())
-            touches_junction = bool((comp & junc_dil).any())
-            # leaf spur: has a free end AND (dangles from <=1 junction OR is isolated)
-            if has_endpoint and (length < thr):
-                # keep genuine node-to-node bridges: those touch a junction on BOTH
-                # ends and have no free endpoint -> already excluded by has_endpoint.
+            if not bool((comp & junc_dil).any()):
+                # free-standing component, not a spur off a larger tree
+                if keep_isolated:
+                    continue
                 to_remove |= comp
                 changed = True
-            elif not touches_junction and length < thr:
-                # isolated tiny fragment
+            elif bool((comp & endpoint).any()):
+                # leaf spur: dangles off a junction and terminates in a free end.
+                # Genuine node-to-node bridges have no free endpoint and are kept.
                 to_remove |= comp
                 changed = True
         if not changed:
@@ -109,13 +116,23 @@ def _endpoints(skel: np.ndarray) -> np.ndarray:
     return skel & (deg == 1)
 
 
-def conn_nearest_points(skel: np.ndarray, maxd_vox: float, ratio) -> np.ndarray:
+def conn_nearest_points(
+    skel: np.ndarray, maxd_vox: float, ratio, proportionate_bridges: bool = False
+) -> np.ndarray:
     """Port of Conn_nearest_points_v2.m — bridge nearby branch pieces.
 
     Repeatedly: take the shortest connected component, find its endpoints, and connect
     the endpoint whose nearest voxel on ANY other component is closest (measured in
     anisotropic voxel units via `ratio`) with a straight line, if that distance <= MaxD.
     Stop when one component remains or the nearest gap exceeds MaxD.
+
+    `proportionate_bridges` adds a second condition: a bridge is rejected unless it is no
+    longer than the smaller of the two pieces it joins. MaxD is a fixed 15 mm and a field
+    of scattered noise specks sits well inside that, so unconditional bridging welds noise
+    into long structures that then read as tubular. The relative rule separates the two
+    cases without a new tuned threshold: a real vessel broken by thresholding leaves gaps
+    short compared to the surviving pieces, while two specks each smaller than the gap
+    between them are not evidence of anything.
     """
     skel = skel.astype(bool)
     ratio = np.asarray(ratio, dtype=np.float64)
@@ -147,6 +164,10 @@ def conn_nearest_points(skel: np.ndarray, maxd_vox: float, ratio) -> np.ndarray:
             d = float(dists[j])
             if d < min_d:
                 min_d = d
+            if proportionate_bridges:
+                target_label = cc_lab[tuple(other_pts[idxs[j]].astype(int))]
+                if d > min(sizes[lbl], sizes[target_label]):
+                    continue
             if d <= maxd_vox:
                 p1 = eps[j].astype(int)
                 p2 = other_pts[idxs[j]].astype(int)
@@ -181,11 +202,17 @@ def vessel_morph(skel: np.ndarray, spacing) -> dict:
     minlen = int(round(10.0 / scale))  # 10 mm in voxels
     maxd = int(round(15.0 / scale))  # 15 mm in voxels
 
-    # Step 1: initial spur prune (Skel2Graph3D(skel,10)) + stabilise (THR=0 loop).
-    s2 = _prune_short_leaves(skel, 10)
-    # Step 2: bridge gaps up to MaxD (anisotropic).
-    s2 = conn_nearest_points(s2, maxd, ratio)
-    # Step 3: final leaf prune at the mm-based minimum length.
+    # Step 1: spur prune (Skel2Graph3D(skel,10)), sparing whole free-standing pieces.
+    s2 = _prune_short_leaves(skel, 10, keep_isolated=True)
+    # Step 2: bridge gaps up to MaxD (anisotropic). Bridges must also be short relative
+    # to the pieces they join, because step 1 no longer removes free-standing specks
+    # before this runs -- without that condition a field of noise specks gets welded
+    # into long structures (measured: 177 speck voxels became 493).
+    s2 = conn_nearest_points(s2, maxd, ratio, proportionate_bridges=True)
+    # Step 3: prune again, now with nothing spared -- anything still short and isolated
+    # after bridging had no vessel to rejoin and is treated as noise.
+    s2 = _prune_short_leaves(s2, 10)
+    # Step 4: final leaf prune at the mm-based minimum length.
     s2 = _prune_short_leaves(s2, minlen)
 
     # Build a per-branch label image (chains between junctions get distinct labels;

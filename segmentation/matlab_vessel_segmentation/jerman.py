@@ -171,7 +171,9 @@ def _volume_eigenvalues(V, sigma, spacing, brightondark):
     return Lambda1, Lambda2, Lambda3
 
 
-def vesselness3d(I, sigmas, spacing, tau=1.0, brightondark=True, verbose=False):
+def vesselness3d(
+    I, sigmas, spacing, tau=1.0, brightondark=True, verbose=False, roi=None
+):
     """Jerman multiscale vesselness. Faithful port of vesselness3D.m.
 
     Parameters
@@ -181,13 +183,47 @@ def vesselness3d(I, sigmas, spacing, tau=1.0, brightondark=True, verbose=False):
     spacing : per-axis voxel-size ratio (aspect), e.g. [1,1,slice/inplane].
     tau : response-uniformity control in [0.5,1]; MATLAB call uses 1.
     brightondark : vessels bright on dark background (True in the MATLAB call).
+    roi : optional boolean volume restricting where the two global maxima below are
+        measured. Responses are still computed everywhere; only the normalising
+        statistics change. See the ROI note below for why this matters.
 
     Returns the max response over scales, normalised to its own max, with values
     below 1e-2 zeroed (exactly as MATLAB).
+
+    THE ROI ARGUMENT (why a filter needs to be told where to look)
+    --------------------------------------------------------------
+    Two lines below take a maximum over the entire volume: the Lambda_rho floor and
+    the final rescale. With tau=1 the first one sets Lambda_rho to the *same constant*
+    at every voxel with positive Lambda3, so the whole output is a function of
+    Lambda2 / max(Lambda3) -- every vessel in the image is scored against one voxel.
+    The response formula is homogeneous of degree 0 in image intensity, so brightness
+    alone cannot cause trouble; only the relative size of that one Lambda3 can.
+
+    That makes the filter acutely sensitive to a single sharp non-vessel structure.
+    Callers that hand this function a volume multiplied by a hard binary mask create
+    exactly such a structure: the mask boundary is a cliff, a cliff has a very large
+    second derivative, and it wins the max. Measured on four UChicago exams (see the
+    2026-07-27 holistic-review LAB_NOTEBOOK entry), the Lambda3 argmax landed 1.0-2.2
+    voxels inside the breast mask at every scale of every exam, and 32-66% of the
+    voxels on those exams' independently-derived HR-TC4D skeletons scored exactly
+    zero vesselness as a result.
+
+    Passing an eroded mask as `roi` keeps the literal max rule but denies the boundary
+    the chance to set it. Note that this is deliberately not a percentile: percentile
+    floors also raise recall, but on every exam tested they did so at monotonically
+    worse marginal precision, i.e. they are a global threshold loosening rather than
+    the removal of a specific artifact.
     """
     I = np.asarray(I, dtype=np.float64)
     I[~np.isfinite(I)] = 0
     spacing = np.asarray(spacing, dtype=np.float64)
+
+    if roi is not None:
+        roi = np.asarray(roi, dtype=bool)
+        if roi.shape != I.shape:
+            raise ValueError(f"roi shape {roi.shape} != volume shape {I.shape}")
+        if not roi.any():
+            raise ValueError("roi is empty; cannot measure normalising statistics")
 
     vesselness = None
     for j, sigma in enumerate(sigmas):
@@ -201,7 +237,7 @@ def vesselness3d(I, sigmas, spacing, tau=1.0, brightondark=True, verbose=False):
         # Regularise Lambda3 (the "proposed filter" step). Lambda_rho clamps small
         # positive Lambda3 up to tau*max(Lambda3), which is what makes the Jerman
         # response uniform (this is the term Frangi lacks).
-        max_l3 = Lambda3.max()
+        max_l3 = Lambda3.max() if roi is None else Lambda3[roi].max()
         Lambda_rho = Lambda3.copy()
         Lambda_rho[(Lambda3 > 0) & (Lambda3 <= tau * max_l3)] = tau * max_l3
         Lambda_rho[Lambda3 <= 0] = 0
@@ -221,8 +257,10 @@ def vesselness3d(I, sigmas, spacing, tau=1.0, brightondark=True, verbose=False):
 
         vesselness = response if j == 0 else np.maximum(vesselness, response)
 
-    m = vesselness.max()
+    m = vesselness.max() if roi is None else vesselness[roi].max()
     if m > 0:
-        vesselness = vesselness / m
+        # Voxels outside the roi can exceed the roi's own maximum, so clip to keep
+        # the documented [0,1] output range that the 1e-2 cutoff below assumes.
+        vesselness = np.clip(vesselness / m, 0.0, 1.0)
     vesselness[vesselness < 1e-2] = 0.0
     return vesselness

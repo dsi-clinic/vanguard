@@ -44,12 +44,17 @@ def _imgaussfilt3(x, sigma):
     )
 
 
-def seg_vessel(sub, aspect, sigmas=(0.2, 0.4, 0.6, 0.8, 1.0), verbose=False):
+def seg_vessel(
+    sub, aspect, sigmas=(0.2, 0.4, 0.6, 0.8, 1.0), verbose=False, normalisation_roi=None
+):
     """Port of seg_vessel.m: contrast-normalise then run the Jerman vesselness.
 
     Normalisation (exact port): shift so min=0; divide by the 95th percentile of the
     voxels brighter than half the (shifted) max; clip to 1. This stretches vessel-level
     contrast into [0,1] before the Hessian filter sees it.
+
+    `normalisation_roi` is passed straight through to the Jerman filter, which uses it
+    to decide where its global normalising maxima may be measured -- see vesselness3d.
     """
     I = np.asarray(sub, dtype=np.float64)
     I = I - I.min()
@@ -63,7 +68,15 @@ def seg_vessel(sub, aspect, sigmas=(0.2, 0.4, 0.6, 0.8, 1.0), verbose=False):
         denom = 1.0
     I = I / denom
     I[I > 1] = 1.0
-    return vesselness3d(I, sigmas, aspect, tau=1.0, brightondark=True, verbose=verbose)
+    return vesselness3d(
+        I,
+        sigmas,
+        aspect,
+        tau=1.0,
+        brightondark=True,
+        verbose=verbose,
+        roi=normalisation_roi,
+    )
 
 
 def segment_vessels_3d(
@@ -162,6 +175,7 @@ def SegVessel(
     dyn_edge_thresh=0.4,
     hr_edge_thresh=0.5,
     keep_thin_large=False,
+    normalisation_roi=None,
 ):
     """Port of SegVessel.m (HR + ultrafast). Returns (vmask, morph_result).
 
@@ -175,6 +189,10 @@ def SegVessel(
         uses 0.15 — main sparsity lever vs ultrafast-only).
     hr_edge_thresh : edge3 high thresh on HR vesselness (MATLAB default 0.5).
     keep_thin_large : OR large unfilled thin skeleton CCs back (density without fill-globs).
+    normalisation_roi : optional boolean volume marking where the Jerman filter's global
+        normalising maxima may be measured, for both branches. Callers that pass a masked
+        volume should pass the mask eroded away from its own boundary -- see vesselness3d.
+        Distinct from the `roi` local below, which is MATLAB's own (disabled) restriction.
     """
     spacing = np.asarray(spacing, dtype=np.float64)
     SIZE = sub_dyn.shape
@@ -191,7 +209,9 @@ def SegVessel(
         print("SegVessel: HR vesselness")
     Subfilt = sub_hr - _imgaussfilt3(sub_hr, 5)  # unsharp / high-pass
     Subfilt[Subfilt < 0] = 0
-    vness_hr = seg_vessel(Subfilt, aspectHR, verbose=verbose)
+    vness_hr = seg_vessel(
+        Subfilt, aspectHR, verbose=verbose, normalisation_roi=normalisation_roi
+    )
     BW = edge3_approxcanny(vness_hr, hr_edge_thresh, 1)
     BW = imdilate_disk2_perslice(BW, 2)  # 2-D disk per slice
     BW1 = imresize3_nearest(BW, SIZE)  # HR grid -> DYN grid
@@ -202,7 +222,9 @@ def SegVessel(
         print(f"SegVessel: ultrafast vesselness (edge3 thresh={dyn_edge_thresh})")
     Subfilt = sub_dyn - _imgaussfilt3(sub_dyn, 5)
     Subfilt[Subfilt < 0] = 0
-    vness_dyn = seg_vessel(Subfilt, aspectDYN, verbose=verbose)
+    vness_dyn = seg_vessel(
+        Subfilt, aspectDYN, verbose=verbose, normalisation_roi=normalisation_roi
+    )
     BW = edge3_approxcanny(vness_dyn, dyn_edge_thresh, 1)
     BW = imdilate_disk2_perslice(BW, 2)
     BW1_2 = skeletonize(BW.astype(bool))
