@@ -406,3 +406,37 @@ failure mode it protects against), and flagged at the point of use.
   `gnn/build_dataset.py --kinetic-baseline-floor-frac` and the
   `KINETIC_BASELINE_FLOOR_FRAC` env in `gnn/slurm/submit_gnn_build.slurm`. The
   UChicago rich-feature rebuild uses `0.05` (caps at ~20x / 2000% enhancement).
+
+## Undefined subgroup AUC and degenerate bootstrap draws (`analysis/gnn_subtype_breakdown.py`)
+
+Added 2026-07-29 for the HER2/subtype breakdown of the cleaned pretreatment
+cohort (`experiments/uchicago_pretreat83/`). Two places where the script does
+not simply raise, both reported explicitly in its output rather than silently
+absorbed.
+
+- **What is handled (1): a subgroup containing a single outcome class.** AUC is
+  mathematically undefined there. The subgroup is emitted with `auc = NaN` and
+  `status = undefined_single_class`, carrying its `n` / `n_pcr` / `n_non_pcr`.
+- **Why.** This is a real, documented property of the cohort, not a data
+  loading bug: all 8 subtype-unavailable patients in
+  `dce2d_internal_ultrafast_pretreatment_cohort_v1` are non-pCR. Raising would
+  abort the whole breakdown over a subgroup whose emptiness is itself a finding
+  worth reporting; dropping the row would hide it. Note the implication —
+  subtype missingness is perfectly correlated with outcome, so subtype is not
+  missing at random in this cohort.
+- **Failure mode it protects against.** A reader assuming every listed subgroup
+  carries a comparable AUC, and an all-non-pCR subgroup being quietly omitted
+  from the table so nobody notices the confounded missingness.
+
+- **What is handled (2): bootstrap resamples that come back single-class.** Such
+  draws have no AUC; they are excluded from the percentile CI and counted in the
+  `n_boot_degenerate` column.
+- **Why.** Unavoidable when resampling subgroups of n=18-43. Silently excluding
+  them would make a CI computed from, say, 1200 usable draws look identical to
+  one computed from 2000.
+- **Failure mode it protects against.** An over-confident subgroup CI whose
+  effective draw count is invisible to the reader.
+
+Neither handler applies to the pooled headline metric in
+`analysis/gnn_tabular_gate.py`, which is computed over the full cohort where
+both classes are always present.
