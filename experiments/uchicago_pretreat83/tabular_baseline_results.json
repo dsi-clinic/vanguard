@@ -1,0 +1,246 @@
+{
+  "per_fold": [
+    {
+      "model": "logistic_regression",
+      "seed": 42,
+      "fold": 0,
+      "auc": 0.14285714285714288,
+      "n_test": 18
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 42,
+      "fold": 1,
+      "auc": 0.6296296296296297,
+      "n_test": 15
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 42,
+      "fold": 2,
+      "auc": 0.5125000000000001,
+      "n_test": 18
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 42,
+      "fold": 3,
+      "auc": 0.45,
+      "n_test": 16
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 42,
+      "fold": 4,
+      "auc": 0.33333333333333337,
+      "n_test": 15
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 142,
+      "fold": 0,
+      "auc": 0.14285714285714288,
+      "n_test": 18
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 142,
+      "fold": 1,
+      "auc": 0.6296296296296297,
+      "n_test": 15
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 142,
+      "fold": 2,
+      "auc": 0.5125000000000001,
+      "n_test": 18
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 142,
+      "fold": 3,
+      "auc": 0.45,
+      "n_test": 16
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 142,
+      "fold": 4,
+      "auc": 0.33333333333333337,
+      "n_test": 15
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 242,
+      "fold": 0,
+      "auc": 0.14285714285714288,
+      "n_test": 18
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 242,
+      "fold": 1,
+      "auc": 0.6296296296296297,
+      "n_test": 15
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 242,
+      "fold": 2,
+      "auc": 0.5125000000000001,
+      "n_test": 18
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 242,
+      "fold": 3,
+      "auc": 0.45,
+      "n_test": 16
+    },
+    {
+      "model": "logistic_regression",
+      "seed": 242,
+      "fold": 4,
+      "auc": 0.33333333333333337,
+      "n_test": 15
+    },
+    {
+      "model": "xgboost",
+      "seed": 42,
+      "fold": 0,
+      "auc": 0.4545454545454545,
+      "n_test": 18
+    },
+    {
+      "model": "xgboost",
+      "seed": 42,
+      "fold": 1,
+      "auc": 0.6296296296296297,
+      "n_test": 15
+    },
+    {
+      "model": "xgboost",
+      "seed": 42,
+      "fold": 2,
+      "auc": 0.5625,
+      "n_test": 18
+    },
+    {
+      "model": "xgboost",
+      "seed": 42,
+      "fold": 3,
+      "auc": 0.4666666666666666,
+      "n_test": 16
+    },
+    {
+      "model": "xgboost",
+      "seed": 42,
+      "fold": 4,
+      "auc": 0.4444444444444445,
+      "n_test": 15
+    },
+    {
+      "model": "xgboost",
+      "seed": 142,
+      "fold": 0,
+      "auc": 0.4545454545454545,
+      "n_test": 18
+    },
+    {
+      "model": "xgboost",
+      "seed": 142,
+      "fold": 1,
+      "auc": 0.6296296296296297,
+      "n_test": 15
+    },
+    {
+      "model": "xgboost",
+      "seed": 142,
+      "fold": 2,
+      "auc": 0.5625,
+      "n_test": 18
+    },
+    {
+      "model": "xgboost",
+      "seed": 142,
+      "fold": 3,
+      "auc": 0.4666666666666666,
+      "n_test": 16
+    },
+    {
+      "model": "xgboost",
+      "seed": 142,
+      "fold": 4,
+      "auc": 0.4444444444444445,
+      "n_test": 15
+    },
+    {
+      "model": "xgboost",
+      "seed": 242,
+      "fold": 0,
+      "auc": 0.4545454545454545,
+      "n_test": 18
+    },
+    {
+      "model": "xgboost",
+      "seed": 242,
+      "fold": 1,
+      "auc": 0.6296296296296297,
+      "n_test": 15
+    },
+    {
+      "model": "xgboost",
+      "seed": 242,
+      "fold": 2,
+      "auc": 0.5625,
+      "n_test": 18
+    },
+    {
+      "model": "xgboost",
+      "seed": 242,
+      "fold": 3,
+      "auc": 0.4666666666666666,
+      "n_test": 16
+    },
+    {
+      "model": "xgboost",
+      "seed": 242,
+      "fold": 4,
+      "auc": 0.4444444444444445,
+      "n_test": 15
+    }
+  ],
+  "pooled_oof": [
+    {
+      "model": "logistic_regression",
+      "pooled_oof_auc_seed_mean": 0.4291898577612863,
+      "pooled_oof_auc_ci95": [
+        0.3035936826811136,
+        0.5566207792049822
+      ],
+      "pooled_oof_auc_per_seed": [
+        0.4291898577612863,
+        0.4291898577612863,
+        0.4291898577612863
+      ],
+      "n_cases": 82,
+      "n_features": 38
+    },
+    {
+      "model": "xgboost",
+      "pooled_oof_auc_seed_mean": 0.5114409400123685,
+      "pooled_oof_auc_ci95": [
+        0.37749432374185093,
+        0.6326579907325249
+      ],
+      "pooled_oof_auc_per_seed": [
+        0.5114409400123685,
+        0.5114409400123685,
+        0.5114409400123685
+      ],
+      "n_cases": 82,
+      "n_features": 38
+    }
+  ]
+}

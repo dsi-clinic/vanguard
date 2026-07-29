@@ -1,0 +1,2 @@
+best_gnn,best_tabular,delta_auc,ci_lo,ci_hi,frac_positive,gate_passed
+gnn_baseline,tabular_7means_logreg,-0.02844774273345685,-0.10834375,0.051015574170461896,0.246,False
