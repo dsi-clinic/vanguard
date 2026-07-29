@@ -231,7 +231,10 @@ qc/
 
 
 # Presentations
-presentations/
+# presentations/ is ignored on every other branch. It is deliberately tracked
+# on poster/symposium-2026-08 so the symposium poster has version history.
+# That branch is never merged to main -- do not carry this change anywhere else.
+# presentations/
 
 # Design Docs
 docs/design/
