@@ -111,6 +111,12 @@ def load_dataset_from_config(
         cache_dir=dp.gnn_cache_dir,
         node_mode=str(mp.gnn_node_mode),
         node_features=node_features,
+        # Honor a configured case whitelist, exactly as gnn/train.py does.
+        # Without this the tabular bar would silently summarize a different case
+        # set than the GNN it is the bar for, whenever a config restricts the
+        # cohort -- and against a whitelisted cache it fails the manifest check
+        # outright, since the cache records cases and this request would not.
+        cases=list(dp.gnn_cases) if dp.gnn_cases else None,
         # Must match the cache manifest's floor: a floored cache (UChicago 0.05)
         # refuses an unfloored (0.0) request and vice versa, so this cannot be
         # left at the default when reading a floored cache.
