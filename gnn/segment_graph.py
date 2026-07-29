@@ -34,7 +34,7 @@ from collections import defaultdict
 import networkx as nx
 import numpy as np
 
-from gnn.kinetics import node_kinetic_features
+from gnn.kinetics import DENOMINATOR_BASELINE, node_kinetic_features
 from graph_extraction.skeleton_to_graph_primitives import (
     Point3D,
     compute_segment_metrics,
@@ -116,6 +116,7 @@ def _segment_kinetic_summary(
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
     baseline_floor_frac: float = 0.0,
+    denominator: str = DENOMINATOR_BASELINE,
 ) -> dict[str, float]:
     """Mean/std of the per-voxel kinetic scalars along one segment's voxels.
 
@@ -140,6 +141,7 @@ def _segment_kinetic_summary(
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
             baseline_floor_frac=baseline_floor_frac,
+            denominator=denominator,
         )
         samples["peak_time"].append(
             float(kinetic["peak_time_seconds"]) / duration_seconds
@@ -175,6 +177,7 @@ def segment_summary_features(
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
     baseline_floor_frac: float = 0.0,
+    denominator: str = DENOMINATOR_BASELINE,
 ) -> dict[str, float]:
     """All segment-level features for one segment polyline, as a flat dict.
 
@@ -202,6 +205,7 @@ def segment_summary_features(
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
             baseline_floor_frac=baseline_floor_frac,
+            denominator=denominator,
         )
     )
     attrs["seg_num_voxels"] = float(len(path))
@@ -221,6 +225,7 @@ def build_segment_line_graph(
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
     baseline_floor_frac: float = 0.0,
+    denominator: str = DENOMINATOR_BASELINE,
 ) -> nx.Graph:
     """Build the segment line graph (Option B) from a voxel skeleton graph.
 
@@ -264,6 +269,7 @@ def build_segment_line_graph(
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
             baseline_floor_frac=baseline_floor_frac,
+            denominator=denominator,
         )
         midpoint = np.mean(np.asarray(path, dtype=float), axis=0)
         line.add_node(seg_id, pos=midpoint, **attrs)

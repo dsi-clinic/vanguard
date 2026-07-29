@@ -54,6 +54,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--id-column", type=str, default="case_id")
     parser.add_argument("--label-column", type=str, default="pcr")
     parser.add_argument(
+        "--kinetic-denominator",
+        type=str,
+        default="baseline",
+        choices=["baseline", "peak"],
+        help="What relative enhancement is expressed relative to. 'baseline' "
+        "(default) divides by S0 -- fold-change over baseline, unbounded above, "
+        "which is what --kinetic-baseline-floor-frac exists to cap. 'peak' "
+        "divides by max_t|S(t)| instead: one quantity rather than a max of two, "
+        "bounded in [-1, 1] by construction, and incompatible with a nonzero "
+        "floor. See gnn/kinetics.py.",
+    )
+    parser.add_argument(
         "--kinetic-baseline-floor-frac",
         type=float,
         default=0.0,
@@ -276,6 +288,7 @@ def main() -> None:
         label_column=args.label_column,
         max_missing_label_frac=args.max_missing_label_frac,
         kinetic_baseline_floor_frac=args.kinetic_baseline_floor_frac,
+        kinetic_denominator=args.kinetic_denominator,
         profile=not args.no_profile,
         num_workers=args.num_workers,
         allow_manifest_mismatch=args.allow_manifest_mismatch,

@@ -168,6 +168,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # dataset load requests the same value and the cache-manifest check
         # matches (0.0 = historical/unfloored; e.g. 0.05 for a floored cache).
         "gnn_kinetic_baseline_floor_frac": 0.0,
+        # What relative enhancement is divided by, also a build-time property of
+        # the cache declared here so the train-time load requests the same value:
+        # "baseline" (S0, the historical default) or "peak" (max_t|S(t)|).
+        "gnn_kinetic_denominator": "baseline",
         # Whole-graph readout for GCNClassifier (voxel/segment): "mean"
         # (default, the original single global_mean_pool -- fully backward
         # compatible), "mean_max", or "mean_max_sum". Concatenating max/sum

@@ -55,6 +55,7 @@ from gnn.junction_graph import (
     JUNCTION_NODE_FEATURE_ATTR,
     build_junction_graph,
 )
+from gnn.kinetics import DENOMINATOR_BASELINE
 from gnn.kinetics import (
     node_kinetic_features as _node_kinetic_features,
 )
@@ -349,6 +350,7 @@ def _attach_node_features(
     node_features: tuple[str, ...],
     *,
     baseline_floor_frac: float = 0.0,
+    denominator: str = DENOMINATOR_BASELINE,
 ) -> None:
     """Set ``radius`` and the DCE-derived kinetic features on every node.
 
@@ -382,6 +384,7 @@ def _attach_node_features(
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
             baseline_floor_frac=baseline_floor_frac,
+            denominator=denominator,
         )
         tte_idx = kinetic["tte_idx"]
 
@@ -532,6 +535,7 @@ def _build_case(
     edge_features: tuple[str, ...] = (),
     attach_node_series: bool = False,
     baseline_floor_frac: float = 0.0,
+    denominator: str = DENOMINATOR_BASELINE,
 ) -> tuple[Data, dict[str, list[float]]]:
     """Build one labeled :class:`Data` graph for ``case_id`` in ``node_mode``.
 
@@ -627,6 +631,7 @@ def _build_case(
                 baseline_frame_count=baseline_frame_count,
                 relative_enhancement=relative_enhancement,
                 baseline_floor_frac=baseline_floor_frac,
+                denominator=denominator,
             )
         num_connected_components = int(data.num_connected_components)
     else:
@@ -640,6 +645,7 @@ def _build_case(
                     baseline_frame_count=baseline_frame_count,
                     relative_enhancement=relative_enhancement,
                     baseline_floor_frac=baseline_floor_frac,
+                    denominator=denominator,
                 )
         else:
             with _stage_timer(stage_samples, "peak_time"):
@@ -653,6 +659,7 @@ def _build_case(
                     label,
                     node_features,
                     baseline_floor_frac=baseline_floor_frac,
+                    denominator=denominator,
                 )
             graph = voxel_graph
 
@@ -881,6 +888,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         label_column: str = "pcr",
         max_missing_label_frac: float = 0.1,
         kinetic_baseline_floor_frac: float = 0.0,
+        kinetic_denominator: str = DENOMINATOR_BASELINE,
         profile: bool = False,
         num_workers: int = 1,
         allow_manifest_mismatch: bool = False,
@@ -1016,6 +1024,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         if kinetic_baseline_floor_frac < 0.0:
             raise ValueError("kinetic_baseline_floor_frac must be >= 0")
         self._kinetic_baseline_floor_frac = float(kinetic_baseline_floor_frac)
+        self._kinetic_denominator = str(kinetic_denominator)
         self._profile = profile
         self._num_workers = num_workers
         self._allow_manifest_mismatch = allow_manifest_mismatch
@@ -1167,6 +1176,11 @@ class VanguardCenterlineDataset(InMemoryDataset):
         # silently serves an unfloored request or vice versa.
         if self._kinetic_baseline_floor_frac > 0.0:
             settings["kinetic_baseline_floor_frac"] = self._kinetic_baseline_floor_frac
+        # Same record-only-when-non-default rule as the floor: caches built
+        # before the peak denominator existed carry no such key and must still
+        # validate against a "baseline" request.
+        if self._kinetic_denominator != DENOMINATOR_BASELINE:
+            settings["kinetic_denominator"] = self._kinetic_denominator
         # Only junction mode has edge features. Recording the key only when it's
         # non-empty keeps voxel/segment manifests (and the caches already built
         # under them) schema-compatible -- a pre-edge_features cache has no such
@@ -1255,6 +1269,16 @@ class VanguardCenterlineDataset(InMemoryDataset):
             mismatched[floor_key] = {
                 "cached": cached_floor,
                 "requested": requested_floor,
+            }
+        # Same absent-means-default comparison for the enhancement denominator,
+        # so a peak-denominator cache can never serve a baseline request.
+        denom_key = "kinetic_denominator"
+        cached_denom = manifest.get(denom_key) or DENOMINATOR_BASELINE
+        requested_denom = requested.get(denom_key) or DENOMINATOR_BASELINE
+        if cached_denom != requested_denom:
+            mismatched[denom_key] = {
+                "cached": cached_denom,
+                "requested": requested_denom,
             }
         if mismatched and not self._allow_manifest_mismatch:
             raise RuntimeError(
@@ -1696,6 +1720,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     node_mode=self._node_mode,
                     edge_features=self._edge_features,
                     baseline_floor_frac=self._kinetic_baseline_floor_frac,
+                    denominator=self._kinetic_denominator,
                 )
                 self._timings.merge(stage_samples)
                 logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
@@ -1722,6 +1747,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                         node_mode=self._node_mode,
                         edge_features=self._edge_features,
                         baseline_floor_frac=self._kinetic_baseline_floor_frac,
+                        denominator=self._kinetic_denominator,
                     )
                     for case_id, mask_path, label in batch
                 ]

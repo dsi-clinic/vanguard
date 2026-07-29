@@ -843,6 +843,7 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> KFoldResults:
         id_column=data_paths.gnn_id_column,
         label_column=data_paths.gnn_label_column,
         kinetic_baseline_floor_frac=float(params.gnn_kinetic_baseline_floor_frac),
+        kinetic_denominator=str(params.gnn_kinetic_denominator),
         allow_manifest_mismatch=bool(data_paths.gnn_allow_manifest_mismatch),
         breast_split_mode=params.gnn_breast_split_mode or None,
         breast_split_skeleton_root=data_paths.gnn_breast_split_skeleton_root or None,

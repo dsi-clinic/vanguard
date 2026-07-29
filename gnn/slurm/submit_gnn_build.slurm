@@ -57,6 +57,10 @@ NODE_FEATURES="${NODE_FEATURES:-peak_time,radius}"
 # peak relative enhancement at ~20x to kill divide-by-near-zero-baseline
 # artifacts. Applies to voxel, segment, and junction modes.
 KINETIC_BASELINE_FLOOR_FRAC="${KINETIC_BASELINE_FLOOR_FRAC:-0}"
+# What relative enhancement is divided by: "baseline" (S0, historical) or
+# "peak" (max_t|S(t)|, bounded in [-1,1], no floor). Mutually exclusive with a
+# nonzero KINETIC_BASELINE_FLOOR_FRAC.
+KINETIC_DENOMINATOR="${KINETIC_DENOMINATOR:-baseline}"
 # Only used by --node-mode junction (segment-as-edge): the segment summary rides
 # on the edges there. Empty for voxel/segment mode.
 EDGE_FEATURES="${EDGE_FEATURES:-}"
@@ -81,6 +85,7 @@ ARGS=(
   --label-column "${LABEL_COLUMN}"
   --node-mode "${NODE_MODE}"
   --kinetic-baseline-floor-frac "${KINETIC_BASELINE_FLOOR_FRAC}"
+  --kinetic-denominator "${KINETIC_DENOMINATOR}"
   --max-missing-label-frac "${MAX_MISSING_LABEL_FRAC}"
   --max-missing-clinical-frac "${MAX_MISSING_CLINICAL_FRAC}"
   --num-workers "${NUM_WORKERS}"

@@ -13,6 +13,14 @@ import numpy as np
 
 from graph_extraction.feature_stats import _arrival_index_from_enhancement
 
+# What relative enhancement is expressed relative to. "baseline" is the standard
+# DCE fold-change over S0 (unbounded above, needs the near-void-baseline floor);
+# "peak" divides by max_t|S(t)| instead, which bounds the result in [-1, 1] and
+# needs no floor. See ``baseline_relative_curve``.
+DENOMINATOR_BASELINE = "baseline"
+DENOMINATOR_PEAK = "peak"
+_DENOMINATORS = frozenset({DENOMINATOR_BASELINE, DENOMINATOR_PEAK})
+
 
 def time_axis_from_study_timepoints(
     study_timepoints: list[int],
@@ -53,6 +61,7 @@ def baseline_relative_curve(
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
     baseline_floor_frac: float = 0.0,
+    denominator: str = DENOMINATOR_BASELINE,
 ) -> np.ndarray:
     """Baseline-reference a DCE curve (or stack of curves) along the time axis.
 
@@ -70,10 +79,35 @@ def baseline_relative_curve(
       convention). With ``baseline_frame_count=1`` this is exactly the old
       ``curve - curve[0]`` frame-0 subtraction.
 
+    Under ``relative_enhancement=True``, ``denominator`` chooses what the
+    difference is expressed relative to:
+
+    - ``"baseline"`` -> divide by S0, optionally floored at
+      ``baseline_floor_frac * max_t|S(t)|``. Fold-change over baseline, the
+      standard DCE "% enhancement". Unbounded above, which is why a near-void S0
+      needs the floor.
+    - ``"peak"`` -> divide by ``max_t|S(t)|`` alone. Expresses enhancement as a
+      fraction of the voxel's own peak signal. Since S(t) and S0 both lie in
+      ``[0, max_t|S|]``, the result is bounded in ``[-1, 1]`` by construction, so
+      no floor exists or is accepted -- a single quantity rather than a max of
+      two. Note this is not a rescaling of the ``"baseline"`` output: the two
+      differ per voxel by that voxel's own ``S0 / max_t|S|``, which varies across
+      voxels, so it reweights voxels rather than just changing units.
+
     Does **not** zero the baseline frames -- that precontrast-noise cleanup is a
     kinetic-feature concern (arrival/peak detection), applied by the caller;
     forecasting keeps the real baseline-referenced signal.
     """
+    if denominator not in _DENOMINATORS:
+        raise ValueError(
+            f"denominator must be one of {sorted(_DENOMINATORS)}; got {denominator!r}"
+        )
+    if denominator == DENOMINATOR_PEAK and baseline_floor_frac > 0.0:
+        raise ValueError(
+            "baseline_floor_frac has no meaning with denominator='peak' -- the "
+            "peak denominator is already bounded away from the near-void-baseline "
+            "blowup the floor exists to cap. Pass baseline_floor_frac=0."
+        )
     arr = np.asarray(curves, dtype=float)
     n_timepoints = arr.shape[-1]
     if not 1 <= baseline_frame_count < n_timepoints:
@@ -93,10 +127,13 @@ def baseline_relative_curve(
     # relative enhancement in the thousands-to-millions (physiological is ~0-5).
     # The floor caps peak relative enhancement at ~1/baseline_floor_frac and
     # leaves normal voxels (baseline >> floor) untouched. See AUDITING_RESULTS.md.
-    denom = baseline
-    if baseline_floor_frac > 0.0:
-        signal_scale = np.max(np.abs(arr), axis=-1, keepdims=True)
-        denom = np.maximum(baseline, baseline_floor_frac * signal_scale)
+    if denominator == DENOMINATOR_PEAK:
+        denom = np.max(np.abs(arr), axis=-1, keepdims=True)
+    else:
+        denom = baseline
+        if baseline_floor_frac > 0.0:
+            signal_scale = np.max(np.abs(arr), axis=-1, keepdims=True)
+            denom = np.maximum(baseline, baseline_floor_frac * signal_scale)
     # Divide only where the denominator is usable; rows with a non-finite or
     # <= float32-eps denominator stay zero (matches the kinetic path). Using
     # ``np.divide(where=...)`` skips the invalid division entirely rather than
@@ -114,11 +151,13 @@ def node_kinetic_features(
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
     baseline_floor_frac: float = 0.0,
+    denominator: str = DENOMINATOR_BASELINE,
 ) -> dict[str, object]:
     """Derive kinetic features from one voxel's unscaled DCE signal curve.
 
     ``baseline_frame_count`` and ``relative_enhancement`` encode the acquisition
-    protocol. The first baseline frames are zeroed after baseline estimation so
+    protocol; ``denominator`` selects what relative enhancement is relative to
+    (see ``baseline_relative_curve``). The first baseline frames are zeroed after baseline estimation so
     precontrast noise can't be mistaken for arrival or peak enhancement.
     ``tte_idx``/``tte_seconds`` are ``None`` when no arrival is detected.
     """
@@ -136,6 +175,7 @@ def node_kinetic_features(
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
             baseline_floor_frac=baseline_floor_frac,
+            denominator=denominator,
         ),
         dtype=float,
     )

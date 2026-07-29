@@ -33,7 +33,7 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 
-from gnn.kinetics import node_kinetic_features
+from gnn.kinetics import DENOMINATOR_BASELINE, node_kinetic_features
 from gnn.segment_graph import SEGMENT_FEATURE_ATTR, segment_summary_features
 from graph_extraction.skeleton_to_graph_primitives import (
     Point3D,
@@ -117,6 +117,7 @@ def _junction_node_features(
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
     baseline_floor_frac: float = 0.0,
+    denominator: str = DENOMINATOR_BASELINE,
 ) -> dict[str, float]:
     """Per-voxel features for one junction/endpoint voxel, plus its degree.
 
@@ -144,6 +145,7 @@ def _junction_node_features(
         baseline_frame_count=baseline_frame_count,
         relative_enhancement=relative_enhancement,
         baseline_floor_frac=baseline_floor_frac,
+        denominator=denominator,
     )
     tte_idx = kinetic["tte_idx"]
     features = {
@@ -176,6 +178,7 @@ def build_junction_graph(
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
     baseline_floor_frac: float = 0.0,
+    denominator: str = DENOMINATOR_BASELINE,
 ) -> Data:
     """Build the segment-as-edge (junction) graph from a voxel skeleton graph.
 
@@ -235,6 +238,7 @@ def build_junction_graph(
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
             baseline_floor_frac=baseline_floor_frac,
+            denominator=denominator,
         )
         for name in JUNCTION_NODE_FEATURE_ATTR:
             node_columns[name].append(features[name])
@@ -256,6 +260,7 @@ def build_junction_graph(
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
             baseline_floor_frac=baseline_floor_frac,
+            denominator=denominator,
         )
         directed = [(u, v)] if u == v else [(u, v), (v, u)]
         for a, b in directed:
