@@ -1,7 +1,7 @@
 """Phase 1 gate: does the vessel-GNN beat a tabular bar by a CI-separated margin?
 
-Puts every contender on one footing -- **pooled OOF AUC over all 179 UChicago
-cases** (the plan's metric convention) with a **case-resampling bootstrap 95%
+Puts every contender on one footing -- **pooled OOF AUC over every case in the
+cohort** (the plan's metric convention) with a **case-resampling bootstrap 95%
 CI** (Phase 0.3) -- and then runs the actual gate test: a **paired** bootstrap of
 the AUC *difference* between the GNN and the strongest tabular model, resampling
 the same cases jointly so the two share sampling noise. Overlapping marginal CIs
@@ -195,7 +195,7 @@ def main() -> None:
         rows.append({"model": name, "pooled_oof_auc": point, "ci_lo": lo, "ci_hi": hi})
     table = pd.DataFrame(rows).sort_values("pooled_oof_auc", ascending=False)
 
-    print("=== Pooled OOF AUC (all 179 cases) with bootstrap 95% CI ===")
+    print(f"=== Pooled OOF AUC (all {len(y)} cases) with bootstrap 95% CI ===")
     for _, r in table.iterrows():
         print(
             f"  {r['model']:26s} {r['pooled_oof_auc']:.3f}  [{r['ci_lo']:.3f}, {r['ci_hi']:.3f}]"
@@ -222,6 +222,13 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     table.to_csv(args.out_dir / "gate_auc_ci.csv", index=False)
+    # Persist the per-case OOF probabilities behind the table above. Any
+    # downstream subgroup read (e.g. analysis/gnn_subtype_breakdown.py) consumes
+    # this file rather than recomputing OOF, so a subgroup number can never come
+    # from a different fit than the headline number it is reported beside.
+    pd.DataFrame({"case_id": case_order, "pcr": y, "fold": folds, **contenders}).to_csv(
+        args.out_dir / "oof_predictions.csv", index=False
+    )
     pd.DataFrame(
         [
             {
@@ -233,7 +240,9 @@ def main() -> None:
         ]
     ).to_csv(args.out_dir / "gate_paired_delta.csv", index=False)
 
-    _forest_plot(table, delta, best_gnn, best_tab, args.out_dir / "gate_forest.png")
+    _forest_plot(
+        table, delta, best_gnn, best_tab, args.out_dir / "gate_forest.png", len(y)
+    )
     print(
         f"\nWrote {args.out_dir}/gate_auc_ci.csv, gate_paired_delta.csv, gate_forest.png"
     )
@@ -245,6 +254,7 @@ def _forest_plot(
     best_gnn: str,
     best_tab: str,
     out_path: Path,
+    n_cases: int,
 ) -> None:
     """Forest plot of each model's pooled-OOF AUC with its 95% CI."""
     import matplotlib
@@ -286,7 +296,7 @@ def _forest_plot(
     ax.set_yticklabels(t["model"])
     ax.set_xlabel("Pooled OOF AUC (95% bootstrap CI)")
     ax.set_title(
-        f"UChicago pCR: GNN vs tabular bar (N=179)\n"
+        f"UChicago pCR: GNN vs tabular bar (N={n_cases})\n"
         f"gate dAUC({best_gnn.replace('gnn_','')} - {best_tab.replace('tabular_','')}) "
         f"= {delta['delta_auc']:+.3f} [{delta['ci_lo']:+.3f}, {delta['ci_hi']:+.3f}]"
     )
