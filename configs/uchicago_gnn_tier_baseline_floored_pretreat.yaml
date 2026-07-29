@@ -1,0 +1,171 @@
+# UChicago tier ladder -- BASELINE arm, on the CLEANED PRETREATMENT cohort.
+#
+# Identical to configs/uchicago_gnn_tier_baseline_floored.yaml in every model
+# knob; the only differences are the labels file and the cache it reads. This is
+# deliberate: the whole point is an apples-to-apples re-estimate of the same
+# model on a cleaner cohort, so anything else changing would confound the
+# comparison.
+#
+# Cohort: /gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_pretreatment_cohort_v1
+# (83 exams / 83 patients, one exam per patient, 50 non-pCR / 33 pCR). It is a
+# strict subset of the legacy 181-exam manifest: the 98 dropped rows are
+# non-pretreatment (longitudinal follow-up) exams, which is why the legacy set
+# had more images than patients. Folds, labels, and the first 37 manifest
+# columns are preserved exactly from the legacy manifest.
+#
+# Effective N is 82, not 83: exam uch_nac_1_3_9789...5840 has no v5 centerline
+# (its DCE is split across 8 HR series with no UFAST, so the paired
+# preprocessing pipeline could not run it -- it is listed in the cohort's own
+# paired_preprocessing_exclusions.csv).
+#
+# The cache is built with an explicit --cases whitelist of the 83 cohort exam
+# ids, NOT by pointing the builder at the centerline root and letting the
+# unwanted cases fall out as "missing label". That distinction is deliberate:
+# the centerline root still holds all 179 legacy exams, so the permissive route
+# drops 54% of what it discovers and (correctly) trips the builder's
+# max_missing_label_frac guard. Raising that threshold to 0.55 would disable a
+# real safety check for every future run against this cache; whitelisting states
+# the intent instead and leaves the guard armed at its default.
+#
+# Consequence to be aware of when auditing: because the whitelist filters at
+# DISCOVERY, the one centerline-less exam never enters the build and so does NOT
+# appear in processed/dropped_cases.json. Its absence is instead visible as
+# num_graphs=82 against an 83-row labels file, and is recorded with its manifest
+# evidence in the experiment README.
+
+experiment_setup:
+  name: "uchicago_gnn_tier_baseline_floored_pretreat"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  # The cohort is one exam per patient, so predefined folds are now also
+  # trivially patient-disjoint (they already were -- the legacy folds were
+  # patient-grouped). Folds are the manifest's, unchanged.
+  split_mode: "predefined"
+  split_col: "fold"
+  # Declares the cache was built with the kinetics.py baseline floor (0.05);
+  # must match the cache manifest's kinetic_baseline_floor_frac.
+  gnn_kinetic_baseline_floor_frac: 0.05
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features:
+    - "peak_time"
+    - "peak_enhancement"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "washout_slope"
+    - "auc_positive"
+    - "radius"
+  # Frozen historical baseline (D0.6): pin to pre-hygiene behavior.
+  weight_decay: 0.0
+  loss: "unweighted_bce"
+  lr_scheduler: "none"
+  max_grad_norm: 0.0
+  early_stopping_patience: 0
+  restore_best_epoch: false
+  gnn_pooling: "mean"
+
+data_paths:
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded_pretreat_v1.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_voxel_richfeat_floored_pretreat83"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  # The cohort, stated explicitly so the config alone determines the case set
+  # and matches the whitelist recorded in the cache manifest. Generated from
+  # uchicago_labels_folded_pretreat_v1.csv; 83 ids, of which 82 have a v5
+  # centerline and become graphs.
+  gnn_cases:
+    - "her2_naclike_1_3_1112355080107576661299835743596435766108344972852"
+    - "her2_naclike_1_3_1119430059532994273898497231645274078651810083937"
+    - "her2_naclike_1_3_1133514133348534644451115807150697614828647865857"
+    - "her2_naclike_1_3_1175633139326634093971158039968646450564633378766"
+    - "her2_naclike_1_3_12972915285879372256874970506125723162562595963"
+    - "her2_naclike_1_3_1356248514949802218790935306473588815511756781813"
+    - "her2_naclike_1_3_1386822367436061983026403168045660169188277507803"
+    - "her2_naclike_1_3_19341219086168802713311688291606514219413638668"
+    - "her2_naclike_1_3_212978801339590646448252171163764301777168922273"
+    - "her2_naclike_1_3_293627115499036563598901640857271567751932855946"
+    - "her2_naclike_1_3_460916236258738760757611796646821159407878075922"
+    - "her2_naclike_1_3_492900180335822370034057898020498722450771174173"
+    - "her2_naclike_1_3_637988375447242208700635966015838219991193709049"
+    - "her2_naclike_1_3_697687151082850266819504998976059193943388184088"
+    - "her2_naclike_1_3_777920858214700979164275360270785029011995469913"
+    - "her2_naclike_1_3_832679562131043796836036911926759503134022916607"
+    - "simbiosys_1_3_1030019470634860272902140055262508098008045104768"
+    - "simbiosys_1_3_1069442029882780038319996170031230057757413143222"
+    - "simbiosys_1_3_1086573277977615735507789794696999255483846083371"
+    - "simbiosys_1_3_1105771244081795911622875098820358030057064206519"
+    - "simbiosys_1_3_1122359768900488159130246526754000355618089908701"
+    - "simbiosys_1_3_1143307108186262740552492265759195390595964985400"
+    - "simbiosys_1_3_115068282792198865934600683270379450603296989838"
+    - "simbiosys_1_3_1156174794853241157861199498200230156646308782227"
+    - "simbiosys_1_3_1178192626232673806370166664437318501570726706251"
+    - "simbiosys_1_3_1182546865420849063085610933350647997753785791330"
+    - "simbiosys_1_3_1222214249447715792430719574206260548375975352040"
+    - "simbiosys_1_3_1239558835739272784225670348732944951904698138080"
+    - "simbiosys_1_3_1290141298258321929044368218184037856070460752034"
+    - "simbiosys_1_3_1292979189904156784714503873245640524293863300573"
+    - "simbiosys_1_3_1331893318637538336470013447758103929786212876114"
+    - "simbiosys_1_3_1393628214358133736997435234090990280575923581296"
+    - "simbiosys_1_3_1417317803739022240173814984091067005577372640565"
+    - "simbiosys_1_3_150559948338880653130752759197393748892081252026"
+    - "simbiosys_1_3_185953586511176715191945814955462026250955316210"
+    - "simbiosys_1_3_254425451029245505739466756347487115697230796190"
+    - "simbiosys_1_3_419674280810381004864975869011150820762350832313"
+    - "simbiosys_1_3_472141744256449344598716206470297640702320197416"
+    - "simbiosys_1_3_498626859476068295127797547679672060586831882474"
+    - "simbiosys_1_3_51972255392907951438501325613275270628213612854"
+    - "simbiosys_1_3_527459145883152295194936046420152295677790661859"
+    - "simbiosys_1_3_547958662987549570929474016819537673441995687483"
+    - "simbiosys_1_3_75545848202990944587533978477048267151045144552"
+    - "simbiosys_1_3_797848524436347931065990957596182939664884320291"
+    - "simbiosys_1_3_813797091514679349463001586110928443429637115644"
+    - "simbiosys_1_3_822868393859247995432789178364668813932514415128"
+    - "simbiosys_1_3_846063380159894469341255196811269256945659144130"
+    - "simbiosys_1_3_938394044443883135548839566577443709462851854518"
+    - "simbiosys_1_3_941417840347086075465896372433589314064937368484"
+    - "simbiosys_1_3_953936836337403216976073209282297936914443919020"
+    - "simbiosys_1_3_958725292905449287178885640244644486395035544600"
+    - "simbiosys_1_3_962516569866565076805727551646708844229118459224"
+    - "uch_nac_1_3_1019673499751594171535396187405451123135387882876"
+    - "uch_nac_1_3_1122310312704246600882911695253734683300978314603"
+    - "uch_nac_1_3_1167648042428238800934435882482074135555794610037"
+    - "uch_nac_1_3_1182506830097537886630832176050501873078844068447"
+    - "uch_nac_1_3_1183210648397464746172410191077888000586916243703"
+    - "uch_nac_1_3_1231645415303439754108022564077964124877379656306"
+    - "uch_nac_1_3_1250630811977034081483705511958488817669131375036"
+    - "uch_nac_1_3_1316126885632079780339415334137605776272071960449"
+    - "uch_nac_1_3_1322243028786166768471302187814465110629364296774"
+    - "uch_nac_1_3_1376289164709249145283935140426925460274563594028"
+    - "uch_nac_1_3_1401850833471742461912491837161797682877423689772"
+    - "uch_nac_1_3_154703649797183093955730744308759164342520762935"
+    - "uch_nac_1_3_159650700035486309521398509783302826125673620087"
+    - "uch_nac_1_3_167576179745747677236224531644064316362661553610"
+    - "uch_nac_1_3_184269273690196684235338845305377239193565604441"
+    - "uch_nac_1_3_199560096046254509441222582765478891063370690428"
+    - "uch_nac_1_3_242779410587797557611698876724865219038247188697"
+    - "uch_nac_1_3_248988259714804955152234414082063553264758537447"
+    - "uch_nac_1_3_268654115292574510125563416960569259624370312964"
+    - "uch_nac_1_3_280195056570320142119347998695024635867967004873"
+    - "uch_nac_1_3_341646098482500198616824341275368820316226787521"
+    - "uch_nac_1_3_38711068681295705385466517148729232666143262614"
+    - "uch_nac_1_3_401093802342081766890306165035587318373196123544"
+    - "uch_nac_1_3_541303145828616436390643581865801141388273696760"
+    - "uch_nac_1_3_60386360404695597594159787410103028638260058172"
+    - "uch_nac_1_3_621205922050864775825823843413006821509804209027"
+    - "uch_nac_1_3_670006662374316224927074392379640570889891778809"
+    - "uch_nac_1_3_683851279883192130842552393613998463701446519724"
+    - "uch_nac_1_3_949993398032297771890353406864978884925128077391"
+    - "uch_nac_1_3_955177664441514946178809724734377345777827238259"
+    - "uch_nac_1_3_978925353542321868351609024718208384487357325840"
+  gnn_dataset_include: null
