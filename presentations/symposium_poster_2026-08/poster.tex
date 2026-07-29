@@ -2,7 +2,7 @@
 % Symposium poster -- UChicago DSI Summer Lab 2026.
 % Build:  ./build.sh          (latexmk + biber; see README.md)
 % Every number carries a comment naming the repo file it came from; see README.md.
-\documentclass[16pt, margin=1in, innermargin=15mm,
+\documentclass[14pt, margin=1in, innermargin=15mm,
                blockverticalspace=8mm, colspace=16mm,
                subcolspace=10mm]{tikzposter}
 
@@ -160,7 +160,7 @@
     {\fontsize{32}{38}\selectfont\bfseries\color{UWDarkRed}
       Is there signal in the vascular networks?}
 
-    \vspace{4mm}
+    \vspace{3mm}
     \badge{1}\ \ {\fontsize{25}{31}\selectfont\bfseries Is there signal in the
       blood vessels at all?}
 
@@ -168,44 +168,36 @@
     \badge{2}\ \ {\fontsize{25}{31}\selectfont\bfseries Does the graph add
       anything beyond that?}
 
-    \vspace{4mm}
+    \vspace{3mm}
     The two answers stay separate. Collapsing them into one ``our model works''
     claim would hide which half is doing the work.
   \end{minipage}
 }
 
-%% ------------------------------------------------------------- pipeline ----
-\block{From scan to prediction}{
-  \begin{minipage}[c]{0.50\linewidth}
-    \begin{tikzfigure}[Ultrafast DCE-MRI to vessel graph to prediction, on one
-      real case. Panels 1--4 are measured data; panel 5 is schematic.]
-      \includegraphics[width=\linewidth]{pipeline.png}
-    \end{tikzfigure}
-  \end{minipage}\hfill
-  \begin{minipage}[c]{0.47\linewidth}
-    One real case: 24 frames over 119.5\,s, 5 of them before contrast arrives.
-    % experiments/dce_curve_example/README.md
-
-    \vspace{3mm}
-    A \textbf{centerline} is the one-voxel-wide skeleton running down the middle
-    of each segmented vessel; every centerline voxel becomes a node of the
-    patient's vessel graph. Segmentation and centerline extraction are upstream
-    lab pipeline --- this project starts at the graph.
-  \end{minipage}
-}
-
 %% ------------------------------------------- methods and the two answers ---
 \begin{columns}
-\column{0.32}
-\block{What the graph is}{
-  \textbf{Nodes.} Three representations, built from the same skeleton and
-  compared on identical folds: one node per \emph{centerline voxel}; one node per
-  \emph{vessel segment}; or nodes at \emph{branch points and tips}.
+\column{0.30}
+\block{From scan to prediction}{
+  \begin{tikzfigure}[Ultrafast DCE-MRI to vessel graph to prediction, on one real
+    case. Panels 1--4 are measured data; panel 5 is schematic.]
+    \includegraphics[width=\linewidth]{pipeline.png}
+  \end{tikzfigure}
 
   \vspace{2mm}
-  \begin{tikzfigure}[The three graph representations.]
-    \includegraphics[width=0.86\linewidth]{graph_representations.png}
-  \end{tikzfigure}
+  One real case: 24 frames over 119.5\,s, 5 of them before contrast arrives.
+  % experiments/dce_curve_example/README.md
+  A \textbf{centerline} is the one-voxel-wide skeleton down the middle of each
+  segmented vessel; every centerline voxel becomes a graph node. Segmentation and
+  centerline extraction are upstream lab pipeline.
+}
+
+\block{What the graph is}{
+  \textbf{Nodes.} Three representations, built from the same skeleton and compared
+  on identical folds: one node per \emph{centerline voxel}, per \emph{vessel
+  segment}, or at \emph{branch points and tips}.
+
+  \vspace{2mm}
+  \begin{center}\includegraphics[width=0.74\linewidth]{graph_representations.png}\end{center}
 
   \vspace{2mm}
   \textbf{Edges.} Voxel adjacency, a shared branch point, or the segments
@@ -223,20 +215,19 @@
   the graph can only average static per-node kinetics.
 }
 
+\column{0.40}
 \block{Contrast-forecasting pretraining}{
   {\color{UWRed}\bfseries A new contribution of this project.}
 
   \vspace{3mm}
   The models here never see contrast \emph{move}. So we pretrain the encoder on a
-  label-free task that forces it to: \textbf{given the first frames, predict every
-  node's enhancement over the next frames}, using message passing --- so the
-  encoder has to learn how the contrast bolus propagates along vessels. Adapted
-  from \textcite{tang2022ssl}, who forecast EEG.
+  label-free task: \textbf{given the first frames, predict every node's
+  enhancement over the next frames}, using message passing --- so the encoder has
+  to learn how the bolus propagates along vessels. After
+  \textcite{tang2022ssl}, who forecast EEG.
 
   \vspace{2mm}
-  \begin{tikzfigure}[Pretrain the shared encoder on forecasting, fine-tune on pCR.]
-    \includegraphics[width=0.86\linewidth]{contrast_pretrain_arch.png}
-  \end{tikzfigure}
+  \begin{center}\includegraphics[width=0.62\linewidth]{contrast_pretrain_arch.png}\end{center}
 
   \vspace{2mm}
   Needing no labels is the point: pretraining can use $\approx$1{,}000 unlabelled
@@ -246,8 +237,7 @@
 
   \vspace{3mm}
   \textbf{Pre-registered gates.} Beat trivial forecasters, then a graph-free
-  per-node forecaster, then random initialisation on pCR by more than twice the
-  seed-to-seed spread.
+  forecaster, then random init on pCR by ${>}2\times$ the seed spread.
 
   \vspace{4mm}
   \tbdblock{26mm}{Gate results on ultrafast data.}{
@@ -255,7 +245,6 @@
     pretrained-vs-random pCR AUC over ${\ge}5$ seeds.}
 }
 
-\column{0.36}
 \block{\badgeontitle{1}\ \ Signal in the vessels?\ \ \color{LightYellow}YES}{
   UChicago ultrafast DCE-MRI, $N=179$, \textbf{vessels only} --- no tumour mask,
   no clinical variables. Pooled out-of-fold AUC, case-resampling bootstrap CIs.
@@ -263,7 +252,7 @@
 
   \vspace{2mm}
   \begin{tikzfigure}[Every vessel model clears chance; the control does not.]
-    \includegraphics[width=0.90\linewidth]{q1_signal.png}
+    \includegraphics[width=0.64\linewidth]{q1_signal.png}
   \end{tikzfigure}
 
   \vspace{2mm}
@@ -273,35 +262,21 @@
   contrast kinetics.
   % experiments/uchicago_graph_mode_floored/README.md ; all_models_auc_ci.csv
 
-  \vspace{3mm}
   Independently, on I-SPY2 \cite{garrucho_mamamia} ($n=808$), adding vessel
   features to clinical variables and tumour size raises AUC from
   $0.571 \pm 0.046$ to $0.606 \pm 0.028$ (XGBoost); the paired gain for logistic
   regression is $+0.024$, $p=0.025$.
   % results/issue118_baseline_arms_summary.csv ; results/README.md
 
-  \vspace{3mm}
-  {\small The signal only appeared after fixing a divide-by-near-zero baseline in
-  the enhancement features: pooled AUC $0.49 \rightarrow 0.61$.}
+  The signal only appeared after fixing a divide-by-near-zero baseline in the
+  enhancement features: pooled AUC $0.49 \rightarrow 0.61$.
   % LAB_NOTEBOOK.md 2026-07-27 (correction) and 2026-07-28
 }
 
-\block{Conclusions}{
-  \begin{itemize}[leftmargin=*, itemsep=1mm, topsep=0mm]
-    \item Vessel kinetics predict pCR \textbf{from vessels alone}.
-    \item The signal is in the \textbf{features}, not the representation.
-    \item Graph topology, as encoded today, is not earning its cost.
-  \end{itemize}
-
-  \vspace{3mm}
-  \textbf{Next.} Nodes get the curve, not six scalars; run the pretraining gates;
-  add tumour features; grow the labelled cohort.
-}
-
-\column{0.32}
+\column{0.30}
 \block{\badgeontitle{2}\ \ Does the graph add?\ \ \color{LightYellow}NOT YET}{
   \begin{tikzfigure}[Every paired interval contains zero.]
-    \includegraphics[width=0.94\linewidth]{q2_graph_delta.png}
+    \includegraphics[width=0.86\linewidth]{q2_graph_delta.png}
   \end{tikzfigure}
 
   \vspace{2mm}
@@ -319,14 +294,25 @@
     curve, against the same tabular bar on the same folds.}
 }
 
-\block{References}{
+\block{Conclusions}{
+  \begin{itemize}[leftmargin=*, itemsep=1mm, topsep=0mm]
+    \item Vessel kinetics predict pCR \textbf{from vessels alone}.
+    \item The signal is in the \textbf{features}, not the representation.
+    \item Graph topology, as encoded today, is not earning its cost.
+  \end{itemize}
+
+  \vspace{3mm}
+  \textbf{Next.} Nodes get the curve, not six scalars; run the pretraining gates;
+  add tumour features; grow the labelled cohort.
+}
+
+\block{References and acknowledgments}{
   \vspace{-1em}
   \begin{footnotesize}
   \printbibliography[heading=none]
   \end{footnotesize}
-}
 
-\block{Acknowledgments}{
+  \vspace{2mm}
   With thanks to \textbf{Dr.\ Anna Woodard} and the \textbf{UChicago Data
   Science Institute Summer Lab}.
 }
