@@ -1,0 +1,64 @@
+# UChicago voxel GNN -- PEAK-DENOMINATOR arm.
+#
+# Identical to configs/uchicago_gnn_tier_baseline_floored.yaml -- same frozen
+# pre-hygiene knobs (unweighted BCE, no weight decay, no scheduler, no early
+# stopping, final-epoch model), same 7-feature voxel set, same predefined
+# UChicago folds -- except relative enhancement is divided by max_t|S(t)| rather
+# than by the floored S0. So a paired dAUC against the floored baseline isolates
+# the denominator choice and nothing else.
+#
+# The peak denominator is bounded in [-1, 1] by construction (see
+# gnn/kinetics.py), so no baseline floor exists or is accepted here. It is not a
+# rescaling of the floored features: the two differ per voxel by that voxel's own
+# S0/max|S|, which varies across voxels, so it reweights voxels.
+#
+# Reads gnn_cache_voxel_richfeat_peak, built with --kinetic-denominator peak.
+
+experiment_setup:
+  name: "uchicago_gnn_tier_baseline_peak"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  split_mode: "predefined"
+  split_col: "fold"
+  # Peak-denominator arm: relative enhancement is (S(t)-S0)/max_t|S(t)| rather
+  # than fold-change over S0, so it is bounded in [-1, 1] and no floor exists.
+  # Both must match the cache manifest.
+  gnn_kinetic_baseline_floor_frac: 0.0
+  gnn_kinetic_denominator: "peak"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features:
+    - "peak_time"
+    - "peak_enhancement"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "washout_slope"
+    - "auc_positive"
+    - "radius"
+  # Frozen historical baseline (D0.6): pin to pre-hygiene behavior.
+  weight_decay: 0.0
+  loss: "unweighted_bce"
+  lr_scheduler: "none"
+  max_grad_norm: 0.0
+  early_stopping_patience: 0
+  restore_best_epoch: false
+  gnn_pooling: "mean"
+
+data_paths:
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_voxel_richfeat_peak"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
