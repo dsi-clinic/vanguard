@@ -235,3 +235,6 @@ presentations/
 
 # Design Docs
 docs/design/
+
+# Dev-phase decision gates (throwaway scaffolding, deleted at end of dev)
+gnn/dev_gates/

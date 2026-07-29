@@ -47,6 +47,50 @@ def time_axis_from_study_timepoints(
     return time_axis
 
 
+def baseline_relative_curve(
+    curves: np.ndarray,
+    *,
+    baseline_frame_count: int = 1,
+    relative_enhancement: bool = False,
+) -> np.ndarray:
+    """Baseline-reference a DCE curve (or stack of curves) along the time axis.
+
+    Single source of truth for the "curve -> enhancement" transform, shared by
+    the kinetic-feature path (``node_kinetic_features``) and the forecasting
+    pretext path (``gnn.pretrain.node_series``) so the two can never silently
+    diverge. Operates on the **last axis** (time), so ``curves`` may be a 1D
+    ``(T,)`` curve or an ``(N, T)`` stack; each row is referenced against *its
+    own* baseline (the mean of its first ``baseline_frame_count`` frames):
+
+    - ``relative_enhancement=True``  -> ``(S(t) - S0) / S0`` (UFAST/UChicago
+      contract; a row whose baseline is non-finite or <= float32 eps yields all
+      zeros, matching the kinetic path).
+    - ``relative_enhancement=False`` -> ``S(t) - S0`` (legacy absolute
+      convention). With ``baseline_frame_count=1`` this is exactly the old
+      ``curve - curve[0]`` frame-0 subtraction.
+
+    Does **not** zero the baseline frames -- that precontrast-noise cleanup is a
+    kinetic-feature concern (arrival/peak detection), applied by the caller;
+    forecasting keeps the real baseline-referenced signal.
+    """
+    arr = np.asarray(curves, dtype=float)
+    n_timepoints = arr.shape[-1]
+    if not 1 <= baseline_frame_count < n_timepoints:
+        raise ValueError("baseline_frame_count must be in [1, n_timepoints)")
+    baseline = arr[..., :baseline_frame_count].mean(axis=-1, keepdims=True)
+    difference = arr - baseline
+    if not relative_enhancement:
+        return difference
+    # Divide only where the baseline is usable; rows with a non-finite or
+    # <= float32-eps baseline stay zero (matches the kinetic path). Using
+    # ``np.divide(where=...)`` skips the invalid division entirely rather than
+    # computing it and masking afterwards, so no divide-by-zero warning fires.
+    usable = np.isfinite(baseline) & (baseline > np.finfo(np.float32).eps)
+    enhancement = np.zeros_like(difference)
+    np.divide(difference, baseline, out=enhancement, where=usable)
+    return enhancement
+
+
 def node_kinetic_features(
     curve: np.ndarray,
     time_axis: np.ndarray,
@@ -69,16 +113,14 @@ def node_kinetic_features(
         raise ValueError("baseline_frame_count must be in [1, n_timepoints)")
 
     baseline = float(np.mean(signal[:baseline_frame_count]))
-    difference = signal - baseline
-    if relative_enhancement:
-        enhancement = (
-            difference / baseline
-            if np.isfinite(baseline) and baseline > np.finfo(np.float32).eps
-            else np.zeros_like(difference)
-        )
-    else:
-        enhancement = difference
-    enhancement = np.asarray(enhancement, dtype=float)
+    enhancement = np.asarray(
+        baseline_relative_curve(
+            signal,
+            baseline_frame_count=baseline_frame_count,
+            relative_enhancement=relative_enhancement,
+        ),
+        dtype=float,
+    )
     enhancement[:baseline_frame_count] = 0.0
 
     peak_idx = baseline_frame_count + int(np.argmax(enhancement[baseline_frame_count:]))

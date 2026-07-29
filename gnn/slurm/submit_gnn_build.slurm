@@ -42,7 +42,7 @@ export PYTHONUNBUFFERED=1
 
 ROOT="${ROOT:-/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies}"
 DCE_ROOT="${DCE_ROOT:-/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images}"
-LABELS_PATH="${LABELS_PATH:-/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv}"
+LABELS_PATH="${LABELS_PATH:-/gpfs/data/karczmar-lab/workspaces/saritbose/metadata/pcr_labels.csv}"
 CACHE_DIR="${CACHE_DIR:-/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache}"
 ID_COLUMN="${ID_COLUMN:-case_id}"
 LABEL_COLUMN="${LABEL_COLUMN:-pcr}"
