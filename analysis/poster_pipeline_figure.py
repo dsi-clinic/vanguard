@@ -48,8 +48,8 @@ NODE = "#3fa7ff"
 EDGE = "#e67e22"
 BOX = "#7E1B14"
 
-TITLE_SIZE = 27
-LABEL_SIZE = 21
+TITLE_SIZE = 20
+LABEL_SIZE = 17
 
 _OFFSETS_3D = [
     (dz, dy, dx)
@@ -154,14 +154,12 @@ def _model_panel(ax: Axes) -> None:
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
-    # Match the near-square MRI panels so all five titles sit on one line.
-    ax.set_box_aspect(1.0)
     for y, label in ((0.66, "GNN\nmessage passing"), (0.30, "pCR score")):
         ax.add_patch(
             FancyBboxPatch(
-                (0.12, y - 0.10),
-                0.76,
-                0.20,
+                (0.06, y - 0.11),
+                0.88,
+                0.22,
                 boxstyle="round,pad=0.02,rounding_size=0.04",
                 facecolor=BOX,
                 edgecolor=BOX,
@@ -231,6 +229,12 @@ def main() -> None:
         default=90,
         help="Side length (voxels) of the panel-4 crop around the busiest branch.",
     )
+    parser.add_argument(
+        "--width",
+        type=float,
+        default=10.4,
+        help="Printed width in inches; one 0.32 column of the 36in poster.",
+    )
     parser.add_argument("--out-path", type=Path, required=True)
     args = parser.parse_args()
 
@@ -261,11 +265,22 @@ def main() -> None:
     support_2d = support[z0:z1, y0:y1, x0:x1].any(axis=0)
     skeleton_2d = skeleton[z0:z1, y0:y1, x0:x1].any(axis=0)
 
-    fig, axes = plt.subplots(1, 5, figsize=(26, 6.2))
+    # Two rows: a 1x5 strip in one poster column would give 2in panels. Row 2
+    # gives the model schematic the width of two image panels so no cell is left
+    # empty.
+    fig = plt.figure(figsize=(args.width, args.width * 0.70))
+    grid = fig.add_gridspec(2, 6, hspace=0.55, wspace=0.18)
+    axes = [
+        fig.add_subplot(grid[0, 0:2]),
+        fig.add_subplot(grid[0, 2:4]),
+        fig.add_subplot(grid[0, 4:6]),
+        fig.add_subplot(grid[1, 0:2]),
+        fig.add_subplot(grid[1, 3:6]),
+    ]
     titles = (
-        "1. Ultrafast DCE-MRI",
-        "2. Vessel segmentation",
-        "3. Centerline extraction",
+        "1. DCE-MRI",
+        "2. Vessel mask",
+        "3. Centerline",
         "4. Vessel graph",
         "5. Prediction",
     )
@@ -303,14 +318,15 @@ def main() -> None:
         f"{int(support.sum()):,} vessel voxels",
         f"{int(skeleton.sum()):,} centerline voxels",
         f"{len(inside):,} nodes shown",
-        "trained on 179 labelled cases",
+        "179 labelled cases",
     )
     for ax, title, caption in zip(axes, titles, captions):
         ax.set_title(title, fontsize=TITLE_SIZE, pad=18)
         ax.set_xlabel(caption, fontsize=LABEL_SIZE, labelpad=14)
 
-    fig.subplots_adjust(left=0.01, right=0.99, top=0.88, bottom=0.12, wspace=0.16)
-    _between_panel_arrows(fig, list(axes))
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.93, bottom=0.09)
+    _between_panel_arrows(fig, axes[:3])
+    _between_panel_arrows(fig, axes[3:])
 
     args.out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.out_path, dpi=160)

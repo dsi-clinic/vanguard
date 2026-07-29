@@ -35,12 +35,12 @@ from matplotlib.axes import Axes  # noqa: E402
 # One colour for "a real vessel model", one contrasting colour reserved for the
 # negative control -- the only place on either figure where colour marks a
 # different kind of thing rather than decoration.
-MODEL = "#1f6fb4"
-CONTROL = "#8a8a8a"
-REFERENCE = "#7E1B14"
+MODEL = "#101820"
+CONTROL = "#B1B3B3"
+REFERENCE = "#C5050C"
 
-LABEL_SIZE = 19
-TICK_SIZE = 18
+LABEL_SIZE = 22
+TICK_SIZE = 20
 
 # Rows shown on the sub-question 1 figure, in poster order, keyed by the model
 # names used in all_models_auc_ci.csv.
@@ -72,10 +72,10 @@ def _forest(
 ) -> None:
     """Horizontal point-and-interval plot with a dashed reference line."""
     ys = range(len(labels))
-    ax.axvline(reference, color=REFERENCE, ls="--", lw=2.5, zorder=0)
+    ax.axvline(reference, color=REFERENCE, ls="--", lw=3, zorder=0)
     for y, centre, lo, hi, color in zip(ys, centres, los, his, colors):
-        ax.plot([lo, hi], [y, y], color=color, lw=4, solid_capstyle="round")
-        ax.plot([centre], [y], marker="o", ms=15, color=color)
+        ax.plot([lo, hi], [y, y], color=color, lw=6, solid_capstyle="round")
+        ax.plot([centre], [y], marker="o", ms=18, color=color)
     ax.set_yticks(list(ys))
     ax.set_yticklabels(labels, fontsize=LABEL_SIZE)
     ax.invert_yaxis()
@@ -91,7 +91,7 @@ def _q1(auc_csv: Path, out_path: Path) -> None:
     labels = [label for _, label in Q1_ROWS]
     colors = [CONTROL if "control" in label.lower() else MODEL for label in labels]
 
-    fig, ax = plt.subplots(figsize=(11.5, 4.3))
+    fig, ax = plt.subplots(figsize=(10.4, 4.6))
     _forest(
         ax,
         labels,
@@ -131,7 +131,7 @@ def _q2(gate_csv: Path, mode_csv: Path, out_path: Path) -> None:
     rows = [deltas[key] for key, _ in Q2_ROWS]
     labels = [label for _, label in Q2_ROWS]
 
-    fig, ax = plt.subplots(figsize=(11.5, 3.4))
+    fig, ax = plt.subplots(figsize=(10.4, 3.6))
     _forest(
         ax,
         labels,
