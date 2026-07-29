@@ -2,7 +2,7 @@
 % Symposium poster -- UChicago DSI Summer Lab 2026.
 % Build:  ./build.sh          (latexmk + biber; see README.md)
 % Every number carries a comment naming the repo file it came from; see README.md.
-\documentclass[18pt, margin=1in, innermargin=15mm,
+\documentclass[16pt, margin=1in, innermargin=15mm,
                blockverticalspace=8mm, colspace=16mm,
                subcolspace=10mm]{tikzposter}
 
@@ -69,8 +69,7 @@
 
 \title{Is there signal in the vascular networks?}
 \author{Spencer Venancio\ \ \textbullet\ \ Advisor: Dr.\ Anna Woodard}
-\institute{University of Wisconsin--Madison\ \ \textbullet\ \ Work performed at
-the University of Chicago Data Science Institute Summer Lab}
+\institute{University of Wisconsin--Madison}
 
 \makeatletter
 \newcommand\insertlogoi[2][]{\def\@insertlogoi{\includegraphics[#1]{#2}}}
@@ -78,8 +77,8 @@ the University of Chicago Data Science Institute Summer Lab}
 \newlength\LogoSep
 \setlength\LogoSep{0pt}
 
-\insertlogoi[height=1.6in]{uw_madison_logo.pdf}
-\insertlogoii[height=1.2in]{dsi_logo.png}
+\insertlogoi[height=1.35in]{uw_madison_logo.pdf}
+\insertlogoii[height=1.0in]{dsi_logo.png}
 
 \renewcommand\TP@maketitle{%
    \centering
@@ -87,9 +86,9 @@ the University of Chicago Data Science Institute Summer Lab}
         \centering
         \color{titlefgcolor}
         {\bfseries \Huge \sc \@title \par}
-        \vspace*{1em}
+        \vspace*{0.35em}
         {\huge \@author \par}
-        \vspace*{1em}
+        \vspace*{0.35em}
         {\LARGE \@institute}
     \end{minipage}%
     \tikz[remember picture,overlay]\node[anchor=south east,xshift=0.5\linewidth,inner sep=0pt] {%
@@ -144,41 +143,36 @@ the University of Chicago Data Science Institute Summer Lab}
 \maketitle
 
 %% ------------------------------------------------- motivation + question ---
-\begin{columns}
-\column{0.34}
-\block{Why vessels?}{
-  Breast tumours are treated with chemotherapy \emph{before} surgery. Patients
-  who reach \textbf{pCR} --- pathologic complete response, no residual invasive
-  cancer at surgery --- do markedly better, and knowing early who will get there
-  would let clinicians change course while it still matters.
+\block{Why vessels, and what we asked}{
+  \begin{minipage}[t]{0.46\linewidth}
+    Breast tumours are treated with chemotherapy \emph{before} surgery. Patients
+    who reach \textbf{pCR} --- pathologic complete response, no residual invasive
+    cancer at surgery --- do markedly better, and knowing early who will get
+    there would let clinicians change course while it still matters.
 
-  \vspace{3mm}
-  Tumours recruit their own blood supply. \textbf{DCE-MRI} --- dynamic
-  contrast-enhanced MRI --- images the breast repeatedly while a contrast agent
-  washes through that vasculature. We ask whether the vessel network, not the
-  tumour, carries the response signal.
-}
-
-\column{0.66}
-\block{The question}{
-  {\fontsize{34}{41}\selectfont\bfseries\color{UWDarkRed}
-    Is there signal in the vascular networks?}
-
-  \vspace{5mm}
-  \begin{minipage}[t]{0.47\linewidth}
-    \badge{1}\ \ {\fontsize{27}{33}\selectfont\bfseries Is there signal in the
-      blood vessels at all?}
+    \vspace{3mm}
+    Tumours recruit their own blood supply, and \textbf{DCE-MRI} --- dynamic
+    contrast-enhanced MRI --- images the breast repeatedly while a contrast agent
+    washes through it. We ask whether the vessel network, not the tumour, carries
+    the response signal.
   \end{minipage}\hfill
-  \begin{minipage}[t]{0.49\linewidth}
-    \badge{2}\ \ {\fontsize{27}{33}\selectfont\bfseries Does the graph add
-      anything beyond that?}
-  \end{minipage}
+  \begin{minipage}[t]{0.50\linewidth}
+    {\fontsize{32}{38}\selectfont\bfseries\color{UWDarkRed}
+      Is there signal in the vascular networks?}
 
-  \vspace{5mm}
-  The two answers stay separate. Collapsing them into one ``our model works''
-  claim would hide which half is doing the work.
+    \vspace{4mm}
+    \badge{1}\ \ {\fontsize{25}{31}\selectfont\bfseries Is there signal in the
+      blood vessels at all?}
+
+    \vspace{3mm}
+    \badge{2}\ \ {\fontsize{25}{31}\selectfont\bfseries Does the graph add
+      anything beyond that?}
+
+    \vspace{4mm}
+    The two answers stay separate. Collapsing them into one ``our model works''
+    claim would hide which half is doing the work.
+  \end{minipage}
 }
-\end{columns}
 
 %% ------------------------------------------------------------- pipeline ----
 \block{From scan to prediction}{
@@ -194,12 +188,9 @@ the University of Chicago Data Science Institute Summer Lab}
 
     \vspace{3mm}
     A \textbf{centerline} is the one-voxel-wide skeleton running down the middle
-    of each segmented vessel. Every centerline voxel becomes a node of the
-    patient's vessel graph.
-
-    \vspace{3mm}
-    Segmentation and centerline extraction are upstream lab pipeline --- this
-    project starts at the graph.
+    of each segmented vessel; every centerline voxel becomes a node of the
+    patient's vessel graph. Segmentation and centerline extraction are upstream
+    lab pipeline --- this project starts at the graph.
   \end{minipage}
 }
 
@@ -218,14 +209,13 @@ the University of Chicago Data Science Institute Summer Lab}
 
   \vspace{2mm}
   \textbf{Edges.} Voxel adjacency, a shared branch point, or the segments
-  themselves --- kept as a multigraph, so parallel vessels survive.
+  themselves, kept as a multigraph.
 
   \vspace{3mm}
   \textbf{Node features (7).} Peak time \textbullet\ peak enhancement
   \textbullet\ time to enhancement \textbullet\ wash-in slope \textbullet\
   wash-out slope \textbullet\ positive AUC \textbullet\ vessel radius.
-  \textbf{Edge features} summarise each segment: length, tortuosity, volume,
-  radius and curvature statistics, and the mean kinetics along it.
+  \textbf{Edge features} summarise each segment's geometry and mean kinetics.
 
   \vspace{3mm}
   \textbf{What is thrown away.} Each node's 24-point enhancement curve becomes
@@ -252,13 +242,12 @@ the University of Chicago Data Science Institute Summer Lab}
   Needing no labels is the point: pretraining can use $\approx$1{,}000 unlabelled
   ultrafast graphs, against 179 labelled ones.
   % docs/design/contrast_pretraining.md, sections 2 and 8a
-  Built and validated end to end across all three graph representations, with
-  physical acquisition times carried into a time-conditioned decoder.
+  Built and validated end to end across all three graph representations.
 
   \vspace{3mm}
-  \textbf{Pre-registered gates.} Beat trivial forecasters; beat a graph-free
-  per-node forecaster; then beat random initialisation on pCR by more than twice
-  the seed-to-seed spread.
+  \textbf{Pre-registered gates.} Beat trivial forecasters, then a graph-free
+  per-node forecaster, then random initialisation on pCR by more than twice the
+  seed-to-seed spread.
 
   \vspace{4mm}
   \tbdblock{26mm}{Gate results on ultrafast data.}{
@@ -293,9 +282,7 @@ the University of Chicago Data Science Institute Summer Lab}
 
   \vspace{3mm}
   {\small The signal only appeared after fixing a divide-by-near-zero baseline in
-  the enhancement features --- pooled AUC $0.49 \rightarrow 0.61$ from a bug
-  touching a median of 0.07\% of vessel voxels per case, which had dominated
-  feature standardisation.}
+  the enhancement features: pooled AUC $0.49 \rightarrow 0.61$.}
   % LAB_NOTEBOOK.md 2026-07-27 (correction) and 2026-07-28
 }
 
