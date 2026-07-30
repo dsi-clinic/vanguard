@@ -168,6 +168,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # dataset load requests the same value and the cache-manifest check
         # matches (0.0 = historical/unfloored; e.g. 0.05 for a floored cache).
         "gnn_kinetic_baseline_floor_frac": 0.0,
+        # Edge-ablation control: does the model use the vessel topology at all?
+        # "none" (default) trains on the real skeleton adjacency; "rewire"
+        # randomizes which nodes are adjacent while preserving every node's
+        # degree; "drop" removes edges entirely, reducing the GCN to a per-node
+        # map plus a permutation-invariant readout. Applied at TRAIN time to the
+        # cloned per-fold graphs, so all three arms share one cache -- no rebuild.
+        # Not defined for junction mode (edge_attr is aligned with edge_index).
+        # See gnn/train.py::_apply_edge_ablation.
+        "gnn_edge_ablation": "none",
+        # Seed for the "rewire" arm's degree-preserving swaps, offset per graph by
+        # the graph's cache index so a case rewires identically across folds/seeds.
+        "gnn_edge_ablation_seed": 0,
         # Whole-graph readout for GCNClassifier (voxel/segment): "mean"
         # (default, the original single global_mean_pool -- fully backward
         # compatible), "mean_max", or "mean_max_sum". Concatenating max/sum
