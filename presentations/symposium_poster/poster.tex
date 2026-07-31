@@ -107,7 +107,29 @@
     \includegraphics[height=4.6cm]{logos/dsi_logo_white.pdf}
   \end{tabular}%
 }
-\logoright{\includegraphics[height=6.9cm]{logos/uw_madison_white.pdf}}
+% Right side carries the author institutions, left the host. The two school marks
+% sit in a row under UW so the block stays about as wide as it is tall -- see the
+% \maxlogowidth note above.
+%
+% Provenance (both official school sources, both with real alpha):
+%   nvhs_wildcat.png  https://resources.finalsite.net/images/v1745596249/ipsdorg/
+%                     pwceoev9pdbw5f653ytp/nvhs.png -- the Neuqua Valley mark on
+%                     Indian Prairie District 204's own Finalsite CDN. Only
+%                     325x200, so ~145 DPI at the height set below; it is the
+%                     largest the district publishes. Navy-and-gold with a white
+%                     outer stroke, which is what keeps it legible on maroon.
+%   bca_seal.png      https://bca-admissions.bergen.org/images/logo.png -- the
+%                     Bergen County Academies seal from their admissions site,
+%                     866x866.
+% Rejected: bergen.org's BergenN.png is the *district* mark (Bergen County
+% Special Services Technical Schools), not BCA.
+\logoright{%
+  \begin{tabular}{@{}c@{}}
+    \includegraphics[height=5.2cm]{logos/uw_madison_white.pdf} \\[1.8ex]
+    \includegraphics[height=3.5cm]{logos/nvhs_wildcat.png}\hspace{2em}%
+    \includegraphics[height=3.5cm]{logos/bca_seal.png}
+  \end{tabular}%
+}
 
 % ====================
 % Body
