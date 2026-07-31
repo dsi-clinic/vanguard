@@ -48,7 +48,7 @@ def main() -> None:
     """Render the forest plot to OUT_PDF."""
     results = pd.read_csv(AUC_CSV).sort_values("pooled_oof_auc")
 
-    fig, ax = plt.subplots(figsize=(10.79, 4.35))  # 27.4 cm wide
+    fig, ax = plt.subplots(figsize=(10.79, 3.35))  # 27.4 cm wide
     for i, row in enumerate(results.itertuples()):
         is_gnn = row.group == "GNN"
         color = MAROON if is_gnn else GREY

@@ -127,26 +127,25 @@
 
   \begin{block}{Introduction + Motivation}
 
-    Breast cancer is the most common cancer in women worldwide,
-    and for those diagnosed with locally advanced breast cancer (LABC), 
-    neoadjuvant chemotherapy (NAC) is the standard of care. 
-    However, only 30\% of patients achieve a \textbf{pathologic complete response (pCR)}
-    to NAC, which is associated with improved survival outcomes. NAC is an 
-    intensive treatment that can have significant side effects, and 
-    patients who do not achieve pCR may require additional treatment. We would 
-    like to develop methods to predict which patients will respond to NAC,
-    so that we can better tailor treatment plans and improve outcomes for 
-    patients with LABC.
+    Breast cancer is the most common cancer in women worldwide, and neoadjuvant
+    chemotherapy (NAC) is widely given before surgery. Only about a third of
+    patients achieve a \textbf{pathologic complete response (pCR)} to NAC, which is
+    associated with improved survival outcomes. NAC is an intensive treatment that
+    can have significant side effects, and patients who do not achieve pCR may
+    require additional treatment. We would like to develop methods to predict
+    which patients will respond to NAC, so that we can better tailor treatment
+    plans and improve outcomes.
      
   \end{block}
 
   \begin{block}{Ultrafast MRI Dataset}
 
-    The dataset used in this study consists of \textbf{ultrafast breast MRI} scans from
-    $n=100$ patients with LABC who underwent NAC. The scans were acquired using a 
-    3T MRI scanner and included both pre- and post-contrast images. The dataset
-    also includes clinical information such as age, tumor size, and hormone 
-    receptor status, as well as treatment response data (pCR vs. non-pCR).
+    The dataset consists of \textbf{ultrafast breast MRI} from a single institution:
+    181 labeled exams across 143 patients, of which 179 are analyzed here. Each
+    exam is a dynamic contrast-enhanced series with precontrast baseline frames and
+    pCR labels; 35\% of exams are pCR-positive. Exams come from three sub-sources
+    (\texttt{simbiosys}, \texttt{uch\_nac}, \texttt{her2\_naclike}) whose
+    acquisition timing differs materially --- 13--24 frames over 96--480\,s.
 
   \end{block}
 
@@ -257,34 +256,37 @@
     \end{figure}
 
     Every arm carrying the full enhancement-kinetic feature set clusters between
-    \textbf{0.607 and 0.624} AUC, with heavily overlapping intervals. The paired
-    difference between the best GNN and the best tabular baseline is consistent
-    with zero, $+0.002$ $[-0.041, 0.046]$.
+    \textbf{0.607 and 0.624} AUC. The paired difference between the best GNN and
+    the best tabular baseline is consistent with zero, $+0.002$ $[-0.041, 0.046]$.
 
     A GNN restricted to two features (peak time and radius) sits at chance,
     $0.492$, placing the signal in the enhancement kinetics rather than in the
     graph. So far feature content moves the metric; model class and graph
     representation do not.
 
+    \heading{Protocol confound}
+
+    Acquisition timing differs by sub-source, and four of the seven kinetic
+    features depend on it. A protocol-only model with no imaging scores $0.593$;
+    regressing protocol out per fold leaves $0.539$ --- read the vessel signal as
+    the bracket $[0.539, 0.613]$.
+
   \end{exampleblock}
 
   \begin{block}{Reproducibility}
-    In an effort to promote reproducibility and transparency in our research,
-    we have made our code publicly available on GitHub. The 
-    repository includes the code for the vessel segmentation, graph construction,'
-    GNN training, and evaluation, as well as instructions for how to 
-    reproduce our results. 
+    All code is publicly available on GitHub: vessel segmentation, graph
+    construction, GNN training and evaluation, plus instructions to reproduce
+    these results.
   \end{block}
 
   \begin{block}{Conclusion}
 
-    In this study, we proposed a novel approach for predicting treatment response
-    in patients with LABC using ultrafast breast MRI scans and GNNs. Our method 
-    demonstrates the ability to predict pCR from the vascular 
-    network of the tumor, and that self-supervised pretraining can improve the 
-    performance of the GNN. Our results suggest that GNNs can be a powerful tool 
-    for predicting treatment response in breast cancer, and may have important 
-    implications for personalized treatment planning.
+    We built an end-to-end pipeline that turns ultrafast breast MRI into a vessel
+    graph and predicts pCR with a GNN. The vasculature carries some signal, but no
+    graph representation yet beats a tabular summary of the same node features, and
+    part of the pooled signal tracks acquisition protocol rather than physiology.
+    Quantifying what survives protocol adjustment, and whether pretraining helps,
+    are the next steps.
 
    
   \end{block}
