@@ -247,29 +247,24 @@
 
   \begin{exampleblock}{Results}
 
-    A different kind of highlighted block.
+    % Regenerate with figures/make_results_figure.py when new results land.
+    % Preliminary: these numbers are expected to move before final submission.
+    \begin{figure}
+      \centering
+      \includegraphics[width=\linewidth]{figures/results_auc.pdf}
+      \caption{Pooled out-of-fold AUC, bootstrap 95\% CI, shared folds.
+      \emph{Preliminary.}}
+    \end{figure}
 
-    $$
-    \int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
-    $$
+    Every arm carrying the full enhancement-kinetic feature set clusters between
+    \textbf{0.607 and 0.624} AUC, with heavily overlapping intervals. The paired
+    difference between the best GNN and the best tabular baseline is consistent
+    with zero, $+0.002$ $[-0.041, 0.046]$.
 
-    Interdum et malesuada fames $\{1, 4, 9, \ldots\}$ ac ante ipsum primis in
-    faucibus. Cras eleifend dolor eu nulla suscipit suscipit. Sed lobortis non
-    felis id vulputate.
-
-    \heading{A heading inside a block}
-
-    Praesent consectetur mi $x^2 + y^2$ metus, nec vestibulum justo viverra
-    nec. Proin eget nulla pretium, egestas magna aliquam, mollis neque. Vivamus
-    dictum $\mathbf{u}^\intercal\mathbf{v}$ sagittis odio, vel porta erat
-    congue sed. Maecenas ut dolor quis arcu auctor porttitor.
-
-    \heading{Another heading inside a block}
-
-    Sed augue erat, scelerisque a purus ultricies, placerat porttitor neque.
-    Donec $P(y \mid x)$ fermentum consectetur $\nabla_x P(y \mid x)$ sapien
-    sagittis egestas. Duis eget leo euismod nunc viverra imperdiet nec id
-    justo.
+    A GNN restricted to two features (peak time and radius) sits at chance,
+    $0.492$, placing the signal in the enhancement kinetics rather than in the
+    graph. So far feature content moves the metric; model class and graph
+    representation do not.
 
   \end{exampleblock}
 
