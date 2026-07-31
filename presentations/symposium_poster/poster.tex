@@ -47,10 +47,16 @@
 % hyperref hits the \\ while building the metadata string and errors out.
 \title[Graph Neural Network Modeling of Breast MRI Vascular Networks for Treatment Response Prediction]{Graph Neural Network Modeling of Breast MRI Vascular \\ Networks for Treatment Response Prediction}
 
-\author{Spencer Venancio \inst{1} \and Advisor: Anna Woodard, PhD \inst{2}}
+\author{Spencer Venancio \inst{1} \and Sarit Bose \inst{2} \and Aakrithi Ram \inst{3}\and Advisor: Anna Woodard, PhD \inst{4}}
 
-\institute[shortinst]{\inst{1} University of Wisconsin--Madison \samelineand
-  \inst{2} Data Science Institute, University of Chicago}
+% The student affiliations share a line; the hosting institute gets its own so it
+% does not read as a fourth school in a run-on list. \samelineand is \qquad, so
+% only \\ actually breaks the line.
+\institute[shortinst]{%
+ \inst{1} University of Wisconsin--Madison \samelineand
+ \inst{2} Neuqua Valley High School \samelineand
+ \inst{3} Bergen County Academies \\[0.5ex]
+ \inst{4} Data Science Institute, University of Chicago}
 
 % ====================
 % Footer (optional)
@@ -72,24 +78,20 @@
 % Three logos: two on the left, one on the right.
 %
 % Provenance -- all official, all with real alpha:
-%   uchicago_seal_white.png  Seal.zip, PNG_RGB_Digital/UChicago_ReverseSeal_
-%                            1Color_White_RGB.png
 %   uchicago_logo_white.png  University-Logo.zip, PNG_RGB_Digital/Reverse
-%                            University Logo_1Color_White_RGB.png (spare: the
+%                            University Logo_1Color_White_RGB.png -- the
 %                            shield+wordmark lockup, which UChicago's guidelines
-%                            prefer over the seal for general communications)
-%                            both from https://creative.uchicago.edu/logos-and-identity-elements
+%                            prefer over the seal for general communications.
+%                            https://creative.uchicago.edu/logos-and-identity-elements
 %   dsi_logo_white.pdf       https://datascience.uchicago.edu/wp-content/uploads/
-%                            2023/01/DSI_Logo_Color@1x.svg
-%   dsi_logo_color.pdf       .../DSI_Logo_Color-2@1x.svg (spare, colour version)
+%                            2023/01/DSI_Logo_Color@1x.svg, converted with
+%                            `rsvg-convert -f pdf` so it stays vector at print size.
+%                            The name is misleading: that file is entirely #FFFFFF
+%                            (the knockout the DSI site uses on its dark footer).
+%                            The actual colour version is DSI_Logo_Color-2@1x.svg.
 %
-% The DSI filenames are misleading: DSI_Logo_Color@1x.svg is entirely #FFFFFF
-% (the knockout the DSI site uses on its dark footer); DSI_Logo_Color-2@1x.svg
-% is the actual colour one (#8B0021 + #58595B). Converted SVG -> PDF with
-% `rsvg-convert -f pdf`, so they stay vector at print size.
-%
-% The "Reverse ... White" variants are the knockout versions, meant for dark
-% backgrounds -- which is what the maroon headline needs. Do not swap in the
+% These are the knockout ("Reverse ... White") variants, meant for dark
+% backgrounds -- which is what the maroon headline needs. Do not swap in a
 % colour DSI logo without also lightening the headline: its maroon ink is
 % RGB(139,0,33) against a RGB(128,0,0) bar, so it disappears.
 %
@@ -205,7 +207,7 @@
     one-voxel wide network of vessels using the \textbf{tc4d} algorithm, then
     converted into a graph using one of the three representations above.
 
-    A \textbf{Graph Neural Network (GNN)} predicts treatment response from that
+    A \textbf{graph neural network (GNN)} predicts treatment response from that
     graph. Successive \textbf{graph convolution (GCN)} layers aggregate information
     from neighboring nodes, a global pooling layer collapses all nodes into a
     fixed-size representation of the entire graph, and a fully connected layer maps
