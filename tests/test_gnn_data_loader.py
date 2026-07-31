@@ -152,6 +152,35 @@ def test_vanguard_kinetics_require_explicit_alignment_approval(tmp_path: Path) -
         _load_study_metadata("case", tmp_path)
 
 
+def test_run_summary_policy_defines_the_kinetic_contract(tmp_path: Path) -> None:
+    """An approved v5 run_summary.json is the single source of the contract.
+
+    The v5 Vanguard preprocessing writes ``kinetic_feature_policy`` +
+    ``alignment_qc_status`` per case (baseline frame count is acquisition
+    metadata, not a build knob), so the loader derives the ultrafast contract --
+    baseline=5, relative signal change -- straight from the file, with no
+    override.
+    """
+    n_timepoints = 24
+    policy_baseline = 5
+    summary = {
+        "study_timepoints": list(range(n_timepoints)),
+        "alignment_qc_status": "pass",
+        "kinetic_feature_policy": {
+            "baseline_frame_count": policy_baseline,
+            "enhancement": "relative_signal_change",
+            "time_axis": "physical_seconds",
+        },
+    }
+    (tmp_path / "run_summary.json").write_text(json.dumps(summary))
+    timepoints, baseline_frame_count, relative_enhancement = _load_study_metadata(
+        "case", tmp_path
+    )
+    assert timepoints == list(range(n_timepoints))
+    assert baseline_frame_count == policy_baseline
+    assert relative_enhancement is True
+
+
 def _write_morphometry_json(path: Path) -> None:
     """Write a tiny synthetic morphometry.json matching the real nested schema."""
     morph = {

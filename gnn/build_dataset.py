@@ -22,7 +22,7 @@ _DEFAULT_ROOT = Path(
     "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
 )
 _DEFAULT_LABELS_PATH = Path(
-    "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+    "/gpfs/data/karczmar-lab/workspaces/saritbose/metadata/pcr_labels.csv"
 )
 _DEFAULT_DCE_ROOT = Path("/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images")
 _DEFAULT_CACHE_DIR = Path(

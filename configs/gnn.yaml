@@ -22,11 +22,23 @@ model_params:
   dropout: 0.2
   learning_rate: 0.001
   gnn_node_features: ["peak_time", "radius"]
+  # Frozen baseline reference (PLAN_advanced_modeling.md, decision D0.6). These
+  # keys are now honored by gnn/train.py, but here they are pinned to the
+  # HISTORICAL behavior that produced the ~0.51 baseline so this config keeps
+  # reproducing it exactly (the shared config defaults are weight_decay=1e-4 and
+  # loss=weighted_bce -- different from what the old GNN runs actually used).
+  # The Tier-0 improvements live in configs/gnn_tier0.yaml instead.
+  weight_decay: 0.0
+  loss: "unweighted_bce"
+  lr_scheduler: "none"
+  max_grad_norm: 0.0
+  early_stopping_patience: 0
+  restore_best_epoch: false
 
 data_paths:
   gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
   gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
-  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/metadata/pcr_labels.csv"
   gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache"
   gnn_id_column: "case_id"
   gnn_label_column: "pcr"
