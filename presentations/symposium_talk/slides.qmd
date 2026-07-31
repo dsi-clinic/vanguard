@@ -1,0 +1,306 @@
+---
+title: "Can Breast MRI Help Predict Treatment Response?"
+subtitle: "What vessel networks taught us—and what they didn’t"
+author: "Spencer Venancio<br><span class='title-team'>with Sarit Bose and Aakrithi Ram · Advisor: Anna Woodard, PhD</span>"
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    width: 1280
+    height: 720
+    margin: 0
+    slide-number: c/t
+    controls: false
+    progress: true
+    transition: fade
+    navigation-mode: linear
+    incremental: false
+    code-line-numbers: false
+    include-after-body:
+      - _logos.html
+      - _autofit.html
+execute:
+  echo: false
+  freeze: auto
+---
+
+## Before surgery, chemotherapy is a high-stakes test
+
+::: {.motivation-grid}
+::: {.story-card}
+<div class="card-kicker">THE TREATMENT</div>
+<div class="card-icon">Before surgery</div>
+<p>Chemotherapy can shrink a tumor and reveal how it responds.</p>
+:::
+
+::: {.story-card .feature-card}
+<div class="card-kicker">THE OUTCOME</div>
+<div class="big-stat">≈ 1 in 3</div>
+<p>scans came from patients with no remaining invasive cancer at surgery.</p>
+:::
+
+::: {.story-card}
+<div class="card-kicker">THE QUESTION</div>
+<div class="card-icon">Can MRI help?</div>
+<p>Could an existing scan give us an earlier clue about treatment response?</p>
+:::
+:::
+
+<div class="plain-callout">The long-term goal is better evidence for tailoring treatment—not replacing clinical judgment.</div>
+
+::: {.notes}
+Many patients with breast cancer receive chemotherapy before surgery. A pathologic
+complete response means no invasive cancer remains at surgery; in our dataset,
+about one third of scans came from complete responders. Chemotherapy is demanding,
+so the motivation is simple: can information already present in an MRI give us an
+earlier clue? This is research toward decision support, not a clinical tool or a
+replacement for physicians.
+:::
+
+## An MRI “movie” shows more than anatomy
+
+<div class="lead-line">After contrast is injected, repeated MRI frames reveal <strong>how it appears through the breast’s vessels over time.</strong></div>
+
+![](figures/pipeline.svg){.nostretch width="94%" fig-align="center"}
+
+::: {.three-facts}
+<div><strong>179</strong><span>analyzed exams</span></div>
+<div><strong>143</strong><span>patients</span></div>
+<div><strong>13–24</strong><span>frames per MRI movie</span></div>
+:::
+
+::: {.notes}
+These scans are closer to a short movie than a still picture. A contrast agent
+enters the blood, and the scanner repeatedly records where it appears. We isolate
+the vessels, reduce them to centerlines, and turn the branching structure into data
+a model can read. The study included 179 exams from 143 patients, with 13 to 24
+frames per movie. That gives us both vessel shape and change over time.
+:::
+
+## We asked whether the vessel **map** adds value
+
+::: {.map-question}
+::: {.network-panel aria-label="A branching vessel graph with connected nodes"}
+<svg viewBox="0 0 500 300" role="img" aria-label="Connected branching vessel map">
+  <g class="edges">
+    <line x1="70" y1="150" x2="170" y2="150"/>
+    <line x1="170" y1="150" x2="270" y2="75"/>
+    <line x1="170" y1="150" x2="280" y2="155"/>
+    <line x1="170" y1="150" x2="255" y2="235"/>
+    <line x1="280" y1="155" x2="395" y2="120"/>
+    <line x1="280" y1="155" x2="395" y2="205"/>
+  </g>
+  <g class="nodes">
+    <circle cx="70" cy="150" r="17"/><circle cx="170" cy="150" r="21"/>
+    <circle cx="270" cy="75" r="15"/><circle cx="280" cy="155" r="19"/>
+    <circle cx="255" cy="235" r="14"/><circle cx="395" cy="120" r="14"/>
+    <circle cx="395" cy="205" r="16"/>
+  </g>
+</svg>
+<div class="network-caption"><strong>Graph neural network</strong><br>Each vessel location shares information with its neighbors.</div>
+:::
+
+::: {.versus}
+<span>VS.</span>
+:::
+
+::: {.summary-panel}
+<div class="summary-stack">
+  <span>How bright?</span>
+  <span>How fast?</span>
+  <span>How long?</span>
+</div>
+<div class="network-caption"><strong>Simple summary</strong><br>Average the same vessel measurements across the whole scan.</div>
+:::
+:::
+
+<div class="question-banner">Does knowing <strong>which vessel connects to which</strong> improve the prediction?</div>
+
+::: {.notes}
+My work focused on a graph neural network, or GNN. Think of the vessels as a road
+map: each dot is a vessel location, each line is a connection, and neighboring dots
+share information. That should help if network patterns matter. But we needed a fair
+comparison, so we tested the GNN against a simple model that averages the same
+brightness and timing measurements across the scan. The decisive question was
+whether the map itself added value.
+:::
+
+## Vessel behavior carried a modest signal
+
+<div class="score-explainer">Ranking score: <strong>50 = chance</strong> · <strong>100 = perfect</strong></div>
+
+::: {.score-chart}
+<div class="score-axis"><span>50</span><span>60</span><span>70</span></div>
+
+<div class="score-row">
+  <div class="score-label">Simple vessel averages</div>
+  <div class="score-track"><div class="score-bar simple" style="width:57%"></div></div>
+  <div class="score-value">61.4</div>
+</div>
+
+<div class="score-row">
+  <div class="score-label">Graph neural network</div>
+  <div class="score-track"><div class="score-bar gnn" style="width:58%"></div></div>
+  <div class="score-value">61.6</div>
+</div>
+:::
+
+::: {.result-grid}
+::: {.result-card .positive}
+<strong>Something is there.</strong>
+
+Vessel enhancement ranked responders above non-responders about 61 times out of 100.
+:::
+
+::: {.result-card .caution}
+<strong>But the estimate is uncertain.</strong>
+
+Differences in scan timing may explain part of it; the defensible range is roughly **54–61**.
+:::
+:::
+
+::: {.notes}
+The vessel measurements contained a modest signal. This ranking score uses 50 for
+chance and 100 for perfect. Both models scored about 61: given one responder and one
+non-responder, the model ranks the responder higher about 61 times out of 100. That
+is better than chance, but far from clinical readiness. Scan timing also differed
+across the dataset, and several measurements depend on timing. After auditing that
+issue, the defensible range is roughly 54 to 61—not one precise headline number.
+:::
+
+## The clearest result came from deleting the graph
+
+::: {.ablation-wrap}
+::: {.ablation-panel}
+<div class="mini-title">Real vessel connections</div>
+<svg viewBox="0 0 360 220" role="img" aria-label="Nodes joined by vessel connections">
+  <g class="edges">
+    <line x1="45" y1="110" x2="130" y2="110"/><line x1="130" y1="110" x2="210" y2="55"/>
+    <line x1="130" y1="110" x2="220" y2="120"/><line x1="130" y1="110" x2="205" y2="180"/>
+    <line x1="220" y1="120" x2="315" y2="95"/><line x1="220" y1="120" x2="310" y2="170"/>
+  </g>
+  <g class="nodes">
+    <circle cx="45" cy="110" r="14"/><circle cx="130" cy="110" r="18"/>
+    <circle cx="210" cy="55" r="13"/><circle cx="220" cy="120" r="16"/>
+    <circle cx="205" cy="180" r="12"/><circle cx="315" cy="95" r="12"/>
+    <circle cx="310" cy="170" r="13"/>
+  </g>
+</svg>
+<div class="ablation-score">61.6</div>
+:::
+
+<div class="delete-arrow"><span>remove every<br>connection</span><strong>→</strong></div>
+
+::: {.ablation-panel .dropped}
+<div class="mini-title">Measurements only</div>
+<svg viewBox="0 0 360 220" role="img" aria-label="The same nodes with all connections removed">
+  <g class="nodes">
+    <circle cx="45" cy="110" r="14"/><circle cx="130" cy="110" r="18"/>
+    <circle cx="210" cy="55" r="13"/><circle cx="220" cy="120" r="16"/>
+    <circle cx="205" cy="180" r="12"/><circle cx="315" cy="95" r="12"/>
+    <circle cx="310" cy="170" r="13"/>
+  </g>
+</svg>
+<div class="ablation-score">61.8</div>
+:::
+:::
+
+<div class="takeaway-banner"><strong>Prediction did not get worse.</strong> The current GNN mostly used vessel measurements—not their connections.</div>
+
+::: {.notes}
+The most informative experiment was simple: we deleted every graph connection. If
+the model used the vessel map, performance should fall. It did not. The disconnected
+model scored 61.8, essentially the same as 61.6 with the real network. Other ways of
+drawing the graph also produced no reliable improvement. This does not prove vessel
+topology is useless. It tells us something narrower: this GNN was mostly ignoring
+the network structure.
+:::
+
+## A negative result saved us from the wrong next step
+
+::: {.lesson-grid}
+::: {.lesson-card}
+<div class="lesson-number">1</div>
+<strong>Keep the useful signal</strong>
+<p>How vessels enhance over time is worth studying.</p>
+:::
+
+::: {.lesson-card}
+<div class="lesson-number">2</div>
+<strong>Stop adding static complexity</strong>
+<p>More graph types and more static layers were not answering the real question.</p>
+:::
+
+::: {.lesson-card}
+<div class="lesson-number">3</div>
+<strong>Learn the movie itself</strong>
+<p>The next model should learn contrast flow through time before predicting response.</p>
+:::
+:::
+
+<div class="plain-callout">A “no improvement” result is valuable when it tells us what to stop—and what to test next.</div>
+
+::: {.notes}
+This negative result changed the project’s direction. We keep the finding that
+enhancement behavior carries some signal, stop spending time on more static graph
+variations, and return to what makes this dataset special: it is a movie. The first
+model compressed each vessel curve into a few measurements before learning, which
+may discard the pattern we care about. A good negative result removes an
+unproductive branch and sharpens the next experiment.
+:::
+
+## Next: learn contrast flow before treatment response
+
+<div class="planned-badge">PLANNED NEXT EXPERIMENT — NOT YET A RESULT</div>
+
+::: {.movie-strip}
+<div class="movie-frame"><span>1</span><i class="pulse p1"></i></div>
+<div class="movie-frame"><span>2</span><i class="pulse p2"></i></div>
+<div class="movie-frame"><span>3</span><i class="pulse p3"></i></div>
+<div class="movie-arrow">predict →</div>
+<div class="movie-frame future"><span>4</span><strong>?</strong></div>
+<div class="movie-frame future"><span>5</span><strong>?</strong></div>
+:::
+
+::: {.next-grid}
+<div><strong>~1,000 exams</strong><span>Learn without treatment labels</span></div>
+<div><strong>With vs. without the map</strong><span>Test whether connections help</span></div>
+<div><strong>Before vs. after pretraining</strong><span>Test whether learning the movie improves response prediction</span></div>
+:::
+
+::: {.notes}
+The next experiment is self-supervised pretraining: show the model three MRI frames
+and ask it to predict the next two. We can use roughly one thousand exams without
+treatment labels, forcing the model to learn change through time. Then we compare
+the same temporal model with and without vessel connections, each started from
+scratch or from pretraining. This separates two questions: does learning the movie
+help, and does the vessel map add anything beyond each location’s own curve?
+:::
+
+## What should you remember?
+
+::: {.remember-grid}
+::: {.remember-card}
+<span>1</span>
+<p><strong>Vessel contrast behavior</strong> carries modest—but uncertain—information about response.</p>
+:::
+
+::: {.remember-card}
+<span>2</span>
+<p>Our first <strong>graph neural network did not benefit</strong> from the vessel connections.</p>
+:::
+
+::: {.remember-card}
+<span>3</span>
+<p>That result redirected us toward <strong>learning contrast flow through time</strong>.</p>
+:::
+:::
+
+<div class="closing-line">A simpler model won this round—and showed us exactly what to test next.</div>
+
+::: {.notes}
+Vessel enhancement behavior contains modest, uncertain information about response.
+Our first GNN did not gain from the connections in the vessel map. That negative
+result gave us a better next test: learn change through time, then ask whether the
+graph finally adds value. A simpler model won this round—and showed us exactly where
+the current approach falls short.
+:::
