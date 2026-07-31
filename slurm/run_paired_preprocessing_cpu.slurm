@@ -3,9 +3,14 @@
 #SBATCH --partition=tier1q
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=08:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=logs/slurm/vanguard-paired-%x-%A_%a.out
 #SBATCH --error=logs/slurm/vanguard-paired-%x-%A_%a.err
+# postprocess runs tc4d+map+qc. tc4d also runs unmodified TC4D over the
+# UFAST-direct route (CPU-bound) before map merges it in. Matches the 11.5h
+# budget analysis/submit_skeletonize_ufast_vessels.slurm already uses for that
+# computation, plus headroom for the (fast) HR TC4D + map + qc stages that
+# still run in this same job. prepare shares this script and is lighter.
 
 set -euo pipefail
 umask 0007

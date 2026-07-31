@@ -153,39 +153,60 @@ def _stage_complete(stage: str, case_root: Path) -> bool:
             )
         return complete
     if stage == "infer":
-        complete = "inference" in provenance
+        inference = provenance.get("inference")
+        complete = isinstance(inference, dict) and {
+            "hr_phases",
+            "ufast_phases",
+        }.issubset(inference)
         if complete:
-            phases = int(provenance["inference"]["phases"])
+            hr_phases = int(inference["hr_phases"])
+            ufast_phases = int(inference["ufast_phases"])
+            exam_id = case_root.name
             _require_files(
                 [
                     case_root
                     / "hr_breast_predictions"
                     / f"{model_subject_id(index)}.npy"
-                    for index in range(phases)
+                    for index in range(hr_phases)
                 ]
                 + [
                     case_root
                     / "hr_vessel_predictions"
                     / f"{model_subject_id(index)}.npz"
-                    for index in range(phases)
+                    for index in range(hr_phases)
+                ]
+                + [
+                    case_root
+                    / "ufast_breast_predictions"
+                    / f"{exam_id}_{index:04d}.npy"
+                    for index in range(ufast_phases)
+                ]
+                + [
+                    case_root
+                    / "ufast_vessel_predictions"
+                    / f"{exam_id}_{index:04d}.npz"
+                    for index in range(ufast_phases)
                 ],
                 stage=stage,
             )
         return complete
     if stage == "tc4d":
-        complete = "tc4d" in provenance
+        complete = "tc4d" in provenance and "ufast_tc4d" in provenance
         if complete:
             _require_files(
                 [
                     case_root / "hr_tc4d" / "exam_skeleton_zyx.npy",
                     case_root / "hr_tc4d" / "exam_support_zyx.npy",
                     case_root / "hr_tc4d" / "center_manifold_4d_yxz.npy",
+                    case_root / "ufast_tc4d" / "exam_skeleton_zyx.npy",
+                    case_root / "ufast_tc4d" / "exam_support_zyx.npy",
+                    case_root / "ufast_tc4d" / "center_manifold_4d_yxz.npy",
                 ],
                 stage=stage,
             )
         return complete
     if stage == "map":
-        complete = "mapping" in provenance
+        complete = "mapping" in provenance and "merge" in provenance
         if complete:
             output_dir = (
                 case_root.parents[1]
@@ -197,22 +218,26 @@ def _stage_complete(stage: str, case_root: Path) -> bool:
                 [
                     output_dir / f"{case_root.name}_skeleton_4d_exam_mask.npy",
                     output_dir / f"{case_root.name}_skeleton_4d_exam_support_mask.npy",
+                    output_dir / f"{case_root.name}_skeleton_4d_exam_mask_hr_only.npy",
+                    output_dir / f"{case_root.name}_merge_provenance_label_zyx.npy",
+                    output_dir / "merge_provenance.json",
                     output_dir / "run_summary.json",
                 ],
                 stage=stage,
             )
         return complete
     if stage == "qc":
-        return (
-            "mapping" in provenance
-            and (
-                case_root.parents[1]
-                / "centerlines"
-                / str(provenance["case"]["dataset"])
-                / case_root.name
-                / "mapping_qc.png"
-            ).exists()
+        if "mapping" not in provenance or "merge" not in provenance:
+            return False
+        centerline_dir = (
+            case_root.parents[1]
+            / "centerlines"
+            / str(provenance["case"]["dataset"])
+            / case_root.name
         )
+        return (centerline_dir / "mapping_qc.png").exists() and (
+            centerline_dir / "temporal_mip.png"
+        ).exists()
     if stage == "postprocess":
         return all(_stage_complete(item, case_root) for item in ("tc4d", "map", "qc"))
     raise ValueError(f"unknown pipeline stage: {stage}")

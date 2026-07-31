@@ -34,7 +34,7 @@ from preprocessing.spatial import (
     save_nifti_xyz,
 )
 
-POLICY_NAME = "vanguard_spgr_raw_signal_v5"
+POLICY_NAME = "vanguard_spgr_raw_signal_v6"
 TARGET_SPACING_MM = 1.0
 BINARY_THRESHOLD = 0.5
 INTERSERIES_REVIEW_TRANSLATION_MM = 2.0

@@ -90,10 +90,13 @@ def classify_overlap(
 ) -> dict[str, np.ndarray]:
     """Split UFAST-direct voxels into "confirmed by HR proximity" vs "UFAST-only".
 
-    Asymmetric by design: HR is dilated and tested against UFAST, not the
-    other way around, since HR is the authoritative source -- every HR voxel
-    is kept regardless of what UFAST does, so it never needs a "confirmed"
-    label of its own.
+    Asymmetric by design for the *merge geometry*: HR is dilated and tested
+    against UFAST, not the other way around, since HR is the authoritative
+    source -- every HR voxel is kept regardless of what UFAST does, so a
+    proximity-confirmed UFAST voxel does not contribute a new merged voxel.
+    Provenance labeling is separate: ``confirmed_both`` marks HR voxels near
+    the UFAST mask (see ``merge_skeletons``), which is the documented
+    two-voxel proximity agreement on the coordinates that survive the merge.
     """
     structure = ndi.generate_binary_structure(3, 3)
     hr_dilated = ndi.binary_dilation(
@@ -305,7 +308,18 @@ def merge_skeletons(
     merged_skeleton = hr_skeleton | cleaned_candidate | kinetics_added_mask
     merged_support = hr_support | ufast_support | merged_skeleton
 
-    confirmed_final = merged_skeleton & overlap["confirmed_ufast_mask"]
+    # Provenance only: proximity-confirmed UFAST voxels are left out of the
+    # merged mask in favor of the authoritative HR coordinates, so intersecting
+    # merged_skeleton with confirmed_ufast_mask would count mostly exact
+    # overlaps. Label the HR voxels near the UFAST mask instead -- that is the
+    # documented two-voxel proximity agreement, without changing the merge.
+    structure = ndi.generate_binary_structure(3, 3)
+    ufast_dilated = ndi.binary_dilation(
+        ufast_skeleton.astype(bool),
+        structure=structure,
+        iterations=dilation_radius_voxels,
+    )
+    confirmed_final = merged_skeleton & hr_skeleton & ufast_dilated
     hr_only_final = merged_skeleton & hr_skeleton & ~confirmed_final
     ufast_size_added_final = merged_skeleton & ufast_size_added_mask & ~hr_skeleton
     kinetics_added_final = (
