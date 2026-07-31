@@ -651,10 +651,6 @@ def map_case(*, case_root: Path) -> None:
     np.save(
         output_dir / f"{exam_id}_skeleton_4d_exam_mask_hr_only.npy", mapped_skeleton
     )
-    )
-    np.save(
-        output_dir / f"{exam_id}_skeleton_4d_exam_mask_hr_only.npy", mapped_skeleton
-    )
     np.save(output_dir / f"{exam_id}_merge_provenance_label_zyx.npy", provenance_label)
     _write_json(output_dir / "merge_provenance.json", merge_provenance)
 
