@@ -90,6 +90,10 @@ def classify_overlap(
 ) -> dict[str, np.ndarray]:
     """Split UFAST-direct voxels into "confirmed by HR proximity" vs "UFAST-only".
 
+    Asymmetric by design: HR is dilated and tested against UFAST, not the
+    other way around, since HR is the authoritative source -- every HR voxel
+    is kept regardless of what UFAST does, so it never needs a "confirmed"
+    label of its own.
     Asymmetric by design for the *merge geometry*: HR is dilated and tested
     against UFAST, not the other way around, since HR is the authoritative
     source -- every HR voxel is kept regardless of what UFAST does, so a
@@ -308,6 +312,7 @@ def merge_skeletons(
     merged_skeleton = hr_skeleton | cleaned_candidate | kinetics_added_mask
     merged_support = hr_support | ufast_support | merged_skeleton
 
+    confirmed_final = merged_skeleton & overlap["confirmed_ufast_mask"]
     # Provenance only: proximity-confirmed UFAST voxels are left out of the
     # merged mask in favor of the authoritative HR coordinates, so intersecting
     # merged_skeleton with confirmed_ufast_mask would count mostly exact

@@ -73,8 +73,8 @@ exam_id,dataset,study_instance_uid,hr_series_instance_uid,ufast_series_instance_
 ## Staged run
 
 Heavy stages belong on Slurm. `prepare` is CPU/memory heavy, `infer` needs a
-GPU, and `tc4d`/`map` are CPU stages. Stages refuse to overwrite an existing
-result.
+GPU, and `tc4d`/`map`/`complement` are CPU stages. Stages refuse to overwrite
+an existing result.
 
 ```bash
 micromamba activate vanguard
@@ -96,6 +96,10 @@ python -m preprocessing.pipeline tc4d \
 python -m preprocessing.pipeline map \
   --exam-id uchicago_example \
   --output-root /path/to/derived/vanguard_preprocessing
+
+python -m preprocessing.pipeline complement \
+  --exam-id uchicago_example \
+  --output-root /path/to/derived/vanguard_preprocessing
 ```
 
 The mapped skeleton is named with the standard Vanguard centerline pattern in
@@ -103,6 +107,7 @@ The mapped skeleton is named with the standard Vanguard centerline pattern in
 raw UFAST phases and physical-time sidecar are in
 `<output-root>/dce/<exam-id>/`. Model intermediates and the main provenance are
 kept under `<output-root>/work/<exam-id>/`.
+Each centerline directory contains the final skeleton/support
 Each centerline directory contains the merged skeleton/support
 (`<exam-id>_skeleton_4d_exam_mask.npy` / `_skeleton_4d_exam_support_mask.npy`,
 the file every downstream consumer reads), the pure HR-mapped skeleton before
@@ -114,6 +119,38 @@ recorded for the full UFAST 4D series: `mapping_qc.png` overlays the merged
 skeleton on UFAST phase 0, and `temporal_mip.png` is a skeleton-free MIP
 across every UFAST phase for comparing the merged skeleton against the raw
 signal directly.
+
+Once `complement` has run, `<exam-id>_skeleton_4d_exam_mask.npy` is the
+HR+UFAST merged skeleton (`preprocessing.merge`) further combined with a
+third, independent source: the MATLAB-translated SegVessel/Jerman pipeline
+(`segmentation.matlab_vessel_segmentation`; method provenance: Zhen Ren's
+lab MATLAB SegVessel, building on Wu et al., Magn Reson Med 2019,
+PMID 30368906), added only where it clears a quality gate calibrated to the
+vessels the merge already confirmed (see `preprocessing/complement.py`'s
+module docstring for the full policy). The matching support mask
+(`<exam-id>_skeleton_4d_exam_support_mask.npy`) is updated the same way:
+SegVessel's vessel-width mask is restricted to the accepted complement
+branches and unioned in, so downstream radius/caliber features see estimated
+vessel width rather than one-voxel stubs. The pre-complement merge skeleton
+and support are preserved as
+`<exam-id>_skeleton_4d_exam_mask_hr_ufast_merge_only.npy` and
+`<exam-id>_skeleton_4d_exam_support_mask_hr_ufast_merge_only.npy`, per-case
+complement statistics are in `complement_provenance.json`, and the per-voxel
+provenance label volume gets one more code (`LABEL_MATLAB_COMPLEMENT_ADDED`)
+for the added voxels.
+
+Already-complemented cases that were produced before support propagation can be
+repaired without rewriting the centerline:
+
+```bash
+python -m preprocessing.pipeline repair-complement-support \
+  --exam-id uchicago_example \
+  --output-root /path/to/derived/vanguard_preprocessing
+```
+
+The cohort wrapper is
+`preprocessing/slurm/repair_complement_support_array.slurm` (skips cases that
+already have `complement.support_propagated=true`).
 
 For the GNN loader, use `<output-root>/centerlines` as `centerline_root` and
 `<output-root>/dce` as `dce_root`. It uses the mean of the five protocol baseline
@@ -165,7 +202,7 @@ loads every original HR/UFAST temporal position, preserves physical acquisition
 times, writes true RAS NIfTI qform/sform affines derived from DICOM LPS, and
 motion-corrects raw-signal UFAST data. GPU inference runs the frozen models on
 every motion-aligned native-HR phase. CPU postprocessing runs TC4D, maps the static skeleton
-through the shared DICOM frame, and writes QC.
+through the shared DICOM frame, adds the MATLAB-translated complement, and writes QC.
 
 ```bash
 export REPO_ROOT=/path/to/vanguard
