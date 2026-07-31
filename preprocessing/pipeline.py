@@ -35,7 +35,7 @@ from preprocessing.spatial import (
     save_nifti_xyz,
 )
 
-POLICY_NAME = "vanguard_spgr_raw_signal_v5"
+POLICY_NAME = "vanguard_spgr_raw_signal_v6"
 TARGET_SPACING_MM = 1.0
 BINARY_THRESHOLD = 0.5
 INTERSERIES_REVIEW_TRANSLATION_MM = 2.0
@@ -647,6 +647,10 @@ def map_case(*, case_root: Path) -> None:
     np.save(
         output_dir / f"{exam_id}_skeleton_4d_exam_support_mask.npy",
         merged_support.astype(np.uint8),
+    )
+    np.save(
+        output_dir / f"{exam_id}_skeleton_4d_exam_mask_hr_only.npy", mapped_skeleton
+    )
     )
     np.save(
         output_dir / f"{exam_id}_skeleton_4d_exam_mask_hr_only.npy", mapped_skeleton

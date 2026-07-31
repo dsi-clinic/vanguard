@@ -38,7 +38,7 @@ model_params:
 data_paths:
   gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
   gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
-  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/pcr_labels.csv"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/metadata/pcr_labels.csv"
   gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_segment_smoke_graph_features"
   gnn_id_column: "case_id"
   gnn_label_column: "pcr"

@@ -1,0 +1,50 @@
+# GNN training on the UChicago internal ultrafast DCE cohort (gnn/train.py).
+#
+# The Vanguard preprocessing output is in the layout the loader expects, so it
+# feeds the standard loader with no dataset adapter:
+#   centerlines: <root>/<sub-source>/<exam_id>/<exam_id>_skeleton_4d_exam_mask.npy
+#   raw DCE:     <dce_root>/<exam_id>/<exam_id>_NNNN.nii.gz  (+ ufast_times_seconds.npy)
+# The DCE is the raw-signal, motion-corrected contract
+# (vanguard_spgr_raw_signal_v5), so no manifest / tar extraction is involved.
+#
+# node_mode defaults to voxel; override model_params.gnn_node_mode for
+# segment/junction.
+
+experiment_setup:
+  name: "gnn_uchicago"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  # Manifest's shipped folds (patient-grouped, pcr-stratified), merged from the
+  # labels CSV's `fold` column.
+  split_mode: "predefined"
+  split_col: "fold"
+  use_group_split: false
+  n_splits: 5
+  random_state: 42
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features: ["peak_time", "radius"]
+  # The kinetic contract (baseline frame count, relative signal change) is
+  # acquisition metadata: the loader reads it per case from run_summary.json's
+  # kinetic_feature_policy and gates on alignment_qc_status. See gnn/data_loader.py.
+
+data_paths:
+  # v5-regenerated UChicago preprocessing (run_summary.json carries the kinetic
+  # policy + alignment approval). On scratch for now; move to the labshare once
+  # storage is resolved, then update these two paths.
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_voxel"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
+
+# Smoke-test a few exams first via gnn_cases: [<exam_id>, ...] or --cases.

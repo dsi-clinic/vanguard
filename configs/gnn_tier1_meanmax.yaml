@@ -1,0 +1,49 @@
+# Tier-1 readout arm (PLAN_advanced_modeling.md, decision D2.1).
+# Identical to the Tier-0 arm (configs/gnn_tier0_sweep_tier0.yaml: all Tier-0
+# training knobs on, same cache, same features, same folds per seed) EXCEPT the
+# whole-graph readout: gnn_pooling="mean_max" concatenates a global max-pool
+# onto the mean-pool, restoring the distributional tails that mean-pool alone
+# discards. So a paired ΔAUC vs. the Tier-0 (mean-pool) arm isolates the readout
+# change (D5: one change per arm), directly testing whether mean-pool washout is
+# what caps the GNN below the quantile-based tabular baseline (Gate G0 finding).
+
+experiment_setup:
+  name: "gnn_sweep_tier1_meanmax"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  group_col: "site"
+  stratum_col: "dataset"
+  split_mode: "random" # frozen-fold parity with gnn.yaml (D0.2)
+  split_col: "fold"
+  batch_size: 8
+  epochs: 100
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features: ["peak_time", "radius"]
+  gnn_pooling: "mean_max"
+  # Tier-0 training knobs (the only deltas vs. configs/gnn.yaml).
+  loss: "weighted_bce"
+  weight_decay: 1.0e-4
+  max_grad_norm: 1.0
+  lr_scheduler: "plateau"
+  lr_scheduler_factor: 0.5
+  lr_scheduler_patience: 5
+  early_stopping_patience: 10
+  restore_best_epoch: true
+
+data_paths:
+  gnn_centerline_root: "/gpfs/data/karczmar-lab/workspaces/saritbose/centerlines_tc4d/studies"
+  gnn_dce_root: "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/images"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/saritbose/metadata/pcr_labels.csv"
+  gnn_cache_dir: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/gnn_cache_tier0_sweep"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null

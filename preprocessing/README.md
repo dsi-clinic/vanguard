@@ -108,6 +108,7 @@ raw UFAST phases and physical-time sidecar are in
 `<output-root>/dce/<exam-id>/`. Model intermediates and the main provenance are
 kept under `<output-root>/work/<exam-id>/`.
 Each centerline directory contains the final skeleton/support
+Each centerline directory contains the merged skeleton/support
 (`<exam-id>_skeleton_4d_exam_mask.npy` / `_skeleton_4d_exam_support_mask.npy`,
 the file every downstream consumer reads), the pure HR-mapped skeleton before
 merging (`<exam-id>_skeleton_4d_exam_mask_hr_only.npy`, kept so nothing is
