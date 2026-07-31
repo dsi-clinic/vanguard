@@ -2,8 +2,13 @@
 #SBATCH --job-name=vanguard-tc4d
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
-#SBATCH --time=04:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=logs/slurm/vanguard-tc4d-%j.out
+# tc4d now also runs unmodified TC4D over the UFAST-direct route (CPU-bound,
+# no GPU) before map merges it in. Matches the 11.5h budget
+# analysis/submit_skeletonize_ufast_vessels.slurm already uses for this
+# exact same computation, plus headroom for the (fast) HR TC4D + map + qc
+# stages that still run in this same job.
 
 set -euo pipefail
 

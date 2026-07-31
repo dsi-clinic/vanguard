@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import SimpleITK as sitk
 
 from preprocessing.cases import CaseRecord, select_case
 from preprocessing.dicom import (
@@ -17,6 +18,7 @@ from preprocessing.dicom import (
     geometry_alignment_checks,
     load_dicom_series,
 )
+from preprocessing.merge import find_ufast_phases, merge_skeletons
 from preprocessing.model import model_subject_id, prepare_hr_phase_for_model
 from preprocessing.motion import (
     DEFAULT_MOTION_SETTINGS,
@@ -24,7 +26,7 @@ from preprocessing.motion import (
     correct_phase,
     correlation_in_support,
 )
-from preprocessing.qc import write_mapping_qc
+from preprocessing.qc import write_mapping_qc, write_temporal_mip
 from preprocessing.spatial import (
     isotropic_geometry,
     rasterize_skeleton_identity,
@@ -32,7 +34,7 @@ from preprocessing.spatial import (
     save_nifti_xyz,
 )
 
-POLICY_NAME = "vanguard_spgr_raw_signal_v5"
+POLICY_NAME = "vanguard_spgr_raw_signal_v6"
 TARGET_SPACING_MM = 1.0
 BINARY_THRESHOLD = 0.5
 INTERSERIES_REVIEW_TRANSLATION_MM = 2.0
@@ -411,10 +413,31 @@ def prepare_case(
     return case_root
 
 
+def _preprocess_ufast_phase_for_model(phase_path: Path, step1_dir: Path) -> None:
+    """Apply the frozen model's input contract to one UFAST phase, save as .npy.
+
+    Same transform as the HR route (``prepare_hr_phase_for_model``): the saved
+    UFAST NIfTI already carries a valid DICOM-derived affine (``prepare_case``'s
+    ``save_nifti_xyz`` call), so sitk's ``(z,y,x)`` array read is the correct
+    starting point. Uses the phase filename's own stem (not
+    ``model_subject_id``, which is an HR-route-only naming scheme) so the
+    resulting vessel .npz files stay in exam-phase order under a plain sort.
+    """
+    array_zyx = sitk.GetArrayFromImage(sitk.ReadImage(str(phase_path)))
+    model_input = prepare_hr_phase_for_model(array_zyx)
+    step1_dir.mkdir(parents=True, exist_ok=True)
+    np.save(step1_dir / f"{phase_path.name.replace('.nii.gz', '')}.npy", model_input)
+
+
 def infer_case(
     *, case_root: Path, breast_model: Path, vessel_model: Path, batch_size: int
 ) -> None:
-    """Run the frozen breast and vessel models over every prepared HR phase."""
+    """Run the frozen breast and vessel models over every prepared HR and UFAST phase.
+
+    Runs both routes in one restartable stage: the UFAST-direct route is a
+    required input to the merge step in ``map_case``, so a case whose UFAST
+    inference didn't complete isn't usably "inferred" either.
+    """
     import torch
 
     from segmentation.batch_segmentation import run_inference_in_process
@@ -424,8 +447,13 @@ def infer_case(
     step1_dir = case_root / "hr_model_inputs"
     breast_dir = case_root / "hr_breast_predictions"
     vessel_dir = case_root / "hr_vessel_predictions"
+    ufast_step1_dir = case_root / "ufast_model_inputs"
+    ufast_breast_dir = case_root / "ufast_breast_predictions"
+    ufast_vessel_dir = case_root / "ufast_vessel_predictions"
     if breast_dir.exists() or vessel_dir.exists():
         raise FileExistsError("refusing to overwrite existing model predictions")
+    if ufast_breast_dir.exists() or ufast_vessel_dir.exists():
+        raise FileExistsError("refusing to overwrite existing UFAST model predictions")
     breast_dir.mkdir()
     vessel_dir.mkdir()
     try:
@@ -447,40 +475,63 @@ def infer_case(
             raise RuntimeError(
                 f"expected {expected} vessel phases, found {len(outputs)}"
             )
+
+        output_root = case_root.parents[1]
+        exam_id = case_root.name
+        ufast_phases = find_ufast_phases(output_root, exam_id)
+        for phase_path in ufast_phases:
+            _preprocess_ufast_phase_for_model(phase_path, ufast_step1_dir)
+        ufast_breast_dir.mkdir()
+        ufast_vessel_dir.mkdir()
+        run_inference_in_process(
+            ufast_step1_dir,
+            ufast_breast_dir,
+            ufast_vessel_dir,
+            str(breast_model),
+            str(vessel_model),
+            batch_size,
+            3,
+            True,
+        )
+        ufast_outputs = sorted(ufast_vessel_dir.glob("*.npz"))
+        if len(ufast_outputs) != len(ufast_phases):
+            raise RuntimeError(
+                f"expected {len(ufast_phases)} UFAST vessel phases, "
+                f"found {len(ufast_outputs)}"
+            )
+
         provenance["inference"] = {
             "breast_model": str(breast_model.resolve()),
             "breast_model_sha256": _sha256(breast_model),
             "vessel_model": str(vessel_model.resolve()),
             "vessel_model_sha256": _sha256(vessel_model),
             "device": torch.cuda.get_device_name(0),
-            "phases": expected,
+            "hr_phases": expected,
+            "ufast_phases": len(ufast_phases),
         }
         _write_json(provenance_path, provenance)
     except Exception:
         shutil.rmtree(breast_dir, ignore_errors=True)
         shutil.rmtree(vessel_dir, ignore_errors=True)
+        shutil.rmtree(ufast_step1_dir, ignore_errors=True)
+        shutil.rmtree(ufast_breast_dir, ignore_errors=True)
+        shutil.rmtree(ufast_vessel_dir, ignore_errors=True)
         raise
 
 
-def tc4d_case(*, case_root: Path) -> None:
-    """Run unmodified TC4D over all native-HR vessel probability phases."""
+def _run_tc4d_over_phases(vessel_paths: list[Path], output_dir: Path) -> dict[str, Any]:
+    """Run unmodified TC4D over one route's vessel-probability phases, save outputs."""
     from graph_extraction.tc4d import run_tc4d_from_priority
 
-    provenance_path = case_root / "preprocessing_provenance.json"
-    provenance = json.loads(provenance_path.read_text())
-    n_phases = len(provenance["hr_source"]["times_seconds"])
-    vessel_dir = case_root / "hr_vessel_predictions"
-    paths = [vessel_dir / f"{model_subject_id(index)}.npz" for index in range(n_phases)]
-    missing = [str(path) for path in paths if not path.is_file()]
+    missing = [str(path) for path in vessel_paths if not path.is_file()]
     if missing:
-        raise FileNotFoundError(f"missing HR vessel phases: {missing[:3]}")
+        raise FileNotFoundError(f"missing vessel phases: {missing[:3]}")
     probabilities = []
-    for path in paths:
+    for path in vessel_paths:
         with np.load(path, allow_pickle=False) as loaded:
             probabilities.append(np.asarray(loaded["vessel"], dtype=np.float32))
     priority_tyxz = np.stack(probabilities, axis=0)
     result, params, diagnostics = run_tc4d_from_priority(priority_tyxz)
-    output_dir = case_root / "hr_tc4d"
     output_dir.mkdir(parents=True, exist_ok=False)
     skeleton_yxz = np.asarray(result["exam_mask"], dtype=bool)
     support_yxz = np.asarray(result["support_mask"], dtype=bool)
@@ -496,8 +547,8 @@ def tc4d_case(*, case_root: Path) -> None:
         output_dir / "center_manifold_4d_yxz.npy",
         np.asarray(result["mask_4d"], dtype=np.uint8),
     )
-    provenance["tc4d"] = {
-        "input_phases": n_phases,
+    return {
+        "input_phases": len(vessel_paths),
         "input_array_order": "time,y,x,z",
         "skeleton_voxels": int(skeleton_yxz.sum()),
         "support_voxels": int(support_yxz.sum()),
@@ -505,11 +556,49 @@ def tc4d_case(*, case_root: Path) -> None:
         "params": params,
         "diagnostics": diagnostics,
     }
+
+
+def tc4d_case(*, case_root: Path) -> None:
+    """Run unmodified TC4D over the native-HR and UFAST-direct vessel probability phases.
+
+    Runs both routes: the UFAST-direct skeleton is a required input to the
+    merge step in ``map_case``.
+    """
+    provenance_path = case_root / "preprocessing_provenance.json"
+    provenance = json.loads(provenance_path.read_text())
+
+    n_hr_phases = len(provenance["hr_source"]["times_seconds"])
+    hr_vessel_dir = case_root / "hr_vessel_predictions"
+    hr_paths = [
+        hr_vessel_dir / f"{model_subject_id(index)}.npz" for index in range(n_hr_phases)
+    ]
+    provenance["tc4d"] = _run_tc4d_over_phases(hr_paths, case_root / "hr_tc4d")
+
+    ufast_vessel_dir = case_root / "ufast_vessel_predictions"
+    ufast_paths = sorted(ufast_vessel_dir.glob("*.npz"))
+    if not ufast_paths:
+        raise FileNotFoundError(
+            f"no UFAST vessel phases found under {ufast_vessel_dir}"
+        )
+    provenance["ufast_tc4d"] = _run_tc4d_over_phases(
+        ufast_paths, case_root / "ufast_tc4d"
+    )
+
     _write_json(provenance_path, provenance)
 
 
 def map_case(*, case_root: Path) -> None:
-    """Map static HR TC4D skeleton/support to the exact 1-mm UFAST grid."""
+    """Map HR TC4D skeleton/support to the UFAST grid, then merge in the UFAST-direct route.
+
+    The written ``<exam_id>_skeleton_4d_exam_mask.npy`` (the file every
+    downstream consumer reads) is the MERGED skeleton, not the HR-mapped
+    skeleton alone: HR is authoritative (every HR-mapped voxel is always
+    kept; see ``preprocessing.merge`` module docstring), and the UFAST-direct
+    TC4D route only adds vessel structure HR's own route missed. The pure
+    HR-mapped skeleton is preserved alongside as
+    ``<exam_id>_skeleton_4d_exam_mask_hr_only.npy`` so nothing is silently
+    discarded.
+    """
     provenance_path = case_root / "preprocessing_provenance.json"
     provenance = json.loads(provenance_path.read_text())
     checks = provenance["geometry_alignment"]
@@ -535,11 +624,35 @@ def map_case(*, case_root: Path) -> None:
     output_dir = output_root / "centerlines" / dataset / case_root.name
     output_dir.mkdir(parents=True, exist_ok=False)
     exam_id = case_root.name
-    np.save(output_dir / f"{exam_id}_skeleton_4d_exam_mask.npy", mapped_skeleton)
+
+    ufast_skeleton = np.load(case_root / "ufast_tc4d" / "exam_skeleton_zyx.npy").astype(
+        bool
+    )
+    ufast_support = np.load(case_root / "ufast_tc4d" / "exam_support_zyx.npy").astype(
+        bool
+    )
+    merged_skeleton, merged_support, merge_provenance, provenance_label = (
+        merge_skeletons(
+            preprocessing_root=output_root,
+            exam_id=exam_id,
+            hr_skeleton=mapped_skeleton,
+            hr_support=mapped_support,
+            ufast_skeleton=ufast_skeleton,
+            ufast_support=ufast_support,
+        )
+    )
+
+    np.save(output_dir / f"{exam_id}_skeleton_4d_exam_mask.npy", merged_skeleton)
     np.save(
         output_dir / f"{exam_id}_skeleton_4d_exam_support_mask.npy",
-        mapped_support.astype(np.uint8),
+        merged_support.astype(np.uint8),
     )
+    np.save(
+        output_dir / f"{exam_id}_skeleton_4d_exam_mask_hr_only.npy", mapped_skeleton
+    )
+    np.save(output_dir / f"{exam_id}_merge_provenance_label_zyx.npy", provenance_label)
+    _write_json(output_dir / "merge_provenance.json", merge_provenance)
+
     ufast_times = np.asarray(provenance["ufast_source"]["times_seconds"], dtype=float)
     alignment_status, alignment_components = _combined_alignment_status(provenance)
     _write_json(
@@ -558,7 +671,10 @@ def map_case(*, case_root: Path) -> None:
                 "enhancement": "relative_signal_change",
                 "time_axis": "physical_seconds",
             },
-            "skeleton_source": "all native-HR vessel phases via TC4D",
+            "skeleton_source": (
+                "HR-mapped TC4D skeleton merged with UFAST-direct TC4D skeleton "
+                "(HR authoritative, UFAST additive only; see merge_provenance.json)"
+            ),
             "kinetic_signal_source": "motion-corrected raw UFAST signal",
         },
     )
@@ -571,11 +687,20 @@ def map_case(*, case_root: Path) -> None:
         "skeleton_outside_support_before_repair": outside,
         **metrics,
     }
+    provenance["merge"] = merge_provenance
     _write_json(provenance_path, provenance)
 
 
 def qc_case(*, case_root: Path) -> Path:
-    """Write a shared-window visual check of the mapped UFAST skeleton."""
+    """Write shared-window visual checks of the mapped skeleton and the raw UFAST series.
+
+    ``mapping_qc.png`` overlays the merged skeleton on UFAST phase 0.
+    ``temporal_mip.png`` is a skeleton-free MIP across every UFAST phase, so a
+    reviewer can compare the merged skeleton against what's actually visible
+    in the raw signal -- e.g. to check for a UFAST-only vessel added a few
+    voxels off from a real HR vessel (see ``preprocessing.merge`` module
+    docstring) rather than a genuinely new one.
+    """
     provenance = json.loads((case_root / "preprocessing_provenance.json").read_text())
     output_root = case_root.parents[1]
     exam_id = case_root.name
@@ -594,6 +719,17 @@ def qc_case(*, case_root: Path) -> Path:
         phase0_nifti=output_root / "dce" / exam_id / f"{exam_id}_0000.nii.gz",
         skeleton_zyx=skeleton,
         output_path=output_path,
+        shared_window=window,
+    )
+    temporal_mip_path = centerline_dir / "temporal_mip.png"
+    if temporal_mip_path.exists():
+        raise FileExistsError(
+            f"refusing to overwrite existing QC panel: {temporal_mip_path}"
+        )
+    write_temporal_mip(
+        dce_dir=output_root / "dce" / exam_id,
+        exam_id=exam_id,
+        output_path=temporal_mip_path,
         shared_window=window,
     )
     return output_path
