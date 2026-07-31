@@ -123,14 +123,34 @@ signal directly.
 Once `complement` has run, `<exam-id>_skeleton_4d_exam_mask.npy` is the
 HR+UFAST merged skeleton (`preprocessing.merge`) further combined with a
 third, independent source: the MATLAB-translated SegVessel/Jerman pipeline
-(`segmentation.matlab_vessel_segmentation`), added only where it clears a
-quality gate calibrated to the vessels the merge already confirmed (see
-`preprocessing/complement.py`'s module docstring for the full policy). The
-pre-complement merge is preserved as
-`<exam-id>_skeleton_4d_exam_mask_hr_ufast_merge_only.npy`, per-case complement
-statistics are in `complement_provenance.json`, and the per-voxel provenance
-label volume gets one more code (`LABEL_MATLAB_COMPLEMENT_ADDED`) for the
-added voxels.
+(`segmentation.matlab_vessel_segmentation`; method provenance: Zhen Ren's
+lab MATLAB SegVessel, building on Wu et al., Magn Reson Med 2019,
+PMID 30368906), added only where it clears a quality gate calibrated to the
+vessels the merge already confirmed (see `preprocessing/complement.py`'s
+module docstring for the full policy). The matching support mask
+(`<exam-id>_skeleton_4d_exam_support_mask.npy`) is updated the same way:
+SegVessel's vessel-width mask is restricted to the accepted complement
+branches and unioned in, so downstream radius/caliber features see estimated
+vessel width rather than one-voxel stubs. The pre-complement merge skeleton
+and support are preserved as
+`<exam-id>_skeleton_4d_exam_mask_hr_ufast_merge_only.npy` and
+`<exam-id>_skeleton_4d_exam_support_mask_hr_ufast_merge_only.npy`, per-case
+complement statistics are in `complement_provenance.json`, and the per-voxel
+provenance label volume gets one more code (`LABEL_MATLAB_COMPLEMENT_ADDED`)
+for the added voxels.
+
+Already-complemented cases that were produced before support propagation can be
+repaired without rewriting the centerline:
+
+```bash
+python -m preprocessing.pipeline repair-complement-support \
+  --exam-id uchicago_example \
+  --output-root /path/to/derived/vanguard_preprocessing
+```
+
+The cohort wrapper is
+`preprocessing/slurm/repair_complement_support_array.slurm` (skips cases that
+already have `complement.support_propagated=true`).
 
 For the GNN loader, use `<output-root>/centerlines` as `centerline_root` and
 `<output-root>/dce` as `dce_root`. It uses the mean of the five protocol baseline

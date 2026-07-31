@@ -4,6 +4,10 @@ Ports:
   Analysis Pipeline/KineticAnalysisFunctions/Jerman_Filter/vesselness3D.m
   (functions: vesselness3D, volumeEigenvalues, Hessian3D, gradient3, imgaussian)
 
+Method provenance: part of the Python translation of Zhen Ren's lab
+MATLAB vessel pipeline, which builds on Wu et al., Magn Reson Med 2019
+(PMID 30368906; doi:10.1002/mrm.27529).
+
 WHY THIS FILE MATTERS (root-cause context)
 ------------------------------------------
 The MATLAB pipeline enhances vessels with the *Jerman* tubularity filter, NOT the

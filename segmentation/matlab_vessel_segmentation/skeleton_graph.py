@@ -5,6 +5,10 @@ Ports (behaviourally) these MATLAB files:
   KineticAnalysisFunctions/VesselAnalysis/Conn_nearest_points_v2.m
   KineticAnalysisFunctions/VesselAnalysis/Vessel_morph.m
 
+Method provenance: part of the Python translation of Zhen Ren's lab
+MATLAB vessel pipeline, which builds on Wu et al., Magn Reson Med 2019
+(PMID 30368906; doi:10.1002/mrm.27529).
+
 WHAT THIS STEP DOES, IN PLAIN LANGUAGE
 --------------------------------------
 `Skeleton3D` gives a raw 1-voxel-wide skeleton that is noisy: lots of tiny hair-like

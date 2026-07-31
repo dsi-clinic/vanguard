@@ -6,6 +6,14 @@ pipeline (``segmentation.matlab_vessel_segmentation``, ported from
 ``matlab-conv-2/vessel_pipeline`` and validated there across 6 UChicago exams -- both
 tc4d-dense and tc4d-sparse cases).
 
+Method provenance
+-----------------
+This complement route extends the lab MATLAB vessel pipeline maintained by
+Zhen Ren, which itself builds on the vesselness / tumor-associated vessel methods
+in Wu et al., Magn Reson Med 2019 (PMID 30368906; doi:10.1002/mrm.27529). The Python
+port lives in ``segmentation.matlab_vessel_segmentation``; this module only decides
+which of those MATLAB-route branches to add on top of the merged skeleton.
+
 Combine policy (additive only, same "never override" contract as ``preprocessing.merge``):
   - Run SegVessel on this exam's UFAST peak-enhancement and HR subtraction volumes to get
     an independent Jerman-vesselness skeleton (the "MATLAB route").
@@ -396,6 +404,7 @@ def filter_complement(
     confirmed_overlap_fraction: float = DEFAULT_CONFIRMED_OVERLAP_FRACTION,
     min_interior_fraction: float = DEFAULT_MIN_INTERIOR_FRACTION,
     min_novel_voxels: int = DEFAULT_MIN_NOVEL_VOXELS,
+    labeled_yxz: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, object]]:
     """Per-component quality-gated complement.
 
@@ -412,6 +421,10 @@ def filter_complement(
     Both populations are whole connected components of the MATLAB route's own skeleton,
     classified by how much of each one already lies near the merged skeleton, so the
     calibration set and the candidate set are the same kind of object.
+
+    ``labeled_yxz`` may be passed in when the caller also needs the same branch labels
+    (for example to restrict SegVessel's ``vmask`` using ``keep_labels``). If omitted,
+    branches are labelled here via ``_branch_labels``.
     """
     tc_near = ndi.binary_dilation(merged_skeleton_yxz, iterations=tc_tolerance_voxels)
     interior = (
@@ -429,7 +442,11 @@ def filter_complement(
     # split segment is precisely the "vessel the merge only partly caught" case this
     # stage exists to recover. See _branch_labels for why branches, not whole connected
     # components, are the right unit.
-    labeled = _branch_labels(matlab_skeleton_yxz)
+    labeled = (
+        np.asarray(labeled_yxz)
+        if labeled_yxz is not None
+        else _branch_labels(matlab_skeleton_yxz)
+    )
     n_components = int(labeled.max())
     component_stats = _per_component_stats(
         labeled,
@@ -460,6 +477,7 @@ def filter_complement(
         "n_confirmed": int(confirmed.sum()),
         "n_candidates": int(candidate.sum()),
         "n_kept": 0,
+        "keep_labels": [],
     }
     if confirmed.sum() < MIN_CONFIRMED_VOXELS_FOR_CALIBRATION or not candidate_labels:
         return np.zeros_like(matlab_skeleton_yxz), empty_stats
@@ -507,6 +525,9 @@ def filter_complement(
         "n_components": n_components,
         "n_kept": int(kept.sum()),
         "n_kept_components": len(keep_labels),
+        # Sorted list so callers (and JSON provenance) can restrict SegVessel's
+        # vessel-width mask to exactly these accepted branches.
+        "keep_labels": sorted(int(label) for label in keep_labels),
         "vesselness_threshold": round(vesselness_threshold, 4),
         "enhancement_threshold": round(enhancement_threshold, 2),
         "elongation_threshold": round(elongation_threshold, 3),
@@ -523,6 +544,31 @@ def filter_complement(
     return kept, stats
 
 
+def restrict_vmask_to_accepted_branches(
+    vmask_yxz: np.ndarray,
+    labeled_yxz: np.ndarray,
+    keep_labels: list[int] | set[int],
+) -> np.ndarray:
+    """Restrict SegVessel's vessel-width mask to accepted complement branches.
+
+    ``vmask`` is the full SegVessel support region grown around *every* MATLAB-route
+    centerline. Radius / caliber features need that width only for the branches this
+    stage actually adds, so each vessel voxel is assigned to its nearest centerline
+    label and kept only when that label is an accepted complement branch.
+    """
+    keep = {int(label) for label in keep_labels}
+    vmask = np.asarray(vmask_yxz, dtype=bool)
+    labeled = np.asarray(labeled_yxz)
+    if not keep or not vmask.any():
+        return np.zeros_like(vmask, dtype=bool)
+    skeleton = labeled > 0
+    if not skeleton.any():
+        return np.zeros_like(vmask, dtype=bool)
+    _, nearest_idx = ndi.distance_transform_edt(~skeleton, return_indices=True)
+    nearest_label = labeled[tuple(nearest_idx)]
+    return vmask & np.isin(nearest_label, list(keep))
+
+
 def complement_exam(
     *,
     preprocessing_root: Path,
@@ -533,12 +579,15 @@ def complement_exam(
     tc_tolerance_voxels: int = DEFAULT_TC_TOLERANCE_VOXELS,
     edge_margin_voxels: int = DEFAULT_EDGE_MARGIN_VOXELS,
     min_component_voxels: int = DEFAULT_MIN_COMPONENT_VOXELS,
-) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, object]]:
     """Run SegVessel + the quality-gated complement filter for one exam.
 
-    Returns ``(final_skeleton_zyx, kept_complement_zyx, provenance)``, all in vanguard's
-    native (z,y,x) convention. ``final_skeleton_zyx`` is ``merged_skeleton_zyx`` unioned
-    with the kept MATLAB-route complement voxels.
+    Returns ``(final_skeleton_zyx, kept_complement_zyx, support_add_zyx, provenance)``,
+    all in vanguard's native (z,y,x) convention. ``final_skeleton_zyx`` is
+    ``merged_skeleton_zyx`` unioned with the kept MATLAB-route complement voxels.
+    ``support_add_zyx`` is SegVessel's vessel-width mask restricted to the accepted
+    complement branches (to union into the saved support mask so radius/caliber
+    features see real vessel width, not one-voxel stubs).
     """
     provenance = json.loads((case_root / "preprocessing_provenance.json").read_text())
     baseline_frame_count = int(provenance["ufast_source"]["baseline_frame_count"])
@@ -575,13 +624,20 @@ def complement_exam(
             f"{VESSELNESS_NORMALISATION_EROSION_VOXELS} voxels"
         )
 
-    _vmask, morph = SegVessel(
+    # SegVessel returns both the cleaned centerline (morph["skel_label"]) and the
+    # grown vessel-width mask (vmask). The quality gate decides which centerline
+    # branches to add; vmask is then restricted to those same branches so the saved
+    # support mask stays consistent with the complemented centerline.
+    vmask_yxz, morph = SegVessel(
         sub_dyn, sub_hr, spacing_yxz, verbose=False, normalisation_roi=normalisation_roi
     )
     matlab_skeleton_yxz = morph["skel_label"] > 0
     vesselness_yxz = morph["vness_dyn"]
 
     merged_skeleton_yxz = np.transpose(merged_skeleton_zyx, (1, 2, 0))
+    # One branch labelling for both the quality gate and support restriction so
+    # filter_stats["keep_labels"] cannot refer to a different ID scheme than vmask.
+    labeled_yxz = _branch_labels(matlab_skeleton_yxz)
     kept_yxz, filter_stats = filter_complement(
         matlab_skeleton_yxz=matlab_skeleton_yxz,
         vesselness_yxz=vesselness_yxz,
@@ -593,22 +649,41 @@ def complement_exam(
         quality_percentile=quality_percentile,
         edge_margin_voxels=edge_margin_voxels,
         min_component_voxels=min_component_voxels,
+        labeled_yxz=labeled_yxz,
     )
+
+    support_add_yxz = restrict_vmask_to_accepted_branches(
+        vmask_yxz, labeled_yxz, filter_stats["keep_labels"]
+    )
+    # Containment: every accepted complement centerline voxel must sit inside the
+    # support we propagate, even if SegVessel's grow somehow missed a skeleton voxel.
+    support_add_yxz = support_add_yxz | kept_yxz
 
     final_skeleton_yxz = merged_skeleton_yxz | kept_yxz
     final_skeleton_zyx = np.transpose(final_skeleton_yxz, (2, 0, 1))
     kept_zyx = np.transpose(kept_yxz, (2, 0, 1))
+    support_add_zyx = np.transpose(support_add_yxz, (2, 0, 1))
 
     provenance_out = {
         "exam_id": exam_id,
         "route": "matlab_segvessel_complement (quality-gated additive complement)",
+        "method_provenance": {
+            "matlab_pipeline": (
+                "Zhen Ren lab MATLAB KineticAnalysisFunctions / SegVessel"
+            ),
+            "paper": (
+                "Wu et al., Magn Reson Med. 2019;81(3):2147-2160. "
+                "doi:10.1002/mrm.27529; PMID:30368906"
+            ),
+        },
         "matlab_skeleton_voxels": int(matlab_skeleton_yxz.sum()),
         "merged_skeleton_voxels_pre_complement": int(merged_skeleton_yxz.sum()),
         "final_skeleton_voxels": int(final_skeleton_yxz.sum()),
         "voxels_added": int(kept_zyx.sum()),
+        "support_voxels_added": int(support_add_zyx.sum()),
         "filter_stats": filter_stats,
         "provenance_label_zyx_codes": {
             "matlab_complement_added": LABEL_MATLAB_COMPLEMENT_ADDED
         },
     }
-    return final_skeleton_zyx, kept_zyx, provenance_out
+    return final_skeleton_zyx, kept_zyx, support_add_zyx, provenance_out

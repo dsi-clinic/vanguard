@@ -1,5 +1,8 @@
 """MATLAB Image Processing Toolbox operations, ported with matched semantics.
 
+Part of the Python translation of Zhen Ren's lab MATLAB vessel
+pipeline (builds on Wu et al., Magn Reson Med 2019, PMID 30368906).
+
 Each function documents the MATLAB call it reproduces and any behavioural difference
 we had to handle. Several of these are HIGH-risk for the "sparse segmentation" bug:
   * strel('disk',2) is a 2-D structuring element; on a 3-D volume MATLAB applies it

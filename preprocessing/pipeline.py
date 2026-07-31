@@ -703,9 +703,17 @@ def complement_case(*, case_root: Path) -> None:
     quality-gated complement voxels from the ported MATLAB pipeline (see
     ``preprocessing.complement``), and overwrites
     ``<exam_id>_skeleton_4d_exam_mask.npy`` -- the file every downstream consumer
-    reads -- with the more complete result. The pre-complement merge is preserved
-    alongside as ``<exam_id>_skeleton_4d_exam_mask_hr_ufast_merge_only.npy``, the same
+    reads -- with the more complete result. The matching support mask is updated the
+    same way: SegVessel's vessel-width mask is restricted to the accepted complement
+    branches and unioned into ``<exam_id>_skeleton_4d_exam_support_mask.npy``, so
+    radius/caliber features see estimated vessel width rather than one-voxel stubs.
+    The pre-complement merge skeleton and support are preserved alongside as
+    ``<exam_id>_skeleton_4d_exam_mask_hr_ufast_merge_only.npy`` and
+    ``<exam_id>_skeleton_4d_exam_support_mask_hr_ufast_merge_only.npy``, the same
     "never silently discard" pattern this module already uses for the HR-only skeleton.
+
+    Method provenance: extends Zhen Ren's lab MATLAB SegVessel pipeline,
+    which builds on Wu et al., Magn Reson Med 2019 (PMID 30368906).
     """
     provenance_path = case_root / "preprocessing_provenance.json"
     provenance = json.loads(provenance_path.read_text())
@@ -722,22 +730,36 @@ def complement_case(*, case_root: Path) -> None:
             f"refusing to overwrite existing complement result: {merge_only_path}"
         )
 
-    merged_skeleton = np.load(
-        output_dir / f"{exam_id}_skeleton_4d_exam_mask.npy"
-    ).astype(bool)
+    skeleton_path = output_dir / f"{exam_id}_skeleton_4d_exam_mask.npy"
+    support_path = output_dir / f"{exam_id}_skeleton_4d_exam_support_mask.npy"
+    merged_skeleton = np.load(skeleton_path).astype(bool)
+    merged_support = np.load(support_path).astype(bool)
 
-    final_skeleton, kept_complement, complement_provenance = complement_exam(
-        preprocessing_root=output_root,
-        case_root=case_root,
-        exam_id=exam_id,
-        merged_skeleton_zyx=merged_skeleton,
+    final_skeleton, kept_complement, support_add, complement_provenance = (
+        complement_exam(
+            preprocessing_root=output_root,
+            case_root=case_root,
+            exam_id=exam_id,
+            merged_skeleton_zyx=merged_skeleton,
+        )
     )
 
+    final_support = merged_support | support_add | final_skeleton
+
+    np.save(merge_only_path, merged_skeleton)
     np.save(
-        output_dir / f"{exam_id}_skeleton_4d_exam_mask_hr_ufast_merge_only.npy",
-        merged_skeleton,
+        output_dir / f"{exam_id}_skeleton_4d_exam_support_mask_hr_ufast_merge_only.npy",
+        merged_support.astype(np.uint8),
     )
-    np.save(output_dir / f"{exam_id}_skeleton_4d_exam_mask.npy", final_skeleton)
+    np.save(skeleton_path, final_skeleton)
+    np.save(support_path, final_support.astype(np.uint8))
+
+    complement_provenance["support_voxels_pre_complement"] = int(merged_support.sum())
+    complement_provenance["support_voxels_final"] = int(final_support.sum())
+    complement_provenance["support_voxels_outside_pre_complement"] = int(
+        np.logical_and(final_skeleton, ~merged_support).sum()
+    )
+    complement_provenance["support_propagated"] = True
 
     provenance_label_path = output_dir / f"{exam_id}_merge_provenance_label_zyx.npy"
     if provenance_label_path.exists():
@@ -745,6 +767,103 @@ def complement_case(*, case_root: Path) -> None:
         provenance_label[kept_complement] = LABEL_MATLAB_COMPLEMENT_ADDED
         np.save(provenance_label_path, provenance_label)
 
+    _write_json(output_dir / "complement_provenance.json", complement_provenance)
+    provenance["complement"] = complement_provenance
+    _write_json(provenance_path, provenance)
+
+
+def repair_complement_support_case(*, case_root: Path) -> None:
+    """Propagate SegVessel vessel-width support for an already-complemented case.
+
+    Older complement runs updated the centerline but left the support mask as the
+    pre-complement merge. This re-runs SegVessel + the quality gate against the
+    preserved merge-only skeleton, restricts ``vmask`` to the accepted branches,
+    and unions that into the saved support mask. The centerline is not rewritten;
+    if the re-derived complement voxels disagree with the saved centerline, the
+    repair fails closed instead of guessing.
+    """
+    provenance_path = case_root / "preprocessing_provenance.json"
+    provenance = json.loads(provenance_path.read_text())
+    if "complement" not in provenance:
+        raise FileNotFoundError(
+            f"no complement result to repair for {case_root.name}; "
+            "run the complement stage first"
+        )
+    if bool(provenance["complement"].get("support_propagated")):
+        raise FileExistsError(
+            f"complement support already propagated for {case_root.name}"
+        )
+
+    output_root = case_root.parents[1]
+    dataset = str(provenance["case"]["dataset"])
+    exam_id = case_root.name
+    output_dir = output_root / "centerlines" / dataset / exam_id
+
+    merge_only_skel_path = (
+        output_dir / f"{exam_id}_skeleton_4d_exam_mask_hr_ufast_merge_only.npy"
+    )
+    if not merge_only_skel_path.exists():
+        raise FileNotFoundError(
+            f"missing merge-only skeleton required for support repair: "
+            f"{merge_only_skel_path}"
+        )
+
+    skeleton_path = output_dir / f"{exam_id}_skeleton_4d_exam_mask.npy"
+    support_path = output_dir / f"{exam_id}_skeleton_4d_exam_support_mask.npy"
+    merge_only_support_path = (
+        output_dir / f"{exam_id}_skeleton_4d_exam_support_mask_hr_ufast_merge_only.npy"
+    )
+
+    merge_only_skeleton = np.load(merge_only_skel_path).astype(bool)
+    current_skeleton = np.load(skeleton_path).astype(bool)
+    current_support = np.load(support_path).astype(bool)
+
+    _final_skeleton, kept_complement, support_add, exam_provenance = complement_exam(
+        preprocessing_root=output_root,
+        case_root=case_root,
+        exam_id=exam_id,
+        merged_skeleton_zyx=merge_only_skeleton,
+    )
+
+    saved_additions = current_skeleton & ~merge_only_skeleton
+    if not np.array_equal(kept_complement, saved_additions):
+        n_only_saved = int(np.logical_and(saved_additions, ~kept_complement).sum())
+        n_only_rerun = int(np.logical_and(kept_complement, ~saved_additions).sum())
+        raise ValueError(
+            f"support repair refused for {exam_id}: re-derived complement voxels "
+            f"do not match the saved centerline "
+            f"(only_in_saved={n_only_saved}, only_in_rerun={n_only_rerun}). "
+            "Re-run complement from scratch after restoring the merge-only skeleton "
+            "rather than guessing which support to keep."
+        )
+
+    if not merge_only_support_path.exists():
+        # Current support was never updated by the old complement stage, so it is
+        # still the pre-complement merge support.
+        np.save(merge_only_support_path, current_support.astype(np.uint8))
+        merge_only_support = current_support
+    else:
+        merge_only_support = np.load(merge_only_support_path).astype(bool)
+
+    final_support = merge_only_support | support_add | current_skeleton
+    np.save(support_path, final_support.astype(np.uint8))
+
+    complement_provenance = dict(provenance["complement"])
+    complement_provenance.update(
+        {
+            "support_propagated": True,
+            "support_repair": {
+                "route": exam_provenance["route"],
+                "support_voxels_added": int(support_add.sum()),
+                "support_voxels_pre_complement": int(merge_only_support.sum()),
+                "support_voxels_final": int(final_support.sum()),
+                "support_voxels_outside_pre_complement": int(
+                    np.logical_and(current_skeleton, ~merge_only_support).sum()
+                ),
+                "method_provenance": exam_provenance.get("method_provenance"),
+            },
+        }
+    )
     _write_json(output_dir / "complement_provenance.json", complement_provenance)
     provenance["complement"] = complement_provenance
     _write_json(provenance_path, provenance)
@@ -797,7 +916,17 @@ def qc_case(*, case_root: Path) -> Path:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "stage", choices=("prepare", "infer", "tc4d", "map", "complement", "qc", "all")
+        "stage",
+        choices=(
+            "prepare",
+            "infer",
+            "tc4d",
+            "map",
+            "complement",
+            "repair-complement-support",
+            "qc",
+            "all",
+        ),
     )
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--exam-id", required=True)
@@ -844,6 +973,8 @@ def main() -> None:
         map_case(case_root=case_root)
     if args.stage in {"complement", "all"}:
         complement_case(case_root=case_root)
+    if args.stage == "repair-complement-support":
+        repair_complement_support_case(case_root=case_root)
     if args.stage in {"qc", "all"}:
         qc_case(case_root=case_root)
 

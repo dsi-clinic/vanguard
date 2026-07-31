@@ -7,13 +7,16 @@
 All arrays are kept in MATLAB (dim1, dim2, dim3) = (row, col, slice) order so index
 logic matches the source; numpy axis 0/1/2 == MATLAB dim 1/2/3.
 
-Ported into vanguard (2026-07-27) from the standalone validation workspace
-``matlab-conv-2/vessel_pipeline`` (workspace saritbose), where this port was validated
-against the lab's production ``merged_tc4d`` skeleton across 6 UChicago exams: the
-DYN-branch quality-gated complement (see ``preprocessing.complement``) adds real,
-interior, vessel-like voxels the merge misses at ~0% mask-edge-hug. See
-``preprocessing/complement.py`` for how this module's output is combined with the
-HR+UFAST merged skeleton in the production pipeline.
+Method provenance: this is a Python translation of Zhen Ren's lab
+MATLAB SegVessel pipeline, which builds on Wu et al., Magn Reson Med 2019
+(PMID 30368906; doi:10.1002/mrm.27529). Ported into vanguard (2026-07-27) from
+the standalone validation workspace ``matlab-conv-2/vessel_pipeline`` (workspace
+saritbose), where this port was validated against the lab's production
+``merged_tc4d`` skeleton across 6 UChicago exams: the DYN-branch quality-gated
+complement (see ``preprocessing.complement``) adds real, interior, vessel-like
+voxels the merge misses at ~0% mask-edge-hug. See ``preprocessing/complement.py``
+for how this module's output is combined with the HR+UFAST merged skeleton in
+the production pipeline.
 """
 
 from __future__ import annotations
@@ -178,6 +181,9 @@ def SegVessel(
     normalisation_roi=None,
 ):
     """Port of SegVessel.m (HR + ultrafast). Returns (vmask, morph_result).
+
+    Extends Zhen Ren's lab MATLAB SegVessel implementation, which
+    builds on Wu et al., Magn Reson Med 2019 (PMID 30368906).
 
     Parameters
     ----------

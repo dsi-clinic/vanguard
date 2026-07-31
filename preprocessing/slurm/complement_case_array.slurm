@@ -1,5 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=vanguard-complement-full
+#SBATCH --account=karczmar-lab
+#SBATCH --partition=tier1q
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=03:00:00
@@ -10,9 +12,11 @@
 # Runs the (latest) MATLAB SegVessel/Jerman complement stage over the full
 # 180-case cohort already sitting in OUTPUT_ROOT (map_case already ran for
 # all of them). Restartable/idempotent: skips a case whose provenance already
-# has a "complement" key (8 cases were complemented earlier, with an older
-# complement.py revision -- left as-is here; rerun those manually with
-# --force if you want them redone with the current code).
+# has a "complement" key. Older complement runs that updated the centerline but
+# not the support mask should use repair-complement-support (see
+# repair_complement_support_array.slurm), not a silent re-run. To redo
+# complement from scratch, restore the merge-only skeleton/support, remove the
+# complement key from provenance, and delete the merge-only backup files first.
 #
 # Usage:
 #   OUTPUT_ROOT=/gpfs/.../preprocessing_out \

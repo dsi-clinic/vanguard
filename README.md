@@ -8,8 +8,22 @@ This project studies blood vessels around the tumor as a possible earlier signal
 
 Our central idea is to turn the vessel network into something we can measure more directly. We extract vessel centerlines, convert them into graphs, summarize the graph near the tumor, and use those summaries for pathologic complete response (pCR) modeling together with clinical and radiomics features.
 
-## Project Goals
+## Method provenance (MATLAB vessel route)
 
+The optional MATLAB-translated vessel complement
+(`segmentation/matlab_vessel_segmentation`, wired through
+`preprocessing.complement`) extends the lab MATLAB vessel pipeline maintained by
+**Zhen Ren** (`KineticAnalysisFunctions` / SegVessel). That MATLAB
+work builds on:
+
+- Wu C, Pineda F, Hormuth DA 2nd, Karczmar GS, Yankeelov TE.
+  Quantitative analysis of vascular properties derived from ultrafast DCE-MRI
+  to discriminate malignant and benign breast tumors.
+  *Magn Reson Med.* 2019;81(3):2147-2160.
+  doi:[10.1002/mrm.27529](https://doi.org/10.1002/mrm.27529);
+  PMID:[30368906](https://pubmed.ncbi.nlm.nih.gov/30368906/).
+
+## Project Goals
 - Build a pipeline that turns breast MRI vessel segmentations into centerlines and graph representations.
 - Extract vessel features that describe size, shape, connectivity, and contrast behavior near the tumor.
 - Train and evaluate pCR models using clinical, vessel, and radiomics inputs.
