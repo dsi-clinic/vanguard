@@ -41,6 +41,11 @@ fi
 if [[ -n "${CASES:-}" ]]; then
   ARGS+=(--cases "${CASES}")
 fi
+if [[ -n "${SHARD_INDEX:-}" || -n "${NUM_SHARDS:-}" ]]; then
+  : "${SHARD_INDEX:?Set both SHARD_INDEX and NUM_SHARDS}"
+  : "${NUM_SHARDS:?Set both SHARD_INDEX and NUM_SHARDS}"
+  ARGS+=(--shard-index "${SHARD_INDEX}" --num-shards "${NUM_SHARDS}")
+fi
 if [[ "${RESUME:-0}" == "1" ]]; then
   ARGS+=(--resume)
 fi

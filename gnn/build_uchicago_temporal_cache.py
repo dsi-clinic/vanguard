@@ -30,6 +30,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Validate and reuse existing per-exam .pt files in the cache directory.",
     )
+    parser.add_argument("--shard-index", type=int)
+    parser.add_argument("--num-shards", type=int)
     parser.add_argument(
         "--defer-manifest",
         action="store_true",
@@ -55,6 +57,8 @@ def main(argv: list[str] | None = None) -> None:
             if args.cases
             else None
         ),
+        shard_index=args.shard_index,
+        num_shards=args.num_shards,
         resume=args.resume,
         write_manifest=not args.defer_manifest,
     )

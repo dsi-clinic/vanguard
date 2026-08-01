@@ -102,6 +102,18 @@ def _resolve_centerline(centerline_root: Path, dataset: str, exam_id: str) -> Pa
     return matches[0]
 
 
+def _resolve_dce_root(dce_root: Path, dataset: str, exam_id: str) -> Path:
+    """Return the root directly containing ``exam_id`` for either cohort layout."""
+    candidates = (dce_root / dataset, dce_root)
+    found = [root for root in candidates if (root / exam_id).is_dir()]
+    if len(found) != 1:
+        raise FileNotFoundError(
+            f"expected exactly one DCE exam directory for {exam_id} under "
+            f"{dce_root}; found {[str(root / exam_id) for root in found]}"
+        )
+    return found[0]
+
+
 def build_temporal_exam(
     row: pd.Series,
     *,
@@ -114,11 +126,14 @@ def build_temporal_exam(
     if "pcr" in row.index and pd.notna(row["pcr"]):
         label = int(row["pcr"])
     mask_path = _resolve_centerline(centerline_root, str(row["dataset"]), exam_id)
+    resolved_dce_root = _resolve_dce_root(
+        Path(dce_root), str(row["dataset"]), exam_id
+    )
     data, _ = _build_case(
         exam_id,
         mask_path,
         label,
-        dce_root=dce_root,
+        dce_root=resolved_dce_root,
         node_features=_MODE_DEFAULT_FEATURES[_VOXEL_MODE],
         node_mode=_VOXEL_MODE,
         attach_temporal_contract=True,
@@ -140,6 +155,8 @@ def build_temporal_cache(
     cache_dir: str | Path,
     exclude_labeled_manifest: str | Path | None = None,
     cases: list[str] | None = None,
+    shard_index: int | None = None,
+    num_shards: int | None = None,
     resume: bool = False,
     write_manifest: bool = True,
 ) -> list[TemporalCacheRecord]:
@@ -162,6 +179,16 @@ def build_temporal_cache(
                 f"requested exam_id values are absent after filtering: {missing}"
             )
         source = source.loc[source["exam_id"].isin(requested)].copy()
+    if (shard_index is None) != (num_shards is None):
+        raise ValueError("shard_index and num_shards must be provided together")
+    if shard_index is not None and num_shards is not None:
+        if num_shards < 1 or not 0 <= shard_index < num_shards:
+            raise ValueError(
+                f"shard_index must be in [0, num_shards); got "
+                f"{shard_index}/{num_shards}"
+            )
+        source = source.sort_values("exam_id").iloc[shard_index::num_shards].copy()
+
     cache_dir = Path(cache_dir)
     graph_dir = cache_dir / "exams"
     graph_dir.mkdir(parents=True, exist_ok=True)
@@ -220,6 +247,8 @@ def build_temporal_cache(
             else None
         ),
         "requested_cases": sorted(cases) if cases is not None else None,
+        "shard_index": shard_index,
+        "num_shards": num_shards,
         "resumed_existing_graphs": resume,
         "centerline_root": str(Path(centerline_root)),
         "dce_root": str(Path(dce_root)),
