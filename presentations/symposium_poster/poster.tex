@@ -261,16 +261,14 @@
 
   \end{block}
 
-  \begin{block}{Acknowledgments + References}
-    \scriptsize We thank Zhen and Milica for feedback and MRI-physics expertise;
-    Fred Howard for the development cohort; and Bella Summe, Julia Luo, José
-    Cardona Arias, and Rebecca Wu for earlier vessel-pipeline development. HIRO
-    (RRID:SCR\_018372) coordinated imaging (Ludwig Fund; NIH/NCI P30 CA014599).
-    Randi HPC/CRI compute was supported by BSD and ITM/CTSA NIH UL1TR002389.
+  \begin{block}{Pretraining Helps This GNN; Clinical Value Remains Unproven}
 
-    \vspace{0.4ex}
-    \setlength{\bibsep}{0pt}
-    \tiny{\bibliographystyle{plainnat}\bibliography{poster}}
+    Centerline enhancement features predict pCR modestly, but hand-engineered
+    GNNs do not beat matched tabular summaries. Forecasting pretraining improved
+    this downstream GNN; graph-free pretraining was unresolved. Repeated seeds
+    and locked-cohort validation must reproduce the gain before any clinical or
+    vascular-specific claim.
+
   \end{block}
 
 \end{column}
@@ -283,7 +281,7 @@
 
     \begin{figure}
       \centering
-      \includegraphics[width=\linewidth]{figures/results_auc.pdf}
+      \includegraphics[width=0.9\linewidth]{figures/results_auc.pdf}
       \caption{Patient-level pooled out-of-fold AUC with patient-bootstrap 95\%
       CIs on shared patient-grouped folds.}
     \end{figure}
@@ -312,14 +310,16 @@
 
   \end{block}
 
-  \begin{block}{Pretraining Helps This GNN; Clinical Value Remains Unproven}
+  \begin{block}{Acknowledgments + References}
+    We thank Zhen and Milica for feedback and MRI-physics expertise;
+    Fred Howard for the development cohort; and Bella Summe, Julia Luo, José
+    Cardona Arias, and Rebecca Wu for earlier vessel-pipeline development. HIRO
+    (RRID:SCR\_018372) coordinated imaging (Ludwig Fund; NIH/NCI P30 CA014599).
+    Randi HPC/CRI compute was supported by BSD and ITM/CTSA NIH UL1TR002389.
 
-    Centerline enhancement features predict pCR modestly, but hand-engineered
-    GNNs do not beat matched tabular summaries. Forecasting pretraining improved
-    this downstream GNN; graph-free pretraining was unresolved. Repeated seeds
-    and locked-cohort validation must reproduce the gain before any clinical or
-    vascular-specific claim.
-
+    \vspace{-1ex}
+    \setlength{\bibsep}{0pt}
+    \bibliographystyle{plainnat}\bibliography{poster}
   \end{block}
 
 \end{column}
