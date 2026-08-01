@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 import SimpleITK as sitk
 
+from graph_extraction.graph_outputs import build_graph_outputs_from_centerline
 from preprocessing.cases import CaseRecord, select_case
 from preprocessing.complement import LABEL_MATLAB_COMPLEMENT_ADDED, complement_exam
 from preprocessing.dicom import (
@@ -360,7 +361,11 @@ def prepare_case(
             "case_manifest_path": str(case_manifest.expanduser().resolve()),
             "case_manifest_sha256": _sha256(case_manifest.expanduser().resolve()),
             "hr_source": {
-                "archive_path": str(hr.archive_path),
+                "source_kind": hr.source_kind,
+                "source_location": str(hr.archive_path),
+                "archive_path": (
+                    str(hr.archive_path) if hr.source_kind == "zip" else None
+                ),
                 "selected_dicom_sha256": hr.source_sha256,
                 "geometry": hr.geometry.to_dict(),
                 "times_seconds": hr.times_seconds.tolist(),
@@ -368,7 +373,11 @@ def prepare_case(
                 "shared_4d_window": _shared_window(hr.signal_tzyx),
             },
             "ufast_source": {
-                "archive_path": str(ufast.archive_path),
+                "source_kind": ufast.source_kind,
+                "source_location": str(ufast.archive_path),
+                "archive_path": (
+                    str(ufast.archive_path) if ufast.source_kind == "zip" else None
+                ),
                 "selected_dicom_sha256": ufast.source_sha256,
                 "geometry": ufast.geometry.to_dict(),
                 "times_seconds": ufast.times_seconds.tolist(),
@@ -768,6 +777,75 @@ def complement_case(*, case_root: Path) -> None:
     _write_json(provenance_path, provenance)
 
 
+def features_case(*, case_root: Path) -> None:
+    """Compute morphometry from the final complemented centerline and support."""
+    provenance_path = case_root / "preprocessing_provenance.json"
+    provenance = json.loads(provenance_path.read_text())
+    if "complement" not in provenance:
+        raise RuntimeError("morphometry requires the completed complement stage")
+
+    output_root = case_root.parents[1]
+    dataset = str(provenance["case"]["dataset"])
+    exam_id = case_root.name
+    output_dir = output_root / "centerlines" / dataset / exam_id
+    skeleton_path = output_dir / f"{exam_id}_skeleton_4d_exam_mask.npy"
+    support_path = output_dir / f"{exam_id}_skeleton_4d_exam_support_mask.npy"
+    morphometry_path = output_dir / f"{exam_id}_morphometry.json"
+    summary_path = output_dir / "run_summary.json"
+    if morphometry_path.exists():
+        raise FileExistsError(
+            f"refusing to overwrite existing morphometry: {morphometry_path}"
+        )
+
+    target_geometry = DicomGeometry.from_dict(provenance["ufast_output_geometry"])
+    spacing = np.asarray(target_geometry.spacing_xyz_mm, dtype=float)
+    if not np.allclose(spacing, TARGET_SPACING_MM):
+        raise ValueError(
+            "morphometry reports voxel distances as millimetres and requires the "
+            f"1 mm output grid, got {spacing.tolist()}"
+        )
+
+    skeleton = np.load(skeleton_path).astype(bool, copy=False)
+    support = np.load(support_path).astype(bool, copy=False)
+    temporary_path = morphometry_path.with_name(f".{morphometry_path.name}.partial")
+    temporary_path.unlink(missing_ok=True)
+    try:
+        feature_stats = build_graph_outputs_from_centerline(
+            skeleton_mask_zyx=skeleton,
+            vessel_reference_zyx=support,
+            output_json_path=temporary_path,
+            strict_qc=True,
+        )
+        temporary_path.replace(morphometry_path)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+    summary = json.loads(summary_path.read_text())
+    summary.update(
+        {
+            "skeleton_source": (
+                "HR-mapped and UFAST-direct TC4D merge plus the quality-gated "
+                "SegVessel/Jerman complement"
+            ),
+            "morphometry_path": str(morphometry_path),
+            "morphometry_status": "computed_from_final_centerline",
+            "morphometry_coordinate_units": "1 mm isotropic voxels",
+            "morphometry_feature_stats": feature_stats,
+        }
+    )
+    _write_json(summary_path, summary)
+    provenance["morphometry"] = {
+        "path": str(morphometry_path),
+        "sha256": _sha256(morphometry_path),
+        "skeleton_sha256": _sha256(skeleton_path),
+        "support_sha256": _sha256(support_path),
+        "coordinate_units": "1 mm isotropic voxels",
+        "feature_stats": feature_stats,
+    }
+    _write_json(provenance_path, provenance)
+
+
 def repair_complement_support_case(*, case_root: Path) -> None:
     """Propagate SegVessel vessel-width support for an already-complemented case.
 
@@ -919,6 +997,7 @@ def _parser() -> argparse.ArgumentParser:
             "tc4d",
             "map",
             "complement",
+            "features",
             "repair-complement-support",
             "qc",
             "all",
@@ -969,6 +1048,8 @@ def main() -> None:
         map_case(case_root=case_root)
     if args.stage in {"complement", "all"}:
         complement_case(case_root=case_root)
+    if args.stage in {"features", "all"}:
+        features_case(case_root=case_root)
     if args.stage == "repair-complement-support":
         repair_complement_support_case(case_root=case_root)
     if args.stage in {"qc", "all"}:
