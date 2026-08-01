@@ -1,27 +1,15 @@
-r"""Forest plot of pooled out-of-fold AUC for every UChicago pCR model arm.
+"""Render the final UChicago temporal-transfer result for the poster.
 
-Regenerates ``results_auc.pdf`` for the poster's Results block. Rerun this when
-new results land -- the numbers are expected to move before final submission.
+The left panel shows all four matched downstream arms.  The right panel shows
+the paired pretraining effect within each architecture, which is the deciding
+comparison.  Values come from the frozen patient-level out-of-fold result:
+
+``/gpfs/data/karczmar-lab/workspaces/spencervenancio/experiments/``
+``uchicago_temporal_transfer/finetune_179_seed0_v1/metrics.json``
+
+Run from ``presentations/symposium_poster`` with::
 
     micromamba run -n vanguard python figures/make_results_figure.py
-
-Source of truth is the consolidated comparison table in the main repo, NOT a
-copy pasted into this repo, so the figure cannot silently drift from the
-experiment it reports:
-
-    ~/vanguard/experiments/uchicago_all_models/all_models_auc_ci.csv
-
-That table is pooled out-of-fold AUC over all 179 cases with a shared-draw
-bootstrap 95% CI; see its README.md for how it was produced.
-
-Drawn at final size (27.4 cm wide = \colwidth on the 36x24in poster) so the
-point sizes here are the sizes the reader sees. Figure text scales with the
-include width, not the poster size.
-
-Colour encodes model class only -- maroon for GNN arms, grey for tabular
-baselines -- with marker shape carrying the same distinction, so the two remain
-separable under colour-vision deficiency and in greyscale print. Rank is not
-encoded: an arm keeps its colour wherever it lands.
 """
 
 from pathlib import Path
@@ -29,82 +17,108 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import pandas as pd
+import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd  # noqa: E402
 
-AUC_CSV = Path.home() / "vanguard/experiments/uchicago_all_models/all_models_auc_ci.csv"
+DATA_CSV = Path(__file__).parent / "transfer_results.csv"
 OUT_PDF = Path(__file__).parent / "results_auc.pdf"
 
-# Poster palette (beamercolorthemeuchicago.sty) plus a neutral for the tabular
-# baselines. L* is roughly 27 vs 50, a separation that survives every CVD type
-# and greyscale, which is what makes the pairing legible without a hue cue.
 MAROON = "#800000"
 GREY = "#6B7280"
-INK = "#3A3A3A"
-CHANCE = 0.5
+INK = "#282828"
+LIGHT = "#D1D5DB"
+
+
+def _interval(
+    ax: plt.Axes,
+    y: float,
+    estimate: float,
+    lo: float,
+    hi: float,
+    color: str,
+    marker: str = "o",
+) -> None:
+    """Draw one horizontal estimate and confidence interval."""
+    ax.plot([lo, hi], [y, y], color=color, lw=3.2, solid_capstyle="round")
+    ax.plot(
+        [estimate],
+        [y],
+        marker=marker,
+        ms=10,
+        color=color,
+        markeredgecolor="white",
+        markeredgewidth=1.2,
+        zorder=3,
+    )
 
 
 def main() -> None:
-    """Render the forest plot to OUT_PDF."""
-    results = pd.read_csv(AUC_CSV).sort_values("pooled_oof_auc")
+    """Render the two-panel forest plot to ``results_auc.pdf``."""
+    table = pd.read_csv(DATA_CSV)
+    auc = table.loc[table["kind"] == "auc"].reset_index(drop=True)
+    delta = table.loc[table["kind"] == "delta"].reset_index(drop=True)
 
-    fig, ax = plt.subplots(figsize=(10.79, 3.35))  # 27.4 cm wide
-    for i, row in enumerate(results.itertuples()):
-        is_gnn = row.group == "GNN"
-        color = MAROON if is_gnn else GREY
-        ax.plot(
-            [row.ci_lo, row.ci_hi],
-            [i, i],
-            color=color,
-            linewidth=2.4,
-            solid_capstyle="round",
-        )
-        ax.plot(
-            row.pooled_oof_auc,
-            i,
-            marker="o" if is_gnn else "s",
-            markersize=10,
-            color=color,
-            markeredgecolor="white",
-            markeredgewidth=1.4,
-            zorder=3,
-        )
-        ax.text(
-            0.755,
-            i,
-            f"{row.pooled_oof_auc:.3f}",
-            va="center",
+    fig, (ax_auc, ax_delta) = plt.subplots(
+        1,
+        2,
+        figsize=(10.79, 3.40),
+        gridspec_kw={"width_ratios": (1.42, 1.0), "wspace": 0.52},
+    )
+
+    for y, row in enumerate(auc.itertuples(index=False)):
+        color = MAROON if row.architecture == "message passing" else GREY
+        marker = "o" if row.initialization == "forecast pretrained" else "s"
+        _interval(ax_auc, y, row.estimate, row.ci_low, row.ci_high, color, marker)
+        ax_auc.text(
+            0.714,
+            y,
+            f"{row.estimate:.3f}",
             ha="right",
-            fontsize=14,
+            va="center",
+            fontsize=12,
             color=INK,
         )
+    ax_auc.axvline(0.5, color=INK, ls="--", lw=1.4, alpha=0.55, zorder=0)
+    ax_auc.text(0.5, -0.63, "chance", ha="center", fontsize=11, color=INK)
+    ax_auc.set_yticks(range(len(auc)))
+    ax_auc.set_yticklabels(auc["label"], fontsize=12)
+    ax_auc.invert_yaxis()
+    ax_auc.set_xlim(0.30, 0.72)
+    ax_auc.set_xlabel("Patient-level pooled OOF AUC (95% CI)", fontsize=12)
+    ax_auc.set_title("All four matched downstream arms", fontsize=14, weight="bold")
 
-    ax.axvline(CHANCE, color=INK, linestyle="--", linewidth=1.4, alpha=0.55, zorder=0)
-    # Labelled at the foot of the line: the top-left of the axes is the only
-    # region free of marks, and the legend claims it.
-    ax.text(CHANCE, -0.55, " chance", fontsize=13, color=INK, alpha=0.8, va="center")
+    for y, row in enumerate(delta.itertuples(index=False)):
+        color = MAROON if row.architecture == "message passing" else GREY
+        _interval(ax_delta, y, row.estimate, row.ci_low, row.ci_high, color)
+        ax_delta.text(
+            0.276,
+            y,
+            f"{row.estimate:+.3f}",
+            ha="right",
+            va="center",
+            fontsize=12,
+            color=INK,
+        )
+    ax_delta.axvline(0.0, color=INK, ls="--", lw=1.4, alpha=0.55, zorder=0)
+    ax_delta.text(0.0, -0.53, "no effect", ha="center", fontsize=11, color=INK)
+    ax_delta.set_yticks(range(len(delta)))
+    ax_delta.set_yticklabels(delta["label"], fontsize=12)
+    ax_delta.invert_yaxis()
+    ax_delta.set_xlim(-0.13, 0.28)
+    ax_delta.set_xlabel("Paired pretraining ΔAUC (95% CI)", fontsize=12)
+    ax_delta.set_title("Paired pretraining effect", fontsize=14, weight="bold")
 
-    ax.set_yticks(range(len(results)))
-    ax.set_yticklabels(results["model"], fontsize=14)
-    ax.set_xlabel("Pooled out-of-fold AUC (95% CI)", fontsize=15)
-    ax.tick_params(axis="x", labelsize=14)
-    ax.set_xlim(0.38, 0.76)
-    ax.set_ylim(-0.7, len(results) - 0.3)
+    for ax in (ax_auc, ax_delta):
+        ax.tick_params(axis="x", labelsize=11)
+        ax.grid(axis="x", color=LIGHT, lw=0.8, alpha=0.7)
+        ax.set_axisbelow(True)
+        for side in ("top", "right", "left"):
+            ax.spines[side].set_visible(False)
+        ax.spines["bottom"].set_color(INK)
 
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(INK)
-    ax.grid(axis="x", color=INK, alpha=0.12, linewidth=0.8)
-    ax.set_axisbelow(True)
-
-    # Two classes are on the plot, so identity is never carried by colour alone:
-    # the legend names them and the marker shape repeats the distinction.
-    ax.plot([], [], "o", color=MAROON, markersize=10, label="GNN")
-    ax.plot([], [], "s", color=GREY, markersize=10, label="tabular baseline")
-    ax.legend(fontsize=14, frameon=False, loc="upper left", handletextpad=0.4)
-
-    fig.tight_layout()
-    fig.savefig(OUT_PDF, bbox_inches="tight")
+    fig.subplots_adjust(left=0.23, right=0.985, top=0.82, bottom=0.20, wspace=0.68)
+    fig.savefig(OUT_PDF)
+    plt.close(fig)
     print(f"wrote {OUT_PDF}")
 
 
