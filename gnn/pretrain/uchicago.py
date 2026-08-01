@@ -104,9 +104,7 @@ def write_pretraining_readme(
             f"- `{checkpoint_path.name}` SHA-256 `{_sha256(checkpoint_path)}`"
         )
     results_path = args.outdir / "pretraining_results.json"
-    artifacts.append(
-        f"- `{results_path.name}` SHA-256 `{_sha256(results_path)}`"
-    )
+    artifacts.append(f"- `{results_path.name}` SHA-256 `{_sha256(results_path)}`")
     status_text = status if status else "clean"
     readme = f"""# UChicago temporal pretraining result
 
@@ -460,8 +458,7 @@ def main(argv: list[str] | None = None) -> None:
         }
     if args.arm == "both":
         results["graph_helps_forecasting"] = (
-            results["gnn"]["validation_mae"]
-            < results["graph_free"]["validation_mae"]
+            results["gnn"]["validation_mae"] < results["graph_free"]["validation_mae"]
         )
     results["train_patient_count"] = len(
         {str(record["patient_key"]) for record in train_records}

@@ -126,9 +126,7 @@ def build_temporal_exam(
     if "pcr" in row.index and pd.notna(row["pcr"]):
         label = int(row["pcr"])
     mask_path = _resolve_centerline(centerline_root, str(row["dataset"]), exam_id)
-    resolved_dce_root = _resolve_dce_root(
-        Path(dce_root), str(row["dataset"]), exam_id
-    )
+    resolved_dce_root = _resolve_dce_root(Path(dce_root), str(row["dataset"]), exam_id)
     data, _ = _build_case(
         exam_id,
         mask_path,
