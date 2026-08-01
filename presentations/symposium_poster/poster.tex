@@ -11,7 +11,7 @@
 
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
-\usepackage[size=custom,width=91.44,height=60.96,scale=0.9]{beamerposter}
+\usepackage[size=custom,width=91.44,height=60.96,scale=0.85]{beamerposter}
 \usetheme{gemini}
 \usecolortheme{uchicago}
 % 36x24in is narrower than the template default, so the title column is tighter.
@@ -38,6 +38,14 @@
 
 \newcommand{\separatorcolumn}{\begin{column}{\sepwidth}\end{column}}
 
+% Title-less callout box, for highlighting a sentence inside a block without
+% opening a nested block/alertblock (which draws its own title strip -- even
+% with an empty title, `block alerted separator` still leaves a bar). Reuses
+% the alertblock body color so it reads as the same "red box" as elsewhere.
+\newenvironment{highlightbox}
+  {\begin{beamercolorbox}[colsep*=0ex,sep=1.5ex]{block alerted body}}
+  {\end{beamercolorbox}\vskip1ex}
+
 % ====================
 % Title
 % ====================
@@ -45,7 +53,7 @@
 % Line break is manual: beamerposter does not wrap the title automatically.
 % The short title in [] is what goes into the PDF metadata -- without it,
 % hyperref hits the \\ while building the metadata string and errors out.
-\title[Graph Neural Network Modeling of Breast MRI Vascular Networks for Treatment Response Prediction]{Graph Neural Network Modeling of Breast MRI Vascular \\ Networks for Treatment Response Prediction}
+\title[Can Blood Vessel Networks in Ultrafast Breast MRI Predict Breast Cancer Treatment Response?]{Can Blood Vessel Networks in Ultrafast Breast MRI \\ Predict Breast Cancer Treatment Response?}
 
 \author{Spencer Venancio \inst{1} \and Sarit Bose \inst{2} \and Aakrithi Ram \inst{3}\and Advisor: Anna Woodard, PhD \inst{4}}
 
@@ -66,7 +74,7 @@
 % example.com/"ABC Conference" placeholders, which look real enough to survive
 % to the printer by accident.
 \footercontent{
- github.com/dsi-clinic/vanguard \hfill
+ Code: https://github.com/dsi-clinic/vanguard \hfill
   University of Chicago Data Science Institute Summer Research Symposium \hfill
   svenancio@wisc.edu}
 % (this whole block can be deleted to remove the footer)
@@ -151,60 +159,62 @@
 
 \begin{column}{\colwidth}
 
-  \begin{block}{Introduction + Motivation}
+  \begin{block}{Why Might Blood Vessels Predict Treatment Response?}
 
-    Breast cancer is the most common cancer in women worldwide, and neoadjuvant
-    chemotherapy (NAC) is widely given before surgery. Only about a third of
-    patients achieve a \textbf{pathologic complete response (pCR)} to NAC, which is
-    associated with improved survival outcomes. NAC is an intensive treatment that
-    can have significant side effects, and patients who do not achieve pCR may
-    require additional treatment. We would like to develop methods to predict
-    which patients will respond to NAC, so that we can better tailor treatment
-    plans and improve outcomes.
-     
+    \textbf{Neoadjuvant treatment (NAT)} varies by breast cancer subtype and may
+    include chemotherapy and HER2-targeted therapy. Only some patients achieve
+    a \textbf{pathologic complete response (pCR)}, which is associated with
+    improved long-term outcomes \citep{cortazar2014pcr}. Earlier prediction could
+    avoid ineffective treatment for women unlikely to benefit and identify
+    nonresponders who need intensified or alternative therapy.
+
+    Tumors recruit abnormal vessels that can be dense, tortuous, leaky, and 
+    disorganized \citep{nagy2009tumourvessels}. Their structure and
+    contrast-enhancement dynamics may reflect tumor biology and affect drug 
+    delivery. We test whether these vessel-network features improve pCR 
+    prediction beyond simple summaries of the same MRI 
+    measurements.
   \end{block}
 
-  \begin{block}{Ultrafast MRI Dataset}
+    \begin{highlightbox}
+      \textbf{Research Question:} does the structure of breast blood
+      vessel networks and the way contrast changes through them improve response
+      prediction beyond simple summaries of the same MRI measurements?
+    \end{highlightbox}
 
-    The dataset consists of \textbf{ultrafast breast MRI} from a single institution:
-    181 labeled exams across 143 patients, of which 179 are analyzed here. Each
-    exam is a dynamic contrast-enhanced series with precontrast baseline frames and
-    pCR labels; 35\% of exams are pCR-positive. Exams come from three sub-sources
-    (\texttt{simbiosys}, \texttt{uch\_nac}, \texttt{her2\_naclike}) whose
-    acquisition timing differs materially --- 13--24 frames over 96--480\,s.
+
+  \begin{block}{179 UChicago Exams Capture Heterogeneous Ultrafast Dynamics}
+
+    UChicago contributed \textbf{181 labeled exams from 143 patients};
+    \textbf{179 exams from 141 patients} are analyzed here (35\% pCR-positive).
+    Two exams lacked the required centerline, support mask, and aligned MRI.
+
+    Acquisition timing is heterogeneous: exams contain 13--24 frames spanning
+    96--480\,s. Longitudinal exams are included. Cross-validation is grouped by
+    patient, so one patient's exams never cross training/evaluation splits.
 
   \end{block}
 
-  \begin{alertblock}{Graph Representation}
+  \begin{alertblock}{Three Graph Representations Test Whether Topology Matters}
 
     \begin{figure}
       \centering
-      \includegraphics[width=0.75 \linewidth]{figures/graph_representation.pdf}
-      \caption{Vascular segments and junctions are converted into graph nodes
-      and edges.}
+      \includegraphics[width=0.72\linewidth]{figures/graph_representation.pdf}
+      \caption{The same vessel centerline represented three ways.}
     \end{figure}
 
-    We represent the vascular network of each patient's tumor as a graph, and 
-    propose 3 different methods of constructing the graph from the MRI scans.
-    In the following let $\mathcal{G} = (\mathcal{V}, \mathcal{E})$ be a graph.
+    We represent the vascular network of each patient's \textbf{breasts} as a
+    graph:
 
     \begin{itemize}
-      \item  \textbf{Voxel-as-node} Let the set of nodes $\mathcal{V}_{\text{vox}}$ be the set 
-      of all voxels, and let the set of edges $\mathcal{E}_{\text{vox}}$
-      be the set of all pairs of adjacent voxels. In this representation, each 
-      voxel is a node, and edges connect adjacent voxels.
-
-       \item \textbf{Junction-as-node} Let $\mathcal{V}_{\text{jun}}$ be the 
-       set of all junctions (i.e. $e \in \mathcal{E}_{\text{vox}}$ with $\mathrm{deg}(e) > 2$) 
-       in the vascular network, and let $\mathcal{E}_{\text{jun}}$ be the set
-       of all pairs of junctions that are connected by a vascular segment.
-
-       \item \textbf{Segement-as-node} Let $\mathcal{V}_{\text{seg}}$ be the 
-       set of all vascular segments, and let $\mathcal{E}_{\text{seg}}$ be the 
-       set of all pairs of segments that are connected at their endpoints. In this 
-       representation, each segment is a node, and edges connect adjacent segments.
-     
+      \item \textbf{Voxel graph:} each vessel-centerline voxel is a node;
+      neighboring centerline voxels are connected.
+      \item \textbf{Junction graph:} branch points are nodes
+      ($v\in V_{\mathrm{vox}}$, $\deg(v)>2$); vessel segments connect them.
+      \item \textbf{Segment graph:} vessel segments are nodes; segments sharing
+      an endpoint are connected.
     \end{itemize}
+
   \end{alertblock}
 
 \end{column}
@@ -213,55 +223,54 @@
 
 \begin{column}{\colwidth}
 
-  % Pipeline and architecture are one block: the two used to end and begin with
-  % the same sentence ("a GNN is trained to predict treatment response from the
-  % graph representation"), and each figure carries most of its own explanation.
-  % Merging them frees a block header and about eighty words for the pretext-task
-  % section below.
-  \begin{block}{Prediction Pipeline and GNN Architecture}
+  \begin{block}{Vessel Centerlines Become Graphs for pCR Prediction}
 
     \begin{figure}
       \centering
-      \includegraphics[width=\linewidth]{figures/dsi-pipeline.pdf}
-      \caption{End-to-end prediction pipeline.}
+      \includegraphics[width=0.88\linewidth]{figures/method_pipeline.pdf}
+      \caption{Ultrafast breast MRI movie to vessel-network prediction.}
     \end{figure}
 
-    Vessel segmentation is performed using a \textbf{nnU-Net model}, which labels
-    each voxel as vessel or background. The segmentation is simplified into a
-    one-voxel wide network of vessels using the \textbf{tc4d} algorithm, then
-    converted into a graph using one of the three representations above.
+    A published deep-learning method (nnU-Net) identifies vessel voxels
+    \citep{isensee2021nnunet}. Our \textbf{tc4d} algorithm converts that mask into
+    a one-voxel-wide centerline while preserving vascular connectivity. The
+    centerline then becomes one of the three graph representations.
 
-    A \textbf{graph neural network (GNN)} predicts treatment response from that
-    graph. Successive \textbf{graph convolution (GCN)} layers aggregate information
-    from neighboring nodes, a global pooling layer collapses all nodes into a
-    fixed-size representation of the entire graph, and a fully connected layer maps
-    that representation to a binary prediction (pCR vs. non-pCR).
-
-    % Vector PDF (25.3 x 9.1 cm, no raster layers), so it scales cleanly. Figure
-    % text scales with the include width, not the poster size: at 0.4\textwidth
-    % these labels rendered at roughly 40% of the size drawn.
-    \begin{figure}
-      \centering
-      \includegraphics[width=\linewidth]{figures/GNN_arch.pdf}
-      \caption{GNN architecture: 4D DCE-MRI through the vessel graph to a pCR
-      probability.}
-    \end{figure}
+    Nodes carry geometry and measured enhancement curves. A \textbf{graph neural
+    network (GNN)} combines neighboring-node information, pools the network into
+    one exam representation, and predicts pCR.
 
   \end{block}
 
-  \begin{block}{Self-supervised Pretraining}
+  \begin{block}{Forecasting Future Enhancement May Teach the Encoder Vascular Dynamics}
 
-    To improve the performance of the GNN, we use a \textbf{self-supervised pretraining}
-    approach. The GNN is first trained to predict \emph{per node} the future contrast
-    enhancement, where it learns to predict contrast flow through the network.
+    \begin{figure}
+      \centering
+      \includegraphics[width=0.86\linewidth]{figures/pretraining_transfer.pdf}
+      \caption{Forecasting weights initialize the downstream encoder.}
+    \end{figure}
 
-    Each contrast curve is cut into non-overlapping windows. Shown the frames on an
-    input horizon $[t_1, t_L]$, the model predicts every node's enhancement over the
-    following horizon $(t_L, t_{L+H}]$, scored by mean absolute error against the
-    measured signal. Predictions are conditioned on \textbf{elapsed seconds}
-    $\tau = t - t_1$ rather than on frame index, so the irregular ultrafast cadence
-    is handled directly.
+    The encoder receives vessel curves, connections, and elapsed times and
+    predicts \textbf{future enhancement at connected vessel nodes}. This may
+    teach how enhancement evolves across the network
+    \citep{tang2022selfsupervised}.
 
+    The downstream comparison holds inputs, encoder, training, patient-grouped
+    folds, and evaluation fixed: forecasting versus random initialization, with
+    and without graph message passing.
+
+  \end{block}
+
+  \begin{block}{Acknowledgments + References}
+    \scriptsize We thank Zhen and Milica for feedback and MRI-physics expertise;
+    Fred Howard for the development cohort; and Bella Summe, Julia Luo, José
+    Cardona Arias, and Rebecca Wu for earlier vessel-pipeline development. HIRO
+    (RRID:SCR\_018372) coordinated imaging (Ludwig Fund; NIH/NCI P30 CA014599).
+    Randi HPC/CRI compute was supported by BSD and ITM/CTSA NIH UL1TR002389.
+
+    \vspace{0.4ex}
+    \setlength{\bibsep}{0pt}
+    \tiny{\bibliographystyle{plainnat}\bibliography{poster}}
   \end{block}
 
 \end{column}
@@ -270,57 +279,46 @@
 
 \begin{column}{\colwidth}
 
-  \begin{exampleblock}{Results}
+  \begin{exampleblock}{Forecast Pretraining Improves the GNN in One Development Run}
 
-    % Regenerate with figures/make_results_figure.py when new results land.
-    % Preliminary: these numbers are expected to move before final submission.
     \begin{figure}
       \centering
       \includegraphics[width=\linewidth]{figures/results_auc.pdf}
-      \caption{Pooled out-of-fold AUC, bootstrap 95\% CI, shared folds.
-      \emph{Preliminary.}}
+      \caption{Patient-level pooled out-of-fold AUC with patient-bootstrap 95\%
+      CIs on shared patient-grouped folds.}
     \end{figure}
 
-    Every arm carrying the full enhancement-kinetic feature set clusters between
-    \textbf{0.607 and 0.624} AUC. The paired difference between the best GNN and
-    the best tabular baseline is consistent with zero, $+0.002$ $[-0.041, 0.046]$.
+    Forecasting initialization changed GNN AUC from 0.434 to \textbf{0.583}:
+    paired $\Delta$AUC \textbf{+0.149} [\textbf{+0.046}, \textbf{+0.255}]. The
+    graph-free effect was unresolved: +0.034 [$-$0.049, +0.120]. The pretrained
+    GNN exceeded pretrained graph-free by +0.079 [+0.010, +0.155].
 
-    A GNN restricted to two features (peak time and radius) sits at chance,
-    $0.492$, placing the signal in the enhancement kinetics rather than in the
-    graph. So far feature content moves the metric; model class and graph
-    representation do not.
-
-    \heading{Protocol confound}
-
-    Acquisition timing differs by sub-source, and four of the seven kinetic
-    features depend on it. A protocol-only model with no imaging scores $0.593$;
-    regressing protocol out per fold leaves $0.539$ --- read the vessel signal as
-    the bracket $[0.539, 0.613]$.
+    The claim is narrow: initialization helped this GNN on one seed. Its absolute
+    interval includes chance. Earlier feature-matched experiments found that full
+    kinetics drove most performance, with no measurable message-passing benefit.
 
   \end{exampleblock}
 
-  \begin{block}{Reproducibility}
-    All code is publicly available on GitHub: vessel segmentation, graph
-    construction, GNN training and evaluation, plus instructions to reproduce
-    these results.
+  \begin{block}{Prediction Is Sensitive to Acquisition Timing}
+
+    Acquisition timing is associated with outcome in this cohort: a model using
+    frame count, duration, and cadence without imaging features reaches
+    \textbf{0.587} AUC---essentially the pretrained GNN's 0.583. Their predictions
+    correlate (Pearson $r=0.50$).
+
+    This raises concern about protocol dependence, but cannot separate technical
+    from biological association. Adjustment can remove genuine patient
+    differences that happen to track acquisition as well as technical variation.
+
   \end{block}
 
-  \begin{block}{Conclusion}
+  \begin{block}{Pretraining Helps This GNN; Clinical Value Remains Unproven}
 
-    We built an end-to-end pipeline that turns ultrafast breast MRI into a vessel
-    graph and predicts pCR with a GNN. The vasculature carries some signal, but no
-    graph representation yet beats a tabular summary of the same node features, and
-    part of the pooled signal tracks acquisition protocol rather than physiology.
-    Quantifying what survives protocol adjustment, and whether pretraining helps,
-    are the next steps.
-
-   
-  \end{block}
-
-  \begin{block}{References}
-
-    \nocite{*}
-    \footnotesize{\bibliographystyle{plainnat}\bibliography{poster}}
+    Centerline enhancement features predict pCR modestly, but hand-engineered
+    GNNs do not beat matched tabular summaries. Forecasting pretraining improved
+    this downstream GNN; graph-free pretraining was unresolved. Repeated seeds
+    and locked-cohort validation must reproduce the gain before any clinical or
+    vascular-specific claim.
 
   \end{block}
 
