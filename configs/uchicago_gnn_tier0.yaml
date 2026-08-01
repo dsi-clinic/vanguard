@@ -1,0 +1,56 @@
+# UChicago tier ladder -- TIER-0 arm (optimization hygiene).
+#
+# Only deltas vs. uchicago_gnn_tier_baseline.yaml are the Tier-0 training knobs
+# (PLAN_advanced_modeling.md Tier 0, decisions D1.1-D1.5): weighted BCE +
+# weight decay + gradient clipping + LR plateau scheduler + early stopping +
+# best-epoch restore. Feature set, folds, and all architecture knobs are held
+# identical to the baseline arm (D5: one change-set per tier). Turning on any
+# of scheduler/early-stopping/restore activates the CV-safe inner-val model
+# selection in gnn/train.py (the 2026-07-23 leakage fix).
+
+experiment_setup:
+  name: "uchicago_gnn_tier0"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  split_mode: "predefined"
+  split_col: "fold"
+  batch_size: 8
+  epochs: 100
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features:
+    - "peak_time"
+    - "peak_enhancement"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "washout_slope"
+    - "auc_positive"
+    - "radius"
+  # Tier-0 hygiene stack (the only deltas vs. the baseline arm).
+  loss: "weighted_bce"
+  weight_decay: 1.0e-4
+  max_grad_norm: 1.0
+  lr_scheduler: "plateau"
+  lr_scheduler_factor: 0.5
+  lr_scheduler_patience: 5
+  early_stopping_patience: 10
+  restore_best_epoch: true
+  inner_val_fraction: 0.2
+  gnn_pooling: "mean"
+
+data_paths:
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_voxel_richfeat"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null

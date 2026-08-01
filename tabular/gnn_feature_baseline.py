@@ -44,7 +44,7 @@ import pandas as pd
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
-from sklearn.pipeline import make_pipeline
+from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import StandardScaler
 from torch_geometric.data import Data
 from xgboost import XGBClassifier
@@ -54,6 +54,36 @@ from load_cohort import load_config
 
 _SUMMARY_QUANTILES = (0.10, 0.50, 0.90)
 _SEEDS = (42, 142, 242)
+_N_BOOTSTRAP = 2000
+_CI_PCT = (2.5, 97.5)
+
+
+def _build_model(model_name: str, seed: int) -> Pipeline:
+    """The imputer -> scaler -> classifier pipeline for one model/seed.
+
+    SimpleImputer (mean) is fit on each fold's training split only (see
+    ``oof_predictions`` / ``run_cv``), so the NaN ``summarize_graph`` emits for
+    an all-no-arrival case's TTE timing summaries never draws on validation
+    data. It is a near-no-op otherwise (only the handful of all-no-arrival cases
+    carry any NaN).
+    """
+    if model_name == "logistic_regression":
+        return make_pipeline(
+            SimpleImputer(strategy="mean"),
+            StandardScaler(),
+            LogisticRegression(max_iter=1000, random_state=seed),
+        )
+    if model_name == "xgboost":
+        return make_pipeline(
+            SimpleImputer(strategy="mean"),
+            XGBClassifier(
+                n_estimators=100,
+                max_depth=3,
+                random_state=seed,
+                eval_metric="logloss",
+            ),
+        )
+    raise ValueError(f"Unknown model_name: {model_name!r}")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -81,6 +111,10 @@ def load_dataset_from_config(
         cache_dir=dp.gnn_cache_dir,
         node_mode=str(mp.gnn_node_mode),
         node_features=node_features,
+        # Must match the cache manifest's floor: a floored cache (UChicago 0.05)
+        # refuses an unfloored (0.0) request and vice versa, so this cannot be
+        # left at the default when reading a floored cache.
+        kinetic_baseline_floor_frac=float(mp.gnn_kinetic_baseline_floor_frac),
     )
     return dataset, node_features
 
@@ -169,30 +203,7 @@ def run_cv(
         test = feature_table[feature_table["fold"] == fold]
         x_train, y_train = train[feature_cols].to_numpy(), train["pcr"].to_numpy()
         x_test, y_test = test[feature_cols].to_numpy(), test["pcr"].to_numpy()
-
-        # SimpleImputer (mean) is fit on this fold's training split only, so the
-        # NaN that summarize_graph emits for an all-no-arrival case's TTE timing
-        # summaries never draws on validation data. It is a near-no-op otherwise
-        # (only the handful of all-no-arrival cases carry any NaN).
-        if model_name == "logistic_regression":
-            model = make_pipeline(
-                SimpleImputer(strategy="mean"),
-                StandardScaler(),
-                LogisticRegression(max_iter=1000, random_state=seed),
-            )
-        elif model_name == "xgboost":
-            model = make_pipeline(
-                SimpleImputer(strategy="mean"),
-                XGBClassifier(
-                    n_estimators=100,
-                    max_depth=3,
-                    random_state=seed,
-                    eval_metric="logloss",
-                ),
-            )
-        else:
-            raise ValueError(f"Unknown model_name: {model_name!r}")
-
+        model = _build_model(model_name, seed)
         model.fit(x_train, y_train)
         y_prob = model.predict_proba(x_test)[:, 1]
         auc = roc_auc_score(y_test, y_prob)
@@ -206,6 +217,48 @@ def run_cv(
             }
         )
     return rows
+
+
+def oof_predictions(
+    feature_table: pd.DataFrame, feature_cols: list[str], *, model_name: str, seed: int
+) -> np.ndarray:
+    """Out-of-fold predicted probabilities, aligned to ``feature_table`` row order.
+
+    Each case is scored only by the model trained on the folds that exclude it,
+    so the stacked vector holds exactly one held-out prediction per case. Feeding
+    it to a single ``roc_auc_score`` over all cases gives the **pooled OOF AUC**
+    -- the plan's metric convention and the estimand the GNN's ~0.61 is measured
+    on -- as opposed to averaging the noisier per-fold AUCs ``run_cv`` reports.
+    """
+    oof = np.full(len(feature_table), np.nan)
+    fold = feature_table["fold"].to_numpy()
+    y = feature_table["pcr"].to_numpy()
+    x = feature_table[feature_cols].to_numpy()
+    for f in sorted(np.unique(fold)):
+        train_mask, test_mask = fold != f, fold == f
+        model = _build_model(model_name, seed)
+        model.fit(x[train_mask], y[train_mask])
+        oof[test_mask] = model.predict_proba(x[test_mask])[:, 1]
+    return oof
+
+
+def bootstrap_auc_ci(
+    y: np.ndarray, prob: np.ndarray, *, n_boot: int = _N_BOOTSTRAP, seed: int = 0
+) -> tuple[float, float]:
+    """Percentile bootstrap CI for a pooled AUC, resampling cases with replacement.
+
+    Quantifies sampling uncertainty of the pooled-OOF AUC at this fixed N -- the
+    Phase 0.3 requirement that tier/model deltas be read against a CI rather than
+    a bare point estimate.
+    """
+    rng = np.random.default_rng(seed)
+    n = len(y)
+    aucs = np.empty(n_boot, dtype=float)
+    for b in range(n_boot):
+        idx = rng.integers(0, n, n)
+        aucs[b] = roc_auc_score(y[idx], prob[idx])
+    lo, hi = np.percentile(aucs, _CI_PCT)
+    return float(lo), float(hi)
 
 
 def main() -> None:
@@ -235,7 +288,7 @@ def main() -> None:
 
     results = pd.DataFrame(all_rows)
     print()
-    print("=== Per-model aggregated AUC (mean +/- std across seed x fold) ===")
+    print("=== Per-model per-fold AUC (mean +/- std across seed x fold) ===")
     print(results.groupby("model")["auc"].agg(["mean", "std", "count"]))
     print()
     print(f"=== Per-fold AUC, one model at a time (seed={_SEEDS[0]}) ===")
@@ -245,8 +298,47 @@ def main() -> None:
         )
     )
 
+    # Pooled OOF AUC is the plan's headline metric (comparable to the GNN's
+    # ~0.61): score every case once from the fold that held it out, average those
+    # OOF probabilities across seeds to damp init noise, then take a single AUC
+    # over all cases plus a bootstrap CI on it (Phase 0.3).
+    y = feature_table["pcr"].to_numpy()
+    pooled: list[dict[str, object]] = []
+    print()
+    print("=== Pooled OOF AUC over all cases (headline metric) ===")
+    for model_name in ("logistic_regression", "xgboost"):
+        per_seed = np.stack(
+            [
+                oof_predictions(
+                    feature_table, feature_cols, model_name=model_name, seed=s
+                )
+                for s in _SEEDS
+            ]
+        )
+        seed_pooled = [float(roc_auc_score(y, per_seed[i])) for i in range(len(_SEEDS))]
+        mean_oof = per_seed.mean(axis=0)
+        auc = float(roc_auc_score(y, mean_oof))
+        ci_lo, ci_hi = bootstrap_auc_ci(y, mean_oof)
+        pooled.append(
+            {
+                "model": model_name,
+                "pooled_oof_auc_seed_mean": auc,
+                "pooled_oof_auc_ci95": [ci_lo, ci_hi],
+                "pooled_oof_auc_per_seed": seed_pooled,
+                "n_cases": int(len(y)),
+                "n_features": len(feature_cols),
+            }
+        )
+        print(
+            f"  {model_name:20s} AUC={auc:.3f}  "
+            f"95% CI [{ci_lo:.3f}, {ci_hi:.3f}]  "
+            f"per-seed={[round(v, 3) for v in seed_pooled]}"
+        )
+
     out_path = args.out_dir / "tabular_baseline_results.json"
-    out_path.write_text(json.dumps(all_rows, indent=2))
+    out_path.write_text(
+        json.dumps({"per_fold": all_rows, "pooled_oof": pooled}, indent=2)
+    )
     print(f"\nWrote {out_path}")
 
 

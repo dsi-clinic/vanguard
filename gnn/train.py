@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib
+import networkx as nx
 import numpy as np
 import pandas as pd
 import torch
@@ -47,6 +48,12 @@ _DECISION_THRESHOLD = 0.5
 # Smallest usable StratifiedKFold: fewer than 2 folds (or 2 of either class)
 # can't hold out a stratified inner-validation split -- see _stratified_inner_split.
 _MIN_INNER_SPLIT_FOLDS = 2
+# Edge-ablation arms for the "is the topology used at all?" control. See
+# ``_apply_edge_ablation``. "none" is the real adjacency and the default.
+EDGE_ABLATION_MODES: tuple[str, ...] = ("none", "rewire", "drop")
+# Degree-preserving swaps per edge for the "rewire" arm. Two passes over the edge
+# set is well past the point where the wiring still resembles the original tree.
+_REWIRE_SWAPS_PER_EDGE = 2
 
 
 def parse_args() -> argparse.Namespace:
@@ -317,6 +324,81 @@ def _apply_pcr_dummy_noise(
         graph.x[:, col] = class_mean + noise_by_index[index]
 
 
+def _apply_edge_ablation(
+    graphs: list[Data],
+    graph_indices: list[int],
+    mode: str,
+    seed: int,
+) -> None:
+    """In place: replace each graph's ``edge_index`` to test whether topology is used.
+
+    The control that separates "vessel topology carries no pCR signal" from "this
+    model never looked at the topology." A GCNConv stack with a mean-pool readout
+    is a low-pass filter followed by an average, and at ``num_layers=2`` on
+    skeleton graphs whose diameter is several hundred hops each node sees only its
+    immediate neighbourhood -- so the graph may be contributing nothing more than a
+    short moving average. Comparing the three modes measures that directly instead
+    of assuming it:
+
+    - ``"none"``   -- the real skeleton adjacency (default, a no-op).
+    - ``"rewire"`` -- degree-preserving random rewiring (``nx.double_edge_swap``).
+      Every node keeps its degree and the graph keeps its size and edge count, so
+      only *which* nodes are adjacent changes. Isolates the specific vessel
+      topology from generic "some graph with this degree sequence."
+    - ``"drop"``   -- no edges at all. ``GCNConv`` adds self-loops, so each node
+      reduces to a per-node linear map and the model becomes a Deep Sets-style
+      permutation-invariant readout over nodes. Isolates message passing entirely.
+
+    If all three score the same, topology is provably unused and every graph-mode
+    null to date is explained by the operator rather than by the vasculature.
+
+    The swap RNG is keyed by ``graph_index`` (the graph's position in the cached
+    dataset), matching ``_apply_pcr_dummy_noise``, so a case gets the same
+    rewiring across folds, seeds, and reruns.
+
+    Refuses to run on graphs carrying ``edge_attr`` (junction mode): rewiring
+    would silently break the correspondence between each edge and its cached
+    segment summary, and dropping edges would discard those features outright.
+    """
+    if mode not in EDGE_ABLATION_MODES:
+        raise ValueError(
+            f"gnn_edge_ablation must be one of {list(EDGE_ABLATION_MODES)}; got {mode!r}"
+        )
+    if mode == "none":
+        return
+    if getattr(graphs[0], "edge_attr", None) is not None:
+        raise NotImplementedError(
+            f"gnn_edge_ablation={mode!r} is not defined for a graph mode with "
+            "edge_attr (junction): edge features are aligned with edge_index, so "
+            "rewiring or dropping edges would invalidate them. Run the ablation "
+            "on voxel or segment mode."
+        )
+    for graph, index in zip(graphs, graph_indices, strict=True):
+        if mode == "drop":
+            graph.edge_index = torch.empty((2, 0), dtype=torch.long)
+            continue
+        edge_index = graph.edge_index.numpy()
+        undirected = nx.Graph()
+        undirected.add_nodes_from(range(int(graph.num_nodes)))
+        undirected.add_edges_from(zip(edge_index[0], edge_index[1], strict=True))
+        num_edges = undirected.number_of_edges()
+        # Two passes over the edge set randomize the wiring well past the point
+        # where the result still resembles the original tree, and cost ~0.1 s on a
+        # 5k-node graph. max_tries is generous because a degree-constrained swap
+        # can fail on the sparse, near-path-like stretches of a skeleton.
+        nx.double_edge_swap(
+            undirected,
+            nswap=_REWIRE_SWAPS_PER_EDGE * num_edges,
+            max_tries=100 * _REWIRE_SWAPS_PER_EDGE * num_edges,
+            seed=seed + index,
+        )
+        # edge_index stores each undirected edge in both directions, matching how
+        # the cached graphs were built.
+        rewired = list(undirected.edges())
+        both_ways = rewired + [(v, u) for u, v in rewired]
+        graph.edge_index = torch.tensor(both_ways, dtype=torch.long).t().contiguous()
+
+
 class FocalWithLogitsLoss(nn.Module):
     """Sigmoid focal loss for class-imbalanced binary classification.
 
@@ -577,6 +659,12 @@ def fit_predict_one_fold(
         train_graph_idx + val_graph_idx,
         node_features=tuple(params.gnn_node_features),
         params=params,
+    )
+    _apply_edge_ablation(
+        train_graphs + val_graphs,
+        train_graph_idx + val_graph_idx,
+        mode=str(params.gnn_edge_ablation),
+        seed=int(params.gnn_edge_ablation_seed),
     )
     mean, std = fit_node_standardizer(train_graphs)
     for graph in train_graphs + val_graphs:
@@ -842,6 +930,7 @@ def run_gnn_pipeline(config: Any, outdir: Path) -> KFoldResults:
         max_missing_clinical_frac=float(params.gnn_max_missing_clinical_frac),
         id_column=data_paths.gnn_id_column,
         label_column=data_paths.gnn_label_column,
+        kinetic_baseline_floor_frac=float(params.gnn_kinetic_baseline_floor_frac),
         allow_manifest_mismatch=bool(data_paths.gnn_allow_manifest_mismatch),
         breast_split_mode=params.gnn_breast_split_mode or None,
         breast_split_skeleton_root=data_paths.gnn_breast_split_skeleton_root or None,

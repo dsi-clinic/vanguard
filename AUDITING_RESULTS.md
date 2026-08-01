@@ -365,3 +365,44 @@ failure mode it protects against), and flagged at the point of use.
 - **Where.** `tabular/gnn_feature_baseline.py` (`summarize_graph`,
   `_summary_stats`, `run_cv`); tests in
   `tests/test_tabular_gnn_feature_baseline.py`.
+
+## GNN — kinetic baseline floor (divide-by-near-zero enhancement artifact)
+
+- **What is handled.** The relative-enhancement transform in
+  `gnn/kinetics.py::baseline_relative_curve` computes `(S(t) - S0) / S0`, where
+  `S0` is the per-voxel precontrast baseline. When `S0` is a tiny-but-nonzero
+  fraction of the voxel's own signal (near-signal-void voxels, mask/registration
+  edges, noise), the ratio explodes: on the UChicago v5 cohort the raw
+  `peak_enhancement` reached 2.5e8 (physiological is ~0-5), with `auc_positive`
+  up to 1.1e10 and `washin_slope` up to 2.7e6. The pre-existing guard only
+  floored `S0` at float32-eps (~1.2e-7), i.e. it caught only *exact* zeros.
+  The new opt-in `baseline_floor_frac` parameter floors the denominator at that
+  fraction of each row's own peak `|signal|`
+  (`denom = max(S0, baseline_floor_frac * max|S|)`), capping peak relative
+  enhancement at ~`1/baseline_floor_frac` and leaving normal voxels
+  (`S0 >> floor`) untouched.
+- **Why.** Per-fold z-standardization (`gnn/train.py::fit_node_standardizer`)
+  fixes scale but not outliers: a single 2.5e8 voxel inflates the feature's std
+  so every physiological value collapses to ~0 after standardization, and
+  max-pooling reads the artifact voxel directly. Three of the seven voxel
+  features were effectively noise, making "advanced modeling didn't help"
+  uninterpretable (signal-absent vs. signal-present-but-crushed were
+  indistinguishable). This is a genuine acquisition/segmentation edge case, not
+  a modeling choice, so it is corrected at the feature source.
+- **Failure mode it protects against.** Divide-by-near-zero baselines turning a
+  handful of noise voxels into features that dominate the pooled graph
+  representation, silently destroying the real kinetic signal after
+  standardization.
+- **Default off; opt-in and audited.** `baseline_floor_frac` defaults to `0.0`
+  (historical behavior, exact-zero guard only), so every existing cache,
+  cohort, and the shared forecasting path (`gnn.pretrain.node_series`, which
+  reuses `baseline_relative_curve`) are byte-for-byte unchanged. It is currently
+  threaded only through the **voxel** kinetic path; `_build_case` raises
+  `NotImplementedError` if a nonzero floor is requested for segment/junction mode
+  or with `attach_node_series=True`, rather than silently ignoring it. When
+  active it is recorded in the cache manifest (`kinetic_baseline_floor_frac`) and
+  enforced by `_check_cache_manifest` (absent normalized to 0.0), so a floored
+  cache can never silently serve an unfloored request or vice versa. Wired via
+  `gnn/build_dataset.py --kinetic-baseline-floor-frac` and the
+  `KINETIC_BASELINE_FLOOR_FRAC` env in `gnn/slurm/submit_gnn_build.slurm`. The
+  UChicago rich-feature rebuild uses `0.05` (caps at ~20x / 2000% enhancement).

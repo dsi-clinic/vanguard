@@ -1,0 +1,56 @@
+# UChicago SEGMENT arm of the floored voxel/segment/junction graph-mode
+# comparison. node_mode="segment": one node per vessel segment (line graph,
+# Option B). Matched to configs/uchicago_gnn_tier_baseline_floored.yaml (voxel
+# baseline) -- every model/training knob is identical so the ONLY difference is
+# the graph representation. The 7 node features are the seg_*_mean summaries of
+# the same 7 signals the voxel arm uses per voxel (peak_time, peak_enhancement,
+# time_to_enhancement, washin_slope, washout_slope, auc_positive, radius).
+#
+# Floored: gnn_kinetic_baseline_floor_frac 0.05 must match the cache manifest
+# (built with KINETIC_BASELINE_FLOOR_FRAC=0.05 via submit_gnn_build.slurm).
+
+experiment_setup:
+  name: "uchicago_gnn_segment_floored"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  split_mode: "predefined"
+  split_col: "fold"
+  gnn_kinetic_baseline_floor_frac: 0.05
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "segment"
+  gnn_node_features:
+    - "seg_peak_time_mean"
+    - "seg_peak_enhancement_mean"
+    - "seg_time_to_enhancement_mean"
+    - "seg_washin_slope_mean"
+    - "seg_washout_slope_mean"
+    - "seg_auc_positive_mean"
+    - "seg_radius_mean"
+  # Frozen historical baseline (D0.6), identical to the voxel baseline arm.
+  weight_decay: 0.0
+  loss: "unweighted_bce"
+  lr_scheduler: "none"
+  max_grad_norm: 0.0
+  early_stopping_patience: 0
+  restore_best_epoch: false
+  gnn_pooling: "mean"
+
+data_paths:
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_segment_richfeat_floored"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null

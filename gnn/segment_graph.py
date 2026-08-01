@@ -115,6 +115,7 @@ def _segment_kinetic_summary(
     *,
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
+    baseline_floor_frac: float = 0.0,
 ) -> dict[str, float]:
     """Mean/std of the per-voxel kinetic scalars along one segment's voxels.
 
@@ -138,6 +139,7 @@ def _segment_kinetic_summary(
             time_axis,
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
+            baseline_floor_frac=baseline_floor_frac,
         )
         samples["peak_time"].append(
             float(kinetic["peak_time_seconds"]) / duration_seconds
@@ -172,6 +174,7 @@ def segment_summary_features(
     *,
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
+    baseline_floor_frac: float = 0.0,
 ) -> dict[str, float]:
     """All segment-level features for one segment polyline, as a flat dict.
 
@@ -198,6 +201,7 @@ def segment_summary_features(
             time_axis,
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
+            baseline_floor_frac=baseline_floor_frac,
         )
     )
     attrs["seg_num_voxels"] = float(len(path))
@@ -216,6 +220,7 @@ def build_segment_line_graph(
     *,
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
+    baseline_floor_frac: float = 0.0,
 ) -> nx.Graph:
     """Build the segment line graph (Option B) from a voxel skeleton graph.
 
@@ -258,6 +263,7 @@ def build_segment_line_graph(
             voxel_graph,
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
+            baseline_floor_frac=baseline_floor_frac,
         )
         midpoint = np.mean(np.asarray(path, dtype=float), axis=0)
         line.add_node(seg_id, pos=midpoint, **attrs)

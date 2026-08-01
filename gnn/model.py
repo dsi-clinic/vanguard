@@ -45,19 +45,62 @@ POOLING_WIDTHS: dict[str, int] = {"mean": 1, "mean_max": 2, "mean_max_sum": 3}
 
 
 def _graph_readout(
-    h: torch.Tensor, batch_index: torch.Tensor, pooling: str
+    h: torch.Tensor,
+    batch_index: torch.Tensor,
+    pooling: str,
+    node_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Concatenate the pooled node embeddings selected by ``pooling``.
 
     ``"mean"`` reproduces the original single ``global_mean_pool`` readout;
     ``"mean_max"``/``"mean_max_sum"`` append global max (and add) pools so the
     graph embedding keeps extreme/aggregate node signal, not just the average.
+
+    ``node_mask`` (shape ``(num_nodes,)``, True = keep) restricts every pool to
+    the marked nodes. Nodes it excludes still took part in message passing --
+    they shaped their neighbours' embeddings in the conv stack -- but contribute
+    nothing to the graph vector, so they cannot reach the graph-level loss. This
+    is the whole-graph analogue of masking a per-node loss: pooling is the last
+    point at which nodes are individually addressable.
+
+    The pools are computed by weighting rather than by dropping rows, so every
+    graph in the batch keeps its slot in the output even when some of its nodes
+    are masked out. A graph with no kept nodes has no defined readout and raises
+    rather than emitting NaN.
     """
-    parts = [global_mean_pool(h, batch_index)]
+    if node_mask is None:
+        parts = [global_mean_pool(h, batch_index)]
+        if pooling in ("mean_max", "mean_max_sum"):
+            parts.append(global_max_pool(h, batch_index))
+        if pooling == "mean_max_sum":
+            parts.append(global_add_pool(h, batch_index))
+        return torch.cat(parts, dim=1)
+
+    if node_mask.shape != batch_index.shape:
+        raise ValueError(
+            f"node_mask shape {tuple(node_mask.shape)} does not match "
+            f"batch_index {tuple(batch_index.shape)}"
+        )
+    keep = node_mask.to(dtype=torch.bool)
+    weights = keep.to(h.dtype).unsqueeze(-1)
+    kept_per_graph = global_add_pool(weights, batch_index)
+    if bool((kept_per_graph == 0).any()):
+        empty = int((kept_per_graph == 0).sum())
+        raise ValueError(
+            f"{empty} graph(s) in this batch have no unmasked nodes, so their "
+            "readout is undefined. Every graph must retain at least one node "
+            "with an observed baseline."
+        )
+    masked_sum = global_add_pool(h * weights, batch_index)
+    parts = [masked_sum / kept_per_graph]
     if pooling in ("mean_max", "mean_max_sum"):
-        parts.append(global_max_pool(h, batch_index))
+        # Excluded rows must lose the max outright, so push them to the dtype's
+        # floor rather than to 0 -- a genuine all-negative embedding would
+        # otherwise be beaten by a masked node.
+        floored = h.masked_fill(~keep.unsqueeze(-1), torch.finfo(h.dtype).min)
+        parts.append(global_max_pool(floored, batch_index))
     if pooling == "mean_max_sum":
-        parts.append(global_add_pool(h, batch_index))
+        parts.append(masked_sum)
     return torch.cat(parts, dim=1)
 
 
@@ -106,18 +149,21 @@ class GCNClassifier(nn.Module):
         edge_index: torch.Tensor,
         batch_index: torch.Tensor,
         graph_features: torch.Tensor | None = None,
+        node_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Return one raw logit per graph in the batch (shape ``(batch_size,)``).
 
         ``graph_features`` (shape ``(batch_size, graph_dim)``) is required
-        when ``graph_dim > 0`` and ignored otherwise.
+        when ``graph_dim > 0`` and ignored otherwise. ``node_mask`` restricts the
+        readout to the marked nodes without removing them from message passing
+        (see ``_graph_readout``).
         """
         h = x
         for conv in self.convs:
             h = conv(h, edge_index)
             h = torch.relu(h)
             h = self.dropout(h)
-        pooled = _graph_readout(h, batch_index, self.pooling)
+        pooled = _graph_readout(h, batch_index, self.pooling, node_mask)
         if self.graph_dim > 0:
             if graph_features is None:
                 raise ValueError("graph_features is required when graph_dim > 0")
