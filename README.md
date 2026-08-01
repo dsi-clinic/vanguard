@@ -136,7 +136,7 @@ Supporting pieces:
 - `results/`
   - compact tracked result summaries
 - `analysis/`
-  - optional notebooks and lightweight exploratory analyses that are not part of the production pipeline
+  - optional Jupyter notebooks for exploratory analysis, not part of the production pipeline; notebooks only -- Python scripts belong in `scripts/` or the owning package
 - `docs/`
   - reference documents that are helpful but not part of the main run path
 
