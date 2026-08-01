@@ -21,6 +21,16 @@ set -euo pipefail
 
 export PATH=/ess/scratch/scratch1/t-9svena/envs/perl/bin:/ess/scratch/scratch1/t-9svena/texlive/2026/bin/x86_64-linux:$PATH
 
+# LuaTeX needs a writable font cache. Login-node environments do not always
+# expose one through kpathsea, so keep a poster-specific cache in the local
+# temporary filesystem rather than failing after producing an unusable PDF.
+POSTER_TEX_CACHE="${TMPDIR:-/tmp}/vanguard-poster-texcache-${USER}"
+mkdir -p "${POSTER_TEX_CACHE}"
+export TEXMFCACHE="${POSTER_TEX_CACHE}"
+export TEXMFVAR="${POSTER_TEX_CACHE}"
+export TEXMFCONFIG="${POSTER_TEX_CACHE}"
+export XDG_CACHE_HOME="${POSTER_TEX_CACHE}"
+
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # -g forces a full reprocess. Without it latexmk remembers a failed run in
