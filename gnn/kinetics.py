@@ -53,6 +53,7 @@ def baseline_relative_curve(
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
     baseline_floor_frac: float = 0.0,
+    baseline_override: np.ndarray | float | None = None,
 ) -> np.ndarray:
     """Baseline-reference a DCE curve (or stack of curves) along the time axis.
 
@@ -80,7 +81,17 @@ def baseline_relative_curve(
         raise ValueError("baseline_frame_count must be in [1, n_timepoints)")
     if baseline_floor_frac < 0.0:
         raise ValueError("baseline_floor_frac must be >= 0")
-    baseline = arr[..., :baseline_frame_count].mean(axis=-1, keepdims=True)
+    if baseline_override is None:
+        baseline = arr[..., :baseline_frame_count].mean(axis=-1, keepdims=True)
+    else:
+        # A repaired baseline supplied by the caller (gnn.baseline_validity):
+        # this voxel's own precontrast frames were not usable, so its enhancement
+        # is referenced against a locally imputed S0 instead.
+        baseline = np.asarray(baseline_override, dtype=float)
+        baseline = np.broadcast_to(
+            baseline.reshape(baseline.shape + (1,) * (arr.ndim - baseline.ndim)),
+            arr.shape[:-1] + (1,),
+        )
     difference = arr - baseline
     if not relative_enhancement:
         return difference
@@ -114,6 +125,7 @@ def node_kinetic_features(
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
     baseline_floor_frac: float = 0.0,
+    baseline_override: float | None = None,
 ) -> dict[str, object]:
     """Derive kinetic features from one voxel's unscaled DCE signal curve.
 
@@ -129,13 +141,18 @@ def node_kinetic_features(
     if not 1 <= baseline_frame_count < signal.size:
         raise ValueError("baseline_frame_count must be in [1, n_timepoints)")
 
-    baseline = float(np.mean(signal[:baseline_frame_count]))
+    baseline = (
+        float(np.mean(signal[:baseline_frame_count]))
+        if baseline_override is None
+        else float(baseline_override)
+    )
     enhancement = np.asarray(
         baseline_relative_curve(
             signal,
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
             baseline_floor_frac=baseline_floor_frac,
+            baseline_override=baseline_override,
         ),
         dtype=float,
     )

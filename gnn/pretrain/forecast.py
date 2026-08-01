@@ -147,3 +147,52 @@ def tile_forecast_windows(
             )
         )
     return tiles
+
+
+def all_forecast_windows(
+    series: torch.Tensor,
+    times_seconds: torch.Tensor,
+    horizon: ForecastHorizon,
+    *,
+    baseline_frame_count: int,
+) -> list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
+    """Return every eligible fixed-length window for one exam.
+
+    Starts span ``B - 1`` through the last complete 3+2 window, matching the
+    temporal-transfer plan. Acquisition times are expressed in minutes relative
+    to the exam's last baseline frame, not to an inferred injection time.
+    """
+    if series.ndim != _NDIM_2D:
+        raise ValueError(f"series must be 2D (N, T); got shape {tuple(series.shape)}")
+    num_timepoints = series.shape[1]
+    if times_seconds.ndim != 1 or times_seconds.shape[0] != num_timepoints:
+        raise ValueError(
+            f"times_seconds must be 1D of length T={num_timepoints}; "
+            f"got {tuple(times_seconds.shape)}"
+        )
+    if not 1 <= baseline_frame_count < num_timepoints:
+        raise ValueError(
+            f"baseline_frame_count must be in [1, T={num_timepoints}); "
+            f"got {baseline_frame_count}"
+        )
+    first = baseline_frame_count - 1
+    last = num_timepoints - horizon.window
+    if first > last:
+        raise ValueError(
+            f"exam has no eligible window: B={baseline_frame_count}, "
+            f"T={num_timepoints}, window={horizon.window}"
+        )
+    times_minutes = (times_seconds - times_seconds[baseline_frame_count - 1]) / 60.0
+    windows = []
+    for start in range(first, last + 1):
+        cut = start + horizon.input_len
+        end = start + horizon.window
+        windows.append(
+            (
+                series[:, start:cut],
+                series[:, cut:end],
+                times_minutes[start:cut],
+                times_minutes[cut:end],
+            )
+        )
+    return windows
