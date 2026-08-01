@@ -12,6 +12,8 @@ from preprocessing.cases import CaseRecord, read_case_manifest
 from preprocessing.model import model_subject_id
 from preprocessing.pipeline import (
     POLICY_NAME,
+    complement_case,
+    features_case,
     infer_case,
     map_case,
     prepare_case,
@@ -153,39 +155,60 @@ def _stage_complete(stage: str, case_root: Path) -> bool:
             )
         return complete
     if stage == "infer":
-        complete = "inference" in provenance
+        inference = provenance.get("inference")
+        complete = isinstance(inference, dict) and {
+            "hr_phases",
+            "ufast_phases",
+        }.issubset(inference)
         if complete:
-            phases = int(provenance["inference"]["phases"])
+            hr_phases = int(inference["hr_phases"])
+            ufast_phases = int(inference["ufast_phases"])
+            exam_id = case_root.name
             _require_files(
                 [
                     case_root
                     / "hr_breast_predictions"
                     / f"{model_subject_id(index)}.npy"
-                    for index in range(phases)
+                    for index in range(hr_phases)
                 ]
                 + [
                     case_root
                     / "hr_vessel_predictions"
                     / f"{model_subject_id(index)}.npz"
-                    for index in range(phases)
+                    for index in range(hr_phases)
+                ]
+                + [
+                    case_root
+                    / "ufast_breast_predictions"
+                    / f"{exam_id}_{index:04d}.npy"
+                    for index in range(ufast_phases)
+                ]
+                + [
+                    case_root
+                    / "ufast_vessel_predictions"
+                    / f"{exam_id}_{index:04d}.npz"
+                    for index in range(ufast_phases)
                 ],
                 stage=stage,
             )
         return complete
     if stage == "tc4d":
-        complete = "tc4d" in provenance
+        complete = "tc4d" in provenance and "ufast_tc4d" in provenance
         if complete:
             _require_files(
                 [
                     case_root / "hr_tc4d" / "exam_skeleton_zyx.npy",
                     case_root / "hr_tc4d" / "exam_support_zyx.npy",
                     case_root / "hr_tc4d" / "center_manifold_4d_yxz.npy",
+                    case_root / "ufast_tc4d" / "exam_skeleton_zyx.npy",
+                    case_root / "ufast_tc4d" / "exam_support_zyx.npy",
+                    case_root / "ufast_tc4d" / "center_manifold_4d_yxz.npy",
                 ],
                 stage=stage,
             )
         return complete
     if stage == "map":
-        complete = "mapping" in provenance
+        complete = "mapping" in provenance and "merge" in provenance
         if complete:
             output_dir = (
                 case_root.parents[1]
@@ -197,24 +220,67 @@ def _stage_complete(stage: str, case_root: Path) -> bool:
                 [
                     output_dir / f"{case_root.name}_skeleton_4d_exam_mask.npy",
                     output_dir / f"{case_root.name}_skeleton_4d_exam_support_mask.npy",
+                    output_dir / f"{case_root.name}_skeleton_4d_exam_mask_hr_only.npy",
+                    output_dir / f"{case_root.name}_merge_provenance_label_zyx.npy",
+                    output_dir / "merge_provenance.json",
+                    output_dir / "run_summary.json",
+                ],
+                stage=stage,
+            )
+        return complete
+    if stage == "complement":
+        complete = "complement" in provenance
+        if complete:
+            output_dir = (
+                case_root.parents[1]
+                / "centerlines"
+                / str(provenance["case"]["dataset"])
+                / case_root.name
+            )
+            _require_files(
+                [
+                    output_dir
+                    / f"{case_root.name}_skeleton_4d_exam_mask_hr_ufast_merge_only.npy",
+                    output_dir / "complement_provenance.json",
+                ],
+                stage=stage,
+            )
+        return complete
+    if stage == "features":
+        morphometry = provenance.get("morphometry")
+        complete = isinstance(morphometry, dict) and "path" in morphometry
+        if complete:
+            output_dir = (
+                case_root.parents[1]
+                / "centerlines"
+                / str(provenance["case"]["dataset"])
+                / case_root.name
+            )
+            _require_files(
+                [
+                    output_dir / f"{case_root.name}_morphometry.json",
                     output_dir / "run_summary.json",
                 ],
                 stage=stage,
             )
         return complete
     if stage == "qc":
-        return (
-            "mapping" in provenance
-            and (
-                case_root.parents[1]
-                / "centerlines"
-                / str(provenance["case"]["dataset"])
-                / case_root.name
-                / "mapping_qc.png"
-            ).exists()
+        if "mapping" not in provenance or "merge" not in provenance:
+            return False
+        centerline_dir = (
+            case_root.parents[1]
+            / "centerlines"
+            / str(provenance["case"]["dataset"])
+            / case_root.name
         )
+        return (centerline_dir / "mapping_qc.png").exists() and (
+            centerline_dir / "temporal_mip.png"
+        ).exists()
     if stage == "postprocess":
-        return all(_stage_complete(item, case_root) for item in ("tc4d", "map", "qc"))
+        return all(
+            _stage_complete(item, case_root)
+            for item in ("tc4d", "map", "complement", "features", "qc")
+        )
     raise ValueError(f"unknown pipeline stage: {stage}")
 
 
@@ -260,10 +326,14 @@ def run_stage(
         tc4d_case(case_root=case_root)
     elif stage == "map":
         map_case(case_root=case_root)
+    elif stage == "complement":
+        complement_case(case_root=case_root)
+    elif stage == "features":
+        features_case(case_root=case_root)
     elif stage == "qc":
         qc_case(case_root=case_root)
     elif stage == "postprocess":
-        for item in ("tc4d", "map", "qc"):
+        for item in ("tc4d", "map", "complement", "features", "qc"):
             if not _stage_complete(item, case_root):
                 run_stage(
                     stage=item,
@@ -284,7 +354,17 @@ def main() -> None:
     """Resolve a Slurm array index and run one exact reviewed case."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "stage", choices=("prepare", "infer", "tc4d", "map", "qc", "postprocess")
+        "stage",
+        choices=(
+            "prepare",
+            "infer",
+            "tc4d",
+            "map",
+            "complement",
+            "features",
+            "qc",
+            "postprocess",
+        ),
     )
     parser.add_argument("--inventory", required=True, type=Path)
     parser.add_argument("--case-manifest", required=True, type=Path)

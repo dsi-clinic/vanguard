@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -62,6 +63,7 @@ class LoadedDicomSeries:
     times_seconds: np.ndarray
     geometry: DicomGeometry
     archive_path: Path
+    source_kind: str
     source_sha256: str
     temporal_positions: tuple[int, ...]
 
@@ -74,18 +76,49 @@ def parse_dicom_clock_seconds(value: object) -> float:
     return float(int(text[:2]) * 3600 + int(text[2:4]) * 60 + float(text[4:]))
 
 
-def _read_inventory(path: Path, *, study_uid: str, series_uid: str) -> Any:
+def _inventory_columns(path: Path) -> set[str]:
+    """Return an inventory's columns without loading every DICOM row."""
     import pandas as pd
 
+    if path.suffix.lower() == ".parquet":
+        try:
+            from fastparquet import ParquetFile
+
+            return set(ParquetFile(path).columns)
+        except ImportError:
+            return set(pd.read_parquet(path).columns)
+    return set(pd.read_csv(path, nrows=0).columns)
+
+
+def _read_inventory(
+    path: Path, *, study_uid: str, series_uid: str
+) -> tuple[Any, str, Path]:
+    import pandas as pd
+
+    available = _inventory_columns(path)
     columns = [
         "study_instance_uid",
         "series_instance_uid",
-        "archive_path",
-        "archive_member",
         "read_ok",
         "temporal_position_identifier",
         "instance_number",
     ]
+    columns.extend(
+        column
+        for column in ("archive_path", "archive_member", "source_path")
+        if column in available
+    )
+    if "sop_instance_uid" in available:
+        columns.append("sop_instance_uid")
+    missing = set(columns[:5]).difference(available)
+    if missing:
+        raise ValueError(f"inventory is missing required columns: {sorted(missing)}")
+    has_archive = {"archive_path", "archive_member"}.issubset(available)
+    has_files = "source_path" in available
+    if not has_archive and not has_files:
+        raise ValueError(
+            "inventory requires either archive_path/archive_member or source_path"
+        )
     if path.suffix.lower() == ".parquet":
         frame = pd.read_parquet(
             path,
@@ -108,10 +141,35 @@ def _read_inventory(path: Path, *, study_uid: str, series_uid: str) -> Any:
         raise ValueError(f"no readable inventory rows for series {series_uid}")
     if frame["temporal_position_identifier"].isna().any():
         raise ValueError(f"series {series_uid} has missing temporal positions")
-    archives = sorted(set(frame["archive_path"].dropna().astype(str)))
-    if len(archives) != 1:
-        raise ValueError(f"expected one archive for {series_uid}, got {archives}")
-    return frame
+    archive_rows = (
+        frame["archive_path"].fillna("").astype(str).str.strip().ne("")
+        if has_archive
+        else pd.Series(False, index=frame.index)
+    )
+    file_rows = (
+        frame["source_path"].fillna("").astype(str).str.strip().ne("")
+        if has_files
+        else pd.Series(False, index=frame.index)
+    )
+    if archive_rows.all() and not file_rows.any():
+        archives = sorted(set(frame["archive_path"].astype(str)))
+        if len(archives) != 1:
+            raise ValueError(f"expected one archive for {series_uid}, got {archives}")
+        if frame["archive_member"].isna().any():
+            raise ValueError(f"series {series_uid} has missing archive members")
+        return frame, "zip", Path(archives[0])
+    if file_rows.all() and not archive_rows.any():
+        source_paths = [Path(value) for value in frame["source_path"].astype(str)]
+        missing_files = [str(value) for value in source_paths if not value.is_file()]
+        if missing_files:
+            raise FileNotFoundError(
+                f"series {series_uid} has missing source files: {missing_files[:3]}"
+            )
+        common_parent = Path(
+            os.path.commonpath([str(value.parent) for value in source_paths])
+        )
+        return frame, "filesystem", common_parent
+    raise ValueError(f"series {series_uid} mixes ZIP and filesystem source rows")
 
 
 def _phase_geometry(
@@ -193,12 +251,13 @@ def load_dicom_series(
     study_uid: str,
     series_uid: str,
 ) -> LoadedDicomSeries:
-    """Load all temporal positions for one exact ZIP-backed DICOM series."""
+    """Load all temporal positions from one exact ZIP- or filesystem-backed series."""
     import pydicom
 
     inventory = Path(inventory_path).expanduser().resolve()
-    rows = _read_inventory(inventory, study_uid=study_uid, series_uid=series_uid)
-    archive_path = Path(str(rows["archive_path"].iloc[0]))
+    rows, source_kind, source_location = _read_inventory(
+        inventory, study_uid=study_uid, series_uid=series_uid
+    )
     phases: list[np.ndarray] = []
     clocks: list[float] = []
     reference: DicomGeometry | None = None
@@ -209,7 +268,8 @@ def load_dicom_series(
             for value in rows["temporal_position_identifier"].unique()
         )
     )
-    with zipfile.ZipFile(archive_path) as archive:
+    archive = zipfile.ZipFile(source_location) if source_kind == "zip" else None
+    try:
         for temporal_position in temporal_positions:
             phase_rows = rows.loc[
                 np.isclose(
@@ -218,9 +278,25 @@ def load_dicom_series(
                 )
             ].sort_values("instance_number")
             datasets: list[Any] = []
-            for member in phase_rows["archive_member"].astype(str):
-                payload = archive.read(member)
-                source_digest.update(member.encode())
+            locations = (
+                phase_rows["archive_member"].astype(str)
+                if archive is not None
+                else phase_rows["source_path"].astype(str)
+            )
+            for row_index, location in zip(phase_rows.index, locations, strict=True):
+                payload = (
+                    archive.read(location)
+                    if archive is not None
+                    else Path(location).read_bytes()
+                )
+                identity = (
+                    location
+                    if archive is not None
+                    else str(phase_rows.loc[row_index, "sop_instance_uid"])
+                    if "sop_instance_uid" in phase_rows
+                    else location
+                )
+                source_digest.update(identity.encode())
                 source_digest.update(payload)
                 datasets.append(pydicom.dcmread(io.BytesIO(payload), force=True))
             geometry, order = _phase_geometry(datasets, series_uid=series_uid)
@@ -237,6 +313,9 @@ def load_dicom_series(
                 raise ValueError("DICOM MR signal must be finite and nonnegative")
             phases.append(np.asarray(volume, dtype=np.float32))
             clocks.append(parse_dicom_clock_seconds(datasets[order[0]].AcquisitionTime))
+    finally:
+        if archive is not None:
+            archive.close()
     if reference is None:
         raise ValueError(f"no DICOM phases loaded for {series_uid}")
     adjusted: list[float] = []
@@ -256,7 +335,8 @@ def load_dicom_series(
         signal_tzyx=np.stack(phases, axis=0),
         times_seconds=times,
         geometry=reference,
-        archive_path=archive_path,
+        archive_path=source_location,
+        source_kind=source_kind,
         source_sha256=source_digest.hexdigest(),
         temporal_positions=temporal_positions,
     )
