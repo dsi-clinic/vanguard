@@ -296,8 +296,8 @@ def fit_fold(
     inner_val_fraction: float,
     seed: int,
     device: torch.device,
-) -> tuple[torch.nn.Module, list[dict[str, float]]]:
-    """Fine-tune the entire encoder and head from epoch one."""
+) -> tuple[torch.nn.Module, list[dict[str, float]], dict[str, int]]:
+    """Select the training duration on a patient-level inner split."""
     fit_patients, inner_patients = _inner_patient_split(
         train_groups, val_fraction=inner_val_fraction, seed=seed
     )
@@ -307,6 +307,7 @@ def fit_fold(
     generator = torch.Generator().manual_seed(seed)
     best_state = None
     best_loss = float("inf")
+    best_epoch = 0
     history = []
     for epoch in range(1, epochs + 1):
         model.train()
@@ -341,10 +342,62 @@ def fit_fold(
         )
         if inner_loss < best_loss:
             best_loss = inner_loss
+            best_epoch = epoch
             best_state = deepcopy(model.state_dict())
     if best_state is None:
         raise RuntimeError("fine-tuning produced no selected checkpoint")
     model.load_state_dict(best_state)
+    return (
+        model,
+        history,
+        {
+            "selection_fit_patients": len(fit_patients),
+            "inner_val_patients": len(inner_patients),
+            "selected_epoch": best_epoch,
+        },
+    )
+
+
+def refit_fold_on_all_outer_train(
+    model: torch.nn.Module,
+    initial_state: dict[str, torch.Tensor],
+    train_groups: dict[str, list[dict[str, object]]],
+    *,
+    uses_graph: bool,
+    epochs: int,
+    learning_rate: float,
+    seed: int,
+    device: torch.device,
+) -> tuple[torch.nn.Module, list[dict[str, float]]]:
+    """Restart from initialization and fit every outer-training patient."""
+    model.load_state_dict(initial_state)
+    model.to(device)
+    torch.manual_seed(seed)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    criterion = torch.nn.BCEWithLogitsLoss()
+    generator = torch.Generator().manual_seed(seed)
+    patients = sorted(train_groups)
+    history = []
+    for epoch in range(1, epochs + 1):
+        model.train()
+        order = torch.randperm(len(patients), generator=generator).tolist()
+        epoch_losses = []
+        for patient_index in order:
+            patient = patients[patient_index]
+            exams = train_groups[patient]
+            exam_index = int(torch.randint(len(exams), (1,), generator=generator))
+            record = exams[exam_index]
+            data = _load_record(record, device)
+            optimizer.zero_grad()
+            logit = _forward_exam(model, data, uses_graph).squeeze()
+            label = torch.tensor(float(record["pcr"]), device=device)
+            loss = criterion(logit, label)
+            loss.backward()
+            optimizer.step()
+            epoch_losses.append(loss.item())
+        history.append(
+            {"epoch": float(epoch), "train_loss": float(np.mean(epoch_losses))}
+        )
     return model, history
 
 
@@ -494,9 +547,9 @@ def write_finetune_readme(
     commit, status = _git_provenance()
     cache_manifest = args.cache_dir / "temporal_cache_manifest.json"
     source_manifest = Path(str(manifest["source_manifest"]))
-    cohort_exam_count = pd.read_csv(
-        args.cohort_manifest, usecols=["exam_id"]
-    )["exam_id"].nunique()
+    cohort_exam_count = pd.read_csv(args.cohort_manifest, usecols=["exam_id"])[
+        "exam_id"
+    ].nunique()
     fold_counts = (
         predictions.drop_duplicates("patient_key")["fold"]
         .value_counts()
@@ -540,7 +593,9 @@ def write_finetune_readme(
         arm = str(predictions["arm"].iloc[0])
         arm_metric = metrics[arm]
         title = f"UChicago temporal-transfer arm: {arm}"
-        status_line = "Complete as one arm; scientific interpretation awaits aggregation."
+        status_line = (
+            "Complete as one arm; scientific interpretation awaits aggregation."
+        )
         results_text = (
             "| Arm | Patient-level pooled OOF AUC | 95% CI low | 95% CI high |\n"
             "|---|---:|---:|---:|---:|\n"
@@ -576,11 +631,13 @@ message passing improves patient-level pCR discrimination.
 - GNN checkpoint SHA-256: `{_sha256(args.gnn_checkpoint)}`
 - Graph-free pretraining checkpoint: `{args.graph_free_checkpoint}`
 - Graph-free checkpoint SHA-256: `{_sha256(args.graph_free_checkpoint)}`
-- Cached usable exams: {len(manifest['records'])} of {cohort_exam_count} cohort exams
-- Patients: {predictions['patient_key'].nunique()}
+- Cached usable exams: {len(manifest["records"])} of {cohort_exam_count} cohort exams
+- Patients: {predictions["patient_key"].nunique()}
 - Outer split: predefined patient-grouped five-fold OOF; patient counts {fold_counts}
 - Inner selection split: pCR-stratified patient split, fraction {args.inner_val_fraction},
   seed `seed + outer_fold`; outer labels are used only for final prediction.
+- After epoch selection, the model restarts from the fold's original initialization and
+  trains on every outer-training patient before predicting the untouched outer fold.
 
 ## Matched configuration
 
@@ -589,14 +646,15 @@ message passing improves patient-level pCR discrimination.
 - Seed: {args.seed}
 - Encoder: hidden dimension 32, two frame layers, one GRU layer, dropout 0.2
 - Fine-tuning: full encoder and linear classification head from epoch one
+- Final fold model: refit on the complete outer-training set for the selected epoch count
 - Patient prediction: mean of exam probabilities
 - Primary metric: pooled patient-level OOF AUC
 - Uncertainty: 2,000 paired patient-resampling bootstrap replicates
 
 ## Scheduler and artifacts
 
-- Slurm job ID: `{os.environ.get('SLURM_JOB_ID', 'not available')}`
-- Parallel arm job IDs: `{os.environ.get('ARM_JOB_IDS', 'not available')}`
+- Slurm job ID: `{os.environ.get("SLURM_JOB_ID", "not available")}`
+- Parallel arm job IDs: `{os.environ.get("ARM_JOB_IDS", "not available")}`
 {chr(10).join(artifacts)}
 
 ## Reproduce
@@ -775,13 +833,25 @@ def main(argv: list[str] | None = None) -> None:
         model, uses_graph = _build_classifier(
             checkpoint_by_kind[kind], pretrained=pretrained
         )
-        model, history = fit_fold(
+        initial_state = deepcopy(model.state_dict())
+        model, history, fit_metadata = fit_fold(
             model,
             train_groups,
             uses_graph=uses_graph,
             epochs=args.epochs,
             learning_rate=args.learning_rate,
             inner_val_fraction=args.inner_val_fraction,
+            seed=args.seed + fold,
+            device=device,
+        )
+        fit_metadata["refit_patients"] = len(train_groups)
+        model, refit_history = refit_fold_on_all_outer_train(
+            model,
+            initial_state,
+            train_groups,
+            uses_graph=uses_graph,
+            epochs=fit_metadata["selected_epoch"],
+            learning_rate=args.learning_rate,
             seed=args.seed + fold,
             device=device,
         )
@@ -801,11 +871,16 @@ def main(argv: list[str] | None = None) -> None:
                 "y_prob": float(prob),
                 "n_exams": len(patient_groups[patient]),
             }
-            for patient, label, prob in zip(
-                outer_patients, y, probability, strict=True
-            )
+            for patient, label, prob in zip(outer_patients, y, probability, strict=True)
         )
-        history_rows.extend({"fold": fold, **item} for item in history)
+        history_rows.extend(
+            {"fold": fold, "phase": "selection", **fit_metadata, **item}
+            for item in history
+        )
+        history_rows.extend(
+            {"fold": fold, "phase": "refit", **fit_metadata, **item}
+            for item in refit_history
+        )
 
     predictions = pd.DataFrame(rows)
     metrics = _arm_metrics(predictions, seed=args.seed)

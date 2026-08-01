@@ -27,6 +27,7 @@ from gnn.temporal_finetune import (  # noqa: E402
     load_parallel_arm_predictions,
     load_tabular_reference,
     protocol_only_oof,
+    refit_fold_on_all_outer_train,
     validate_cache_against_cohort,
     validate_matched_encoder_configs,
     write_finetune_readme,
@@ -79,9 +80,9 @@ def test_temporal_cache_resume_reuses_and_validates_existing_graph(
 ) -> None:
     """A resumed cache rebuilds its manifest without recomputing valid graphs."""
     manifest_path = tmp_path / "manifest.csv"
-    pd.DataFrame(
-        {"exam_id": ["e1"], "patient_key": ["p1"], "dataset": ["u"]}
-    ).to_csv(manifest_path, index=False)
+    pd.DataFrame({"exam_id": ["e1"], "patient_key": ["p1"], "dataset": ["u"]}).to_csv(
+        manifest_path, index=False
+    )
     cached = Data(
         times_seconds=torch.tensor([0.0, 5.0, 10.0]),
         exam_id="e1",
@@ -92,9 +93,7 @@ def test_temporal_cache_resume_reuses_and_validates_existing_graph(
     def build_once(*args: object, **kwargs: object) -> Data:
         return cached
 
-    monkeypatch.setattr(
-        "gnn.uchicago_temporal_data.build_temporal_exam", build_once
-    )
+    monkeypatch.setattr("gnn.uchicago_temporal_data.build_temporal_exam", build_once)
     cache_dir = tmp_path / "cache"
     build_temporal_cache(
         manifest_path=manifest_path,
@@ -353,6 +352,51 @@ def test_finetune_cli_separates_parallel_arms_from_aggregation(
     assert aggregate_args.aggregate_only
 
 
+def test_outer_refit_restarts_and_uses_every_training_patient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The final fold model resets before consuming the full outer train split."""
+    seen = []
+
+    def load_record(record: dict[str, object], device: torch.device) -> object:
+        seen.append(str(record["patient_key"]))
+        return record
+
+    def forward_exam(
+        model: torch.nn.Module, data: object, uses_graph: bool
+    ) -> torch.Tensor:
+        parameter = next(model.parameters())
+        return model(torch.ones((1, 1), device=parameter.device))
+
+    monkeypatch.setattr("gnn.temporal_finetune._load_record", load_record)
+    monkeypatch.setattr("gnn.temporal_finetune._forward_exam", forward_exam)
+    model = torch.nn.Linear(1, 1)
+    initial_state = {
+        name: torch.zeros_like(value) for name, value in model.state_dict().items()
+    }
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.fill_(9.0)
+    groups = {
+        f"p{index}": [{"patient_key": f"p{index}", "pcr": index % 2}]
+        for index in range(3)
+    }
+    model, history = refit_fold_on_all_outer_train(
+        model,
+        initial_state,
+        groups,
+        uses_graph=False,
+        epochs=1,
+        learning_rate=0.0,
+        seed=3,
+        device=torch.device("cpu"),
+    )
+    assert set(seen) == set(groups)
+    assert len(history) == 1
+    for value in model.state_dict().values():
+        torch.testing.assert_close(value, torch.zeros_like(value))
+
+
 def test_labeled_cache_must_match_confirmed_downstream_cohort(
     tmp_path: Path,
 ) -> None:
@@ -419,12 +463,8 @@ def test_finetune_arm_result_gets_provenance_readme(tmp_path: Path) -> None:
     outdir.mkdir()
     source_manifest = tmp_path / "usable.csv"
     cohort_manifest = tmp_path / "cohort.csv"
-    pd.DataFrame({"exam_id": ["e0", "e1"]}).to_csv(
-        source_manifest, index=False
-    )
-    pd.DataFrame({"exam_id": ["e0", "e1"]}).to_csv(
-        cohort_manifest, index=False
-    )
+    pd.DataFrame({"exam_id": ["e0", "e1"]}).to_csv(source_manifest, index=False)
+    pd.DataFrame({"exam_id": ["e0", "e1"]}).to_csv(cohort_manifest, index=False)
     (cache_dir / "temporal_cache_manifest.json").write_text("{}\n")
     (tmp_path / "gnn.pt").write_bytes(b"gnn")
     (tmp_path / "free.pt").write_bytes(b"free")
@@ -448,9 +488,7 @@ def test_finetune_arm_result_gets_provenance_readme(tmp_path: Path) -> None:
         }
     )
     predictions.to_csv(outdir / "patient_predictions.csv", index=False)
-    metrics = {
-        "graph_free_random": {"auc": 1.0, "ci_low": 1.0, "ci_high": 1.0}
-    }
+    metrics = {"graph_free_random": {"auc": 1.0, "ci_low": 1.0, "ci_high": 1.0}}
     (outdir / "metrics.json").write_text("{}\n")
     (outdir / "history.json").write_text("{}\n")
     manifest = {
