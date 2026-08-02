@@ -12,12 +12,19 @@ pytest.importorskip("torch_geometric")
 
 from torch_geometric.data import Data  # noqa: E402
 
-from gnn.pretrain.model import ContrastForecastGNN  # noqa: E402
+from gnn.pretrain.checkpoint import (  # noqa: E402
+    DEFAULT_PREPROCESSING_CONTRACT,
+    load_checkpoint,
+    save_encoder_checkpoint,
+)
+from gnn.pretrain.model import ContrastForecastGNN, PerNodeForecaster  # noqa: E402
+from gnn.pretrain.resume import make_run_fingerprint  # noqa: E402
 from gnn.pretrain.uchicago import (  # noqa: E402
     HORIZON,
     eligible_starts,
     make_window,
     split_records_by_patient,
+    train_one_encoder,
     write_pretraining_readme,
 )
 from gnn.pretrain.uchicago import (  # noqa: E402
@@ -221,6 +228,82 @@ def test_window_policy_uses_b_minus_one_and_minutes_from_last_baseline() -> None
     assert torch.isfinite(window.target).all()
 
 
+def test_uchicago_epoch_resume_exactly_matches_uninterrupted_training(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The production loop restores exact weights, history, best state, and RNGs."""
+    data = _exam()
+
+    def load_graph(record: dict[str, object], device: torch.device) -> Data:
+        return data.clone().to(device)
+
+    monkeypatch.setattr("gnn.pretrain.uchicago._load_graph", load_graph)
+    fingerprint = make_run_fingerprint(
+        {
+            "pretraining_task": "future_frame_forecast",
+            "model": "per_node",
+            "epochs": 4,
+            "seed": 23,
+            "manifest_sha256": "synthetic",
+            "git_commit": "synthetic",
+        }
+    )
+    common = {
+        "train_records": [{"exam_id": "train"}],
+        "val_records": [{"exam_id": "val"}],
+        "uses_graph": False,
+        "epochs": 4,
+        "learning_rate": 0.001,
+        "seed": 23,
+        "device": torch.device("cpu"),
+        "resume_fingerprint": fingerprint,
+    }
+
+    torch.manual_seed(23)
+    uninterrupted_model = PerNodeForecaster(hidden_dim=4, dropout=0.2)
+    uninterrupted = train_one_encoder(
+        uninterrupted_model,
+        progress_path=tmp_path / "uninterrupted.pt",
+        **common,
+    )
+
+    from gnn.pretrain import uchicago as uchicago_module
+
+    original_save = uchicago_module.save_epoch_progress
+    interrupted_next_epoch = 3
+
+    def interrupt_after_epoch_two(*args: object, **kwargs: object) -> Path:
+        path = original_save(*args, **kwargs)
+        if kwargs["next_epoch"] == interrupted_next_epoch:
+            raise RuntimeError("simulated preemption")
+        return path
+
+    monkeypatch.setattr(
+        "gnn.pretrain.uchicago.save_epoch_progress", interrupt_after_epoch_two
+    )
+    torch.manual_seed(23)
+    interrupted_model = PerNodeForecaster(hidden_dim=4, dropout=0.2)
+    with pytest.raises(RuntimeError, match="simulated preemption"):
+        train_one_encoder(
+            interrupted_model,
+            progress_path=tmp_path / "resumed.pt",
+            **common,
+        )
+
+    monkeypatch.setattr("gnn.pretrain.uchicago.save_epoch_progress", original_save)
+    torch.manual_seed(999)
+    resumed_model = PerNodeForecaster(hidden_dim=4, dropout=0.2)
+    resumed = train_one_encoder(
+        resumed_model,
+        progress_path=tmp_path / "resumed.pt",
+        **common,
+    )
+
+    assert uninterrupted[1:] == resumed[1:]
+    for name, value in uninterrupted[0].state_dict().items():
+        assert torch.equal(value, resumed[0].state_dict()[name])
+
+
 def test_masked_pool_excludes_invalid_nodes_from_mean_and_max() -> None:
     """Originally invalid nodes influence neither downstream pooling operator."""
     embedding = torch.tensor([[1.0, 2.0], [100.0, 100.0], [3.0, 0.0]])
@@ -250,6 +333,38 @@ def test_forecaster_and_classifier_share_exact_encoder_state() -> None:
         forecaster.encoder.parameters(), classifier.encoder.parameters(), strict=True
     ):
         torch.testing.assert_close(expected, actual)
+
+
+def test_checkpoint_load_validates_resolved_pretraining_contract(
+    tmp_path: Path,
+) -> None:
+    """A checkpoint can't be reused under a different resolved run contract."""
+    model = PerNodeForecaster(hidden_dim=4, dropout=0.0)
+    resolved = {
+        "seed": 3,
+        "epochs": 4,
+        "pretraining_task": "future_frame_forecast",
+    }
+    fingerprint = make_run_fingerprint(resolved)
+    path = tmp_path / "encoder.pt"
+    save_encoder_checkpoint(
+        path,
+        model=model,
+        preprocessing_contract=DEFAULT_PREPROCESSING_CONTRACT,
+        data_manifest=tmp_path / "manifest.json",
+        epoch=2,
+        validation_mae=0.25,
+        resolved_config=resolved,
+        run_fingerprint=fingerprint,
+    )
+    checkpoint = load_checkpoint(
+        path,
+        expected_resolved_config=resolved,
+        expected_run_fingerprint=fingerprint,
+    )
+    assert checkpoint["encoder_config"] == model.encoder.config()
+    with pytest.raises(ValueError, match="resolved_config mismatch"):
+        load_checkpoint(path, expected_resolved_config={**resolved, "seed": 4})
 
 
 def test_strict_transfer_rejects_architecture_mismatch() -> None:

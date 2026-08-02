@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import logging
 import os
 import subprocess
@@ -23,11 +22,22 @@ import torch
 from gnn.pretrain.baselines import last_frame_forecast
 from gnn.pretrain.checkpoint import (
     DEFAULT_PREPROCESSING_CONTRACT,
+    load_checkpoint,
     save_encoder_checkpoint,
 )
 from gnn.pretrain.forecast import ForecastHorizon
 from gnn.pretrain.loss import masked_mae
 from gnn.pretrain.model import ContrastForecastGNN, PerNodeForecaster
+from gnn.pretrain.resume import (
+    atomic_json_save,
+    load_arm_completion,
+    load_epoch_progress,
+    make_run_fingerprint,
+    save_epoch_progress,
+    validate_run_completion,
+    write_arm_completion,
+    write_run_completion,
+)
 from gnn.pretrain.train import ForecastGraph
 from gnn.uchicago_temporal_data import load_temporal_cache_manifest
 
@@ -58,6 +68,39 @@ def _git_provenance() -> tuple[str, str]:
         text=True,
     ).stdout.rstrip()
     return commit, status
+
+
+def _resolved_run_config(
+    args: argparse.Namespace,
+    *,
+    manifest_path: Path,
+    git_commit: str,
+    git_status: str,
+) -> dict[str, object]:
+    """Return every run-level field that must match for an exact resume."""
+    return {
+        "cache_dir": str(Path(args.cache_dir).resolve()),
+        "outdir": str(Path(args.outdir).resolve()),
+        "cache_manifest_sha256": _sha256(manifest_path),
+        "git_commit": git_commit,
+        "git_status": git_status,
+        "epochs": args.epochs,
+        "hidden_dim": args.hidden_dim,
+        "num_gcn_layers": args.num_gcn_layers,
+        "num_gru_layers": args.num_gru_layers,
+        "dropout": args.dropout,
+        "learning_rate": args.learning_rate,
+        "val_fraction": args.val_fraction,
+        "pretraining_task": "future_frame_forecast",
+        "seed": args.seed,
+        "requested_arm": args.arm,
+        "device": args.device,
+        "forecast_horizon": {
+            "input_len": HORIZON.input_len,
+            "target_len": HORIZON.target_len,
+        },
+        "preprocessing_contract": DEFAULT_PREPROCESSING_CONTRACT,
+    }
 
 
 def _reproduction_command(args: argparse.Namespace) -> str:
@@ -319,17 +362,52 @@ def train_one_encoder(
     learning_rate: float,
     seed: int,
     device: torch.device,
+    progress_path: Path | None = None,
+    resume_fingerprint: dict[str, object] | None = None,
 ) -> tuple[torch.nn.Module, list[dict[str, float]], float, int, float]:
     """Train with one random exam window per epoch and inner validation only."""
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     generator = torch.Generator().manual_seed(seed)
-    best_state = None
+    best_state: dict[str, torch.Tensor] | None = None
     best_val = float("inf")
     best_epoch = 0
     best_persistence = float("nan")
-    history = []
-    for epoch in range(1, epochs + 1):
+    history: list[dict[str, float]] = []
+    start_epoch = 1
+    if (progress_path is None) != (resume_fingerprint is None):
+        raise ValueError(
+            "progress_path and resume_fingerprint must be provided together"
+        )
+    if progress_path is not None and resume_fingerprint is not None:
+        resumed = load_epoch_progress(
+            progress_path,
+            expected_fingerprint=resume_fingerprint,
+            model=model,
+            optimizer=optimizer,
+            sampling_generator=generator,
+            device=device,
+        )
+        if resumed is not None:
+            start_epoch = resumed.next_epoch
+            history = resumed.history
+            best_state = resumed.best_state_dict
+            best_val = resumed.best_metric
+            best_epoch = resumed.best_epoch
+            try:
+                best_persistence = float(resumed.best_metadata["persistence_mae"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(
+                    "saved epoch progress has no valid persistence MAE"
+                ) from error
+            logging.info(
+                "resuming exact epoch state from %s at epoch=%d",
+                progress_path,
+                start_epoch,
+            )
+    if start_epoch > epochs + 1:
+        raise ValueError("saved epoch progress exceeds the requested epoch budget")
+    for epoch in range(start_epoch, epochs + 1):
         model.train()
         order = torch.randperm(len(train_records), generator=generator).tolist()
         losses = []
@@ -366,6 +444,23 @@ def train_one_encoder(
             best_epoch = epoch
             best_persistence = persistence_mae
             best_state = deepcopy(model.state_dict())
+        if progress_path is not None and resume_fingerprint is not None:
+            if best_state is None:
+                raise RuntimeError("pretraining epoch produced no finite best state")
+            save_epoch_progress(
+                progress_path,
+                fingerprint=resume_fingerprint,
+                model=model,
+                optimizer=optimizer,
+                next_epoch=epoch + 1,
+                history=history,
+                best_state_dict=best_state,
+                best_metric=best_val,
+                best_epoch=best_epoch,
+                best_metadata={"persistence_mae": best_persistence},
+                sampling_generator=generator,
+                device=device,
+            )
     if best_state is None:
         raise RuntimeError("pretraining produced no checkpoint")
     model.load_state_dict(best_state)
@@ -401,6 +496,8 @@ def main(argv: list[str] | None = None) -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     args = parse_args(argv)
+    args.outdir.mkdir(parents=True, exist_ok=True)
+    manifest_path = Path(args.cache_dir) / "temporal_cache_manifest.json"
     manifest = load_temporal_cache_manifest(args.cache_dir)
     if manifest.get("excluded_labeled_manifest") is None:
         raise ValueError(
@@ -424,11 +521,85 @@ def main(argv: list[str] | None = None) -> None:
         "graph_free": (PerNodeForecaster, False),
     }
     arms = arm_specs if args.arm == "both" else {args.arm: arm_specs[args.arm]}
-    args.outdir.mkdir(parents=True, exist_ok=True)
-    results = {"requested_arm": args.arm}
+    git_commit, git_status = _git_provenance()
+    resolved_config = _resolved_run_config(
+        args,
+        manifest_path=manifest_path,
+        git_commit=git_commit,
+        git_status=git_status,
+    )
+    run_fingerprint = make_run_fingerprint(resolved_config)
+    final_marker = args.outdir / "COMPLETED.json"
+    if validate_run_completion(final_marker, expected_fingerprint=run_fingerprint):
+        logging.info("validated already-complete pretraining run at %s", args.outdir)
+        return
+
+    results = {
+        "requested_arm": args.arm,
+        "resolved_config": resolved_config,
+        "run_fingerprint": run_fingerprint,
+    }
+    final_artifacts: list[Path] = []
     for arm, (model_class, uses_graph) in arms.items():
         torch.manual_seed(args.seed)
         model = model_class(**common)
+        arm_config = {
+            **resolved_config,
+            "current_arm": arm,
+            "uses_graph": uses_graph,
+            "model_class": f"{model_class.__module__}.{model_class.__name__}",
+            "encoder_config": model.encoder.config(),
+        }
+        arm_fingerprint = make_run_fingerprint(arm_config)
+        checkpoint_path = args.outdir / f"{arm}_encoder.pt"
+        progress_path = args.outdir / f"{arm}_progress.pt"
+        arm_marker = args.outdir / f"{arm}_COMPLETED.json"
+        validated_checkpoints: list[dict[str, object]] = []
+        expected_encoder_config = model.encoder.config()
+
+        def validate_final_checkpoint(
+            path: Path,
+            *,
+            expected_config: dict[str, object] = arm_config,
+            expected_fingerprint: dict[str, object] = arm_fingerprint,
+            encoder_config: dict[str, object] = expected_encoder_config,
+            validated: list[dict[str, object]] = validated_checkpoints,
+        ) -> None:
+            checkpoint = load_checkpoint(
+                path,
+                expected_resolved_config=expected_config,
+                expected_run_fingerprint=expected_fingerprint,
+            )
+            if checkpoint["encoder_config"] != encoder_config:
+                raise ValueError("completed arm encoder configuration mismatch")
+            if checkpoint["git_commit"] != git_commit:
+                raise ValueError("completed arm checkpoint git commit mismatch")
+            if Path(checkpoint["data_manifest"]) != manifest_path:
+                raise ValueError("completed arm checkpoint manifest path mismatch")
+            validated.append(checkpoint)
+
+        completed_result = load_arm_completion(
+            arm_marker,
+            expected_fingerprint=arm_fingerprint,
+            checkpoint_path=checkpoint_path,
+            checkpoint_validator=validate_final_checkpoint,
+        )
+        if completed_result is not None:
+            checkpoint = validated_checkpoints[0]
+            if int(checkpoint["epoch"]) != int(completed_result["best_epoch"]):
+                raise ValueError("completed arm best epoch does not match checkpoint")
+            if float(checkpoint["validation_mae"]) != float(
+                completed_result["validation_mae"]
+            ):
+                raise ValueError(
+                    "completed arm validation metric does not match checkpoint"
+                )
+            logging.info("validated and skipped completed arm=%s", arm)
+            results[arm] = completed_result
+            progress_path.unlink(missing_ok=True)
+            final_artifacts.extend([checkpoint_path, arm_marker])
+            continue
+
         model, history, val_mae, epoch, persistence = train_one_encoder(
             model,
             train_records,
@@ -438,8 +609,9 @@ def main(argv: list[str] | None = None) -> None:
             learning_rate=args.learning_rate,
             seed=args.seed,
             device=device,
+            progress_path=progress_path,
+            resume_fingerprint=arm_fingerprint,
         )
-        checkpoint_path = args.outdir / f"{arm}_encoder.pt"
         save_encoder_checkpoint(
             checkpoint_path,
             model=model,
@@ -447,8 +619,10 @@ def main(argv: list[str] | None = None) -> None:
             data_manifest=Path(args.cache_dir) / "temporal_cache_manifest.json",
             epoch=epoch,
             validation_mae=val_mae,
+            resolved_config=arm_config,
+            run_fingerprint=arm_fingerprint,
         )
-        results[arm] = {
+        arm_result = {
             "validation_mae": val_mae,
             "persistence_mae": persistence,
             "beats_persistence": val_mae < persistence,
@@ -456,6 +630,15 @@ def main(argv: list[str] | None = None) -> None:
             "history": history,
             "checkpoint": str(checkpoint_path),
         }
+        results[arm] = arm_result
+        write_arm_completion(
+            arm_marker,
+            fingerprint=arm_fingerprint,
+            checkpoint_path=checkpoint_path,
+            result=arm_result,
+        )
+        progress_path.unlink(missing_ok=True)
+        final_artifacts.extend([checkpoint_path, arm_marker])
     if args.arm == "both":
         results["graph_helps_forecasting"] = (
             results["gnn"]["validation_mae"] < results["graph_free"]["validation_mae"]
@@ -466,10 +649,19 @@ def main(argv: list[str] | None = None) -> None:
     results["val_patient_count"] = len(
         {str(record["patient_key"]) for record in val_records}
     )
-    (args.outdir / "pretraining_results.json").write_text(
-        json.dumps(results, indent=2) + "\n"
+    results_path = atomic_json_save(
+        results,
+        args.outdir / "pretraining_results.json",
     )
-    write_pretraining_readme(args=args, results=results, manifest=manifest)
+    readme_path = write_pretraining_readme(
+        args=args, results=results, manifest=manifest
+    )
+    final_artifacts.extend([results_path, readme_path])
+    write_run_completion(
+        final_marker,
+        fingerprint=run_fingerprint,
+        artifacts=final_artifacts,
+    )
 
 
 if __name__ == "__main__":

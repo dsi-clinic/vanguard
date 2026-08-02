@@ -9,6 +9,8 @@ from typing import Any
 import torch
 from torch import nn
 
+from gnn.pretrain.resume import atomic_torch_save
+
 
 def _git_commit() -> str:
     result = subprocess.run(  # noqa: S603
@@ -28,6 +30,8 @@ def save_encoder_checkpoint(
     data_manifest: str | Path,
     epoch: int,
     validation_mae: float,
+    resolved_config: dict[str, Any] | None = None,
+    run_fingerprint: dict[str, Any] | None = None,
 ) -> None:
     """Save only the reusable encoder and its complete construction contract."""
     encoder = getattr(model, "encoder", None)
@@ -54,10 +58,19 @@ def save_encoder_checkpoint(
         "epoch": int(epoch),
         "validation_mae": float(validation_mae),
     }
-    torch.save(payload, Path(path))
+    if resolved_config is not None:
+        payload["resolved_config"] = dict(resolved_config)
+    if run_fingerprint is not None:
+        payload["run_fingerprint"] = dict(run_fingerprint)
+    atomic_torch_save(payload, Path(path))
 
 
-def load_checkpoint(path: str | Path) -> dict[str, Any]:
+def load_checkpoint(
+    path: str | Path,
+    *,
+    expected_resolved_config: dict[str, Any] | None = None,
+    expected_run_fingerprint: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Load a checkpoint and fail if any weight-transfer field is absent."""
     checkpoint = torch.load(Path(path), map_location="cpu")
     required = {
@@ -72,6 +85,13 @@ def load_checkpoint(path: str | Path) -> dict[str, Any]:
     missing = required - set(checkpoint)
     if missing:
         raise ValueError(f"encoder checkpoint is missing fields: {sorted(missing)}")
+    expectations = {
+        "resolved_config": expected_resolved_config,
+        "run_fingerprint": expected_run_fingerprint,
+    }
+    for field, expected in expectations.items():
+        if expected is not None and checkpoint.get(field) != expected:
+            raise ValueError(f"encoder checkpoint {field} mismatch")
     return checkpoint
 
 
