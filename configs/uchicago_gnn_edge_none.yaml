@@ -1,0 +1,60 @@
+# UChicago voxel GNN -- edge-ablation control, REAL-ADJACENCY arm.
+#
+# Reference arm for the "does this model use the vessel topology at all?" control
+# (gnn/train.py::_apply_edge_ablation). Identical to
+# configs/uchicago_gnn_tier_baseline_floored.yaml -- same frozen pre-hygiene knobs
+# (unweighted BCE, no weight decay, no scheduler, no early stopping, final-epoch
+# model), same 7-feature voxel set, same floored cache, same predefined folds --
+# and trains on the real skeleton adjacency.
+#
+# Re-run here rather than reusing the existing tier-sweep baseline results so all
+# three arms come from one code version and one submission, making the paired
+# dAUC a comparison of the ablation and nothing else.
+
+experiment_setup:
+  name: "uchicago_gnn_edge_none"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  split_mode: "predefined"
+  split_col: "fold"
+  # Declares the cache was built with the kinetics.py baseline floor (0.05);
+  # must match the cache manifest's kinetic_baseline_floor_frac.
+  gnn_kinetic_baseline_floor_frac: 0.05
+  gnn_edge_ablation: "none"
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features:
+    - "peak_time"
+    - "peak_enhancement"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "washout_slope"
+    - "auc_positive"
+    - "radius"
+  # Frozen historical baseline (D0.6): pin to pre-hygiene behavior.
+  weight_decay: 0.0
+  loss: "unweighted_bce"
+  lr_scheduler: "none"
+  max_grad_norm: 0.0
+  early_stopping_patience: 0
+  restore_best_epoch: false
+  gnn_pooling: "mean"
+
+data_paths:
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_voxel_richfeat_floored"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null

@@ -50,8 +50,25 @@ class ForecastGraph:
     x_seq: torch.Tensor  # (N, input_len, C)
     target: torch.Tensor  # (N, target_len)
     edge_index: torch.Tensor  # (2, E)
-    input_times: torch.Tensor  # (input_len,) elapsed seconds from window start
-    target_times: torch.Tensor  # (target_len,) elapsed seconds from window start
+    input_times: torch.Tensor  # (input_len,) acquisition times
+    target_times: torch.Tensor  # (target_len,) minutes from last baseline
+    target_mask: torch.Tensor | None = None  # (N, target_len)
+    baseline_observed: torch.Tensor | None = None  # (N,) original validity
+    exam_id: str = ""
+
+    def __post_init__(self) -> None:
+        """Fill compatibility defaults for legacy all-valid smoke fixtures."""
+        if self.target_mask is None:
+            self.target_mask = torch.isfinite(self.target)
+        if self.baseline_observed is None:
+            self.baseline_observed = torch.ones(
+                self.x_seq.shape[0], dtype=torch.bool, device=self.x_seq.device
+            )
+
+    @property
+    def acquisition_times(self) -> torch.Tensor:
+        """Explicit name used by the shared temporal encoder."""
+        return self.input_times
 
 
 def build_synthetic_forecast_graphs(
@@ -100,47 +117,90 @@ def build_synthetic_forecast_graphs(
                 edge_index=edge_index,
                 input_times=input_times,
                 target_times=target_times,
+                target_mask=torch.ones_like(target, dtype=torch.bool),
+                baseline_observed=torch.ones(num_nodes, dtype=torch.bool),
             )
         )
     return graphs
 
 
-def _mean_graph_mae(
-    per_graph_errors: list[torch.Tensor], node_counts: list[int]
+def _exam_groups(
+    graphs: list[ForecastGraph] | list[list[ForecastGraph]],
+) -> list[list[ForecastGraph]]:
+    """Normalize the legacy one-window-per-exam form to grouped exam windows."""
+    if not graphs:
+        raise ValueError("at least one forecast exam is required")
+    if isinstance(graphs[0], ForecastGraph):
+        return [[graph] for graph in graphs]  # type: ignore[list-item]
+    groups = graphs  # type: ignore[assignment]
+    if any(not group for group in groups):
+        raise ValueError("every exam must contain at least one eligible window")
+    return groups
+
+
+def _mean_exam_mae(per_exam_window_errors: list[list[torch.Tensor]]) -> float:
+    """Average windows within an exam, then exams equally."""
+    exam_means = [
+        torch.stack(errors).mean().item() for errors in per_exam_window_errors
+    ]
+    return float(sum(exam_means) / len(exam_means))
+
+
+@torch.no_grad()
+def evaluate_gnn(
+    model: ContrastForecastGNN,
+    graphs: list[ForecastGraph] | list[list[ForecastGraph]],
 ) -> float:
-    """Node-weighted mean MAE across graphs (a node is a node, regardless of graph)."""
-    total = sum(
-        err.item() * n for err, n in zip(per_graph_errors, node_counts, strict=True)
-    )
-    return total / sum(node_counts)
+    """Held-out MAE averaged within exam and then across exams."""
+    model.eval()
+    errors = [
+        [
+            masked_mae(
+                model(
+                    g.x_seq,
+                    g.edge_index,
+                    g.acquisition_times,
+                    g.baseline_observed,
+                    g.target_times,
+                ),
+                g.target,
+                g.target_mask,
+            )
+            for g in exam
+        ]
+        for exam in _exam_groups(graphs)
+    ]
+    return _mean_exam_mae(errors)
 
 
 @torch.no_grad()
-def evaluate_gnn(model: ContrastForecastGNN, graphs: list[ForecastGraph]) -> float:
-    """Node-weighted held-out MAE of the GNN forecaster over ``graphs``."""
+def evaluate_per_node(
+    model: PerNodeForecaster,
+    graphs: list[ForecastGraph] | list[list[ForecastGraph]],
+) -> float:
+    """Held-out graph-free MAE averaged within exam and then across exams."""
     model.eval()
-    errs = [
-        masked_mae(
-            model(g.x_seq, g.edge_index, g.input_times, g.target_times), g.target
-        )
-        for g in graphs
+    errors = [
+        [
+            masked_mae(
+                model(
+                    g.x_seq,
+                    g.acquisition_times,
+                    g.baseline_observed,
+                    g.target_times,
+                ),
+                g.target,
+                g.target_mask,
+            )
+            for g in exam
+        ]
+        for exam in _exam_groups(graphs)
     ]
-    return _mean_graph_mae(errs, [g.x_seq.shape[0] for g in graphs])
-
-
-@torch.no_grad()
-def evaluate_per_node(model: PerNodeForecaster, graphs: list[ForecastGraph]) -> float:
-    """Node-weighted held-out MAE of the graph-free forecaster over ``graphs``."""
-    model.eval()
-    errs = [
-        masked_mae(model(g.x_seq, g.input_times, g.target_times), g.target)
-        for g in graphs
-    ]
-    return _mean_graph_mae(errs, [g.x_seq.shape[0] for g in graphs])
+    return _mean_exam_mae(errors)
 
 
 def _baseline_mae(
-    graphs: list[ForecastGraph],
+    graphs: list[ForecastGraph] | list[list[ForecastGraph]],
     forecast_fn: Callable[[torch.Tensor, int], torch.Tensor],
     target_len: int,
 ) -> float:
@@ -150,20 +210,26 @@ def _baseline_mae(
     contrast enhancement being forecast -- the target signal), consistent with
     the models forecasting that same channel.
     """
-    errs = []
-    for g in graphs:
-        inputs = g.x_seq[:, :, 0]  # (N, input_len) -- the enhancement channel
-        errs.append(masked_mae(forecast_fn(inputs, target_len), g.target))
-    return _mean_graph_mae(errs, [g.x_seq.shape[0] for g in graphs])
+    errors = []
+    for exam in _exam_groups(graphs):
+        exam_errors = []
+        for g in exam:
+            inputs = g.x_seq[:, :, 0]
+            exam_errors.append(
+                masked_mae(forecast_fn(inputs, target_len), g.target, g.target_mask)
+            )
+        errors.append(exam_errors)
+    return _mean_exam_mae(errors)
 
 
 def train_forecaster(
     model: torch.nn.Module,
-    train_graphs: list[ForecastGraph],
+    train_graphs: list[ForecastGraph] | list[list[ForecastGraph]],
     *,
     epochs: int,
     lr: float,
     uses_graph: bool,
+    seed: int = 0,
 ) -> list[float]:
     """Train ``model`` (batch-of-one per graph); return per-epoch mean train MAE.
 
@@ -171,30 +237,45 @@ def train_forecaster(
     the graph-free ablation does not. One optimiser step per graph per epoch.
     """
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    exams = _exam_groups(train_graphs)
+    generator = torch.Generator().manual_seed(seed)
     history: list[float] = []
     for _ in range(epochs):
         model.train()
-        epoch_errs: list[torch.Tensor] = []
-        for g in train_graphs:
+        epoch_errs: list[list[torch.Tensor]] = []
+        order = torch.randperm(len(exams), generator=generator).tolist()
+        for exam_index in order:
+            exam = exams[exam_index]
+            window_index = int(torch.randint(len(exam), (1,), generator=generator))
+            g = exam[window_index]
             optimizer.zero_grad()
             pred = (
-                model(g.x_seq, g.edge_index, g.input_times, g.target_times)
+                model(
+                    g.x_seq,
+                    g.edge_index,
+                    g.acquisition_times,
+                    g.baseline_observed,
+                    g.target_times,
+                )
                 if uses_graph
-                else model(g.x_seq, g.input_times, g.target_times)
+                else model(
+                    g.x_seq,
+                    g.acquisition_times,
+                    g.baseline_observed,
+                    g.target_times,
+                )
             )
-            loss = masked_mae(pred, g.target)
+            loss = masked_mae(pred, g.target, g.target_mask)
             loss.backward()
             optimizer.step()
-            epoch_errs.append(loss.detach())
-        history.append(
-            _mean_graph_mae(epoch_errs, [g.x_seq.shape[0] for g in train_graphs])
-        )
+            epoch_errs.append([loss.detach()])
+        history.append(_mean_exam_mae(epoch_errs))
     return history
 
 
 def run_pretrain_gates(
-    train_graphs: list[ForecastGraph],
-    val_graphs: list[ForecastGraph],
+    train_graphs: list[ForecastGraph] | list[list[ForecastGraph]],
+    val_graphs: list[ForecastGraph] | list[list[ForecastGraph]],
     horizon: ForecastHorizon,
     *,
     in_channels: int = 1,
@@ -220,7 +301,9 @@ def run_pretrain_gates(
         num_layers=num_layers,
         dropout=dropout,
     )
-    train_forecaster(gnn, train_graphs, epochs=epochs, lr=lr, uses_graph=True)
+    train_forecaster(
+        gnn, train_graphs, epochs=epochs, lr=lr, uses_graph=True, seed=seed
+    )
 
     torch.manual_seed(seed)
     per_node = PerNodeForecaster(
@@ -229,7 +312,14 @@ def run_pretrain_gates(
         num_layers=num_layers,
         dropout=dropout,
     )
-    train_forecaster(per_node, train_graphs, epochs=epochs, lr=lr, uses_graph=False)
+    train_forecaster(
+        per_node,
+        train_graphs,
+        epochs=epochs,
+        lr=lr,
+        uses_graph=False,
+        seed=seed,
+    )
 
     gnn_mae = evaluate_gnn(gnn, val_graphs)
     per_node_mae = evaluate_per_node(per_node, val_graphs)

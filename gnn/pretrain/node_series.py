@@ -45,6 +45,7 @@ def voxel_node_series(
     *,
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
+    baseline_override: np.ndarray | None = None,
 ) -> np.ndarray:
     """Stack each voxel node's baseline-referenced DCE curve into ``(num_nodes, T)``.
 
@@ -75,6 +76,7 @@ def voxel_node_series(
         series,
         baseline_frame_count=baseline_frame_count,
         relative_enhancement=relative_enhancement,
+        baseline_override=baseline_override,
     )
     return enhancement.astype(np.float32)
 

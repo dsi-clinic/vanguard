@@ -116,6 +116,7 @@ def _junction_node_features(
     *,
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
+    baseline_floor_frac: float = 0.0,
 ) -> dict[str, float]:
     """Per-voxel features for one junction/endpoint voxel, plus its degree.
 
@@ -142,6 +143,7 @@ def _junction_node_features(
         time_axis,
         baseline_frame_count=baseline_frame_count,
         relative_enhancement=relative_enhancement,
+        baseline_floor_frac=baseline_floor_frac,
     )
     tte_idx = kinetic["tte_idx"]
     features = {
@@ -173,6 +175,7 @@ def build_junction_graph(
     *,
     baseline_frame_count: int = 1,
     relative_enhancement: bool = False,
+    baseline_floor_frac: float = 0.0,
 ) -> Data:
     """Build the segment-as-edge (junction) graph from a voxel skeleton graph.
 
@@ -231,6 +234,7 @@ def build_junction_graph(
             bifurcation_summary.get(node),
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
+            baseline_floor_frac=baseline_floor_frac,
         )
         for name in JUNCTION_NODE_FEATURE_ATTR:
             node_columns[name].append(features[name])
@@ -251,6 +255,7 @@ def build_junction_graph(
             voxel_graph,
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
+            baseline_floor_frac=baseline_floor_frac,
         )
         directed = [(u, v)] if u == v else [(u, v), (v, u)]
         for a, b in directed:

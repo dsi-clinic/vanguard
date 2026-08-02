@@ -34,6 +34,12 @@ STRAIGHT_VESSEL_LENGTH = 4.0
 Y_ARMS, Y_EDGES, Y_DEGREE = 3, 3, 2  # K3 (triangle)
 X_ARMS, X_EDGES, X_DEGREE = 4, 6, 3  # K4
 
+# Baseline-floor cap check: a 0.01 baseline vs. a floor of 0.05*peak(2.0)=0.1
+# shrinks the relative-enhancement denominator exactly 10x; the unfloored peak
+# is far above physiological (~0-5), confirming the divide-by-near-zero pathology.
+FLOOR_DENOM_RATIO = 10.0
+PATHOLOGICAL_PEAK_MIN = 100.0
+
 
 def _make_graph(edges: list[tuple[tuple, tuple]]) -> nx.Graph:
     """Build a voxel skeleton graph from (x,y,z) endpoint pairs."""
@@ -86,6 +92,46 @@ def test_straight_vessel_is_one_node_no_edges() -> None:
     assert attrs["seg_degree_max"] == pytest.approx(1.0)
     # Enhancement peaks at the last timepoint -> no washout window (den == 0).
     assert attrs["seg_washout_slope_mean"] == pytest.approx(0.0)
+
+
+def test_baseline_floor_caps_segment_relative_enhancement() -> None:
+    """Baseline floor threads into segment kinetics: caps a void baseline, no-op otherwise.
+
+    With relative enhancement and a near-void baseline the floor caps the
+    otherwise-exploding per-voxel peak enhancement; with a healthy baseline
+    (already above the floor) it changes nothing.
+    """
+    coords = [(x, 5, 0) for x in range(1, 6)]
+    graph = _make_graph(_line(coords))
+    radius_map = dict.fromkeys(graph.nodes(), 1.0)
+
+    # Near-void baseline (0.01) under a peak signal of 2.0: (S - S0)/S0 explodes.
+    void_baseline = np.empty((NUM_TIMEPOINTS, *VOLUME_ZYX), dtype=np.float32)
+    void_baseline[0], void_baseline[1], void_baseline[2] = 0.01, 1.0, 2.0
+
+    def seg_peak(dce_4d: np.ndarray, floor: float) -> float:
+        line = build_segment_line_graph(
+            graph,
+            radius_map,
+            dce_4d,
+            TIME_AXIS,
+            relative_enhancement=True,
+            baseline_floor_frac=floor,
+        )
+        return line.nodes[0]["seg_peak_enhancement_mean"]
+
+    unfloored = seg_peak(void_baseline, 0.0)
+    floored = seg_peak(void_baseline, 0.05)
+    # Denominator goes from S0=0.01 to max(0.01, 0.05*2)=0.1 -> exactly 10x
+    # smaller, independent of the exact peak definition (linear in 1/denom).
+    assert unfloored > PATHOLOGICAL_PEAK_MIN  # the divide-by-near-zero pathology
+    assert unfloored == pytest.approx(floored * FLOOR_DENOM_RATIO, rel=1e-3)
+
+    # Healthy baseline (1.0; floor 0.05*2=0.1 < baseline) -> floor is a no-op.
+    healthy = np.stack(
+        [np.full(VOLUME_ZYX, v, dtype=np.float32) for v in (1.0, 1.5, 2.0)]
+    )
+    assert seg_peak(healthy, 0.0) == pytest.approx(seg_peak(healthy, 0.05))
 
 
 def test_y_junction_gives_triangle_line_graph() -> None:

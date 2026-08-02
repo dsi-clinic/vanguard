@@ -347,6 +347,8 @@ def _attach_node_features(
     relative_enhancement: bool,
     label: int | None,
     node_features: tuple[str, ...],
+    *,
+    baseline_floor_frac: float = 0.0,
 ) -> None:
     """Set ``radius`` and the DCE-derived kinetic features on every node.
 
@@ -379,6 +381,7 @@ def _attach_node_features(
             time_axis,
             baseline_frame_count=baseline_frame_count,
             relative_enhancement=relative_enhancement,
+            baseline_floor_frac=baseline_floor_frac,
         )
         tte_idx = kinetic["tte_idx"]
 
@@ -528,6 +531,8 @@ def _build_case(
     node_mode: str,
     edge_features: tuple[str, ...] = (),
     attach_node_series: bool = False,
+    attach_temporal_contract: bool = False,
+    baseline_floor_frac: float = 0.0,
 ) -> tuple[Data, dict[str, list[float]]]:
     """Build one labeled :class:`Data` graph for ``case_id`` in ``node_mode``.
 
@@ -551,6 +556,21 @@ def _build_case(
     ``_finalize_data``. ``edge_features`` is non-empty only for junction mode.
     """
     stage_samples: dict[str, list[float]] = {}
+    # The baseline floor is threaded through the voxel, segment, and junction
+    # kinetic paths. The forecasting node-series path (attach_node_series) still
+    # calls baseline_relative_curve with the default (unfloored) denominator, so
+    # refuse rather than silently half-apply it there.
+    if attach_temporal_contract and node_mode != _VOXEL_MODE:
+        raise ValueError(
+            "attach_temporal_contract=True requires node_mode='voxel'; the "
+            "UChicago weight-transfer experiment does not sweep graph modes."
+        )
+    if baseline_floor_frac > 0.0 and (attach_node_series or attach_temporal_contract):
+        raise NotImplementedError(
+            "baseline_floor_frac > 0 is not yet wired into the forecasting "
+            "node-series path (attach_node_series=True). Thread it through "
+            "gnn/pretrain/node_series.py before using it there."
+        )
     study_dir = mask_path.parent
 
     with _stage_timer(stage_samples, "mask_load"):
@@ -612,6 +632,7 @@ def _build_case(
                 time_axis,
                 baseline_frame_count=baseline_frame_count,
                 relative_enhancement=relative_enhancement,
+                baseline_floor_frac=baseline_floor_frac,
             )
         num_connected_components = int(data.num_connected_components)
     else:
@@ -624,6 +645,7 @@ def _build_case(
                     time_axis,
                     baseline_frame_count=baseline_frame_count,
                     relative_enhancement=relative_enhancement,
+                    baseline_floor_frac=baseline_floor_frac,
                 )
         else:
             with _stage_timer(stage_samples, "peak_time"):
@@ -636,6 +658,7 @@ def _build_case(
                     relative_enhancement,
                     label,
                     node_features,
+                    baseline_floor_frac=baseline_floor_frac,
                 )
             graph = voxel_graph
 
@@ -673,14 +696,55 @@ def _build_case(
     #     ``ordered_nodes``). First-pass target = raw junction-voxel curve
     #     (design doc §4.3; flow/derivative alternative deferred).
     # Default off -> the classification build path is byte-for-byte unchanged.
-    if attach_node_series:
+    if attach_node_series or attach_temporal_contract:
         from gnn.pretrain.node_series import (
             junction_node_series,
             segment_node_series,
             voxel_node_series,
         )
 
-        if node_mode == _VOXEL_MODE:
+        if attach_temporal_contract:
+            from gnn.baseline_validity import repair_baselines
+
+            ordered_nodes = list(voxel_graph.nodes())
+            raw_signal = np.stack(
+                [dce_4d[:, z, y, x] for x, y, z in ordered_nodes], axis=0
+            )
+            s0 = raw_signal[:, :baseline_frame_count].mean(axis=1)
+            repair = repair_baselines(
+                voxel_graph,
+                ordered_nodes,
+                s0,
+                mode="impute",
+            )
+            if not repair.observed_valid.any():
+                raise ValueError(
+                    f"case={case_id}: no voxel has an observed valid baseline; "
+                    "forecast loss and downstream pooling would be undefined"
+                )
+            node_series = voxel_node_series(
+                dce_4d,
+                ordered_nodes,
+                baseline_frame_count=baseline_frame_count,
+                # The temporal-transfer path has one preprocessing contract:
+                # relative enhancement against the locally repaired S0. It is
+                # deliberately independent of the static-feature policy above.
+                relative_enhancement=True,
+                baseline_override=repair.s0_filled,
+            )
+            # A component with no valid baseline seed cannot be repaired. Keep
+            # its nodes in the graph so topology is unchanged, but give them a
+            # neutral curve; node_valid masks them from every loss/readout.
+            node_series[~repair.has_baseline] = 0.0
+            node_valid = repair.observed_valid
+            data.baseline_imputed = torch.tensor(
+                repair.has_baseline & ~repair.observed_valid, dtype=torch.bool
+            )
+            data.baseline_imputation_round = torch.tensor(
+                repair.imputation_round, dtype=torch.long
+            )
+            data.baseline_validity_threshold = float(repair.threshold)
+        elif node_mode == _VOXEL_MODE:
             node_series = voxel_node_series(
                 dce_4d,
                 list(voxel_graph.nodes()),
@@ -705,11 +769,24 @@ def _build_case(
             raise ValueError(
                 f"attach_node_series=True: unknown node_mode {node_mode!r}."
             )
-        data.node_series = torch.tensor(node_series, dtype=torch.float)
+        if attach_temporal_contract:
+            data.node_series = torch.tensor(node_series, dtype=torch.float).unsqueeze(
+                -1
+            )
+            data.node_valid = torch.tensor(node_valid, dtype=torch.bool)
+        else:
+            # Historical Duke smoke contract. Kept separate so the production
+            # UChicago contract does not silently change a cohort-specific
+            # placeholder harness.
+            data.node_series = torch.tensor(node_series, dtype=torch.float)
         # Physical acquisition seconds for the forecasting time axis (issue 3a):
         # the same ``time_axis`` the kinetic path uses, so forecasting sees the
         # real (irregular) UFAST cadence rather than frame indices.
         data.node_times = torch.tensor(time_axis, dtype=torch.float)
+        if attach_temporal_contract:
+            data.times_seconds = data.node_times
+            postbaseline = np.arange(num_timepoints) >= baseline_frame_count
+            data.is_postbaseline = torch.tensor(postbaseline, dtype=torch.bool)
         # Protocol baseline length, so the forecasting tiler can drop precontrast
         # baseline frames from its windows (issue 3b) while still using them for S0.
         data.baseline_frame_count = int(baseline_frame_count)
@@ -863,6 +940,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
         id_column: str = "case_id",
         label_column: str = "pcr",
         max_missing_label_frac: float = 0.1,
+        kinetic_baseline_floor_frac: float = 0.0,
         profile: bool = False,
         num_workers: int = 1,
         allow_manifest_mismatch: bool = False,
@@ -995,6 +1073,9 @@ class VanguardCenterlineDataset(InMemoryDataset):
         self._id_column = id_column
         self._label_column = label_column
         self._max_missing_label_frac = max_missing_label_frac
+        if kinetic_baseline_floor_frac < 0.0:
+            raise ValueError("kinetic_baseline_floor_frac must be >= 0")
+        self._kinetic_baseline_floor_frac = float(kinetic_baseline_floor_frac)
         self._profile = profile
         self._num_workers = num_workers
         self._allow_manifest_mismatch = allow_manifest_mismatch
@@ -1140,6 +1221,12 @@ class VanguardCenterlineDataset(InMemoryDataset):
             "node_features": list(self._node_features),
             "feature_source": _FEATURE_SOURCE,
         }
+        # Kinetic baseline floor: recorded only when active so pre-floor caches
+        # (which have no such key) stay schema-compatible. _check_cache_manifest
+        # normalizes a missing cached value to 0.0, so a floored cache never
+        # silently serves an unfloored request or vice versa.
+        if self._kinetic_baseline_floor_frac > 0.0:
+            settings["kinetic_baseline_floor_frac"] = self._kinetic_baseline_floor_frac
         # Only junction mode has edge features. Recording the key only when it's
         # non-empty keeps voxel/segment manifests (and the caches already built
         # under them) schema-compatible -- a pre-edge_features cache has no such
@@ -1217,6 +1304,18 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     mismatched[key] = {"cached": cached_value, "requested": value}
             elif cached_value != value:
                 mismatched[key] = {"cached": cached_value, "requested": value}
+        # Kinetic baseline floor is recorded only when active, so it may be
+        # absent from either side; compare it explicitly with absent==0.0 so a
+        # floored cache can't serve an unfloored request (or vice versa) even
+        # though the key is missing from the requested settings.
+        floor_key = "kinetic_baseline_floor_frac"
+        cached_floor = manifest.get(floor_key) or 0.0
+        requested_floor = requested.get(floor_key) or 0.0
+        if cached_floor != requested_floor:
+            mismatched[floor_key] = {
+                "cached": cached_floor,
+                "requested": requested_floor,
+            }
         if mismatched and not self._allow_manifest_mismatch:
             raise RuntimeError(
                 f"Cache at {self.processed_dir} was built with different "
@@ -1656,6 +1755,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                     node_features=self._node_features,
                     node_mode=self._node_mode,
                     edge_features=self._edge_features,
+                    baseline_floor_frac=self._kinetic_baseline_floor_frac,
                 )
                 self._timings.merge(stage_samples)
                 logging.info("GNN build: built %s (%d/%d)", case_id, done, total)
@@ -1681,6 +1781,7 @@ class VanguardCenterlineDataset(InMemoryDataset):
                         node_features=self._node_features,
                         node_mode=self._node_mode,
                         edge_features=self._edge_features,
+                        baseline_floor_frac=self._kinetic_baseline_floor_frac,
                     )
                     for case_id, mask_path, label in batch
                 ]

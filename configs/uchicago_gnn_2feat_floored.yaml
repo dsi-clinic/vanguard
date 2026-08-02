@@ -1,0 +1,47 @@
+# UChicago 2-feature voxel GNN (floored), for the all-models comparison.
+# Identical to configs/uchicago_gnn_tier_baseline_floored.yaml except the node
+# feature set is the minimal [peak_time, radius] pair (the two features that were
+# never corrupted by the near-void-baseline blowup -- see LAB_NOTEBOOK). Tests
+# whether the richer 7-feature set actually buys signal over this 2-feature floor.
+# Reads the SAME 7-feature floored voxel cache and selects the 2-feature subset at
+# load (manifest allows a node_features subset without a rebuild).
+
+experiment_setup:
+  name: "uchicago_gnn_2feat_floored"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  n_splits: 5
+  random_state: 42
+  use_group_split: false
+  split_mode: "predefined"
+  split_col: "fold"
+  gnn_kinetic_baseline_floor_frac: 0.05
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_mode: "voxel"
+  gnn_node_features:
+    - "peak_time"
+    - "radius"
+  weight_decay: 0.0
+  loss: "unweighted_bce"
+  lr_scheduler: "none"
+  max_grad_norm: 0.0
+  early_stopping_patience: 0
+  restore_best_epoch: false
+  gnn_pooling: "mean"
+
+data_paths:
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_voxel_richfeat_floored"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null

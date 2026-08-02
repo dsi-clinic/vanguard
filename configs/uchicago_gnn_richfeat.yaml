@@ -1,0 +1,54 @@
+# GNN training on the UChicago internal ultrafast DCE cohort (gnn/train.py) --
+# "rich feature" baseline: identical voxel-GCN model to configs/uchicago_gnn.yaml,
+# but with the full set of legitimate voxel node features instead of just
+# [peak_time, radius]. This is the "richer node features" next step flagged in
+# LAB_NOTEBOOK.md after the 2026-07-22 null result (AUC 0.527 with 2 features).
+#
+# Feature set = every non-leakage voxel feature the loader exposes
+# (gnn/data_loader.py _FEATURE_ATTR): the four kinetic curve descriptors named
+# in the notebook (peak_enhancement, time_to_enhancement, washin_slope,
+# auc_positive) plus washout_slope, plus the two originals (peak_time, radius).
+# pcr_dummy is deliberately excluded -- it is a leakage diagnostic, not a feature.
+#
+# Requires a cache built with (a superset of) this feature list; see
+# gnn/slurm/submit_gnn_build.slurm with NODE_FEATURES set to match.
+#
+# Paths, folds, kinetic contract, and all model hyperparameters are copied
+# verbatim from configs/uchicago_gnn.yaml so the ONLY change vs. the baseline
+# is the node feature set (and the cache it reads).
+
+experiment_setup:
+  name: "gnn_uchicago_richfeat"
+  base_outdir: "./experiments"
+
+model_params:
+  device: "cpu"
+  split_mode: "predefined"
+  split_col: "fold"
+  use_group_split: false
+  n_splits: 5
+  random_state: 42
+  batch_size: 8
+  epochs: 25
+  hidden_dim: 32
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  gnn_node_features:
+    - "peak_time"
+    - "peak_enhancement"
+    - "time_to_enhancement"
+    - "washin_slope"
+    - "washout_slope"
+    - "auc_positive"
+    - "radius"
+
+data_paths:
+  gnn_centerline_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/centerlines"
+  gnn_dce_root: "/ess/scratch/scratch1/t-9svena/uchicago/preprocessing_out_v5/dce"
+  gnn_labels_path: "/gpfs/data/karczmar-lab/workspaces/spencervenancio/uchicago/uchicago_labels_folded.csv"
+  gnn_cache_dir: "/ess/scratch/scratch1/t-9svena/uchicago/gnn_cache_voxel_richfeat"
+  gnn_id_column: "case_id"
+  gnn_label_column: "pcr"
+  gnn_cases: null
+  gnn_dataset_include: null
