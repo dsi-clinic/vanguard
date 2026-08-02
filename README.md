@@ -99,6 +99,10 @@ References:
 
 Runtime defaults now live in [`config.py`](config.py). The YAML files under [`configs/`](configs/) only need to override the values for a specific run. On the DSI cluster, many of those defaults point at shared paths under `/net/projects2/vanguard/...`. If your environment differs, override the relevant `data_paths` values in your YAML file instead of editing code.
 
+### UChicago internal cohorts (site-specific)
+
+The UChicago ultrafast DCE cohorts are internal data and are **not** distributed with this repository. Their dataset roots, cohort composition, layout, known caveats, and restricted raw DICOM sources are documented in [`UCHICAGO.md`](UCHICAGO.md); those paths only resolve on the UChicago cluster. To run the same pipelines elsewhere, prepare your own dataset against the manifest and directory contract described there, or arrange access with the Karczmar lab.
+
 ## Repository Structure
 
 This repository has four main workflows.
@@ -417,6 +421,7 @@ Optional graph-extraction analysis helpers live under:
 
 ## Additional Documentation
 
+- [`UCHICAGO.md`](UCHICAGO.md) — UChicago site-specific data paths and cohorts
 - [`docs/data_policy.md`](docs/data_policy.md)
 - [`docs/resources.md`](docs/resources.md)
 - [`docs/workflow.md`](docs/workflow.md)

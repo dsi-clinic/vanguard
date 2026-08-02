@@ -75,75 +75,12 @@ Raw images, labels, and masks should be treated as read-only.
 
 Derived outputs should go in clearly named output folders with enough provenance to reproduce them.
 
-### UChicago ultrafast cohorts
-
-Two published dataset roots under `/gpfs/data/karczmar-lab/vanguard/`, complete through
-cohort construction, Vanguard v5 preprocessing, and tumor/vessel artifact publication:
-
-- `uchicago_ultrafast_longitudinal_cohort_v1` — 240 exams from 196 patients. Repeated
-  visits are retained on purpose: 179 runnable legacy exams plus 61 newly transferred
-  exams from 55 patients. Patient-level pCR is 122 non-pCR / 74 pCR.
-- `uchicago_ultrafast_pretreatment_cohort_v1` — 137 exams from 137 patients, one
-  reviewed pretreatment exam per patient: 82 runnable legacy baselines plus 55
-  new-patient baselines. pCR is 78 non-pCR / 59 pCR.
-
-The cohort manifest is `dce2d_internal_ultrafast_manifest.csv` in either root. It keeps
-the existing UChicago manifest contract: `exam_id`, `patient_key`, fixed patient-grouped
-`fold`, `pcr`, physical timestamps, phase paths, and clinical/cohort metadata. Repeated
-exams from the same patient always share a label and a fold.
-
-Each root contains:
-
-- `images/<dataset>/<exam_id>/` — motion-corrected UFAST phase NIfTIs and
-  `ufast_times_seconds.npy`. The UFAST signal is raw: no clipping, no z-scoring, five
-  protocol baselines, physical DICOM times, and one spatial interpolation. Dynamics are
-  not collapsed and not independently normalized by phase.
-- `centerlines/<dataset>/<exam_id>/` — the HR-derived vessel skeleton mask, support
-  mask, `*_morphometry.json`, `run_summary.json`, and mapping QC. Vessel extraction uses
-  the higher-spatial-resolution acquisition; node kinetics come from the aligned UFAST
-  acquisition.
-- `tumor/masks/<exam_id>.nii.gz` — primary tumor masks mapped from the
-  higher-spatial-resolution segmentation onto the exact UFAST/centerline grid, plus
-  `tumor_mask_manifest.csv`, checksums, provenance, and review flags.
-- `README.md`, `SHA256SUMS`, and `pending_cases.csv`.
-
-Tumor-mask caveats:
-
-- All 240/240 longitudinal and 137/137 pretreatment masks were published with passing
-  alignment/mapping status.
-- 14 longitudinal masks are empty. All fall outside the selected pretreatment cohort,
-  and most are later visits where a visible tumor may no longer be present.
-- The manifests flag 69 longitudinal and 36 pretreatment exams as possible bilateral
-  cases requiring review and downstream exclusion. These are conservative candidates,
-  not 69 or 36 confirmed bilateral cancers.
-
-`pending_cases.csv` lists four cases explicitly rather than dropping them silently: two
-workbook patients whose images were not present in the transferred inventories, and two
-legacy exams that cannot be run through the exact HR+UFAST contract (one shared HR/UFAST
-acquisition with no distinct HR series, and one split-series exam with eight HR
-candidates but no identifiable UFAST series).
-
-### UChicago raw DICOM sources
-
-The cohort roots above expose derived outputs by symlink. Full preprocessing from raw
-DICOM uses these restricted Karczmar-lab sources:
-
-- Legacy paired HR+UFAST package:
-  `/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/paired_hr_ufast_source_dicom`.
-  `archives/<dataset>/<exam_id>.zip` contains byte-for-byte selected DICOM payloads.
-  `dicom_file_manifest.parquet`, `dicom_spatial_geometry_manifest.csv`,
-  `hr_ufast_spatial_alignment_manifest.csv`, and
-  `paired_preprocessing_case_manifest.csv` are the runnable inventory/geometry contract.
-  The package README explains how to launch Vanguard's complete DICOM-to-vessel pipeline.
-- Newly transferred DICOM sources: `/gpfs/data/karczmar-lab/Retro NACT`,
-  `/gpfs/data/karczmar-lab/9127/9127 NAC`, and `/gpfs/data/karczmar-lab/9127/9127 Staging`.
-- Reviewed new-data inventories and selected-series manifests, under
-  `uchicago_ultrafast_longitudinal_cohort_v1/_build/source_inventory`,
-  `_build/zhen_extension`, and `_build/zhen_staging_extension`.
-
-The DICOM payloads are restricted and are not deidentified. Keep them within the
-approved Karczmar-lab shares. The published derived cohorts and their provenance do not
-require Huo-lab access.
+### Site-specific data
+Concrete dataset roots, cohort counts, and raw-source paths are site-specific and are not
+part of the repo's portable contract. The UChicago ultrafast cohorts and their restricted
+Karczmar-lab DICOM sources are documented in [`UCHICAGO.md`](UCHICAGO.md). Those paths are
+valid only on the UChicago cluster -- anywhere else, prepare an equivalent dataset or arrange
+access, and point `data_paths` in your own YAML at it rather than assuming those roots exist.
 
 ## Project Conventions
 - Keep scripts and outputs named clearly enough that another student can understand what they are for.
