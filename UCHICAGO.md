@@ -1,9 +1,9 @@
-# UChicago Site-Specific Data
+# UChicago Site-Specific Data (Randi)
 
 **Scope: this file describes one site's data only.** Every path, cohort count, and access
-rule below is valid only on the University of Chicago cluster, under the Karczmar-lab
-shares. Nothing here is bundled with the repository, and none of it is reachable from
-outside that cluster.
+rule below is valid only on Randi, the cluster maintained by the Biological Sciences
+Division of the University of Chicago, under the Karczmar-lab shares. Nothing here is
+bundled with the repository, and none of it is reachable from outside Randi.
 
 If you are running Vanguard elsewhere, treat this file as a worked example of the data
 contract the code expects, not as something to point your configs at. You need either:
@@ -23,7 +23,7 @@ a complete provenance record.
 
 ## UChicago ultrafast cohorts
 
-Two published dataset roots under `/gpfs/data/karczmar-lab/vanguard/`, complete through
+Two published dataset roots under `/gpfs/data/karczmar-lab/vanguard/` on Randi, complete through
 cohort construction, Vanguard v5 preprocessing, and tumor/vessel artifact publication:
 
 - `uchicago_ultrafast_longitudinal_cohort_v1` — 240 exams from 196 patients. Repeated
@@ -72,7 +72,7 @@ candidates but no identifiable UFAST series).
 ## UChicago raw DICOM sources
 
 The cohort roots above expose derived outputs by symlink. Full preprocessing from raw
-DICOM uses these restricted Karczmar-lab sources:
+DICOM uses these restricted Karczmar-lab sources, also on Randi:
 
 - Legacy paired HR+UFAST package:
   `/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/paired_hr_ufast_source_dicom`.

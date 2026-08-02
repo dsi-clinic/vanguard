@@ -79,8 +79,9 @@ Derived outputs should go in clearly named output folders with enough provenance
 Concrete dataset roots, cohort counts, and raw-source paths are site-specific and are not
 part of the repo's portable contract. The UChicago ultrafast cohorts and their restricted
 Karczmar-lab DICOM sources are documented in [`UCHICAGO.md`](UCHICAGO.md). Those paths are
-valid only on the UChicago cluster -- anywhere else, prepare an equivalent dataset or arrange
-access, and point `data_paths` in your own YAML at it rather than assuming those roots exist.
+valid only on Randi, the cluster maintained by the Biological Sciences Division of the
+University of Chicago -- anywhere else, prepare an equivalent dataset or arrange access, and
+point `data_paths` in your own YAML at it rather than assuming those roots exist.
 
 ## Project Conventions
 - Keep scripts and outputs named clearly enough that another student can understand what they are for.
