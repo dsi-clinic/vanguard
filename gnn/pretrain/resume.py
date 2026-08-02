@@ -135,9 +135,7 @@ def save_epoch_progress(
     if best_epoch < 1 or best_epoch >= next_epoch:
         raise ValueError("best_epoch must refer to a completed epoch")
     validate_run_fingerprint(fingerprint, fingerprint)
-    cuda_states = (
-        torch.cuda.get_rng_state_all() if device.type == "cuda" else []
-    )
+    cuda_states = torch.cuda.get_rng_state_all() if device.type == "cuda" else []
     payload = {
         "format_version": _FORMAT_VERSION,
         "fingerprint": fingerprint,
@@ -211,8 +209,14 @@ def load_epoch_progress(
     cuda_states = payload["torch_cuda_rng_states"]
     if device.type == "cuda":
         if len(cuda_states) != torch.cuda.device_count():
-            raise ValueError("saved CUDA RNG state count does not match visible devices")
-        torch.cuda.set_rng_state_all(cuda_states)
+            raise ValueError(
+                "saved CUDA RNG state count does not match visible devices"
+            )
+        cpu_byte_states = [
+            state.detach().to(device="cpu", dtype=torch.uint8).contiguous()
+            for state in cuda_states
+        ]
+        torch.cuda.set_rng_state_all(cpu_byte_states)
     elif cuda_states:
         raise ValueError("CPU resume unexpectedly contains CUDA RNG states")
 
@@ -335,5 +339,7 @@ def validate_run_completion(
     for path_text, expected_sha in artifacts.items():
         artifact = Path(path_text)
         if not artifact.is_file() or sha256(artifact) != expected_sha:
-            raise ValueError(f"completed run artifact is missing or changed: {artifact}")
+            raise ValueError(
+                f"completed run artifact is missing or changed: {artifact}"
+            )
     return True

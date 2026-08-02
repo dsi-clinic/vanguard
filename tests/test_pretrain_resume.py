@@ -196,9 +196,7 @@ def test_resume_fails_before_loading_on_fingerprint_mismatch(tmp_path: Path) -> 
     with pytest.raises(ValueError, match="fingerprint mismatch"):
         load_epoch_progress(
             tmp_path / "progress.pt",
-            expected_fingerprint=make_run_fingerprint(
-                {"seed": 2, "objective": "a"}
-            ),
+            expected_fingerprint=make_run_fingerprint({"seed": 2, "objective": "a"}),
             model=target_model,
             optimizer=torch.optim.Adam(target_model.parameters(), lr=0.01),
             sampling_generator=torch.Generator(),
@@ -206,6 +204,57 @@ def test_resume_fails_before_loading_on_fingerprint_mismatch(tmp_path: Path) -> 
         )
     for name, value in before.items():
         assert torch.equal(value, target_model.state_dict()[name])
+
+
+def test_cuda_rng_states_are_cpu_byte_tensors_before_restoration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CUDA-mapped RNG states are restored through CPU uint8 ByteTensors."""
+    fingerprint = make_run_fingerprint({"seed": 5, "device": "cuda"})
+    source_model = _model()
+    source_optimizer = torch.optim.Adam(source_model.parameters(), lr=0.01)
+    _train_epochs(
+        model=source_model,
+        optimizer=source_optimizer,
+        generator=torch.Generator().manual_seed(7),
+        fingerprint=fingerprint,
+        progress_path=tmp_path / "progress.pt",
+        final_epoch=1,
+    )
+    payload = torch.load(tmp_path / "progress.pt", map_location="cpu")
+    payload["rng_device_type"] = "cuda"
+    payload["torch_cuda_rng_states"] = [
+        torch.tensor([0, 1, 127, 255], dtype=torch.int64)
+    ]
+    restored: list[list[torch.Tensor]] = []
+    monkeypatch.setattr(
+        "gnn.pretrain.resume.torch.load", lambda *args, **kwargs: payload
+    )
+    monkeypatch.setattr("gnn.pretrain.resume.torch.cuda.device_count", lambda: 1)
+    monkeypatch.setattr(
+        "gnn.pretrain.resume.torch.cuda.set_rng_state_all",
+        lambda states: restored.append(states),
+    )
+
+    target_model = _model()
+    resumed = load_epoch_progress(
+        tmp_path / "progress.pt",
+        expected_fingerprint=fingerprint,
+        model=target_model,
+        optimizer=torch.optim.Adam(target_model.parameters(), lr=0.01),
+        sampling_generator=torch.Generator(),
+        device=torch.device("cuda"),
+    )
+
+    assert resumed is not None
+    assert len(restored) == 1
+    assert len(restored[0]) == 1
+    restored_state = restored[0][0]
+    assert restored_state.device.type == "cpu"
+    assert restored_state.dtype == torch.uint8
+    assert isinstance(restored_state, torch.ByteTensor)
+    assert restored_state.is_contiguous()
+    assert restored_state.tolist() == [0, 1, 127, 255]
 
 
 def test_completed_arm_requires_unchanged_validated_checkpoint(tmp_path: Path) -> None:
