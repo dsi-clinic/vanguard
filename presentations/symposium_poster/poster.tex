@@ -40,10 +40,11 @@
 
 % Title-less callout box, for highlighting a sentence inside a block without
 % opening a nested block/alertblock (which draws its own title strip -- even
-% with an empty title, `block alerted separator` still leaves a bar). Reuses
-% the alertblock body color so it reads as the same "red box" as elsewhere.
-\newenvironment{highlightbox}
-  {\begin{beamercolorbox}[colsep*=0ex,sep=1.5ex]{block alerted body}}
+% with an empty title, `block alerted separator` still leaves a bar). Takes an
+% optional beamer color name so callouts can match either the alertblock (red)
+% or exampleblock (grey) palette already used elsewhere, defaulting to red.
+\newenvironment{highlightbox}[1][block alerted body]
+  {\begin{beamercolorbox}[colsep*=0ex,sep=1.5ex]{#1}}
   {\end{beamercolorbox}\vskip1ex}
 
 % ====================
@@ -176,7 +177,7 @@
     measurements.
   \end{block}
 
-    \begin{highlightbox}
+    \begin{highlightbox}[block example body]
       \textbf{Research Question:} does the structure of breast blood
       vessel networks and the way contrast changes through them improve response
       prediction beyond simple summaries of the same MRI measurements?
