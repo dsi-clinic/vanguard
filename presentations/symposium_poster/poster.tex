@@ -246,11 +246,11 @@
 
   \end{block}
 
-  \begin{block}{Forecasting Pretraining Helps This GNN; Clinical Value Remains Unproven}
+  \begin{block}{Forecasting Pretraining Helps This GNN}
 
     \begin{figure}
       \centering
-      \includegraphics[width=0.85\linewidth]{figures/architecture.pdf}
+      \includegraphics[width=0.76\linewidth]{figures/architecture.pdf}
       \caption{Forecasting weights transfer into the pCR classifier; a randomly
       initialized twin is the control arm.}
     \end{figure}
@@ -264,9 +264,13 @@
 
     Centerline enhancement features predict pCR modestly, but hand-engineered
     GNNs do not beat matched tabular summaries. Forecasting pretraining improved
-    this downstream GNN; graph-free pretraining was unresolved. Repeated seeds
-    and locked-cohort validation must reproduce the gain before any clinical or
-    vascular-specific claim.
+    this downstream GNN; graph-free pretraining was unresolved.
+
+    \begin{highlightbox}
+      \textbf{Clinical value remains unproven:} this is one seed on one
+      cohort. Repeated seeds and locked-cohort validation must reproduce the
+      gain before any clinical or vascular-specific claim.
+    \end{highlightbox}
 
   \end{block}
 
