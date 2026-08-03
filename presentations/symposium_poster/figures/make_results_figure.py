@@ -53,6 +53,28 @@ def _interval(
     )
 
 
+def _estimate_label(ax: plt.Axes, y: float, text: str) -> None:
+    """Print one row's point estimate just outside the axes' right edge.
+
+    Anchored with a blended transform (x in axes-fraction, y in data units)
+    plus a fixed point offset, so the label sits clear of the plot area --
+    and every gridline in it -- instead of at a hardcoded data-coordinate x
+    that only clears the rightmost gridline for one specific xlim.
+    """
+    ax.annotate(
+        text,
+        xy=(1.0, y),
+        xycoords=blended_transform_factory(ax.transAxes, ax.transData),
+        xytext=(8, 0),
+        textcoords="offset points",
+        ha="left",
+        va="center",
+        fontsize=12,
+        color=INK,
+        annotation_clip=False,
+    )
+
+
 def _reference_label(ax: plt.Axes, x: float, label: str) -> None:
     """Caption a vertical reference line just above the axes.
 
@@ -92,15 +114,7 @@ def main() -> None:
         color = MAROON if row.architecture == "message passing" else GREY
         marker = "o" if row.initialization == "forecast pretrained" else "s"
         _interval(ax_auc, y, row.estimate, row.ci_low, row.ci_high, color, marker)
-        ax_auc.text(
-            0.714,
-            y,
-            f"{row.estimate:.3f}",
-            ha="right",
-            va="center",
-            fontsize=12,
-            color=INK,
-        )
+        _estimate_label(ax_auc, y, f"{row.estimate:.3f}")
     ax_auc.axvline(0.5, color=INK, ls="--", lw=1.4, alpha=0.55, zorder=0)
     ax_auc.set_yticks(range(len(auc)))
     ax_auc.set_yticklabels(auc["label"], fontsize=12)
@@ -115,15 +129,7 @@ def main() -> None:
     for y, row in enumerate(delta.itertuples(index=False)):
         color = MAROON if row.architecture == "message passing" else GREY
         _interval(ax_delta, y, row.estimate, row.ci_low, row.ci_high, color)
-        ax_delta.text(
-            0.276,
-            y,
-            f"{row.estimate:+.3f}",
-            ha="right",
-            va="center",
-            fontsize=12,
-            color=INK,
-        )
+        _estimate_label(ax_delta, y, f"{row.estimate:+.3f}")
     ax_delta.axvline(0.0, color=INK, ls="--", lw=1.4, alpha=0.55, zorder=0)
     ax_delta.set_yticks(range(len(delta)))
     ax_delta.set_yticklabels(delta["label"], fontsize=12)
