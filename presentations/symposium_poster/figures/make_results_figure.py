@@ -19,6 +19,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
+from matplotlib.transforms import blended_transform_factory  # noqa: E402
 
 DATA_CSV = Path(__file__).parent / "transfer_results.csv"
 OUT_PDF = Path(__file__).parent / "results_auc.pdf"
@@ -52,6 +53,28 @@ def _interval(
     )
 
 
+def _reference_label(ax: plt.Axes, x: float, label: str) -> None:
+    """Caption a vertical reference line just above the axes.
+
+    Anchored with a blended transform (x in data units, y in axes-fraction)
+    plus a fixed point offset, so the label sits the same small distance
+    above the plot regardless of how many rows the axes holds -- unlike a
+    hardcoded data-coordinate y, which only clears the title for one specific
+    row count and collides with it for any other.
+    """
+    ax.annotate(
+        label,
+        xy=(x, 1.0),
+        xycoords=blended_transform_factory(ax.transData, ax.transAxes),
+        xytext=(0, 6),
+        textcoords="offset points",
+        ha="center",
+        va="bottom",
+        fontsize=11,
+        color=INK,
+    )
+
+
 def main() -> None:
     """Render the two-panel forest plot to ``results_auc.pdf``."""
     table = pd.read_csv(DATA_CSV)
@@ -79,13 +102,15 @@ def main() -> None:
             color=INK,
         )
     ax_auc.axvline(0.5, color=INK, ls="--", lw=1.4, alpha=0.55, zorder=0)
-    ax_auc.text(0.5, -0.63, "chance", ha="center", fontsize=11, color=INK)
     ax_auc.set_yticks(range(len(auc)))
     ax_auc.set_yticklabels(auc["label"], fontsize=12)
     ax_auc.invert_yaxis()
     ax_auc.set_xlim(0.30, 0.72)
     ax_auc.set_xlabel("Patient-level pooled OOF AUC (95% CI)", fontsize=12)
-    ax_auc.set_title("All four matched downstream arms", fontsize=14, weight="bold")
+    ax_auc.set_title(
+        "All four matched downstream arms", fontsize=14, weight="bold", pad=24
+    )
+    _reference_label(ax_auc, 0.5, "chance")
 
     for y, row in enumerate(delta.itertuples(index=False)):
         color = MAROON if row.architecture == "message passing" else GREY
@@ -100,13 +125,14 @@ def main() -> None:
             color=INK,
         )
     ax_delta.axvline(0.0, color=INK, ls="--", lw=1.4, alpha=0.55, zorder=0)
-    ax_delta.text(0.0, -0.53, "no effect", ha="center", fontsize=11, color=INK)
     ax_delta.set_yticks(range(len(delta)))
     ax_delta.set_yticklabels(delta["label"], fontsize=12)
     ax_delta.invert_yaxis()
+    ax_delta.set_ylim(len(delta) - 0.5, -0.5)
     ax_delta.set_xlim(-0.13, 0.28)
     ax_delta.set_xlabel("Paired pretraining ΔAUC (95% CI)", fontsize=12)
-    ax_delta.set_title("Paired pretraining effect", fontsize=14, weight="bold")
+    ax_delta.set_title("Paired pretraining effect", fontsize=14, weight="bold", pad=24)
+    _reference_label(ax_delta, 0.0, "no effect")
 
     for ax in (ax_auc, ax_delta):
         ax.tick_params(axis="x", labelsize=11)
@@ -116,8 +142,8 @@ def main() -> None:
             ax.spines[side].set_visible(False)
         ax.spines["bottom"].set_color(INK)
 
-    fig.subplots_adjust(left=0.23, right=0.985, top=0.82, bottom=0.20, wspace=0.68)
-    fig.savefig(OUT_PDF)
+    fig.subplots_adjust(left=0.23, right=0.985, top=0.78, bottom=0.20, wspace=0.68)
+    fig.savefig(OUT_PDF, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {OUT_PDF}")
 
