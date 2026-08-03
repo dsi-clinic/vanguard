@@ -117,14 +117,28 @@ def make_pipeline() -> None:
     faces = (GREY, GREY, MAROON, MAROON, MAROON)
     xs = (0.05, 2.55, 5.05, 7.55, 10.05)
     widths = (1.85, 1.85, 1.85, 1.85, 1.85)
+    box_y = 0.55  # raised from 0.41 so the pad-inflated box bottom (box_y -
+    # 0.16) still leaves clear room below for the nnU-Net/tc4d annotations.
+    box_height = 1.30
+    box_center_y = box_y + box_height / 2
     for x, width, label, face in zip(xs, widths, labels, faces):
-        _box(ax, (x, 0.41), width, 1.30, label, face=face, size=14)
+        _box(ax, (x, box_y), width, box_height, label, face=face, size=14)
+    # The boxstyle pad (0.16) inflates each box's drawn edge 0.16 beyond its
+    # nominal (x, width) rect, so an arrow offset smaller than that -- the old
+    # 0.08 -- starts/ends underneath the rounded corner instead of in the gap.
+    # 0.20 clears the inflated edge with a small margin on both ends.
+    arrow_clearance = 0.20
     for left_x, left_w, right_x in zip(xs[:-1], widths[:-1], xs[1:]):
-        _arrow(ax, (left_x + left_w + 0.08, 1.06), (right_x - 0.08, 1.06))
+        _arrow(
+            ax,
+            (left_x + left_w + arrow_clearance, box_center_y),
+            (right_x - arrow_clearance, box_center_y),
+        )
 
+    annotation_y = 0.10
     ax.text(
         3.47,
-        0.18,
+        annotation_y,
         "nnU-Net",
         ha="center",
         va="center",
@@ -133,7 +147,7 @@ def make_pipeline() -> None:
     )
     ax.text(
         5.97,
-        0.18,
+        annotation_y,
         "tc4d",
         ha="center",
         va="center",
