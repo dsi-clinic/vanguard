@@ -204,7 +204,7 @@
 
     \begin{figure}
       \centering
-      \includegraphics[width=0.6\linewidth]{figures/graph_representation.pdf}
+      \includegraphics[width=0.68\linewidth]{figures/graph_representation.pdf}
       \caption{The same vessel centerline represented three ways.}
     \end{figure}
 
@@ -285,15 +285,15 @@
 
     \begin{figure}
       \centering
-      \includegraphics[width=0.9\linewidth]{figures/results_auc.pdf}
+      \includegraphics[width=0.75\linewidth]{figures/results_auc.pdf}
       \caption{Patient-level pooled out-of-fold AUC with patient-bootstrap 95\%
       CIs on shared patient-grouped folds.}
     \end{figure}
 
-    Forecasting initialization changed GNN AUC from 0.434 to \textbf{0.583}:
-    paired $\Delta$AUC \textbf{+0.149} [\textbf{+0.046}, \textbf{+0.255}]. The
-    graph-free effect was unresolved: +0.034 [$-$0.049, +0.120]. The pretrained
-    GNN exceeded pretrained graph-free by +0.079 [+0.010, +0.155].
+    Paired pretraining $\Delta$AUC: \textbf{+0.149} [\textbf{+0.046},
+    \textbf{+0.255}] for the GNN, versus +0.034 [$-$0.049, +0.120] for
+    graph-free (unresolved). The pretrained GNN exceeded pretrained graph-free
+    by +0.079 [+0.010, +0.155].
 
     The claim is narrow: initialization helped this GNN on one seed, and its
     absolute interval includes chance.
