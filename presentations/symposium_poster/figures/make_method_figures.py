@@ -34,12 +34,18 @@ def _box(
     face: str = MAROON,
     color: str = "white",
     size: float = 15,
+    bold: bool = True,
 ) -> None:
     """Draw one rounded process box with centered text.
 
     ``pad`` inflates the drawn border outward from the given ``(width,
     height)`` rect without moving the centered text, which is what keeps the
     label clear of the box edge at poster print size.
+
+    ``bold`` is an explicit choice, not inferred from ``face``: every process
+    box in a given figure should share one font weight regardless of color,
+    so a color-only distinction (e.g. upstream vs. in-scope stages) doesn't
+    also read as two different typefaces.
     """
     x, y = xy
     ax.add_patch(
@@ -61,7 +67,7 @@ def _box(
         va="center",
         color=color,
         fontsize=size,
-        fontweight="bold" if face == MAROON else "normal",
+        fontweight="bold" if bold else "normal",
         linespacing=1.15,
     )
 
@@ -169,6 +175,7 @@ def make_pretraining_transfer() -> None:
         face=PALE,
         color=INK,
         size=12,
+        bold=False,
     )
     _arrow(ax, (2.91, 3.34), (3.64, 3.34))
     _arrow(ax, (6.53, 3.34), (7.26, 3.34))
