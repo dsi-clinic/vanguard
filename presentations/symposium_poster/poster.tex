@@ -182,16 +182,20 @@
       prediction beyond simple summaries of the same MRI measurements?
     \end{highlightbox}
 
-
-  \begin{block}{179 UChicago Exams Capture Heterogeneous Ultrafast Dynamics}
+  \begin{block}{UChicago Cohort: 179 Labeled, 1,226 Unlabeled Exams}
 
     UChicago contributed \textbf{181 labeled exams from 143 patients};
-    \textbf{179 exams from 141 patients} are analyzed here (35\% pCR-positive).
-    Two exams lacked the required centerline, support mask, and aligned MRI.
+    \textbf{179 exams from 141 patients} are analyzed here (115 non-pCR /
+    \textbf{64 pCR}, 36\%). Two exams lacked the required centerline, support
+    mask, and aligned MRI.
 
     Acquisition timing is heterogeneous: exams contain 13--24 frames spanning
     96--480\,s. Longitudinal exams are included. Cross-validation is grouped by
     patient, so one patient's exams never cross training/evaluation splits.
+
+    Pretraining draws on a separate, non-overlapping pool: \textbf{1,226
+    unlabeled exams from 225 patients} (1,081 CAPS, 145 CHIMEC), with no
+    patient or exam shared with the labeled cohort.
 
   \end{block}
 
@@ -199,11 +203,11 @@
 
     \begin{figure}
       \centering
-      \includegraphics[width=0.72\linewidth]{figures/graph_representation.pdf}
+      \includegraphics[width=0.66\linewidth]{figures/graph_representation.pdf}
       \caption{The same vessel centerline represented three ways.}
     \end{figure}
 
-    We represent the vascular network of each patient's \textbf{breasts} as a
+    We represent the vascular network of each patient's breasts as a
     graph:
 
     \begin{itemize}
@@ -246,8 +250,9 @@
 
     \begin{figure}
       \centering
-      \includegraphics[width=0.86\linewidth]{figures/pretraining_transfer.pdf}
-      \caption{Forecasting weights initialize the downstream encoder.}
+      \includegraphics[width=\linewidth]{figures/architecture.pdf}
+      \caption{Forecasting weights transfer into the pCR classifier; a randomly
+      initialized twin is the control arm.}
     \end{figure}
 
     The encoder receives vessel curves, connections, and elapsed times and
