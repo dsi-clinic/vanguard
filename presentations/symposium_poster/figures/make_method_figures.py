@@ -99,7 +99,10 @@ def _arrow(
 def make_pipeline() -> None:
     """Render the imaging-to-prediction pipeline."""
     fig, ax = plt.subplots(figsize=(10.79, 1.85))
-    ax.set_xlim(0, 12.4)
+    # The first box's left edge sits at x=0.05, and the boxstyle pad (0.16)
+    # inflates its drawn outline 0.16 further left, to -0.11 -- past an xlim
+    # of 0, the axes clip the rounded corner into a flat edge. -0.2 clears it.
+    ax.set_xlim(-0.2, 12.4)
     ax.set_ylim(0, 2.1)
     ax.axis("off")
 
