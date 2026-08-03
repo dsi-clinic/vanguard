@@ -162,8 +162,9 @@
 
   \begin{block}{Why Might Blood Vessels Predict Treatment Response?}
 
-    \textbf{Neoadjuvant treatment (NAT)} varies by breast cancer subtype and may
-    include chemotherapy and HER2-targeted therapy. Only some patients achieve
+    \textbf{Neoadjuvant treatment (NAT)} is given before surgery and varies by
+    breast cancer subtype, including chemotherapy and HER2-targeted therapy.
+    Only some patients achieve
     a \textbf{pathologic complete response (pCR)}, which is associated with
     improved long-term outcomes \citep{cortazar2014pcr}. Earlier prediction could
     avoid ineffective treatment for women unlikely to benefit and identify
@@ -251,7 +252,7 @@
 
     \begin{figure}
       \centering
-      \includegraphics[width=0.85\linewidth]{figures/arch3.pdf}
+      \includegraphics[width=\linewidth]{figures/arch3.pdf}
       \caption{Forecasting weights transfer into the pCR classifier; a randomly
       initialized twin is the control arm.}
     \end{figure}
@@ -266,12 +267,6 @@
     Centerline enhancement features predict pCR modestly, but hand-engineered
     GNNs do not beat matched tabular summaries---motivating this pretraining
     comparison as an alternative route to a better node representation.
-
-    \begin{highlightbox}
-      \textbf{Clinical value remains unproven:} repeated seeds and
-      locked-cohort validation must reproduce this gain before any clinical
-      or vascular-specific claim.
-    \end{highlightbox}
 
   \end{block}
 
