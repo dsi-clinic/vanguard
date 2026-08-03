@@ -35,14 +35,19 @@ def _box(
     color: str = "white",
     size: float = 15,
 ) -> None:
-    """Draw one rounded process box with centered text."""
+    """Draw one rounded process box with centered text.
+
+    ``pad`` inflates the drawn border outward from the given ``(width,
+    height)`` rect without moving the centered text, which is what keeps the
+    label clear of the box edge at poster print size.
+    """
     x, y = xy
     ax.add_patch(
         FancyBboxPatch(
             (x, y),
             width,
             height,
-            boxstyle="round,pad=0.03,rounding_size=0.10",
+            boxstyle="round,pad=0.16,rounding_size=0.10",
             facecolor=face,
             edgecolor=face,
             linewidth=1.4,
@@ -99,10 +104,15 @@ def make_pipeline() -> None:
         "Vessel-network\ngraph",
         "pCR\nprediction",
     )
+    # The first two stages -- the raw acquisition and its off-the-shelf
+    # segmentation -- are upstream inputs this project consumes, not work done
+    # here; greyed out to read as "given," with the maroon boxes starting at
+    # the centerline this project actually builds on.
+    faces = (GREY, GREY, MAROON, MAROON, MAROON)
     xs = (0.05, 2.55, 5.05, 7.55, 10.05)
     widths = (1.85, 1.85, 1.85, 1.85, 1.85)
-    for x, width, label in zip(xs, widths, labels):
-        _box(ax, (x, 0.48), width, 1.16, label, size=14)
+    for x, width, label, face in zip(xs, widths, labels, faces):
+        _box(ax, (x, 0.41), width, 1.30, label, face=face, size=14)
     for left_x, left_w, right_x in zip(xs[:-1], widths[:-1], xs[1:]):
         _arrow(ax, (left_x + left_w + 0.08, 1.06), (right_x - 0.08, 1.06))
 
