@@ -143,7 +143,8 @@ def make_pipeline() -> None:
         ha="center",
         va="center",
         color=INK,
-        fontsize=11,
+        fontsize=13,
+        fontweight="bold",
     )
     ax.text(
         5.97,
@@ -152,7 +153,8 @@ def make_pipeline() -> None:
         ha="center",
         va="center",
         color=INK,
-        fontsize=11,
+        fontsize=13,
+        fontweight="bold",
     )
 
     fig.tight_layout(pad=0.05)
