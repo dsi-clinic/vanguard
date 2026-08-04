@@ -116,7 +116,8 @@ def main() -> None:
     ax.invert_yaxis()
     ax.set_xlim(0.30, 0.72)
     ax.set_xlabel("Patient-level pooled OOF AUC (95% CI)", fontsize=12)
-    ax.set_title("All four matched downstream arms", fontsize=14, weight="bold", pad=24)
+    # No in-axes title: "all four matched downstream arms" is redundant with
+    # the LaTeX figure caption, and dropping it frees vertical space.
     _reference_label(ax, 0.5, "chance")
 
     ax.tick_params(axis="x", labelsize=11)
@@ -126,7 +127,7 @@ def main() -> None:
         ax.spines[side].set_visible(False)
     ax.spines["bottom"].set_color(INK)
 
-    fig.subplots_adjust(left=0.34, right=0.97, top=0.78, bottom=0.20)
+    fig.subplots_adjust(left=0.34, right=0.97, top=0.88, bottom=0.20)
     fig.savefig(OUT_PDF, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {OUT_PDF}")
