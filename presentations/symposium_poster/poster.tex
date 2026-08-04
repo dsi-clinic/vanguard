@@ -239,9 +239,11 @@
     \end{figure}
 
     A published deep-learning method (nnU-Net) identifies vessel voxels
-    \citep{isensee2021nnunet}. Our \textbf{tc4d} algorithm converts that mask into
-    a one-voxel-wide centerline while preserving vascular connectivity. The
-    centerline then becomes one of the three graph representations.
+    \citep{isensee2021nnunet}. Our \textbf{tc4d} algorithm (temporal-consensus
+    4D, using consistency across DCE-MRI time points to extract an exam-level
+    vessel skeleton) converts that mask into a one-voxel-wide centerline while
+    preserving vascular connectivity. The centerline then becomes one of the
+    three graph representations.
 
     Nodes carry geometry and measured enhancement curves. A \textbf{graph neural
     network (GNN)} combines neighboring-node information, pools the network into
