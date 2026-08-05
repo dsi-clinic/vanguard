@@ -8,15 +8,11 @@
 #SBATCH --output=logs/slurm/%x-%j.out
 #SBATCH --error=logs/slurm/%x-%j.err
 
-set -euo pipefail
-
-: "${INPUT_DIR:?set INPUT_DIR to a folder of nnU-Net inputs named CASE_0000.nii.gz}"
-
 REPO_ROOT="${SLURM_SUBMIT_DIR:-${REPO_ROOT:-$PWD}}"
 RUN_ID="${SLURM_JOB_ID:-manual}"
 OUTPUT_DIR="${OUTPUT_DIR:-results/nnunet_tumor_inference/${RUN_ID}}"
-VANGUARD_NNUNET_ENV="${VANGUARD_NNUNET_ENV:-/ess/scratch/scratch1/aakrithiram/micromamba/envs/vanguard-nnunet}"
-NNUNET_ROOT="${NNUNET_ROOT:-/ess/scratch/scratch1/aakrithiram/nnunet_vanguard}"
+VANGUARD_NNUNET_ENV="${VANGUARD_NNUNET_ENV:?set VANGUARD_NNUNET_ENV to the nnU-Net environment prefix}"
+NNUNET_ROOT="${NNUNET_ROOT:?set NNUNET_ROOT to the nnU-Net runtime root}"
 MODEL_DIR="${MODEL_DIR:-${NNUNET_ROOT}/results/full_image_dce_mri_tumor_segmentation}"
 DEVICE="${DEVICE:-cuda}"
 FOLDS="${FOLDS:-0 1 2 3 4}"
@@ -24,15 +20,12 @@ NPP="${NPP:-${SLURM_CPUS_PER_TASK:-4}}"
 NPS="${NPS:-${SLURM_CPUS_PER_TASK:-4}}"
 
 cd "${REPO_ROOT}"
-mkdir -p logs/slurm "${OUTPUT_DIR}"
+eval "$(micromamba shell hook -s bash)"
+micromamba activate "${VANGUARD_NNUNET_ENV}"
+set -euo pipefail
 
-set +u
-source ~/.bashrc || true
-if command -v micromamba >/dev/null 2>&1; then
-  eval "$(micromamba shell hook -s bash)"
-  micromamba activate "${VANGUARD_NNUNET_ENV}"
-fi
-set -u
+: "${INPUT_DIR:?set INPUT_DIR to a folder of nnU-Net inputs named CASE_0000.nii.gz}"
+mkdir -p logs/slurm "${OUTPUT_DIR}"
 
 export nnUNet_raw="${NNUNET_ROOT}/raw"
 export nnUNet_preprocessed="${NNUNET_ROOT}/preprocessed"

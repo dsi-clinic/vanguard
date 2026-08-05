@@ -8,17 +8,15 @@
 #SBATCH --output=logs/slurm/%x-%j.out
 #SBATCH --error=logs/slurm/%x-%j.err
 
-set -eo pipefail
-
-cd /ess/home/home1/aakrithiram/vanguard
-
+REPO_ROOT="${REPO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
+cd "${REPO_ROOT}"
 eval "$(micromamba shell hook -s bash)"
 micromamba activate vanguard
-set -u
+set -euo pipefail
 
 mkdir -p logs/slurm
 
-RUN_ROOT="${RUN_ROOT:-/ess/scratch/scratch1/aakrithiram/uchic_tumor_masks_contract_30}"
+: "${RUN_ROOT:?set RUN_ROOT to the prepared tumor output directory}"
 
 echo "host=$(hostname)"
 echo "date=$(date -Is)"

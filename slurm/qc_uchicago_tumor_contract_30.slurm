@@ -8,19 +8,16 @@
 #SBATCH --output=logs/slurm/%x-%j.out
 #SBATCH --error=logs/slurm/%x-%j.err
 
-set -eo pipefail
-
-cd /ess/home/home1/aakrithiram/vanguard
-
+REPO_ROOT="${REPO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
+cd "${REPO_ROOT}"
 eval "$(micromamba shell hook -s bash)"
 micromamba activate vanguard
-set -u
+set -euo pipefail
 
-export MPLCONFIGDIR=/ess/scratch/scratch1/aakrithiram/tmp/matplotlib
+: "${RUN_ROOT:?set RUN_ROOT to the prepared tumor output directory}"
+OUT_DIR="${OUT_DIR:-${RUN_ROOT}/qc}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-${RUN_ROOT}/.matplotlib}"
 mkdir -p "${MPLCONFIGDIR}" logs/slurm
-
-RUN_ROOT="${RUN_ROOT:-/ess/scratch/scratch1/aakrithiram/uchic_tumor_masks_contract_30}"
-OUT_DIR="${OUT_DIR:-/ess/home/home1/aakrithiram/vanguard/qc/uchic_tumor_masks_contract_30}"
 
 echo "host=$(hostname)"
 echo "date=$(date -Is)"

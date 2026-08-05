@@ -1,9 +1,19 @@
-"""MAMA-MIA nnU-Net tumor-mask workflow for paired UChicago HR/UFAST DCE."""
+"""MAMA-MIA nnU-Net tumor-mask workflow for paired UChicago HR/UFAST DCE.
+
+The released model and preprocessing plan are from Garrucho et al., Scientific
+Data 12, 453 (2025), https://doi.org/10.1038/s41597-025-04707-4, and the
+official MAMA-MIA nnU-Net fork.
+
+Aakrithi Ram designed and implemented the initial UChicago HR/UFAST tumor
+segmentation and shared-window visual-QC workflow and validated it on a 30-case
+pilot. Anna Woodard generalized that implementation for restartable
+cohort-scale execution, multi-source publication, and longitudinal laterality
+provenance.
+"""
 
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import json
 from pathlib import Path
@@ -22,12 +32,18 @@ from preprocessing.dicom import (
 )
 from preprocessing.motion import DEFAULT_MOTION_SETTINGS, correct_phase
 from preprocessing.pipeline import _identity_alignment_qc
-from preprocessing.spatial import resample_to_geometry, save_nifti_xyz
+from preprocessing.spatial import (
+    isotropic_geometry,
+    resample_to_geometry,
+    save_nifti_xyz,
+)
 
 POLICY_NAME = "mama_mia_first_postcontrast_hr_tumor_v1"
 FIRST_POSTCONTRAST_PHASE = 1
 TEMPORAL_INSTABILITY_DICE_THRESHOLD = 0.60
 TINY_VOLUME_ML_THRESHOLD = 0.10
+BILATERAL_MIN_OPPOSITE_VOLUME_ML = 0.10
+BILATERAL_MIN_OPPOSITE_TO_PRIMARY_RATIO = 0.10
 COMPONENT_CONNECTIVITY = 3
 BINARY_THRESHOLD = 0.5
 
@@ -39,13 +55,13 @@ DEFAULT_CASE_MANIFEST = Path(
     "/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/"
     "paired_hr_ufast_source_dicom/paired_preprocessing_case_manifest.csv"
 )
-DEFAULT_SELECTED_CASES = Path(
-    "results/uchicago_nnunet_timepoint_pilot/"
-    "all_datasets_random10_per_dataset_seed20260727/selected_cases.csv"
+DEFAULT_COHORT_MANIFEST = Path(
+    "/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_manifest/"
+    "dce2d_internal_ultrafast_with_high_resolution_manifest.csv"
 )
 DEFAULT_MODEL_DIR = Path(
-    "/ess/scratch/scratch1/aakrithiram/nnunet_vanguard/results/"
-    "full_image_dce_mri_tumor_segmentation"
+    "/gpfs/data/karczmar-lab/MAMA-MIA-syn60868042/"
+    "nnUNet_pretrained_weights/full_image_dce_mri_tumor_segmentation"
 )
 
 
@@ -164,7 +180,7 @@ def prepare_case_for_tumor(
                 input_link = nnunet_input_dir / image_path.name
                 _safe_symlink(image_path, input_link)
             else:
-                input_link = Path("")
+                input_link = Path()
             rows.append(
                 {
                     "exam_id": exam_id,
@@ -205,7 +221,11 @@ def prepare_case_for_tumor(
             "inventory_path": str(inventory.expanduser().resolve()),
             "case_manifest_path": str(case_manifest.expanduser().resolve()),
             "hr_source": {
-                "archive_path": str(hr.archive_path),
+                "source_kind": hr.source_kind,
+                "source_location": str(hr.archive_path),
+                "archive_path": (
+                    str(hr.archive_path) if hr.source_kind == "zip" else None
+                ),
                 "selected_dicom_sha256": hr.source_sha256,
                 "series_instance_uid": record.hr_series_instance_uid,
                 "geometry": hr.geometry.to_dict(),
@@ -214,7 +234,11 @@ def prepare_case_for_tumor(
                 "shared_4d_window": _shared_window(hr.signal_tzyx),
             },
             "ufast_source": {
-                "archive_path": str(ufast.archive_path),
+                "source_kind": ufast.source_kind,
+                "source_location": str(ufast.archive_path),
+                "archive_path": (
+                    str(ufast.archive_path) if ufast.source_kind == "zip" else None
+                ),
                 "selected_dicom_sha256": ufast.source_sha256,
                 "series_instance_uid": record.ufast_series_instance_uid,
                 "geometry": ufast.geometry.to_dict(),
@@ -240,9 +264,12 @@ def prepare_case_for_tumor(
         raise
 
 
-def prepare_cohort(args: argparse.Namespace) -> None:
-    selected = pd.read_csv(args.selected_cases, dtype=str)
+def _selected_cases(args: argparse.Namespace) -> pd.DataFrame:
+    """Return the requested cases, or every runnable manifest row."""
     case_manifest = pd.read_csv(args.case_manifest, dtype=str)
+    if args.selected_cases is None:
+        return case_manifest.sort_values("exam_id").reset_index(drop=True)
+    selected = pd.read_csv(args.selected_cases, dtype=str)
     cases = selected[["exam_id", "dataset"]].merge(
         case_manifest,
         on=["exam_id", "dataset"],
@@ -252,17 +279,44 @@ def prepare_cohort(args: argparse.Namespace) -> None:
     if len(cases) != len(selected):
         missing = selected.loc[~selected["exam_id"].isin(cases["exam_id"])]
         raise RuntimeError(f"selected cases missing runnable HR rows:\n{missing}")
+    return cases.sort_values("exam_id").reset_index(drop=True)
+
+
+def prepare_case_command(args: argparse.Namespace) -> None:
+    """Prepare one stable case-manifest row for use in a Slurm array."""
+    if args.exam_id is not None:
+        exam_id = args.exam_id
+    else:
+        index = args.array_index
+        if index is None:
+            import os
+
+            index = int(os.environ["SLURM_ARRAY_TASK_ID"])
+        cases = _selected_cases(args)
+        if index < 0 or index >= len(cases):
+            raise IndexError(f"array index {index} outside [0, {len(cases) - 1}]")
+        exam_id = str(cases.iloc[index]["exam_id"])
+    provenance = prepare_case_for_tumor(
+        inventory=args.inventory,
+        case_manifest=args.case_manifest,
+        exam_id=exam_id,
+        output_root=args.output_root,
+    )
+    print(f"prepared {exam_id}: {provenance['outputs']['nnunet_postcontrast_inputs']}")
+
+
+def write_cohort_manifests(args: argparse.Namespace) -> None:
+    """Index already prepared cases and pin the released model provenance."""
+    cases = _selected_cases(args)
 
     all_rows = []
     job_rows = []
     for row in cases.sort_values("exam_id").itertuples(index=False):
-        provenance = prepare_case_for_tumor(
-            inventory=args.inventory,
-            case_manifest=args.case_manifest,
-            exam_id=str(row.exam_id),
-            output_root=args.output_root,
-        )
         case_root = _case_root(args.output_root, str(row.exam_id))
+        provenance_path = case_root / "tumor_preprocessing_provenance.json"
+        if not provenance_path.is_file():
+            raise FileNotFoundError(f"case is not prepared: {provenance_path}")
+        provenance = json.loads(provenance_path.read_text())
         phase_manifest = pd.read_csv(case_root / "hr_phase_manifest.csv")
         all_rows.append(phase_manifest)
         job_rows.append(
@@ -286,7 +340,11 @@ def prepare_cohort(args: argparse.Namespace) -> None:
             "policy": POLICY_NAME,
             "inventory": str(args.inventory.expanduser().resolve()),
             "case_manifest": str(args.case_manifest.expanduser().resolve()),
-            "selected_cases": str(args.selected_cases.expanduser().resolve()),
+            "selected_cases": (
+                "all runnable case-manifest rows"
+                if args.selected_cases is None
+                else str(args.selected_cases.expanduser().resolve())
+            ),
             "model_dir": str(args.model_dir.expanduser().resolve()),
             "model_dir_sha256s": {
                 str(path.relative_to(args.model_dir)): _sha256(path)
@@ -305,6 +363,18 @@ def prepare_cohort(args: argparse.Namespace) -> None:
     print(f"n_postcontrast_inputs={sum(row['n_postcontrast_phases'] for row in job_rows)}")
 
 
+def prepare_cohort(args: argparse.Namespace) -> None:
+    """Prepare cases sequentially, then write the cohort manifests."""
+    for row in _selected_cases(args).itertuples(index=False):
+        prepare_case_for_tumor(
+            inventory=args.inventory,
+            case_manifest=args.case_manifest,
+            exam_id=str(row.exam_id),
+            output_root=args.output_root,
+        )
+    write_cohort_manifests(args)
+
+
 def _load_mask(path: Path) -> tuple[np.ndarray, nib.Nifti1Image]:
     image = nib.load(path)
     return np.asanyarray(image.dataobj) > 0, image
@@ -319,7 +389,9 @@ def _dice(a: np.ndarray, b: np.ndarray) -> float | None:
     return float((2.0 * np.logical_and(a, b).sum()) / denom) if denom else None
 
 
-def _component_outputs(mask: np.ndarray, img: nib.Nifti1Image, out_dir: Path) -> dict[str, Any]:
+def _component_outputs(
+    mask: np.ndarray, img: nib.Nifti1Image, out_dir: Path
+) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     all_path = out_dir / "tumor_all_components_hr.nii.gz"
     primary_path = out_dir / "tumor_primary_hr.nii.gz"
@@ -332,6 +404,28 @@ def _component_outputs(mask: np.ndarray, img: nib.Nifti1Image, out_dir: Path) ->
         primary_label = 0
         primary = np.zeros_like(mask, dtype=bool)
     voxel_ml = float(abs(np.linalg.det(img.affine[:3, :3])) / 1000.0)
+    field_center_xyz = (np.asarray(mask.shape, dtype=float) - 1.0) / 2.0
+    field_center_ras_x = float(
+        nib.affines.apply_affine(img.affine, field_center_xyz)[0]
+    )
+    components = []
+    for label in range(1, n_components + 1):
+        component = labeled == label
+        centroid_xyz = np.asarray(ndimage.center_of_mass(component), dtype=float)
+        centroid_ras = nib.affines.apply_affine(img.affine, centroid_xyz)
+        components.append(
+            {
+                "label": label,
+                "volume_ml": float(component.sum() * voxel_ml),
+                "centroid_xyz": centroid_xyz.tolist(),
+                "centroid_ras_mm": np.asarray(centroid_ras, dtype=float).tolist(),
+                "laterality": (
+                    "right"
+                    if float(centroid_ras[0]) > field_center_ras_x
+                    else "left"
+                ),
+            }
+        )
     for path, arr in ((all_path, mask), (primary_path, primary)):
         out = nib.Nifti1Image(arr.astype(np.uint8), img.affine, img.header)
         out.set_data_dtype(np.uint8)
@@ -343,11 +437,14 @@ def _component_outputs(mask: np.ndarray, img: nib.Nifti1Image, out_dir: Path) ->
         "primary_label": primary_label,
         "all_components_volume_ml": float(mask.sum() * voxel_ml),
         "primary_component_volume_ml": float(primary.sum() * voxel_ml),
+        "field_center_ras_x_mm": field_center_ras_x,
+        "components": components,
         "primary_mask": primary,
     }
 
 
 def finalize_cohort(args: argparse.Namespace) -> None:
+    """Select the primary mask, map it to UFAST, and write the cohort manifest."""
     cases = pd.read_csv(args.output_root / "tumor_case_manifest.csv", dtype=str)
     phase_manifest = pd.read_csv(args.output_root / "tumor_phase_manifest.csv")
     rows = []
@@ -373,6 +470,38 @@ def finalize_cohort(args: argparse.Namespace) -> None:
         median_later_dice = float(np.median(later_dice)) if later_dice else None
         tumor_empty = not bool(first_mask.any())
         primary_volume_ml = float(component_info["primary_component_volume_ml"])
+        primary_component = next(
+            (
+                component
+                for component in component_info["components"]
+                if component["label"] == component_info["primary_label"]
+            ),
+            None,
+        )
+        tumor_laterality_direct = (
+            "unknown"
+            if primary_component is None
+            else str(primary_component["laterality"])
+        )
+        opposite_components = [
+            component
+            for component in component_info["components"]
+            if component["laterality"] != tumor_laterality_direct
+        ]
+        opposite_volume_ml = max(
+            (float(component["volume_ml"]) for component in opposite_components),
+            default=0.0,
+        )
+        opposite_ratio = (
+            opposite_volume_ml / primary_volume_ml
+            if primary_volume_ml > 0
+            else None
+        )
+        bilateral_candidate = bool(
+            opposite_volume_ml >= BILATERAL_MIN_OPPOSITE_VOLUME_ML
+            and opposite_ratio is not None
+            and opposite_ratio >= BILATERAL_MIN_OPPOSITE_TO_PRIMARY_RATIO
+        )
         review_temporal = bool(
             tumor_empty
             or median_later_dice is None
@@ -385,21 +514,55 @@ def finalize_cohort(args: argparse.Namespace) -> None:
         )
         hr_geometry = DicomGeometry.from_dict(provenance["hr_source"]["geometry"])
         ufast_geometry = DicomGeometry.from_dict(provenance["ufast_source"]["geometry"])
+        # Vanguard's published UFAST phases and mapped vessel skeletons use the
+        # source-aligned 1 mm output grid, not the native DICOM voxel grid.  Keep
+        # the tumor mask on that exact downstream grid so array indices, shape,
+        # and affine all agree without a second consumer-side resampling step.
+        ufast_output_geometry = isotropic_geometry(ufast_geometry, spacing_mm=1.0)
         primary_ufast = (
-            resample_to_geometry(primary_hr_zyx, hr_geometry, ufast_geometry, nearest=True)
+            resample_to_geometry(
+                primary_hr_zyx,
+                hr_geometry,
+                ufast_output_geometry,
+                nearest=True,
+            )
             > BINARY_THRESHOLD
         )
         primary_ufast_path = case_root / "tumor_masks" / "tumor_primary_ufast.nii.gz"
-        save_nifti_xyz(primary_ufast_path, np.transpose(primary_ufast.astype(np.float32), (2, 1, 0)), ufast_geometry)
+        save_nifti_xyz(
+            primary_ufast_path,
+            np.transpose(primary_ufast.astype(np.float32), (2, 1, 0)),
+            ufast_output_geometry,
+        )
+
+        provenance["tumor_mapping"] = {
+            "source": "motion-corrected HR first-postcontrast primary component",
+            "target": "Vanguard source-aligned 1 mm UFAST output grid",
+            "transform": "physical-coordinate mapping in shared DICOM frame",
+            "interpolator": "nearest_neighbor",
+            "target_geometry": ufast_output_geometry.to_dict(),
+            "output_path": str(primary_ufast_path),
+            "output_voxels": int(primary_ufast.sum()),
+        }
+        _write_json(
+            case_root / "tumor_preprocessing_provenance.json",
+            provenance,
+        )
 
         alignment_status = str(provenance["identity_alignment_qc"]["status"])
         mapping_status = "pass" if alignment_status == "pass" else "review_required"
-        exclude_downstream = mapping_status != "pass"
-        exclude_reason = "alignment_review_required" if exclude_downstream else ""
+        exclusion_reasons = []
+        if mapping_status != "pass":
+            exclusion_reasons.append("alignment_review_required")
+        if bilateral_candidate:
+            exclusion_reasons.append("bilateral_candidate_review_required")
+        exclude_downstream = bool(exclusion_reasons)
+        exclude_reason = ";".join(exclusion_reasons)
 
         rows.append(
             {
                 "exam_id": exam_id,
+                "dataset": case.dataset,
                 "hr_series_instance_uid": case.hr_series_instance_uid,
                 "ufast_series_instance_uid": case.ufast_series_instance_uid,
                 "first_postcontrast_phase": FIRST_POSTCONTRAST_PHASE,
@@ -408,26 +571,327 @@ def finalize_cohort(args: argparse.Namespace) -> None:
                 "median_first_to_later_dice": median_later_dice,
                 "all_components_volume_ml": component_info["all_components_volume_ml"],
                 "primary_component_volume_ml": primary_volume_ml,
-                "opposite_breast_component_ml": None,
-                "opposite_to_primary_volume_ratio": None,
+                "tumor_laterality_direct": tumor_laterality_direct,
+                "laterality_method": (
+                    "primary-component centroid relative to the HR physical "
+                    "field center; NIfTI RAS x increases toward patient right"
+                ),
+                "opposite_breast_component_ml": opposite_volume_ml,
+                "opposite_to_primary_volume_ratio": opposite_ratio,
                 "tumor_mask_empty": tumor_empty,
                 "review_tiny": review_tiny,
                 "review_temporal_instability": review_temporal,
-                "bilateral_candidate": None,
-                "bilateral_review_status": "not_evaluated_no_aligned_bilateral_hr_mask",
+                "bilateral_candidate": bilateral_candidate,
+                "bilateral_review_status": (
+                    "review_required" if bilateral_candidate else "not_suspected"
+                ),
                 "alignment_qc_status": alignment_status,
                 "mapping_status": mapping_status,
+                "primary_ufast_grid": "vanguard_source_aligned_1mm_output",
                 "exclude_downstream": exclude_downstream,
                 "exclude_reason": exclude_reason,
                 "primary_hr_mask": component_info["primary_path"],
                 "primary_ufast_mask": str(primary_ufast_path),
                 "all_components_hr_mask": component_info["all_components_path"],
-                "qc_panel": "",
             }
         )
     manifest = pd.DataFrame(rows)
     manifest.to_csv(args.output_root / "tumor_mask_manifest.csv", index=False)
     print(f"wrote {args.output_root / 'tumor_mask_manifest.csv'}")
+    _write_longitudinal_manifest(args, manifest)
+
+
+def _write_longitudinal_manifest(
+    args: argparse.Namespace, direct_manifest: pd.DataFrame
+) -> None:
+    """Add every cohort exam and propagate an unambiguous patient tumor side."""
+    cohort = pd.read_csv(args.cohort_manifest, dtype=str)
+    direct = direct_manifest.copy()
+    for column in ("tumor_mask_empty", "review_tiny", "bilateral_candidate"):
+        direct[column] = direct[column].astype(bool)
+    usable = direct.loc[
+        direct["tumor_laterality_direct"].isin(["left", "right"])
+        & ~direct["tumor_mask_empty"]
+        & ~direct["review_tiny"]
+        & ~direct["bilateral_candidate"]
+    ]
+    patient_lookup = cohort[["exam_id", "patient_id"]].merge(
+        usable[["exam_id", "tumor_laterality_direct"]],
+        on="exam_id",
+        how="inner",
+        validate="one_to_one",
+    )
+    consensus: dict[str, tuple[str, str, bool]] = {}
+    for patient_id, group in patient_lookup.groupby("patient_id", sort=False):
+        sides = sorted(set(group["tumor_laterality_direct"]))
+        source_exams = ";".join(sorted(group["exam_id"]))
+        consensus[str(patient_id)] = (
+            sides[0] if len(sides) == 1 else "unknown",
+            source_exams,
+            len(sides) > 1,
+        )
+
+    duplicate_source_columns = [
+        column
+        for column in direct.columns
+        if column != "exam_id" and column in cohort.columns
+    ]
+    direct_for_join = direct.drop(columns=duplicate_source_columns)
+    combined = cohort.merge(
+        direct_for_join, on="exam_id", how="left", validate="one_to_one"
+    )
+    final_side = []
+    side_source = []
+    source_exams = []
+    conflicts = []
+    for row in combined.itertuples(index=False):
+        direct_side = getattr(row, "tumor_laterality_direct", None)
+        direct_valid = bool(
+            direct_side in {"left", "right"}
+            and not bool(getattr(row, "tumor_mask_empty", True))
+            and not bool(getattr(row, "review_tiny", True))
+            and not bool(getattr(row, "bilateral_candidate", True))
+        )
+        patient_side, patient_sources, conflict = consensus.get(
+            str(row.patient_id), ("unknown", "", False)
+        )
+        if conflict:
+            final_side.append("unknown")
+            side_source.append("unknown_patient_conflict")
+            source_exams.append(patient_sources)
+        elif direct_valid:
+            final_side.append(direct_side)
+            side_source.append("direct_segmentation")
+            source_exams.append(str(row.exam_id))
+        elif patient_side in {"left", "right"}:
+            final_side.append(patient_side)
+            side_source.append("same_patient_consensus")
+            source_exams.append(patient_sources)
+        else:
+            final_side.append("unknown")
+            side_source.append("unknown_no_unambiguous_valid_source")
+            source_exams.append(patient_sources)
+        conflicts.append(conflict)
+    combined["tumor_laterality"] = final_side
+    combined["tumor_laterality_source"] = side_source
+    combined["tumor_laterality_source_exam_ids"] = source_exams
+    combined["patient_laterality_conflict"] = conflicts
+    direct_exclusion = combined["exclude_downstream"].eq(True)
+    combined["exclude_downstream"] = direct_exclusion | combined[
+        "patient_laterality_conflict"
+    ]
+    direct_reasons = combined["exclude_reason"].fillna("").astype(str)
+    combined["exclude_reason"] = [
+        ";".join(
+            reason
+            for reason in (
+                direct_reason,
+                "patient_laterality_conflict" if conflict else "",
+            )
+            if reason
+        )
+        for direct_reason, conflict in zip(
+            direct_reasons,
+            combined["patient_laterality_conflict"],
+            strict=True,
+        )
+    ]
+    combined["tumor_segmentation_status"] = np.where(
+        combined["primary_hr_mask"].notna(),
+        "segmented",
+        combined.get("hr_selection_status", pd.Series("not_runnable", index=combined.index)),
+    )
+    if args.centerline_root is not None:
+        centerline_rows = []
+        for case_dir in sorted(args.centerline_root.expanduser().resolve().glob("*/*")):
+            exam_id = case_dir.name
+            skeleton = case_dir / f"{exam_id}_skeleton_4d_exam_mask.npy"
+            support = case_dir / f"{exam_id}_skeleton_4d_exam_support_mask.npy"
+            morphometry = case_dir / f"{exam_id}_morphometry.json"
+            if skeleton.is_file() or support.is_file() or morphometry.is_file():
+                centerline_rows.append(
+                    {
+                        "exam_id": exam_id,
+                        "skeleton_path": str(skeleton) if skeleton.is_file() else "",
+                        "support_path": str(support) if support.is_file() else "",
+                        "morphometry_path": (
+                            str(morphometry) if morphometry.is_file() else ""
+                        ),
+                        "centerline_status": (
+                            "complete"
+                            if all(
+                                path.is_file()
+                                for path in (skeleton, support, morphometry)
+                            )
+                            else "incomplete"
+                        ),
+                    }
+                )
+        centerlines = pd.DataFrame(centerline_rows)
+        if centerlines["exam_id"].duplicated().any():
+            raise ValueError("centerline root contains duplicate exam IDs")
+        combined = combined.merge(
+            centerlines, on="exam_id", how="left", validate="one_to_one"
+        )
+        combined["centerline_status"] = combined["centerline_status"].fillna(
+            "missing"
+        )
+    output_path = args.output_root / "longitudinal_tumor_manifest.csv"
+    combined.to_csv(output_path, index=False)
+    print(f"wrote {output_path}")
+
+
+def publish_cohort(args: argparse.Namespace) -> None:
+    """Publish direct masks on the exact student-facing UFAST cohort grid."""
+    if args.centerline_root is None:
+        raise ValueError("publish-cohort requires --centerline-root")
+    cohort_path = args.cohort_manifest.expanduser().resolve()
+    cohort = pd.read_csv(cohort_path, dtype=str)
+    if cohort["exam_id"].duplicated().any():
+        raise ValueError("cohort manifest repeats exam_id")
+    cohort_by_exam = cohort.set_index("exam_id")
+
+    parts = []
+    for path in args.direct_manifest:
+        resolved = path.expanduser().resolve()
+        part = pd.read_csv(resolved)
+        part["source_direct_manifest"] = str(resolved)
+        parts.append(part)
+    direct = pd.concat(parts, ignore_index=True)
+    if direct["exam_id"].astype(str).duplicated().any():
+        repeated = direct.loc[
+            direct["exam_id"].astype(str).duplicated(keep=False), "exam_id"
+        ].tolist()
+        raise ValueError(f"direct tumor manifests repeat exam IDs: {repeated[:3]}")
+    direct = direct.loc[
+        direct["exam_id"].astype(str).isin(cohort_by_exam.index)
+    ].copy()
+    if direct.empty:
+        raise ValueError("no direct tumor masks overlap the cohort")
+    if not direct["primary_ufast_grid"].eq(
+        "vanguard_source_aligned_1mm_output"
+    ).all():
+        raise ValueError("a direct tumor mask isn't on the Vanguard UFAST output grid")
+
+    args.output_root.mkdir(parents=True, exist_ok=True)
+    mask_dir = args.output_root / "masks"
+    mask_dir.mkdir(parents=True, exist_ok=True)
+    checksums = []
+    canonical_paths = []
+    source_paths = []
+    normalized_datasets = []
+    centerline_root = args.centerline_root.expanduser().resolve()
+    for row in direct.itertuples(index=False):
+        exam_id = str(row.exam_id)
+        cohort_row = cohort_by_exam.loc[exam_id]
+        dataset = str(cohort_row["dataset"])
+        source_mask = Path(row.primary_ufast_mask).expanduser().resolve()
+        if not source_mask.is_file():
+            raise FileNotFoundError(source_mask)
+        canonical_mask = mask_dir / f"{exam_id}.nii.gz"
+        _safe_symlink(source_mask, canonical_mask)
+
+        phase_paths = [Path(value) for value in json.loads(cohort_row["phase_files"])]
+        if not phase_paths or not phase_paths[0].is_file():
+            raise FileNotFoundError(f"{exam_id}: published UFAST phase is missing")
+        mask_image = nib.load(source_mask)
+        phase_image = nib.load(phase_paths[0])
+        skeleton_path = (
+            centerline_root
+            / dataset
+            / exam_id
+            / f"{exam_id}_skeleton_4d_exam_mask.npy"
+        )
+        if not skeleton_path.is_file():
+            raise FileNotFoundError(skeleton_path)
+        skeleton_shape_xyz = tuple(reversed(np.load(skeleton_path, mmap_mode="r").shape))
+        if mask_image.shape != phase_image.shape or mask_image.shape != skeleton_shape_xyz:
+            raise ValueError(
+                f"{exam_id}: tumor/image/skeleton shapes disagree: "
+                f"{mask_image.shape}, {phase_image.shape}, {skeleton_shape_xyz}"
+            )
+        if not np.allclose(mask_image.affine, phase_image.affine):
+            raise ValueError(f"{exam_id}: tumor and UFAST image affines disagree")
+
+        source_paths.append(str(source_mask))
+        canonical_paths.append(str(canonical_mask))
+        normalized_datasets.append(dataset)
+        checksums.append(
+            {
+                "exam_id": exam_id,
+                "primary_ufast_mask": str(canonical_mask),
+                "sha256": _sha256(source_mask),
+            }
+        )
+
+    direct["source_dataset"] = direct["dataset"]
+    direct["dataset"] = normalized_datasets
+    direct["source_primary_ufast_mask"] = source_paths
+    direct["primary_ufast_mask"] = canonical_paths
+    direct = direct.sort_values("exam_id").reset_index(drop=True)
+    expected_mask_names = {Path(path).name for path in canonical_paths}
+    for published_mask in mask_dir.glob("*.nii.gz"):
+        if published_mask.is_symlink() and published_mask.name not in expected_mask_names:
+            published_mask.unlink()
+    direct_path = args.output_root / "tumor_mask_manifest.csv"
+    direct.to_csv(direct_path, index=False)
+    pd.DataFrame(checksums).sort_values("exam_id").to_csv(
+        args.output_root / "mask_checksums.csv", index=False
+    )
+    _write_longitudinal_manifest(args, direct)
+
+    missing = sorted(set(cohort["exam_id"].astype(str)) - set(direct["exam_id"]))
+    provenance = {
+        "policy": POLICY_NAME,
+        "cohort_manifest": str(cohort_path),
+        "cohort_manifest_sha256": _sha256(cohort_path),
+        "direct_manifests": [
+            {
+                "path": str(path.expanduser().resolve()),
+                "sha256": _sha256(path.expanduser().resolve()),
+            }
+            for path in args.direct_manifest
+        ],
+        "centerline_root": str(centerline_root),
+        "cohort_exams": int(len(cohort)),
+        "direct_masks": int(len(direct)),
+        "missing_direct_exam_ids": missing,
+        "spatial_validation": (
+            "every direct mask has the exact published UFAST phase shape and "
+            "affine and the exact published skeleton shape"
+        ),
+    }
+    _write_json(args.output_root / "provenance.json", provenance)
+    (args.output_root / "README.md").write_text(
+        "# UChicago tumor masks\n\n"
+        f"This directory contains {len(direct)} direct primary-tumor masks for "
+        f"the {len(cohort)}-exam cohort. Each mask is the largest connected "
+        "component from MAMA-MIA inference on the first postcontrast "
+        "higher-spatial-resolution image, mapped in physical coordinates to "
+        "the exact 1 mm Vanguard UFAST image and vessel-skeleton grid. "
+        "Possible bilateral cases remain flagged in the manifests; the flat "
+        "`masks/` directory always contains only the primary component.\n\n"
+        "`tumor_mask_manifest.csv` lists direct segmentations, "
+        "`longitudinal_tumor_manifest.csv` joins tumor status and unambiguous "
+        "same-patient laterality to every cohort row, and "
+        "`mask_checksums.csv` records mask content checksums.\n",
+        encoding="utf-8",
+    )
+    checksum_paths = [
+        args.output_root / "tumor_mask_manifest.csv",
+        args.output_root / "longitudinal_tumor_manifest.csv",
+        args.output_root / "mask_checksums.csv",
+        args.output_root / "provenance.json",
+        args.output_root / "README.md",
+    ]
+    (args.output_root / "SHA256SUMS").write_text(
+        "".join(f"{_sha256(path)}  {path.name}\n" for path in checksum_paths),
+        encoding="utf-8",
+    )
+    print(
+        f"published {len(direct)}/{len(cohort)} direct masks under "
+        f"{args.output_root}; missing_direct={len(missing)}"
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -437,19 +901,38 @@ def _parser() -> argparse.ArgumentParser:
     common.add_argument("--output-root", type=Path, required=True)
     common.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     common.add_argument("--case-manifest", type=Path, default=DEFAULT_CASE_MANIFEST)
-    common.add_argument("--selected-cases", type=Path, default=DEFAULT_SELECTED_CASES)
+    common.add_argument(
+        "--cohort-manifest", type=Path, default=DEFAULT_COHORT_MANIFEST
+    )
+    common.add_argument("--centerline-root", type=Path)
+    common.add_argument("--selected-cases", type=Path)
     common.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL_DIR)
     sub.add_parser("prepare-cohort", parents=[common])
+    prepare_case_parser = sub.add_parser("prepare-case", parents=[common])
+    prepare_case_parser.add_argument("--exam-id")
+    prepare_case_parser.add_argument("--array-index", type=int)
+    sub.add_parser("index-cohort", parents=[common])
     sub.add_parser("finalize-cohort", parents=[common])
+    publish_parser = sub.add_parser("publish-cohort", parents=[common])
+    publish_parser.add_argument(
+        "--direct-manifest", action="append", required=True, type=Path
+    )
     return parser
 
 
 def main() -> None:
+    """Run one tumor-segmentation workflow stage."""
     args = _parser().parse_args()
     if args.command == "prepare-cohort":
         prepare_cohort(args)
+    elif args.command == "prepare-case":
+        prepare_case_command(args)
+    elif args.command == "index-cohort":
+        write_cohort_manifests(args)
     elif args.command == "finalize-cohort":
         finalize_cohort(args)
+    elif args.command == "publish-cohort":
+        publish_cohort(args)
     else:
         raise ValueError(args.command)
 

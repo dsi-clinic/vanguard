@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Render QC panels for the mentor-contract 30-case UChicago tumor pilot."""
+"""Render shared-window QC panels for a prepared UChicago tumor run.
+
+Aakrithi Ram implemented this renderer for the original 30-case validation
+pilot. It remains compatible with that run while accepting any prepared tumor
+cohort root explicitly.
+"""
 
 from __future__ import annotations
 
@@ -15,13 +20,12 @@ import pandas as pd
 from preprocessing.dicom import load_dicom_series
 
 
-DEFAULT_RUN_ROOT = Path("/ess/scratch/scratch1/aakrithiram/uchic_tumor_masks_contract_30")
 DEFAULT_OUT_DIR = Path("qc/uchic_tumor_masks_contract_30")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-root", type=Path, default=DEFAULT_RUN_ROOT)
+    parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     return parser.parse_args()
 
@@ -198,7 +202,7 @@ def main() -> None:
     index = pd.DataFrame(rows)
     index.to_csv(args.out_dir / "index.csv", index=False)
     with (args.out_dir / "index.html").open("w") as stream:
-        stream.write("<html><body><h1>UChicago tumor contract QC, 30-case pilot</h1>\n")
+        stream.write("<html><body><h1>UChicago tumor segmentation QC</h1>\n")
         for row in rows:
             name = Path(row["qc_panel"]).name
             stream.write(f"<h2>{row['exam_id']}</h2>\n")
