@@ -87,7 +87,9 @@ def _shared_window(signal_tzyx: np.ndarray) -> list[float]:
     return [float(value) for value in np.percentile(values, [0.5, 99.5])]
 
 
-def _motion_correct_hr(signal_tzyx: np.ndarray, geometry: DicomGeometry) -> tuple[np.ndarray, list[dict[str, Any]]]:
+def _motion_correct_hr(
+    signal_tzyx: np.ndarray, geometry: DicomGeometry
+) -> tuple[np.ndarray, list[dict[str, Any]]]:
     signal_tzyx = np.asarray(signal_tzyx, dtype=np.float32)
     fixed_xyz = np.transpose(signal_tzyx[0], (2, 1, 0))
     corrected = [signal_tzyx[0]]
@@ -164,7 +166,9 @@ def prepare_case_for_tumor(
             ufast,
             baseline_frame_count=record.ufast_baseline_frame_count,
         )
-        corrected_hr_tzyx, motion_metrics = _motion_correct_hr(hr.signal_tzyx, hr.geometry)
+        corrected_hr_tzyx, motion_metrics = _motion_correct_hr(
+            hr.signal_tzyx, hr.geometry
+        )
         hr_dir = case_root / "hr_images"
         nnunet_input_dir = case_root / "nnunet_postcontrast_inputs"
         rows = []
@@ -197,8 +201,12 @@ def prepare_case_for_tumor(
                         )
                     ),
                     "hr_image": str(image_path),
-                    "nnunet_input": str(input_link) if phase_index >= FIRST_POSTCONTRAST_PHASE else "",
-                    "prediction": str(prediction_path) if phase_index >= FIRST_POSTCONTRAST_PHASE else "",
+                    "nnunet_input": str(input_link)
+                    if phase_index >= FIRST_POSTCONTRAST_PHASE
+                    else "",
+                    "prediction": str(prediction_path)
+                    if phase_index >= FIRST_POSTCONTRAST_PHASE
+                    else "",
                 }
             )
 
@@ -252,7 +260,9 @@ def prepare_case_for_tumor(
             "outputs": {
                 "hr_images": str(hr_dir),
                 "nnunet_postcontrast_inputs": str(nnunet_input_dir),
-                "nnunet_postcontrast_predictions": str(case_root / "nnunet_postcontrast_predictions"),
+                "nnunet_postcontrast_predictions": str(
+                    case_root / "nnunet_postcontrast_predictions"
+                ),
             },
         }
         _write_json(provenance_path, provenance)
@@ -327,13 +337,19 @@ def write_cohort_manifests(args: argparse.Namespace) -> None:
                 "ufast_series_instance_uid": row.ufast_series_instance_uid,
                 "input_dir": provenance["outputs"]["nnunet_postcontrast_inputs"],
                 "output_dir": provenance["outputs"]["nnunet_postcontrast_predictions"],
-                "n_postcontrast_phases": int((phase_manifest["phase_index"] >= FIRST_POSTCONTRAST_PHASE).sum()),
+                "n_postcontrast_phases": int(
+                    (phase_manifest["phase_index"] >= FIRST_POSTCONTRAST_PHASE).sum()
+                ),
             }
         )
 
     args.output_root.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(job_rows).to_csv(args.output_root / "tumor_case_manifest.csv", index=False)
-    pd.concat(all_rows, ignore_index=True).to_csv(args.output_root / "tumor_phase_manifest.csv", index=False)
+    pd.DataFrame(job_rows).to_csv(
+        args.output_root / "tumor_case_manifest.csv", index=False
+    )
+    pd.concat(all_rows, ignore_index=True).to_csv(
+        args.output_root / "tumor_phase_manifest.csv", index=False
+    )
     _write_json(
         args.output_root / "tumor_run_provenance.json",
         {
@@ -360,7 +376,9 @@ def write_cohort_manifests(args: argparse.Namespace) -> None:
     print(f"wrote {args.output_root / 'tumor_case_manifest.csv'}")
     print(f"wrote {args.output_root / 'tumor_phase_manifest.csv'}")
     print(f"n_cases={len(job_rows)}")
-    print(f"n_postcontrast_inputs={sum(row['n_postcontrast_phases'] for row in job_rows)}")
+    print(
+        f"n_postcontrast_inputs={sum(row['n_postcontrast_phases'] for row in job_rows)}"
+    )
 
 
 def prepare_cohort(args: argparse.Namespace) -> None:
@@ -395,7 +413,9 @@ def _component_outputs(
     out_dir.mkdir(parents=True, exist_ok=True)
     all_path = out_dir / "tumor_all_components_hr.nii.gz"
     primary_path = out_dir / "tumor_primary_hr.nii.gz"
-    labeled, n_components = ndimage.label(mask, structure=np.ones((3, 3, 3), dtype=np.uint8))
+    labeled, n_components = ndimage.label(
+        mask, structure=np.ones((3, 3, 3), dtype=np.uint8)
+    )
     if n_components:
         sizes = ndimage.sum(mask, labeled, index=np.arange(1, n_components + 1))
         primary_label = int(np.argmax(sizes) + 1)
@@ -420,9 +440,7 @@ def _component_outputs(
                 "centroid_xyz": centroid_xyz.tolist(),
                 "centroid_ras_mm": np.asarray(centroid_ras, dtype=float).tolist(),
                 "laterality": (
-                    "right"
-                    if float(centroid_ras[0]) > field_center_ras_x
-                    else "left"
+                    "right" if float(centroid_ras[0]) > field_center_ras_x else "left"
                 ),
             }
         )
@@ -451,15 +469,25 @@ def finalize_cohort(args: argparse.Namespace) -> None:
     for case in cases.itertuples(index=False):
         exam_id = str(case.exam_id)
         case_root = _case_root(args.output_root, exam_id)
-        provenance = json.loads((case_root / "tumor_preprocessing_provenance.json").read_text())
-        case_phases = phase_manifest.loc[phase_manifest["exam_id"].astype(str).eq(exam_id)].copy()
-        first_row = case_phases.loc[case_phases["phase_index"].eq(FIRST_POSTCONTRAST_PHASE)].iloc[0]
+        provenance = json.loads(
+            (case_root / "tumor_preprocessing_provenance.json").read_text()
+        )
+        case_phases = phase_manifest.loc[
+            phase_manifest["exam_id"].astype(str).eq(exam_id)
+        ].copy()
+        first_row = case_phases.loc[
+            case_phases["phase_index"].eq(FIRST_POSTCONTRAST_PHASE)
+        ].iloc[0]
         first_pred = Path(first_row["prediction"])
         first_mask, first_img = _load_mask(first_pred)
-        component_info = _component_outputs(first_mask, first_img, case_root / "tumor_masks")
+        component_info = _component_outputs(
+            first_mask, first_img, case_root / "tumor_masks"
+        )
 
         later_dice = []
-        for _, later in case_phases.loc[case_phases["phase_index"].gt(FIRST_POSTCONTRAST_PHASE)].iterrows():
+        for _, later in case_phases.loc[
+            case_phases["phase_index"].gt(FIRST_POSTCONTRAST_PHASE)
+        ].iterrows():
             later_pred = Path(later["prediction"])
             if not later_pred.exists():
                 continue
@@ -493,9 +521,7 @@ def finalize_cohort(args: argparse.Namespace) -> None:
             default=0.0,
         )
         opposite_ratio = (
-            opposite_volume_ml / primary_volume_ml
-            if primary_volume_ml > 0
-            else None
+            opposite_volume_ml / primary_volume_ml if primary_volume_ml > 0 else None
         )
         bilateral_candidate = bool(
             opposite_volume_ml >= BILATERAL_MIN_OPPOSITE_VOLUME_ML
@@ -567,7 +593,9 @@ def finalize_cohort(args: argparse.Namespace) -> None:
                 "ufast_series_instance_uid": case.ufast_series_instance_uid,
                 "first_postcontrast_phase": FIRST_POSTCONTRAST_PHASE,
                 "first_postcontrast_time_seconds": float(first_row["time_seconds"]),
-                "n_later_postcontrast_phases": int(case_phases["phase_index"].gt(FIRST_POSTCONTRAST_PHASE).sum()),
+                "n_later_postcontrast_phases": int(
+                    case_phases["phase_index"].gt(FIRST_POSTCONTRAST_PHASE).sum()
+                ),
                 "median_first_to_later_dice": median_later_dice,
                 "all_components_volume_ml": component_info["all_components_volume_ml"],
                 "primary_component_volume_ml": primary_volume_ml,
@@ -677,9 +705,9 @@ def _write_longitudinal_manifest(
     combined["tumor_laterality_source_exam_ids"] = source_exams
     combined["patient_laterality_conflict"] = conflicts
     direct_exclusion = combined["exclude_downstream"].eq(True)
-    combined["exclude_downstream"] = direct_exclusion | combined[
-        "patient_laterality_conflict"
-    ]
+    combined["exclude_downstream"] = (
+        direct_exclusion | combined["patient_laterality_conflict"]
+    )
     direct_reasons = combined["exclude_reason"].fillna("").astype(str)
     combined["exclude_reason"] = [
         ";".join(
@@ -699,7 +727,9 @@ def _write_longitudinal_manifest(
     combined["tumor_segmentation_status"] = np.where(
         combined["primary_hr_mask"].notna(),
         "segmented",
-        combined.get("hr_selection_status", pd.Series("not_runnable", index=combined.index)),
+        combined.get(
+            "hr_selection_status", pd.Series("not_runnable", index=combined.index)
+        ),
     )
     if args.centerline_root is not None:
         centerline_rows = []
@@ -733,9 +763,7 @@ def _write_longitudinal_manifest(
         combined = combined.merge(
             centerlines, on="exam_id", how="left", validate="one_to_one"
         )
-        combined["centerline_status"] = combined["centerline_status"].fillna(
-            "missing"
-        )
+        combined["centerline_status"] = combined["centerline_status"].fillna("missing")
     output_path = args.output_root / "longitudinal_tumor_manifest.csv"
     combined.to_csv(output_path, index=False)
     print(f"wrote {output_path}")
@@ -763,14 +791,10 @@ def publish_cohort(args: argparse.Namespace) -> None:
             direct["exam_id"].astype(str).duplicated(keep=False), "exam_id"
         ].tolist()
         raise ValueError(f"direct tumor manifests repeat exam IDs: {repeated[:3]}")
-    direct = direct.loc[
-        direct["exam_id"].astype(str).isin(cohort_by_exam.index)
-    ].copy()
+    direct = direct.loc[direct["exam_id"].astype(str).isin(cohort_by_exam.index)].copy()
     if direct.empty:
         raise ValueError("no direct tumor masks overlap the cohort")
-    if not direct["primary_ufast_grid"].eq(
-        "vanguard_source_aligned_1mm_output"
-    ).all():
+    if not direct["primary_ufast_grid"].eq("vanguard_source_aligned_1mm_output").all():
         raise ValueError("a direct tumor mask isn't on the Vanguard UFAST output grid")
 
     args.output_root.mkdir(parents=True, exist_ok=True)
@@ -797,15 +821,17 @@ def publish_cohort(args: argparse.Namespace) -> None:
         mask_image = nib.load(source_mask)
         phase_image = nib.load(phase_paths[0])
         skeleton_path = (
-            centerline_root
-            / dataset
-            / exam_id
-            / f"{exam_id}_skeleton_4d_exam_mask.npy"
+            centerline_root / dataset / exam_id / f"{exam_id}_skeleton_4d_exam_mask.npy"
         )
         if not skeleton_path.is_file():
             raise FileNotFoundError(skeleton_path)
-        skeleton_shape_xyz = tuple(reversed(np.load(skeleton_path, mmap_mode="r").shape))
-        if mask_image.shape != phase_image.shape or mask_image.shape != skeleton_shape_xyz:
+        skeleton_shape_xyz = tuple(
+            reversed(np.load(skeleton_path, mmap_mode="r").shape)
+        )
+        if (
+            mask_image.shape != phase_image.shape
+            or mask_image.shape != skeleton_shape_xyz
+        ):
             raise ValueError(
                 f"{exam_id}: tumor/image/skeleton shapes disagree: "
                 f"{mask_image.shape}, {phase_image.shape}, {skeleton_shape_xyz}"
@@ -831,7 +857,10 @@ def publish_cohort(args: argparse.Namespace) -> None:
     direct = direct.sort_values("exam_id").reset_index(drop=True)
     expected_mask_names = {Path(path).name for path in canonical_paths}
     for published_mask in mask_dir.glob("*.nii.gz"):
-        if published_mask.is_symlink() and published_mask.name not in expected_mask_names:
+        if (
+            published_mask.is_symlink()
+            and published_mask.name not in expected_mask_names
+        ):
             published_mask.unlink()
     direct_path = args.output_root / "tumor_mask_manifest.csv"
     direct.to_csv(direct_path, index=False)
@@ -901,9 +930,7 @@ def _parser() -> argparse.ArgumentParser:
     common.add_argument("--output-root", type=Path, required=True)
     common.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     common.add_argument("--case-manifest", type=Path, default=DEFAULT_CASE_MANIFEST)
-    common.add_argument(
-        "--cohort-manifest", type=Path, default=DEFAULT_COHORT_MANIFEST
-    )
+    common.add_argument("--cohort-manifest", type=Path, default=DEFAULT_COHORT_MANIFEST)
     common.add_argument("--centerline-root", type=Path)
     common.add_argument("--selected-cases", type=Path)
     common.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL_DIR)
