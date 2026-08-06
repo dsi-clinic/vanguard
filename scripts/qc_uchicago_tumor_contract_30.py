@@ -19,11 +19,11 @@ import pandas as pd
 
 from preprocessing.dicom import load_dicom_series
 
-
 DEFAULT_OUT_DIR = Path("qc/uchic_tumor_masks_contract_30")
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the prepared-run and output locations."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
@@ -67,7 +67,15 @@ def _best_slice(*masks: np.ndarray) -> int:
     return int(masks[0].shape[2] // 2)
 
 
-def _overlay(ax: plt.Axes, image: np.ndarray, mask: np.ndarray, *, vmin: float, vmax: float, color: str) -> None:
+def _overlay(
+    ax: plt.Axes,
+    image: np.ndarray,
+    mask: np.ndarray,
+    *,
+    vmin: float,
+    vmax: float,
+    color: str,
+) -> None:
     ax.imshow(_display(image), cmap="gray", vmin=vmin, vmax=vmax)
     shown = np.ma.masked_where(~mask.astype(bool), mask.astype(bool))
     ax.imshow(_display(shown), cmap=color, alpha=0.45, vmin=0, vmax=1)
@@ -78,7 +86,9 @@ def _sub_limit(first: np.ndarray, images: list[np.ndarray]) -> float:
     limits = []
     for image in images:
         sub = image.astype(np.float32) - first.astype(np.float32)
-        limits.extend([abs(float(np.percentile(sub, 1))), abs(float(np.percentile(sub, 99)))])
+        limits.extend(
+            [abs(float(np.percentile(sub, 1))), abs(float(np.percentile(sub, 99)))]
+        )
     value = max(limits) if limits else 1.0
     return value if value > 0 else 1.0
 
@@ -95,9 +105,12 @@ def _ufast_baseline(provenance: dict[str, object]) -> np.ndarray:
 
 
 def render_case(run_root: Path, out_dir: Path, row: pd.Series) -> dict[str, object]:
+    """Render and index one exam's tumor QC panel."""
     exam_id = str(row["exam_id"])
     case_root = run_root / "work" / exam_id
-    provenance = json.loads((case_root / "tumor_preprocessing_provenance.json").read_text())
+    provenance = json.loads(
+        (case_root / "tumor_preprocessing_provenance.json").read_text()
+    )
     phases = pd.read_csv(case_root / "hr_phase_manifest.csv")
     image_paths = [Path(path) for path in phases["hr_image"]]
     images = [_load(path).astype(np.float32) for path in image_paths]
@@ -113,11 +126,15 @@ def render_case(run_root: Path, out_dir: Path, row: pd.Series) -> dict[str, obje
     for _, phase in later_rows.iterrows():
         pred = Path(str(phase["prediction"]))
         if pred.exists():
-            later_masks.append((int(phase["phase_index"]), float(phase["time_seconds"]), _mask(pred)))
+            later_masks.append(
+                (int(phase["phase_index"]), float(phase["time_seconds"]), _mask(pred))
+            )
 
     z = _best_slice(primary, all_components)
     n_cols = 6 + len(later_masks)
-    fig, axes = plt.subplots(2, n_cols, figsize=(2.4 * n_cols, 5.2), constrained_layout=True)
+    fig, axes = plt.subplots(
+        2, n_cols, figsize=(2.4 * n_cols, 5.2), constrained_layout=True
+    )
     if n_cols == 1:
         axes = np.asarray(axes).reshape(2, 1)
     fig.suptitle(f"{exam_id} tumor QC, HR axial z={z}", fontsize=11)
@@ -126,26 +143,57 @@ def render_case(run_root: Path, out_dir: Path, row: pd.Series) -> dict[str, obje
     axes[0, 0].set_title("HR tp0 pre", fontsize=8)
     axes[0, 0].axis("off")
 
-    _overlay(axes[0, 1], first_post[:, :, z], primary[:, :, z], vmin=vmin, vmax=vmax, color="autumn")
-    axes[0, 1].set_title(f"HR tp1 final\n{float(phases.iloc[1]['time_seconds']):.1f}s", fontsize=8)
+    _overlay(
+        axes[0, 1],
+        first_post[:, :, z],
+        primary[:, :, z],
+        vmin=vmin,
+        vmax=vmax,
+        color="autumn",
+    )
+    axes[0, 1].set_title(
+        f"HR tp1 final\n{float(phases.iloc[1]['time_seconds']):.1f}s", fontsize=8
+    )
 
     sub = first_post - pre
-    axes[0, 2].imshow(_display(sub[:, :, z]), cmap="seismic", vmin=-sub_lim, vmax=sub_lim)
-    axes[0, 2].imshow(_display(np.ma.masked_where(~primary[:, :, z], primary[:, :, z])), cmap="autumn", alpha=0.45)
+    axes[0, 2].imshow(
+        _display(sub[:, :, z]), cmap="seismic", vmin=-sub_lim, vmax=sub_lim
+    )
+    axes[0, 2].imshow(
+        _display(np.ma.masked_where(~primary[:, :, z], primary[:, :, z])),
+        cmap="autumn",
+        alpha=0.45,
+    )
     axes[0, 2].set_title("tp1 - tp0", fontsize=8)
     axes[0, 2].axis("off")
 
-    _overlay(axes[0, 3], first_post[:, :, z], all_components[:, :, z], vmin=vmin, vmax=vmax, color="spring")
+    _overlay(
+        axes[0, 3],
+        first_post[:, :, z],
+        all_components[:, :, z],
+        vmin=vmin,
+        vmax=vmax,
+        color="spring",
+    )
     axes[0, 3].set_title("all tp1 comps", fontsize=8)
 
-    _overlay(axes[0, 4], first_post[:, :, z], primary[:, :, z], vmin=vmin, vmax=vmax, color="autumn")
+    _overlay(
+        axes[0, 4],
+        first_post[:, :, z],
+        primary[:, :, z],
+        vmin=vmin,
+        vmax=vmax,
+        color="autumn",
+    )
     axes[0, 4].set_title("primary comp", fontsize=8)
 
     ufast_base = _ufast_baseline(provenance)
     primary_ufast = _mask(case_root / "tumor_masks" / "tumor_primary_ufast.nii.gz")
     z_ufast = _best_slice(primary_ufast)
     uf_vals = ufast_base[ufast_base > 0]
-    uf_vmin, uf_vmax = np.percentile(uf_vals, [0.5, 99.5]) if uf_vals.size else (0.0, 1.0)
+    uf_vmin, uf_vmax = (
+        np.percentile(uf_vals, [0.5, 99.5]) if uf_vals.size else (0.0, 1.0)
+    )
     _overlay(
         axes[0, 5],
         np.transpose(ufast_base, (2, 1, 0))[:, :, z_ufast],
@@ -158,8 +206,17 @@ def render_case(run_root: Path, out_dir: Path, row: pd.Series) -> dict[str, obje
 
     for col, (phase_index, time_seconds, mask) in enumerate(later_masks, start=6):
         image = images[phase_index]
-        _overlay(axes[0, col], image[:, :, z], mask[:, :, z], vmin=vmin, vmax=vmax, color="autumn")
-        axes[0, col].set_title(f"later tp{phase_index}\n{time_seconds:.1f}s", fontsize=8)
+        _overlay(
+            axes[0, col],
+            image[:, :, z],
+            mask[:, :, z],
+            vmin=vmin,
+            vmax=vmax,
+            color="autumn",
+        )
+        axes[0, col].set_title(
+            f"later tp{phase_index}\n{time_seconds:.1f}s", fontsize=8
+        )
 
     for col in range(n_cols):
         axes[1, col].axis("off")
@@ -191,14 +248,21 @@ def render_case(run_root: Path, out_dir: Path, row: pd.Series) -> dict[str, obje
     out_path = out_dir / f"{exam_id}_tumor_contract_qc.png"
     fig.savefig(out_path, dpi=140)
     plt.close(fig)
-    return {"exam_id": exam_id, "dataset": row.get("dataset", ""), "qc_panel": str(out_path)}
+    return {
+        "exam_id": exam_id,
+        "dataset": row.get("dataset", ""),
+        "qc_panel": str(out_path),
+    }
 
 
 def main() -> None:
+    """Render panels and an HTML index for every manifest row."""
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     manifest = pd.read_csv(args.run_root / "tumor_mask_manifest.csv")
-    rows = [render_case(args.run_root, args.out_dir, row) for _, row in manifest.iterrows()]
+    rows = [
+        render_case(args.run_root, args.out_dir, row) for _, row in manifest.iterrows()
+    ]
     index = pd.DataFrame(rows)
     index.to_csv(args.out_dir / "index.csv", index=False)
     with (args.out_dir / "index.html").open("w") as stream:

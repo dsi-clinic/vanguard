@@ -13,6 +13,7 @@ DEFAULT_SLURM = Path("slurm/submit_nnunet_tumor_inference.slurm")
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the prepared run and Slurm submission settings."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--slurm-script", type=Path, default=DEFAULT_SLURM)
@@ -21,6 +22,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Submit one nnU-Net inference job for each prepared case."""
     args = parse_args()
     run_root = args.run_root.resolve()
     jobs_csv = args.jobs_csv or run_root / "tumor_inference_slurm_jobs.csv"
@@ -33,12 +35,13 @@ def main() -> None:
         cmd = [
             "sbatch",
             "--parsable",
-            "--export=ALL,"
-            f"INPUT_DIR={input_dir},"
-            f"OUTPUT_DIR={output_dir}",
+            f"--export=ALL,INPUT_DIR={input_dir},OUTPUT_DIR={output_dir}",
             str(args.slurm_script),
         ]
-        result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+        # This CLI intentionally executes the caller-selected Slurm wrapper.
+        result = subprocess.run(  # noqa: S603
+            cmd, check=True, text=True, capture_output=True
+        )
         job_id = result.stdout.strip().split(";", maxsplit=1)[0]
         out_row = dict(row)
         out_row["job_id"] = job_id
