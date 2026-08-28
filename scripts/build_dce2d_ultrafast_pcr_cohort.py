@@ -42,7 +42,9 @@ IDENTITY_SCHEMA = "vanguard.sarit_pcr_pretreatment_cohort.identity_audit.v1"
 # It is the only record that the two name one person, so a consumer reconciling a v6 fold against an
 # earlier release needs it to see that the patient did not disappear, only change key.
 IDENTITY_LINK_SCHEMA = "vanguard.sarit_pcr_cross_delivery_identity_link.v1"
-CURATION_ROOT = Path("/gpfs/data/karczmar-lab/vanguard/dce2d_ultrafast_pcr_cohort_curation_v1")
+CURATION_ROOT = Path(
+    "/gpfs/data/karczmar-lab/vanguard/dce2d_ultrafast_pcr_cohort_curation_v1"
+)
 IMAGE_EXCLUSION_SCHEMA = "vanguard.sarit_pcr_image_duplicate_exclusion.v1"
 LABEL_OVERRIDE_SCHEMA = "vanguard.dce2d_ultrafast_pcr_label_override.v1"
 CARRIED_FORWARD_SCHEMA = "vanguard.dce2d_ultrafast_pcr_carried_forward_change.v1"
@@ -1121,9 +1123,9 @@ def _exclude_duplicate_exams(
             f"image duplicate exclusion: withdrew {int(matched.sum())} {arm} exams",
             file=sys.stderr,
         )
-    return frame.loc[~matched].reset_index(drop=True), frame.loc[matched, "exam_id"].map(
-        _clean
-    )
+    retained = frame.loc[~matched].reset_index(drop=True)
+    withdrawn = frame.loc[matched, "exam_id"].map(_clean)
+    return retained, withdrawn
 
 
 def _read_label_overrides(paths: dict[str, Path]) -> pd.DataFrame:
@@ -1282,7 +1284,6 @@ def _apply_label_overrides(
     return applied
 
 
-
 def _carried_forward_changes(
     paths: dict[str, Path], source_manifest: pd.DataFrame
 ) -> pd.DataFrame:
@@ -1407,7 +1408,9 @@ def _build_tables(
             f"{len(unmatched)} image duplicate exclusions name exams this build never selected, so "
             f"the frozen table no longer describes the cohort: {unmatched[:3]}"
         )
-    surviving = set(canonical["exam_id"].map(_clean)) | set(retro["exam_id"].map(_clean))
+    surviving = set(canonical["exam_id"].map(_clean)) | set(
+        retro["exam_id"].map(_clean)
+    )
     orphaned = sorted(set(exclusions["retained_exam_id"]) - surviving)
     if orphaned:
         raise ValueError(
@@ -2528,9 +2531,7 @@ def _write_release(
             tables["image_duplicate_exclusions"],
             stage / "image_duplicate_exclusions.csv",
         )
-        _write_csv(
-            tables["pcr_label_overrides"], stage / "pcr_label_overrides.csv"
-        )
+        _write_csv(tables["pcr_label_overrides"], stage / "pcr_label_overrides.csv")
         _write_csv(
             tables["carried_forward_changes"], stage / "carried_forward_changes.csv"
         )
