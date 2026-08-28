@@ -218,3 +218,73 @@ The submission prints three job IDs. Corresponding array tasks are linked with
 `aftercorr`, so one failed case does not block unrelated cases. Completed stages
 are skipped on resubmission. The documented Vanguard environment can be
 overridden explicitly with `VANGUARD_PYTHON` when validating another checkout.
+
+### High-resolution tumor masks
+
+`preprocessing/tumor.py` owns the DICOM-to-mask handoff for the released
+MAMA-MIA nnU-Net tumor model from Garrucho et al., *Scientific Data* 12, 453
+(2025), <https://doi.org/10.1038/s41597-025-04707-4>. It motion-aligns the HR
+series to precontrast, uses the first postcontrast HR phase for the final mask,
+uses later phases only for temporal QC, keeps the largest component as the
+primary tumor, and maps that mask by physical coordinates onto the same
+source-aligned 1-mm UFAST grid used by the dynamic images and vessel skeletons.
+A substantial component in the opposite breast is flagged for bilateral review
+rather than silently merged into the primary mask.
+
+Aakrithi Ram designed and implemented the initial UChicago HR/UFAST tumor
+segmentation workflow, shared-window QC renderer, and 30-case validation pilot.
+Anna Woodard subsequently generalized that implementation for restartable
+cohort-scale execution, multi-source publication, and longitudinal laterality
+provenance. The Git history keeps the original implementation as an
+Aakrithi-authored commit before the production extensions.
+
+The supported cohort entrypoint is the restartable CPU/GPU/CPU Slurm chain:
+
+```bash
+export RUN_ROOT=/path/to/derived/uchicago_tumor
+export INVENTORY=/path/to/dicom_file_manifest.parquet
+export CASE_MANIFEST=/path/to/paired_preprocessing_case_manifest.csv
+export COHORT_MANIFEST=/path/to/dce2d_internal_ultrafast_manifest.csv
+export MODEL_DIR=/path/to/full_image_dce_mri_tumor_segmentation
+export NNUNET_ENV=/path/to/nnunet-2.5-environment
+bash slurm/submit_tumor_pipeline.sh
+```
+
+The entrypoint chains `prepare-case`, `index-cohort`, released-model inference,
+and `finalize-cohort`. Each run records the exact inventory, case manifest,
+segmentation policy, model checkpoint hashes, model plans hash, physical DICOM
+geometry, timestamps, and motion decisions in `tumor_run_provenance.json` and
+per-case `tumor_preprocessing_provenance.json` files.
+
+Each component run writes `tumor_mask_manifest.csv` for its directly runnable
+exams. After all components have finished, publish their masks into a stable
+cohort root with one repeated `--direct-manifest` argument per component:
+
+```bash
+python -m preprocessing.tumor publish-cohort \
+  --output-root /path/to/student-facing-cohort/tumor \
+  --cohort-manifest /path/to/student-facing-cohort/dce2d_internal_ultrafast_manifest.csv \
+  --centerline-root /path/to/student-facing-cohort/centerlines \
+  --direct-manifest /path/to/legacy/tumor_mask_manifest.csv \
+  --direct-manifest /path/to/extension/tumor_mask_manifest.csv
+```
+
+`preprocessing/slurm/tumor_publish_cohort.slurm` is the Slurm wrapper for this
+publication command and accepts the same paths through exported variables.
+
+Published `masks/<exam-id>.nii.gz` files contain only the primary component.
+`longitudinal_tumor_manifest.csv` joins direct mask status and unambiguous
+same-patient laterality to every cohort row. Missing direct masks and conflicting
+patient-level laterality remain explicit rather than receiving invented values.
+
+Render the original visual-QC contract against any prepared cohort run with:
+
+```bash
+python scripts/qc_uchicago_tumor_contract_30.py \
+  --run-root /path/to/derived/uchicago_tumor \
+  --out-dir /path/to/qc/tumor_panels
+```
+
+The renderer uses one shared HR intensity window across all DCE phases so that
+true enhancement and washout differences are not hidden by per-timepoint
+windowing.
