@@ -3,6 +3,31 @@
 Working notebook for the v5 -> v6 extension. Records inputs, job IDs, and decisions so the
 release is reproducible and so a fresh session can resume without re-deriving the picture.
 
+## Outcome, 2026-08-28
+
+Done. `dce2d_internal_ultrafast_pcr_cohort_v6` and `_v6_raw_dicoms` are published under
+`/gpfs/data/karczmar-lab/vanguard`: 283 main exams over 283 patients (172 pCR-, 111 pCR+), 488
+source exams, 198 longitudinal exams, folds 78/77/77/77/77, and raw-DICOM locators for 566
+series over 879167 files. All 243 v5 exams carry forward with every label column reproduced
+exactly.
+
+Two sections below are superseded by how it was actually built and should not be followed:
+
+- The plan to run the builder into a scratch root and take only the rows absent from v5 is
+  gone. `--previous-fold-assignments` freezes released folds directly, which was the only
+  thing the four-stage chain bought, so v6 is one build from stated inputs. The frozen human
+  decisions live in
+  `/gpfs/data/karczmar-lab/vanguard/dce2d_ultrafast_pcr_cohort_curation_v1`.
+- The builder is no longer untracked. It is `scripts/build_dce2d_ultrafast_pcr_cohort.py`,
+  tracked in vanguard PR #210, and the sha256 quoted below belongs to the v2-era
+  `build_sarit_pcr_cohort.py`.
+
+Two v5 defects were found and fixed on the way, both recorded in
+`dce2d_internal_ultrafast_pcr_cohort_v6_raw_dicoms/ERRATUM.md` and in the retired
+`configs/pcr/sarit_pcr_raw_dicom_release.yaml` in hfdp: v5's consumer manifest points its
+image paths into v4, and v5 shipped a `MIP SUB UFAST` projection as one exam's ultrafast
+acquisition. Do not remove v4 while anyone is pinned to v5.
+
 ## Why
 
 More retro-CAPS imaging landed after v5 was frozen. v5 covers 243 exams, 125 of them
