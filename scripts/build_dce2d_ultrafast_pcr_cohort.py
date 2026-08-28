@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Build Sarit's versioned UChicago + retro-CAPS pretreatment pCR cohort.
+"""Build the versioned UChicago + retro-CAPS DCE-2D ultrafast pCR cohort release.
 
 The consumer manifest is intentionally stricter than the source-eligible cohort:
 it contains only one-row-per-source-patient exams with a binary pCR label, a
@@ -45,6 +45,23 @@ SINGLE_SERIES = "single_series"
 SPLIT_SERIES = "split_precontrast_postcontrast_pair"
 LABEL_MAP = {"not_supported": 0, "supported": 1}
 
+# The consumer-facing partition of the release. `pretreatment` is the primary analysis set and
+# holds exactly one exam per patient, so a manifest filtered to it is a drop-in replacement for a
+# release that carried nothing else. `longitudinal` holds every additional timepoint, kept so a
+# temporal model can reach them but excluded from any one-exam-per-patient analysis. `visit_role`
+# carries the finer distinction (on treatment, after treatment, unspecified follow-up).
+PRETREATMENT_ANALYSIS_SET = "pretreatment"
+LONGITUDINAL_ANALYSIS_SET = "longitudinal"
+# Keyed by adjudicated visit role. A role absent here is out of scope for a pCR cohort rather than
+# defaulted, so a newly introduced role cannot land in the pretreatment set unnoticed.
+ANALYSIS_SET_BY_VISIT_ROLE = {
+    "pretreatment": PRETREATMENT_ANALYSIS_SET,
+    "on_treatment": LONGITUDINAL_ANALYSIS_SET,
+    "post_treatment_nat": LONGITUDINAL_ANALYSIS_SET,
+    "longitudinal_unspecified": LONGITUDINAL_ANALYSIS_SET,
+    "longitudinal_followup": LONGITUDINAL_ANALYSIS_SET,
+}
+
 PAIR_COLUMNS = [
     "exam_id",
     "dataset",
@@ -76,11 +93,12 @@ EXTRA_MANIFEST_COLUMNS = [
     "tumor_bearing_basis",
     "patient_deduplication_policy",
     "patient_identity_scope",
+    "analysis_set",
 ]
 
 SNAPSHOT_ARGUMENTS = {
     "reference_manifest": "reference_v1_manifest.csv",
-    "canonical_manifest": "canonical_137_manifest.csv",
+    "canonical_manifest": "canonical_manifest.csv",
     "legacy_pair_manifest": "canonical_legacy_pair_manifest.csv",
     "zhen_pair_manifest": "canonical_zhen_pair_manifest.csv",
     "zhen_staging_pair_manifest": "canonical_zhen_staging_pair_manifest.csv",
@@ -89,8 +107,8 @@ SNAPSHOT_ARGUMENTS = {
     "retro_gate_readme": "retro_gate_README.md",
     "retro_inventory_exams": "retro_exam_inventory.parquet",
     "retro_inventory_series": "retro_dicom_series_inventory.parquet",
-    "retro_metadata": "retro_landed_exam_metadata.csv",
-    "retro_metadata_readme": "retro_landed_exam_metadata_README.md",
+    "retro_metadata": "retro_exam_metadata.csv",
+    "retro_metadata_readme": "retro_exam_metadata_README.md",
     "retro_roles": "retro_exam_bucket_assignment.csv",
     "retro_raw_cache_manifest": "retro_raw_signal_cache_manifest.csv",
     "retro_raw_ingest_manifest": "retro_raw_signal_ingest_manifest.csv",
@@ -151,6 +169,24 @@ def _calendar_date(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
 
 
+def _visit_folder_date(relative_paths: pd.Series) -> pd.Series:
+    """Read the visit date off a `<patient>/<accession>-YYYY-MM-DD` delivery path.
+
+    The delivery's own `exam_datetime` column cannot be used for this. It is collapsed to a single
+    value per patient -- all 600 delivered patients carry exactly one distinct timestamp across all
+    their visits -- so keying a visit on it merges a patient's whole treatment course into one visit and
+    hands a later scan the baseline's role. The folder name disagrees with `exam_datetime` for 268 of
+    866 delivered exams and is the only per-visit date the delivery actually varies.
+    """
+    dates = relative_paths.str.extract(r"(\d{4}-\d{2}-\d{2})$", expand=False)
+    if dates.isna().any():
+        missing = sorted(relative_paths[dates.isna()])[:3]
+        raise ValueError(
+            f"a delivered visit folder carries no trailing date: {missing}"
+        )
+    return dates
+
+
 def _git(*arguments: str) -> str:
     try:
         return subprocess.run(  # noqa: S603 -- fixed executable and internal arguments
@@ -189,6 +225,13 @@ def _validate_input_paths(paths: dict[str, Path]) -> None:
 
 
 def _canonical_pairs(paths: dict[str, Path], canonical: pd.DataFrame) -> pd.DataFrame:
+    """Collect the ultrafast/high-resolution pair rows for the UChicago arm.
+
+    Coverage is required over the pretreatment set, which is what the six-column paired-preprocessing
+    contract is built from. Follow-up visits may be missing a pair row: the longitudinal cohort carries
+    phase exports for repeat visits whose ultrafast/HR halves were never re-adjudicated, and those
+    exams ship marked as unrepresentable in the pair contract rather than being dropped or invented.
+    """
     frames = [
         _read_csv(paths["legacy_pair_manifest"]),
         _read_csv(paths["zhen_pair_manifest"]),
@@ -210,9 +253,12 @@ def _canonical_pairs(paths: dict[str, Path], canonical: pd.DataFrame) -> pd.Data
     pairs = pairs[
         pairs["study_instance_uid"].isin(canonical["study_instance_uid"])
     ].copy()
-    if len(pairs) != len(canonical):
+    required = canonical[canonical["analysis_set"].eq(PRETREATMENT_ANALYSIS_SET)]
+    uncovered = set(required["study_instance_uid"]) - set(pairs["study_instance_uid"])
+    if uncovered:
         raise ValueError(
-            f"canonical pair coverage is {len(pairs)}/{len(canonical)}, expected complete"
+            f"{len(uncovered)} canonical pretreatment exams have no ultrafast/HR pair row, so they "
+            f"cannot enter the paired-preprocessing contract: {sorted(uncovered)[:3]}"
         )
     if pairs["study_instance_uid"].duplicated().any():
         raise ValueError("canonical pairs contain duplicate studies")
@@ -254,8 +300,26 @@ def _raw_phase_rows(
             },
             source_name,
         )
-        if frame["study_instance_uid"].duplicated().any():
-            raise ValueError(f"{source_name} has duplicate StudyInstanceUID rows")
+        # One delivered study occasionally holds two ultrafast acquisitions, and the upstream selection
+        # lineages disagree about which to export, so the cache carries both under different dataset
+        # names with different phase counts and different native clocks. More timed frames is the
+        # better ultrafast acquisition, and it is also the one already released, so it wins; the exam_id
+        # hash only breaks an exact tie. The collapse is counted so a growing disagreement stays
+        # visible in the release audit rather than being absorbed silently.
+        frame["_phase_count"] = pd.to_numeric(
+            frame["n_phases"], errors="coerce"
+        ).fillna(-1)
+        frame["_intra_tie_break"] = frame["exam_id"].map(
+            lambda value: _token("raw-phase-intra-source-v1", value, 64)
+        )
+        collapsed = int(frame["study_instance_uid"].duplicated().sum())
+        if collapsed:
+            overlap_checks[f"{source_name}_duplicate_studies_collapsed"] += collapsed
+            frame = frame.sort_values(
+                ["study_instance_uid", "_phase_count", "_intra_tie_break"],
+                ascending=[True, False, True],
+                kind="stable",
+            ).drop_duplicates("study_instance_uid", keep="first")
         for row in frame.to_dict(orient="records"):
             uid = _clean(row["study_instance_uid"])
             record: dict[str, object] = {
@@ -276,6 +340,32 @@ def _raw_phase_rows(
                 continue
             selected[uid] = record
     return selected, dict(overlap_checks)
+
+
+def _analysis_set(visit_role: object) -> str:
+    """Map an adjudicated visit role onto the consumer-facing analysis set.
+
+    Unknown roles raise rather than defaulting, so a role introduced upstream cannot quietly join the
+    pretreatment set that the cross-sectional analysis treats as one exam per patient.
+    """
+    role = _clean(visit_role)
+    if role not in ANALYSIS_SET_BY_VISIT_ROLE:
+        raise ValueError(f"visit role {role!r} has no analysis set")
+    return ANALYSIS_SET_BY_VISIT_ROLE[role]
+
+
+def _retro_patient_key(study_id: object) -> str:
+    """Stable patient key for the retro arm.
+
+    The namespace and the unstripped argument are both part of the released contract: every prior
+    release keyed its retro patients this way, and changing either would rename every patient and
+    so discard their released fold.
+    """
+    return f"retro_{_token('retro-caps-project-alias-v1', study_id)}"
+
+
+def _retro_exam_id(study_instance_uid: object) -> str:
+    return f"retro_caps_{_token('retro-caps-study-v1', study_instance_uid, 24)}"
 
 
 def _join_retro_candidates(
@@ -370,13 +460,21 @@ def _join_retro_candidates(
     passed = joined[
         joined["reason"].map(_clean).eq("") & joined["pcr_label"].isin(LABEL_MAP)
     ].copy()
-    passed["_calendar_date"] = _calendar_date(passed["exam_datetime"])
+    passed["_calendar_date"] = _visit_folder_date(passed["_exam_relative_path"])
+    # Kept for provenance so the disagreement stays inspectable in the accounting tables.
+    passed["_metadata_calendar_date"] = _calendar_date(passed["exam_datetime"])
     passed["_description_normalized"] = _normalize_description(
         passed["exam_description"]
     )
     roles["_calendar_date"] = _calendar_date(roles["exam_datetime"])
     roles["_description_normalized"] = _normalize_description(roles["proc_name"])
-    role_keys = ["study_id", "_calendar_date", "_description_normalized"]
+    # A visit is identified by patient alias and calendar date, not by description. The delivery and
+    # the role table word the same exam differently -- `MRI BREAST BILAT WWO` against
+    # `MRI BREAST BILAT CAD WWO` -- which stranded 28 gate-passing exams when the description was part
+    # of the key. On patient and date alone the role table is 99.98% single-valued (4 of 20313 groups
+    # hold two roles), and every gate-passing exam resolves; the conflicting-role path below covers the
+    # remainder. The normalized description is still carried, for provenance rather than for joining.
+    role_keys = ["study_id", "_calendar_date"]
     grouped = roles.groupby(role_keys, dropna=False)
     role_counts = grouped["role"].nunique(dropna=False)
     role_summary = grouped.agg(
@@ -398,82 +496,128 @@ def _join_retro_candidates(
         how="left",
         validate="many_to_one",
     )
-    if passed["role"].map(_clean).eq("").any():
+    binary_label_exams = int(len(passed))
+    # The transfer role table is the timepoint authority for this arm, and its silence is meaningful
+    # rather than a join failure: the exams it omits are MRI-guided procedures (core biopsy,
+    # vacuum-assisted excision) rather than role-bearing visits. Recording them as unselected keeps a
+    # real join regression visible in the accounting table -- that would strand hundreds of exams, not
+    # a handful -- without failing the build on studies that were never staging visits.
+    unresolved_role = passed[passed["role"].map(_clean).eq("")].copy()
+    unresolved_role["_selection_status"] = "visit_role_unresolved_not_selected"
+    unresolved_role["_reason"] = (
+        "the transfer role table holds no visit for this patient alias, calendar date, and "
+        "normalized description, so the exam has no adjudicated treatment timepoint"
+    )
+    # A visit the role table describes two ways cannot be placed on the treatment course at all, so it
+    # leaves both the pretreatment and the longitudinal set rather than being guessed at.
+    conflicting_role = passed[
+        passed["role"].map(_clean).ne("")
+        & passed["_role_count"].fillna(0).astype(int).gt(1)
+    ].copy()
+    conflicting_role["_selection_status"] = "visit_role_conflicting_not_selected"
+    conflicting_role["_reason"] = (
+        "the transfer role table assigns this visit more than one role, so its position on the "
+        "treatment course is ambiguous"
+    )
+    passed = passed[
+        passed["role"].map(_clean).ne("")
+        & passed["_role_count"].fillna(0).astype(int).le(1)
+    ].copy()
+    # Only neoadjuvant treatment-course roles belong in a pCR cohort. Screening, diagnostic workup and
+    # never-diagnosed visits are excluded by adjudicated role rather than by description matching.
+    out_of_scope = passed[~passed["role"].isin(ANALYSIS_SET_BY_VISIT_ROLE)].copy()
+    out_of_scope["_selection_status"] = "visit_role_out_of_scope_not_selected"
+    out_of_scope["_reason"] = (
+        "the visit role is not a neoadjuvant treatment-course timepoint, so the exam holds no "
+        "pretreatment or longitudinal position relative to therapy"
+    )
+    candidates = passed[passed["role"].isin(ANALYSIS_SET_BY_VISIT_ROLE)].copy()
+    candidates["analysis_set"] = candidates["role"].map(ANALYSIS_SET_BY_VISIT_ROLE)
+    if candidates["study_id"].map(_clean).eq("").any():
         raise ValueError(
-            "a binary-label gate-pass exam does not resolve to a visit role"
+            "a treatment-course candidate lacks its protected project patient alias"
         )
-    if passed["_role_count"].fillna(0).astype(int).gt(1).any():
-        raise ValueError(
-            "a binary-label gate-pass exam resolves to conflicting visit roles"
-        )
-    pretreatment = passed[passed["role"].eq("pretreatment")].copy()
-    if pretreatment["study_id"].map(_clean).eq("").any():
-        raise ValueError(
-            "a pretreatment candidate lacks its protected project patient alias"
-        )
-    pretreatment["_phase_ready"] = pretreatment["study_instance_uid"].isin(raw_by_study)
-    pretreatment["_single_series"] = pretreatment["high_resolution_partner_layout"].eq(
+    candidates["_phase_ready"] = candidates["study_instance_uid"].isin(raw_by_study)
+    candidates["_single_series"] = candidates["high_resolution_partner_layout"].eq(
         SINGLE_SERIES
     )
-    pretreatment["_released"] = pretreatment[
-        "already_released_selected_acquisition"
-    ].map(_truthy)
-    pretreatment["_hr_timed_phases"] = pd.to_numeric(
-        pretreatment["high_resolution_timed_phases"], errors="coerce"
+    candidates["_released"] = candidates["already_released_selected_acquisition"].map(
+        _truthy
+    )
+    candidates["_hr_timed_phases"] = pd.to_numeric(
+        candidates["high_resolution_timed_phases"], errors="coerce"
     ).fillna(-1)
-    pretreatment["_tie_break"] = pretreatment["study_instance_uid"].map(
+    candidates["_tie_break"] = candidates["study_instance_uid"].map(
         lambda value: _token("retro-patient-dedup-v1", value, 64)
     )
 
-    duplicate_sizes = pretreatment.groupby("study_id").size()
-    duplicate_ids = set(duplicate_sizes[duplicate_sizes.gt(1)].index)
-    for _patient, block in pretreatment[
-        pretreatment["study_id"].isin(duplicate_ids)
-    ].groupby("study_id"):
-        if (
-            len(set(block["_calendar_date"])) != 1
-            or len(set(block["_description_normalized"])) != 1
-            or len(set(block["pcr_label"])) != 1
-        ):
+    # Deduplication is per visit rather than per patient. The delivery re-exports one physical study
+    # several times under separate visit folders, and those copies share a patient alias, a calendar
+    # date, and a normalized description -- which is exactly the role table's key -- so collapsing on
+    # that key removes the re-exports while leaving a patient's genuinely separate timepoints intact.
+    # Collapsing on the patient alias instead, as v2 did, would silently discard every follow-up visit.
+    visit_keys = ["study_id", "_calendar_date"]
+    visit_sizes = candidates.groupby(visit_keys).size()
+    duplicate_visits = set(visit_sizes[visit_sizes.gt(1)].index)
+    for visit, block in candidates.groupby(visit_keys):
+        if visit in duplicate_visits and len(set(block["pcr_label"])) != 1:
             raise ValueError(
-                "one source patient has multiple non-equivalent pretreatment candidates; "
-                "technical deduplication is not valid"
+                "one source visit carries more than one pCR label, so technical deduplication "
+                "would silently choose a label"
             )
-    ordered = pretreatment.sort_values(
-        [
-            "study_id",
+    ordered = candidates.sort_values(
+        visit_keys
+        + [
             "_phase_ready",
             "_single_series",
             "_released",
             "_hr_timed_phases",
             "_tie_break",
         ],
-        ascending=[True, False, False, False, False, True],
+        ascending=[True] * len(visit_keys) + [False, False, False, False, True],
         kind="stable",
     )
-    selected = ordered.drop_duplicates("study_id", keep="first").copy()
+    selected = ordered.drop_duplicates(visit_keys, keep="first").copy()
     chosen_studies = set(selected["study_instance_uid"])
     dropped = ordered[~ordered["study_instance_uid"].isin(chosen_studies)].copy()
-    selected["patient_key"] = selected["study_id"].map(
-        lambda value: f"retro_{_token('retro-caps-project-alias-v1', value)}"
+    dropped["_selection_status"] = "duplicate_same_patient_date_not_selected"
+    dropped["_reason"] = (
+        "one-per-visit technical deduplication preferred an existing phase export, then a "
+        "single-series HR partner, a released acquisition, more HR timed phases, and finally a "
+        "deterministic StudyInstanceUID hash"
     )
-    selected["exam_id"] = selected["study_instance_uid"].map(
-        lambda value: f"retro_caps_{_token('retro-caps-study-v1', value, 24)}"
+    # The label is a property of the patient, not of a timepoint, and `_assign_folds` places a patient
+    # once. Two selected visits disagreeing on it would fold the same patient twice, under both labels.
+    label_spread = selected.groupby("study_id")["pcr_label"].nunique()
+    if label_spread.gt(1).any():
+        raise ValueError(
+            "one source patient's selected visits disagree on the pCR label, so the patient would "
+            "receive two fold assignments under two labels"
+        )
+    # A patient can hold two pretreatment-role visits. The cross-sectional set takes one exam per
+    # patient, so the earliest stays the baseline and any later one joins the longitudinal set with its
+    # role intact -- the same earliest-wins rule the UChicago arm uses.
+    pretreatment_rank = (
+        selected[selected["analysis_set"].eq(PRETREATMENT_ANALYSIS_SET)]
+        .sort_values(["study_id", "_calendar_date", "_tie_break"], kind="stable")
+        .groupby("study_id")
+        .cumcount()
     )
-    patient_key_map = dict(
-        zip(selected["study_id"], selected["patient_key"], strict=True)
+    selected.loc[pretreatment_rank[pretreatment_rank.gt(0)].index, "analysis_set"] = (
+        LONGITUDINAL_ANALYSIS_SET
     )
-    dropped["patient_key"] = dropped["study_id"].map(patient_key_map)
-    dropped["exam_id"] = dropped["study_instance_uid"].map(
-        lambda value: f"retro_caps_{_token('retro-caps-study-v1', value, 24)}"
+    selected["patient_key"] = selected["study_id"].map(_retro_patient_key)
+    selected["exam_id"] = selected["study_instance_uid"].map(_retro_exam_id)
+    unselected = pd.concat(
+        [dropped, unresolved_role, conflicting_role, out_of_scope],
+        ignore_index=True,
     )
-    dropped = dropped.assign(
-        selection_status="duplicate_same_patient_date_description_not_selected",
-        reason=(
-            "one-per-source-patient technical deduplication preferred an existing phase export, "
-            "then a single-series HR partner, a released acquisition, more HR timed phases, "
-            "and finally a deterministic StudyInstanceUID hash"
-        ),
+    unselected["patient_key"] = unselected["study_id"].map(_retro_patient_key)
+    unselected["exam_id"] = unselected["study_instance_uid"].map(_retro_exam_id)
+    # The gate's own `reason` column is dropped rather than overwritten so the rename cannot produce
+    # two columns of the same name.
+    dropped = unselected.drop(columns=["reason"]).rename(
+        columns={"_selection_status": "selection_status", "_reason": "reason"}
     )[
         [
             "exam_id",
@@ -487,14 +631,24 @@ def _join_retro_candidates(
     audit = {
         "gate_rows": int(len(gate)),
         "gate_pass_rows": int(gate["reason"].map(_clean).eq("").sum()),
-        "gate_rows_with_binary_label": int(len(passed)),
-        "pretreatment_candidate_exams": int(len(pretreatment)),
-        "pretreatment_candidate_source_patients": int(
-            pretreatment["study_id"].nunique()
+        "gate_rows_with_binary_label": binary_label_exams,
+        "visit_role_unresolved_exams": int(len(unresolved_role)),
+        "visit_role_conflicting_exams": int(len(conflicting_role)),
+        "visit_role_out_of_scope_exams": int(len(out_of_scope)),
+        "treatment_course_candidate_exams": int(len(candidates)),
+        "treatment_course_candidate_source_patients": int(
+            candidates["study_id"].nunique()
         ),
-        "duplicate_source_patient_groups": int(len(duplicate_ids)),
-        "duplicate_exam_rows_removed": int(len(dropped)),
+        "duplicate_source_visit_groups": int(len(duplicate_visits)),
+        "duplicate_exam_rows_removed": int(len(ordered) - len(selected)),
         "selected_retro_exams": int(len(selected)),
+        "selected_retro_source_patients": int(selected["study_id"].nunique()),
+        "selected_pretreatment_exams": int(
+            selected["analysis_set"].eq(PRETREATMENT_ANALYSIS_SET).sum()
+        ),
+        "selected_longitudinal_exams": int(
+            selected["analysis_set"].eq(LONGITUDINAL_ANALYSIS_SET).sum()
+        ),
     }
     return selected, dropped, audit
 
@@ -512,7 +666,6 @@ def _prior_folds(prior: pd.DataFrame | None) -> dict[str, int]:
     invalidates every cross-validated result computed against the earlier one, so a fold, once
     released, is treated here as a property of the release that assigned it.
     """
-
     if prior is None:
         return {}
     _ensure_columns(prior, {"patient_key", "fold"}, "previous fold assignments")
@@ -527,7 +680,9 @@ def _prior_folds(prior: pd.DataFrame | None) -> dict[str, int]:
     folds = frame["fold"].astype(float).astype(int)
     outside = sorted(set(folds[~folds.between(0, N_FOLDS - 1)]))
     if outside:
-        raise ValueError(f"previous fold assignments hold folds outside 0..{N_FOLDS - 1}: {outside}")
+        raise ValueError(
+            f"previous fold assignments hold folds outside 0..{N_FOLDS - 1}: {outside}"
+        )
     return dict(zip(frame["patient_key"], folds))
 
 
@@ -543,8 +698,17 @@ def _assign_folds(
     canonical_assignments["fold"] = (
         canonical_assignments["fold"].astype(float).astype(int)
     )
-    if canonical_assignments["patient_key"].duplicated().any():
-        raise ValueError("canonical patient keys are not unique")
+    # A fold belongs to a patient, not to an exam, so repeat visits collapse to one assignment. They
+    # must already agree: a patient split across folds or labels would leak between train and test
+    # through their own follow-up imaging.
+    spread = canonical_assignments.groupby("patient_key")[["pcr", "fold"]].nunique()
+    if spread.gt(1).any(axis=None):
+        disagreeing = sorted(spread[spread.gt(1).any(axis=1)].index)
+        raise ValueError(
+            f"{len(disagreeing)} canonical patients' visits disagree on fold or pCR label: "
+            f"{disagreeing[:5]}"
+        )
+    canonical_assignments = canonical_assignments.drop_duplicates("patient_key")
     canonical_assignments["assignment_source"] = "canonical_fold_preserved"
     schema = FOLD_SCHEMA if prior is None else FOLD_SCHEMA_RETAINED
     canonical_assignments["schema"] = schema
@@ -648,23 +812,29 @@ def _assign_folds(
     return assignments.sort_values("patient_key").reset_index(drop=True)
 
 
-def _identity_audit(
+def _cross_delivery_link_groups(
     *,
     paths: dict[str, Path],
     canonical: pd.DataFrame,
     canonical_pairs: pd.DataFrame,
-    retro: pd.DataFrame,
-) -> dict[str, object]:
+) -> tuple[pd.Series, set[str], pd.Series]:
+    """Resolve which cross-delivery patient link groups each arm occupies.
+
+    A link group is positive evidence of physical identity: it exists because one SeriesInstanceUID
+    appears both in the released UChicago signal cache and under a retro-CAPS patient folder, and
+    series UIDs are globally unique, so a shared one is the same acquisition of the same person. The
+    absence of a group proves nothing, which is why the release states that limitation rather than
+    claiming the two arms are disjoint.
+
+    Returns the canonical arm's per-exam group, the set of groups it occupies, and a retro patient
+    alias -> group mapping.
+    """
     roster = _read_csv(paths["cross_delivery_roster"])
     _ensure_columns(
         roster,
         {"series_instance_uid", "delivery_patient_key", "cohort", "patient_link_group"},
         "cross-delivery roster",
     )
-    series_inventory = pd.read_parquet(
-        paths["retro_inventory_series"],
-        columns=["series_instance_uid", "patient_id_fs"],
-    ).astype(str)
     signal = roster[roster["cohort"].eq("signal_enhancement_released_cache")].copy()
     series_to_group = dict(
         zip(signal["series_instance_uid"], signal["patient_link_group"], strict=False)
@@ -678,10 +848,19 @@ def _identity_audit(
     canonical_link["_patient_link_group"] = canonical_link[
         "ufast_series_instance_uid"
     ].map(series_to_group)
-    if canonical_link["_patient_link_group"].isna().any():
+    # An exam with no pair row names no ultrafast acquisition, so there is nothing to look up. Those
+    # exams are counted rather than resolved: the roster is what rules out physical overlap between the
+    # two arms, so an unauditable exam is a stated limitation, not a silent pass.
+    auditable = canonical_link["ufast_series_instance_uid"].map(_clean).ne("")
+    unresolved = int(canonical_link.loc[auditable, "_patient_link_group"].isna().sum())
+    if unresolved:
         raise ValueError(
-            "not every canonical UFAST acquisition resolves to the identity roster"
+            f"{unresolved} canonical UFAST acquisitions do not resolve to the identity roster"
         )
+    series_inventory = pd.read_parquet(
+        paths["retro_inventory_series"],
+        columns=["series_instance_uid", "patient_id_fs"],
+    ).astype(str)
     shared = series_inventory.merge(
         signal[["series_instance_uid", "patient_link_group"]],
         on="series_instance_uid",
@@ -693,20 +872,38 @@ def _identity_audit(
         .agg(lambda values: sorted(set(values)))
         .to_dict()
     )
-    ambiguous = sum(len(values) > 1 for values in options.values())
-    if ambiguous:
+    if any(len(values) > 1 for values in options.values()):
         raise ValueError(
             "a current retro patient alias links to multiple released-cache patients"
         )
-    retro_groups = retro["patient_id_fs"].map(options)
-    retro_groups = retro_groups.map(
-        lambda values: values[0]
-        if isinstance(values, list) and len(values) == 1
-        else ""
+    alias_to_group = pd.Series(
+        {alias: values[0] for alias, values in options.items()}, dtype="object"
     )
-    canonical_groups = set(canonical_link["_patient_link_group"])
-    mapped_retro_groups = set(retro_groups[retro_groups.ne("")])
-    overlap = canonical_groups & mapped_retro_groups
+    return (
+        canonical_link.assign(_auditable=auditable)["_patient_link_group"],
+        set(canonical_link["_patient_link_group"].dropna()),
+        alias_to_group,
+    )
+
+
+def _identity_audit(
+    *,
+    paths: dict[str, Path],
+    canonical: pd.DataFrame,
+    canonical_pairs: pd.DataFrame,
+    retro: pd.DataFrame,
+) -> dict[str, object]:
+    canonical_groups_per_exam, canonical_groups, alias_to_group = (
+        _cross_delivery_link_groups(
+            paths=paths, canonical=canonical, canonical_pairs=canonical_pairs
+        )
+    )
+    retro_groups = (
+        retro["patient_id_fs"].map(alias_to_group).fillna("").astype(str)
+        if len(retro)
+        else pd.Series(dtype="object")
+    )
+    overlap = canonical_groups & set(retro_groups[retro_groups.ne("")])
     exact_studies = set(canonical["study_instance_uid"]) & set(
         retro["study_instance_uid"]
     )
@@ -723,7 +920,10 @@ def _identity_audit(
         "exact_study_instance_uid_overlap": 0,
         "exact_selected_ufast_series_instance_uid_overlap": 0,
         "canonical_source_patients_resolved_to_cross_delivery_roster": int(
-            canonical_link["_patient_link_group"].notna().sum()
+            canonical_groups_per_exam.notna().sum()
+        ),
+        "canonical_exams_without_an_ultrafast_acquisition_to_audit": int(
+            canonical_groups_per_exam.isna().sum()
         ),
         "retro_source_patients_with_any_shared_acquisition_to_released_cache": int(
             retro_groups.ne("").sum()
@@ -819,15 +1019,75 @@ def _build_tables(
         raise ValueError(
             f"canonical count changed: {len(canonical)} != {arguments.expected_canonical}"
         )
-    if (
-        canonical["study_instance_uid"].duplicated().any()
-        or canonical["patient_key"].duplicated().any()
-    ):
-        raise ValueError("canonical manifest is not one unique exam per source patient")
+    if canonical["study_instance_uid"].duplicated().any():
+        raise ValueError("canonical manifest repeats a StudyInstanceUID")
+    # A patient may legitimately appear more than once now that follow-up visits are carried, so the
+    # uniqueness the cross-sectional analysis needs is enforced on the pretreatment set alone.
+    canonical["analysis_set"] = canonical["visit_role"].map(_analysis_set)
+    # A patient occasionally carries two pretreatment-role visits weeks apart, both declared baselines.
+    # The cross-sectional set takes exactly one exam per patient, so the earlier visit stays the
+    # baseline and the later one moves to the longitudinal set with its role intact. Earliest-wins is
+    # also the exam every prior release chose, so no already-released patient changes exam here.
+    pretreatment_rank = (
+        canonical[canonical["analysis_set"].eq(PRETREATMENT_ANALYSIS_SET)]
+        .sort_values(["patient_key", "study_date", "study_instance_uid"], kind="stable")
+        .groupby("patient_key")
+        .cumcount()
+    )
+    canonical.loc[pretreatment_rank[pretreatment_rank.gt(0)].index, "analysis_set"] = (
+        LONGITUDINAL_ANALYSIS_SET
+    )
+    canonical_pretreatment = canonical[
+        canonical["analysis_set"].eq(PRETREATMENT_ANALYSIS_SET)
+    ]
+    if canonical_pretreatment["patient_key"].duplicated().any():
+        raise ValueError(
+            "the canonical pretreatment set is not one unique exam per source patient"
+        )
+    # A follow-up visit inherits its patient's fold, so a patient split across folds would leak between
+    # train and test through their own repeat imaging.
+    if canonical.groupby("patient_key")["fold"].nunique().gt(1).any():
+        raise ValueError(
+            "a canonical patient's visits disagree on fold, so repeat imaging would leak across folds"
+        )
     canonical_pairs = _canonical_pairs(paths, canonical)
     raw_by_study, raw_overlap_audit = _raw_phase_rows(paths)
     retro, dedup_exclusions, retro_join_audit = _join_retro_candidates(
         paths=paths, raw_by_study=raw_by_study
+    )
+    # A patient present in both deliveries cannot be carried twice. Keeping both copies would either
+    # split one person across two folds -- a leak between train and test -- or break the one-exam-per-
+    # patient premise of the cross-sectional set. The released UChicago exam wins: its fold is already
+    # frozen and its pCR label is reviewed, where the retro label is an unreviewed chart abstraction.
+    # This costs no patient, only the second delivery's exam of a patient the release already holds.
+    _, canonical_groups, alias_to_group = _cross_delivery_link_groups(
+        paths=paths, canonical=canonical, canonical_pairs=canonical_pairs
+    )
+    retro_groups = retro["patient_id_fs"].map(alias_to_group).fillna("").astype(str)
+    shared_identity = retro_groups.ne("") & retro_groups.isin(canonical_groups)
+    if shared_identity.any():
+        shared = retro[shared_identity]
+        print(
+            f"cross-delivery identity: dropped {len(shared)} retro exams over "
+            f"{shared['patient_key'].nunique()} patients already held by the UChicago arm",
+            file=sys.stderr,
+        )
+        dedup_exclusions = pd.concat(
+            [
+                dedup_exclusions,
+                shared.assign(
+                    selection_status="cross_delivery_physical_identity_not_selected",
+                    reason=(
+                        "a SeriesInstanceUID shared with the released UChicago signal cache proves "
+                        "this is a patient the canonical arm already holds, whose fold is frozen"
+                    ),
+                )[list(dedup_exclusions.columns)],
+            ],
+            ignore_index=True,
+        )
+        retro = retro[~shared_identity].copy()
+    retro_join_audit["cross_delivery_identity_exams_removed"] = int(
+        shared_identity.sum()
     )
     if len(retro) != arguments.expected_retro:
         raise ValueError(
@@ -865,6 +1125,9 @@ def _build_tables(
         column for column in EXTRA_MANIFEST_COLUMNS if column not in manifest_columns
     )
     pair_index = canonical_pairs.set_index("study_instance_uid")
+    # The input manifest flags the whole longitudinal cohort as multi-visit, which is true of the cohort
+    # but not of each patient in it. Measured per patient, the flag says what a consumer needs to know.
+    canonical_exams_per_patient = canonical.groupby("patient_key").size().to_dict()
     source_rows: list[dict[str, object]] = []
     link_rows: list[dict[str, str]] = []
     paired_source_rows: list[dict[str, object]] = []
@@ -872,6 +1135,10 @@ def _build_tables(
 
     for source in canonical.to_dict(orient="records"):
         row = {column: source.get(column, "") for column in manifest_columns}
+        row["analysis_set"] = _clean(source["analysis_set"])
+        row["one_exam_per_patient"] = (
+            canonical_exams_per_patient.get(_clean(source["patient_key"]), 1) == 1
+        )
         exam_id = _clean(source["exam_id"])
         dataset = _clean(source["dataset"])
         source_case = Path(_clean(source["preproc_exam_dir"]))
@@ -894,37 +1161,58 @@ def _build_tables(
             phase_paths=phases,
             times_path=times_path,
         )
-        pair = pair_index.loc[_clean(source["study_instance_uid"])]
+        study_uid = _clean(source["study_instance_uid"])
+        paired = study_uid in pair_index.index
+        pair = pair_index.loc[study_uid] if paired else None
         pcr = int(float(source["pcr"]))
+        is_pretreatment = row["analysis_set"] == PRETREATMENT_ANALYSIS_SET
+        # The main manifest is the cross-sectional analysis set: one exam per patient, each
+        # representable in the pair contract. Follow-up visits ship in the source manifest only.
         row.update(
             {
                 "pcr": pcr,
                 "fold": int(float(source["fold"])),
-                "cohort_component": "uchicago_ultrafast_pretreatment_cohort_v1",
-                "source_readiness": "sarit_manifest_runnable",
-                "included_in_sarit_manifest": True,
+                "cohort_component": _clean(arguments.canonical_component),
+                "source_readiness": (
+                    "sarit_manifest_runnable"
+                    if paired
+                    else "ultrafast_hr_pair_contract_unavailable"
+                ),
+                "included_in_sarit_manifest": bool(paired and is_pretreatment),
                 "phase_export_status": "ready",
                 "pcr_label_status": "supported" if pcr == 1 else "not_supported",
                 "pcr_label_authority": _clean(source.get("label_source"))
                 or "canonical_reviewed_label",
                 "pcr_label_confidence": "",
                 "pcr_label_is_provisional": False,
-                "pair_gate_schema": "canonical_paired_preprocessing_contract",
-                "pair_gate_source": str(paths["canonical_manifest"]),
-                "ultrafast_series_instance_uid": _clean(
-                    pair["ufast_series_instance_uid"]
+                "pair_gate_schema": (
+                    "canonical_paired_preprocessing_contract"
+                    if paired
+                    else "canonical_pair_contract_absent"
                 ),
-                "high_resolution_series_instance_uid": _clean(
-                    pair["hr_series_instance_uid"]
+                "pair_gate_source": str(paths["canonical_manifest"]),
+                "ultrafast_series_instance_uid": (
+                    _clean(pair["ufast_series_instance_uid"]) if paired else ""
+                ),
+                "high_resolution_series_instance_uid": (
+                    _clean(pair["hr_series_instance_uid"]) if paired else ""
                 ),
                 "high_resolution_precontrast_series_instance_uid": "",
-                "high_resolution_partner_layout": SINGLE_SERIES,
+                "high_resolution_partner_layout": SINGLE_SERIES if paired else "",
                 "high_resolution_baseline_frame_count": "",
                 "high_resolution_timed_phases": "",
                 "requires_cross_series_scaling": False,
-                "tumor_bearing_status": True,
-                "tumor_bearing_basis": "published_nonempty_pretreatment_tumor_mask",
-                "patient_deduplication_policy": "canonical_one_exam_per_patient",
+                "tumor_bearing_status": is_pretreatment,
+                "tumor_bearing_basis": (
+                    "published_nonempty_pretreatment_tumor_mask"
+                    if is_pretreatment
+                    else "not_claimed_for_a_follow_up_visit"
+                ),
+                "patient_deduplication_policy": (
+                    "canonical_one_exam_per_patient"
+                    if is_pretreatment
+                    else "canonical_repeat_visits_retained"
+                ),
                 "patient_identity_scope": "canonical_mrn_hash",
             }
         )
@@ -937,14 +1225,16 @@ def _build_tables(
                     Path(arguments.output_root).resolve() / "images" / dataset / exam_id
                 ),
                 "target_path": str(source_case),
-                "cohort_component": "canonical_137",
+                "cohort_component": _clean(arguments.canonical_component),
             }
         )
+        if not paired:
+            continue
         paired_source_rows.append(
             {
                 "exam_id": exam_id,
                 "dataset": dataset,
-                "study_instance_uid": _clean(source["study_instance_uid"]),
+                "study_instance_uid": study_uid,
                 "hr_series_instance_uid": _clean(pair["hr_series_instance_uid"]),
                 "ufast_series_instance_uid": _clean(pair["ufast_series_instance_uid"]),
                 "ufast_baseline_frame_count": int(
@@ -955,7 +1245,7 @@ def _build_tables(
                 "hr_partner_layout": SINGLE_SERIES,
                 "requires_cross_series_scaling": False,
                 "paired_preprocessing_status": "six_column_contract_representable",
-                "cohort_component": "canonical_137",
+                "cohort_component": _clean(arguments.canonical_component),
             }
         )
 
@@ -974,12 +1264,26 @@ def _build_tables(
         .drop_duplicates("series_instance_uid")
         .set_index("series_instance_uid")
     )
+    # A patient contributing more than one selected visit breaks the one-exam-per-patient premise a
+    # cross-sectional analysis rests on, so the flag is measured per patient rather than asserted.
+    retro_exams_per_patient = retro.groupby("patient_key").size().to_dict()
+    # A follow-up visit is not its own baseline: its baseline is the same patient's pretreatment
+    # visit, and the list stays empty when that visit did not survive selection.
+    retro_baseline_dates = (
+        retro[retro["analysis_set"].eq(PRETREATMENT_ANALYSIS_SET)]
+        .groupby("patient_key")["_calendar_date"]
+        .apply(lambda values: sorted({_clean(value) for value in values} - {""}))
+        .to_dict()
+    )
     for source in retro.to_dict(orient="records"):
         row = dict.fromkeys(manifest_columns, "")
         exam_id = _clean(source["exam_id"])
         dataset = "retro_caps_pcr"
         patient_key = _clean(source["patient_key"])
         study_uid = _clean(source["study_instance_uid"])
+        visit_role = _clean(source["role"])
+        analysis_set = _clean(source["analysis_set"])
+        is_pretreatment = analysis_set == PRETREATMENT_ANALYSIS_SET
         raw = raw_by_study.get(study_uid)
         phase_ready = raw is not None
         layout = _clean(source["high_resolution_partner_layout"])
@@ -988,7 +1292,9 @@ def _build_tables(
                 "a selected retro case has an unsupported HR partner layout"
             )
         split = layout == SPLIT_SERIES
-        included = phase_ready and not split
+        # The main manifest is the cross-sectional analysis set, so a follow-up visit stays out of it
+        # even when it is fully runnable. It still ships in the source manifest, marked longitudinal.
+        included = phase_ready and not split and is_pretreatment
         if phase_ready:
             phase_paths = [
                 Path(value) for value in json.loads(_clean(raw["phase_files_json"]))
@@ -1067,15 +1373,26 @@ def _build_tables(
         manufacturer = ""
         if ufast_uid in series_lookup.index:
             manufacturer = _clean(series_lookup.loc[ufast_uid].get("manufacturer"))
-        exam_dt = pd.to_datetime(_clean(source.get("exam_datetime")), errors="coerce")
+        # The visit folder's date, not the delivery's per-patient-constant `exam_datetime`.
+        exam_dt = pd.to_datetime(_clean(source.get("_calendar_date")), errors="coerce")
         treatment_dt = pd.to_datetime(
             _clean(source.get("neoadjuvant_actual_start")), errors="coerce"
         )
         days_before = ""
         if pd.notna(exam_dt) and pd.notna(treatment_dt):
             days_before = float((treatment_dt - exam_dt).total_seconds() / 86400.0)
-            if days_before <= 0:
-                raise ValueError("a selected pretreatment exam is not before treatment")
+            # Positive means the exam precedes the neoadjuvant start. A pretreatment exam must be
+            # positive or its role and its treatment date contradict each other; a follow-up visit must
+            # not be, or it is mislabelled as on or after treatment. The sign is kept for follow-up
+            # visits because its negation is the useful quantity: days elapsed since treatment began.
+            if is_pretreatment and days_before <= 0:
+                raise ValueError(
+                    "a selected pretreatment exam is dated on or after the neoadjuvant start"
+                )
+            if not is_pretreatment and days_before > 0:
+                raise ValueError(
+                    "a selected follow-up exam is dated before the neoadjuvant start"
+                )
         authority = _clean(source["pcr_label_authority"])
         provisional = authority != "anna_manual"
         if split and not _truthy(source["requires_cross_series_scaling"]):
@@ -1086,7 +1403,10 @@ def _build_tables(
             raise ValueError(
                 "a single-series HR partner unexpectedly requires cross-series scaling"
             )
-        if included:
+        # Readiness describes the imaging, so it depends only on the phase export and the HR layout.
+        # It deliberately does not depend on `included`: a follow-up visit can be fully runnable and
+        # still be held out of the cross-sectional main manifest.
+        if phase_ready and not split:
             readiness = "sarit_manifest_runnable"
         elif phase_ready:
             readiness = "split_hr_scaling_required"
@@ -1130,24 +1450,25 @@ def _build_tables(
                 "post_hoc_only": True,
                 "accession_specific_subtype_claim": False,
                 "cohort_projection_schema": SCHEMA,
-                "pretreatment_status": "role_confirmed_pretreatment",
+                "pretreatment_status": f"role_confirmed_{visit_role}",
                 "pretreatment_selection_reason": (
-                    "patient_alias_calendar_date_normalized_description_transfer_role"
+                    "patient_alias_visit_folder_date_transfer_role"
                 ),
                 "days_before_treatment": days_before,
                 "days_treatment_to_surgery": "",
                 "timepoint_evidence_sha256": roles_sha256,
                 "timepoint_provenance_role": "retro_caps_transfer_bucket_assignment",
                 "baseline_selection_used_aif_or_model_quality": False,
-                "one_exam_per_patient": True,
-                "cohort_source": "retro_caps_pcr_imaging_cohort",
-                "visit_role": "pretreatment",
-                "study_date": _clean(source.get("_calendar_date")),
-                "baseline_dates_json": _json([_clean(source.get("_calendar_date"))]),
-                "is_declared_baseline": True,
-                "baseline_match_method": (
-                    "patient_alias_calendar_date_normalized_description"
+                "one_exam_per_patient": (
+                    retro_exams_per_patient.get(patient_key, 1) == 1
                 ),
+                "cohort_source": "retro_caps_pcr_imaging_cohort",
+                "visit_role": visit_role,
+                "analysis_set": analysis_set,
+                "study_date": _clean(source.get("_calendar_date")),
+                "baseline_dates_json": _json(retro_baseline_dates.get(patient_key, [])),
+                "is_declared_baseline": is_pretreatment,
+                "baseline_match_method": "patient_alias_visit_folder_date",
                 "source_name": "retro_caps",
                 "tumor_laterality": "",
                 "histologic_type": "",
@@ -1237,21 +1558,22 @@ def _build_tables(
         raise ValueError(
             "the v2 main manifest does not preserve Sarit's first 37 columns"
         )
-    if (
-        source_manifest["exam_id"].duplicated().any()
-        or source_manifest["patient_key"].duplicated().any()
-    ):
+    if source_manifest["exam_id"].duplicated().any():
+        raise ValueError("the source cohort repeats an exam id")
+    # Follow-up visits share a patient key with their baseline by design, so one-exam-per-patient is
+    # the main manifest's invariant now rather than the whole source cohort's.
+    if main_manifest["patient_key"].duplicated().any():
         raise ValueError(
-            "source cohort is not one unique exam per source patient identity"
+            "the main manifest is not one unique exam per source patient identity"
         )
+    if not main_manifest["analysis_set"].eq(PRETREATMENT_ANALYSIS_SET).all():
+        raise ValueError("the main manifest holds an exam outside the pretreatment set")
     if not set(main_manifest["exam_id"]).issubset(set(source_manifest["exam_id"])):
         raise ValueError("main manifest is not a subset of the source cohort")
     if not main_manifest["high_resolution_partner_layout"].eq(SINGLE_SERIES).all():
-        raise ValueError("the Sarit-compatible main manifest includes split-series HR")
+        raise ValueError("the main manifest includes a split-series HR partner")
     if not main_manifest["phase_export_status"].eq("ready").all():
-        raise ValueError(
-            "the Sarit-compatible main manifest includes a pending phase export"
-        )
+        raise ValueError("the main manifest includes a pending phase export")
 
     paired_source = pd.DataFrame(paired_source_rows)
     if paired_source["study_instance_uid"].duplicated().any():
@@ -1342,12 +1664,19 @@ def _build_tables(
         }
     )
 
+    # Split out for convenience only: it is exactly the source cohort's longitudinal rows, so nothing
+    # here is unique to it. It exists so a temporal model can point at one file rather than remember
+    # which column to filter on, and so the main manifest can stay strictly cross-sectional.
+    longitudinal_manifest = source_manifest[
+        source_manifest["analysis_set"].eq(LONGITUDINAL_ANALYSIS_SET)
+    ].copy()
     return {
         "reference_columns": list(reference.columns),
         "canonical": canonical,
         "retro": retro,
         "source_manifest": source_manifest,
         "main_manifest": main_manifest,
+        "longitudinal_manifest": longitudinal_manifest,
         "paired_source": paired_source,
         "paired_legacy": paired_legacy,
         "paired_exclusions": paired_exclusions,
@@ -1680,6 +2009,7 @@ def _write_release(
         _write_csv(
             tables["source_manifest"], stage / "source_eligible_cohort_manifest.csv"
         )
+        _write_csv(tables["longitudinal_manifest"], stage / "longitudinal_manifest.csv")
         _write_csv(
             tables["paired_legacy"], stage / "paired_preprocessing_case_manifest.csv"
         )
@@ -1773,8 +2103,7 @@ def _parser() -> argparse.ArgumentParser:
         "--output-root",
         type=Path,
         default=Path(
-            "/gpfs/data/karczmar-lab/vanguard/"
-            "dce2d_internal_ultrafast_pretreatment_cohort_v2"
+            "/gpfs/data/karczmar-lab/vanguard/dce2d_internal_ultrafast_pcr_cohort_v6"
         ),
     )
     parser.add_argument(
@@ -1791,8 +2120,13 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(
             "/gpfs/data/karczmar-lab/vanguard/"
-            "uchicago_ultrafast_pretreatment_cohort_v1/"
+            "uchicago_ultrafast_longitudinal_cohort_v1/"
             "dce2d_internal_ultrafast_manifest.csv"
+        ),
+        help=(
+            "the UChicago arm. Defaults to the longitudinal cohort rather than the pretreatment one "
+            "because it is a strict superset: the same 37-column contract, every pretreatment study "
+            "the pretreatment cohort holds, plus the repeat visits, which inherit their patient's fold."
         ),
     )
     parser.add_argument(
@@ -1825,7 +2159,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(
             "/gpfs/data/huo-lab/Image/annawoodard/hfdp/outputs/"
-            "retro_caps_two_series_gate_readiness_resolved_identity/gate_readiness.csv"
+            "retro_caps_two_series_gate_readiness_all_delivered_v2/gate_readiness.csv"
         ),
     )
     parser.add_argument(
@@ -1833,7 +2167,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(
             "/gpfs/data/huo-lab/Image/annawoodard/hfdp/outputs/"
-            "retro_caps_two_series_gate_readiness_resolved_identity/"
+            "retro_caps_two_series_gate_readiness_all_delivered_v2/"
             "gate_readiness_summary.json"
         ),
     )
@@ -1842,7 +2176,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(
             "/gpfs/data/huo-lab/Image/annawoodard/hfdp/outputs/"
-            "retro_caps_two_series_gate_readiness_resolved_identity/README.md"
+            "retro_caps_two_series_gate_readiness_all_delivered_v2/README.md"
         ),
     )
     parser.add_argument(
@@ -1850,7 +2184,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(
             "/gpfs/data/huo-lab/Image/annawoodard/hfdp/outputs/"
-            "retro_caps_pcr_imaging_inventory_stability_gated/exam_manifest.parquet"
+            "retro_caps_pcr_imaging_inventory_all_delivered_exams_v2/exam_manifest.parquet"
         ),
     )
     parser.add_argument(
@@ -1858,7 +2192,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(
             "/gpfs/data/huo-lab/Image/annawoodard/hfdp/outputs/"
-            "retro_caps_pcr_imaging_inventory_stability_gated/dicom_series_manifest.parquet"
+            "retro_caps_pcr_imaging_inventory_all_delivered_exams_v2/dicom_series_manifest.parquet"
         ),
     )
     parser.add_argument(
@@ -1866,7 +2200,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(
             "/gpfs/data/karczmar-lab/DR_662135_Karczmar_Breast_MRI_ML/"
-            "retro_caps_pcr_imaging_cohort/landed_exam_metadata.csv"
+            "retro_caps_pcr_imaging_cohort/exam_metadata.csv"
         ),
     )
     parser.add_argument(
@@ -1874,7 +2208,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(
             "/gpfs/data/karczmar-lab/DR_662135_Karczmar_Breast_MRI_ML/"
-            "retro_caps_pcr_imaging_cohort/landed_exam_metadata_README.md"
+            "retro_caps_pcr_imaging_cohort/exam_metadata_README.md"
         ),
     )
     parser.add_argument(
@@ -1921,9 +2255,19 @@ def _parser() -> argparse.ArgumentParser:
             "pre-v6 behaviour, which re-places every retro patient on every build."
         ),
     )
-    parser.add_argument("--expected-canonical", type=int, default=137)
-    parser.add_argument("--expected-retro", type=int, default=204)
-    parser.add_argument("--expected-main", type=int, default=292)
+    # Tripwires, not targets: they fail the build when an input silently changes shape under it. They
+    # track the defaults above, so overriding an input path usually means overriding these too.
+    parser.add_argument(
+        "--canonical-component",
+        default="uchicago_ultrafast_longitudinal_cohort_v1",
+        help=(
+            "the provenance label written to cohort_component for every UChicago row. Change it with "
+            "--canonical-manifest so the release records which cohort its UChicago arm came from."
+        ),
+    )
+    parser.add_argument("--expected-canonical", type=int, default=240)
+    parser.add_argument("--expected-retro", type=int, default=291)
+    parser.add_argument("--expected-main", type=int, default=338)
     parser.add_argument(
         "--plan-only",
         action="store_true",
