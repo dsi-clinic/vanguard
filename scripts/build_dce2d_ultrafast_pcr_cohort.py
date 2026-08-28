@@ -42,6 +42,38 @@ IDENTITY_SCHEMA = "vanguard.sarit_pcr_pretreatment_cohort.identity_audit.v1"
 # It is the only record that the two name one person, so a consumer reconciling a v6 fold against an
 # earlier release needs it to see that the patient did not disappear, only change key.
 IDENTITY_LINK_SCHEMA = "vanguard.sarit_pcr_cross_delivery_identity_link.v1"
+CURATION_ROOT = Path("/gpfs/data/karczmar-lab/vanguard/dce2d_ultrafast_pcr_cohort_curation_v1")
+IMAGE_EXCLUSION_SCHEMA = "vanguard.sarit_pcr_image_duplicate_exclusion.v1"
+LABEL_OVERRIDE_SCHEMA = "vanguard.dce2d_ultrafast_pcr_label_override.v1"
+CARRIED_FORWARD_SCHEMA = "vanguard.dce2d_ultrafast_pcr_carried_forward_change.v1"
+
+# What a consumer of an earlier release keyed their cached work on. A released exam that keeps its
+# id but changes the imaging behind it silently invalidates every derivative anyone computed from
+# it, so these columns are compared against the previous release rather than assumed stable.
+CARRIED_FORWARD_COLUMNS = (
+    "study_instance_uid",
+    "ultrafast_series_instance_uid",
+    "high_resolution_series_instance_uid",
+    "high_resolution_precontrast_series_instance_uid",
+    "high_resolution_partner_layout",
+    "study_date",
+    "pcr",
+)
+
+# The curation a build applies on top of its inputs. Both were separate release stages through v5 --
+# each one copied the whole preceding release forward to change tens of rows -- and are inputs here
+# so a release is one build from frozen tables instead of a chain nobody can replay.
+#
+# An override names upstream label fields only. `pcr_label_status`, `pcr_label_authority` and
+# `pcr_label_is_provisional` are derived from `pcr` and `label_source` when the manifest row is
+# built, so correcting the upstream field carries the derived ones with it. `pcr_label_confidence`
+# has no upstream source and is the one derived field an override may set directly.
+LABEL_OVERRIDE_UPSTREAM_COLUMNS = ("pcr", "label_source", "rcb_class", "rcb_score")
+LABEL_OVERRIDE_DERIVED_COLUMNS = ("pcr_label_confidence",)
+LABEL_OVERRIDE_GUARD_COLUMNS = {
+    "previous_pcr": "pcr",
+    "previous_label_source": "label_source",
+}
 N_FOLDS = 5
 MIN_TIMEPOINTS = 2
 POLICY_BASELINE_FRAMES = 5
@@ -123,6 +155,9 @@ SNAPSHOT_ARGUMENTS = {
 # required inputs. `_input_paths` includes an entry only when its argument was actually given.
 OPTIONAL_SNAPSHOT_ARGUMENTS = {
     "previous_fold_assignments": "previous_release_fold_assignments.csv",
+    "image_duplicate_exclusions": "image_duplicate_exclusions.csv",
+    "pcr_label_overrides": "pcr_label_overrides.csv",
+    "previous_manifest": "previous_release_manifest.csv",
 }
 
 ALL_SNAPSHOT_ARGUMENTS = {**SNAPSHOT_ARGUMENTS, **OPTIONAL_SNAPSHOT_ARGUMENTS}
@@ -1021,6 +1056,286 @@ def _rewrite_ready_paths(
     return row
 
 
+def _pcr_text(value: object) -> str:
+    """Normalise a pCR label to `0`/`1` so `0`, `0.0` and `"0"` compare equal."""
+    cleaned = _clean(value)
+    if cleaned == "":
+        return ""
+    return str(int(float(cleaned)))
+
+
+def _read_image_duplicate_exclusions(paths: dict[str, Path]) -> pd.DataFrame:
+    """Read the frozen list of exams withdrawn as image-content duplicates of a retained exam.
+
+    Two deliveries can hand over the same physical exam under different accessions, which is a
+    duplicate patient in every analysis that follows. The pairs were adjudicated against pixel
+    correlations once, and the surviving list is an input here so a rebuild reproduces the same
+    cohort rather than re-deriving the adjudication or inheriting it through a chained release.
+    """
+    if "image_duplicate_exclusions" not in paths:
+        return pd.DataFrame(columns=["dropped_exam_id", "retained_exam_id"])
+    frame = _read_csv(paths["image_duplicate_exclusions"])
+    required = {"dropped_exam_id", "retained_exam_id", "duplicate_classification"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"the image duplicate exclusion table lacks columns {missing}")
+    if "schema" in frame.columns:
+        schemas = sorted(set(frame["schema"].map(_clean)))
+        if schemas != [IMAGE_EXCLUSION_SCHEMA]:
+            raise ValueError(
+                f"the image duplicate exclusion table declares schemas {schemas}, not "
+                f"[{IMAGE_EXCLUSION_SCHEMA!r}]"
+            )
+    frame["dropped_exam_id"] = frame["dropped_exam_id"].map(_clean)
+    frame["retained_exam_id"] = frame["retained_exam_id"].map(_clean)
+    if frame["dropped_exam_id"].eq("").any() or frame["retained_exam_id"].eq("").any():
+        raise ValueError("an image duplicate exclusion names an empty exam id")
+    if frame["dropped_exam_id"].duplicated().any():
+        raise ValueError("an image duplicate exclusion drops the same exam twice")
+    # A retained exam that is itself dropped elsewhere would make the surviving exam depend on the
+    # order the rows are applied in, so the table has to be one flat generation of decisions.
+    chained = sorted(set(frame["retained_exam_id"]) & set(frame["dropped_exam_id"]))
+    if chained:
+        raise ValueError(
+            f"image duplicate exclusions chain through {chained}, so which exam survives depends on "
+            "the order the rows are applied in"
+        )
+    return frame
+
+
+def _exclude_duplicate_exams(
+    frame: pd.DataFrame, exclusions: pd.DataFrame, *, arm: str
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Withdraw the named exams from one arm before any per-patient fact is measured.
+
+    The exclusion runs this early because everything downstream is per patient: the fold a patient
+    is placed in, whether their pretreatment visit is unique, whether they hold a follow-up. A
+    duplicate exam left in until after those are computed corrupts all three.
+    """
+    if not len(exclusions):
+        return frame, pd.Series(dtype=bool)
+    dropped = set(exclusions["dropped_exam_id"])
+    matched = frame["exam_id"].map(_clean).isin(dropped)
+    if matched.any():
+        print(
+            f"image duplicate exclusion: withdrew {int(matched.sum())} {arm} exams",
+            file=sys.stderr,
+        )
+    return frame.loc[~matched].reset_index(drop=True), frame.loc[matched, "exam_id"].map(
+        _clean
+    )
+
+
+def _read_label_overrides(paths: dict[str, Path]) -> pd.DataFrame:
+    """Read the frozen pCR label corrections a build applies to its input labels."""
+    columns = [
+        "exam_id",
+        "override_kind",
+        *LABEL_OVERRIDE_UPSTREAM_COLUMNS,
+        *LABEL_OVERRIDE_DERIVED_COLUMNS,
+        *LABEL_OVERRIDE_GUARD_COLUMNS,
+        "reason",
+    ]
+    if "pcr_label_overrides" not in paths:
+        return pd.DataFrame(columns=columns)
+    frame = _read_csv(paths["pcr_label_overrides"])
+    missing = sorted({"exam_id", "override_kind", "reason"} - set(frame.columns))
+    if missing:
+        raise ValueError(f"the pCR label override table lacks columns {missing}")
+    if "schema" in frame.columns:
+        schemas = sorted(set(frame["schema"].map(_clean)))
+        if schemas != [LABEL_OVERRIDE_SCHEMA]:
+            raise ValueError(
+                f"the pCR label override table declares schemas {schemas}, not "
+                f"[{LABEL_OVERRIDE_SCHEMA!r}]"
+            )
+    for column in (*LABEL_OVERRIDE_UPSTREAM_COLUMNS, *LABEL_OVERRIDE_DERIVED_COLUMNS):
+        if column not in frame.columns:
+            frame[column] = ""
+    frame["exam_id"] = frame["exam_id"].map(_clean)
+    if frame["exam_id"].duplicated().any():
+        raise ValueError("a pCR label override names the same exam twice")
+    if frame["reason"].map(_clean).eq("").any():
+        raise ValueError("a pCR label override carries no reason")
+    settable = [*LABEL_OVERRIDE_UPSTREAM_COLUMNS, *LABEL_OVERRIDE_DERIVED_COLUMNS]
+    empty = frame[settable].apply(lambda row: all(_clean(v) == "" for v in row), axis=1)
+    if empty.any():
+        raise ValueError("a pCR label override sets no field")
+    return frame
+
+
+def _apply_label_overrides(
+    *,
+    overrides: pd.DataFrame,
+    canonical: pd.DataFrame,
+    retro: pd.DataFrame,
+) -> pd.DataFrame:
+    """Correct input pCR labels in place, before any label-dependent decision is taken.
+
+    Each override edits the upstream label fields the manifest row is derived from rather than the
+    derived fields themselves, so `pcr_label_status`, `pcr_label_authority` and
+    `pcr_label_is_provisional` follow from the correction instead of needing a second patch to
+    agree with it. Applying them here rather than to the finished manifest also puts the corrected
+    label in front of the label-balanced fold pass, which is the decision that actually reads it.
+    """
+    if not len(overrides):
+        return overrides.assign(applied_to_arm=pd.Series(dtype=str))
+    arms: list[str] = []
+    exam_counts: list[int] = []
+    for record in overrides.to_dict(orient="records"):
+        exam_id = _clean(record["exam_id"])
+        canonical_mask = canonical["exam_id"].map(_clean).eq(exam_id)
+        retro_mask = retro["exam_id"].map(_clean).eq(exam_id)
+        hits = int(canonical_mask.sum()) + int(retro_mask.sum())
+        if hits != 1:
+            raise ValueError(
+                f"pCR label override target {exam_id} resolves to {hits} cohort exams, so the "
+                "override has no single label to correct"
+            )
+        for guard, column in LABEL_OVERRIDE_GUARD_COLUMNS.items():
+            expected = _clean(record.get(guard))
+            if expected == "":
+                continue
+            frame, mask = (
+                (canonical, canonical_mask)
+                if canonical_mask.any()
+                else (retro, retro_mask)
+            )
+            if column in frame.columns:
+                observed = _clean(frame.loc[mask, column].iloc[0])
+            elif column == "pcr" and "pcr_label" in frame.columns:
+                # The retro arm has not derived `pcr` yet; its label is still the status string.
+                observed = str(LABEL_MAP[_clean(frame.loc[mask, "pcr_label"].iloc[0])])
+            else:
+                raise ValueError(
+                    f"pCR label override target {exam_id} guards on {column}, which its arm of the "
+                    "cohort does not carry"
+                )
+            if column == "pcr":
+                expected, observed = _pcr_text(expected), _pcr_text(observed)
+            if observed != expected:
+                raise ValueError(
+                    f"pCR label override target {exam_id} expects {column}={expected!r} but the "
+                    f"input carries {observed!r}, so the label it corrects has changed upstream"
+                )
+        # pCR is a property of the treatment episode, not of one scan, so the correction carries to
+        # every visit the patient contributes. Applying it to the named exam alone would leave a
+        # patient's follow-up visits asserting the label the adjudication just overturned.
+        frame, mask = (
+            (canonical, canonical_mask) if canonical_mask.any() else (retro, retro_mask)
+        )
+        patient_key = _clean(frame.loc[mask, "patient_key"].iloc[0])
+        mask = frame["patient_key"].map(_clean).eq(patient_key)
+        exam_counts.append(int(mask.sum()))
+        if canonical_mask.any():
+            canonical_mask = mask
+            arms.append("canonical")
+            for column in (
+                *LABEL_OVERRIDE_UPSTREAM_COLUMNS,
+                *LABEL_OVERRIDE_DERIVED_COLUMNS,
+            ):
+                value = _clean(record.get(column))
+                if value == "":
+                    continue
+                if column not in canonical.columns:
+                    canonical[column] = ""
+                canonical.loc[canonical_mask, column] = (
+                    _pcr_text(value) if column == "pcr" else value
+                )
+            continue
+        retro_mask = mask
+        arms.append("retro")
+        # The retro arm carries its label as a status string the build maps to `pcr`, and its
+        # authority and confidence under their own names, so an override reaches the same fields
+        # through the columns this arm actually reads.
+        unsupported = [
+            column
+            for column in ("rcb_class", "rcb_score")
+            if _clean(record.get(column)) != ""
+        ]
+        if unsupported:
+            raise ValueError(
+                f"pCR label override target {exam_id} sets {unsupported} on a retro-CAPS exam, but "
+                "the retro delivery carries no residual-cancer-burden fields to correct"
+            )
+        pcr = _pcr_text(record.get("pcr"))
+        if pcr != "":
+            status = {value: key for key, value in LABEL_MAP.items()}[int(pcr)]
+            retro.loc[retro_mask, "pcr_label"] = status
+        authority = _clean(record.get("label_source"))
+        if authority != "":
+            retro.loc[retro_mask, "pcr_label_authority"] = authority
+        confidence = _clean(record.get("pcr_label_confidence"))
+        if confidence != "":
+            retro.loc[retro_mask, "pcr_confidence"] = confidence
+    applied = overrides.copy()
+    applied["applied_to_arm"] = arms
+    applied["applied_to_patient_exams"] = exam_counts
+    print(
+        "pCR label override: corrected "
+        + ", ".join(
+            f"{count} {arm} labels"
+            for arm, count in sorted(pd.Series(arms).value_counts().items())
+        ),
+        file=sys.stderr,
+    )
+    return applied
+
+
+
+def _carried_forward_changes(
+    paths: dict[str, Path], source_manifest: pd.DataFrame
+) -> pd.DataFrame:
+    """Report every exam that keeps its id from the previous release but changes underneath it.
+
+    Through v5 each release was built from its predecessor, so a stage that moved an exam onto
+    different imaging had to survive a comparison against the release it copied. Building in one
+    shot from upstream inputs drops that comparison, and an upstream re-derivation is exactly the
+    thing it used to catch -- the regenerated pair gate replaced one released exam's ultrafast
+    series after learning to reject projection renderings. This puts the comparison back.
+    """
+    columns = ["exam_id", "column", "previous_value", "current_value", "schema"]
+    if "previous_manifest" not in paths:
+        return pd.DataFrame(columns=columns)
+    previous = _read_csv(paths["previous_manifest"])
+    if "exam_id" not in previous.columns:
+        raise ValueError("the previous release manifest carries no exam_id column")
+    current = source_manifest.set_index("exam_id")
+    shared = [
+        exam_id
+        for exam_id in previous["exam_id"].map(_clean)
+        if exam_id in current.index
+    ]
+    rows = []
+    previous_index = previous.set_index(previous["exam_id"].map(_clean))
+    for column in CARRIED_FORWARD_COLUMNS:
+        if column not in previous.columns or column not in current.columns:
+            continue
+        before = previous_index.loc[shared, column].map(_clean)
+        after = current.loc[shared, column].map(_clean)
+        if column == "pcr":
+            before, after = before.map(_pcr_text), after.map(_pcr_text)
+        for exam_id in before.index[before.to_numpy() != after.to_numpy()]:
+            rows.append(
+                {
+                    "exam_id": exam_id,
+                    "column": column,
+                    "previous_value": before[exam_id],
+                    "current_value": after[exam_id],
+                    "schema": CARRIED_FORWARD_SCHEMA,
+                }
+            )
+    frame = pd.DataFrame(rows, columns=columns)
+    missing = sorted(set(previous["exam_id"].map(_clean)) - set(current.index))
+    print(
+        f"carried-forward check: {len(shared)} of {len(previous)} previously released exams are "
+        f"still in the cohort, {len(frame)} of them changed a pinned column"
+        + (f", {len(missing)} are gone" if missing else ""),
+        file=sys.stderr,
+    )
+    return frame
+
+
 def _build_tables(
     *,
     arguments: argparse.Namespace,
@@ -1038,6 +1353,10 @@ def _build_tables(
         )
     if canonical["study_instance_uid"].duplicated().any():
         raise ValueError("canonical manifest repeats a StudyInstanceUID")
+    exclusions = _read_image_duplicate_exclusions(paths)
+    canonical, canonical_excluded = _exclude_duplicate_exams(
+        canonical, exclusions, arm="UChicago"
+    )
     # A patient may legitimately appear more than once now that follow-up visits are carried, so the
     # uniqueness the cross-sectional analysis needs is enforced on the pretreatment set alone.
     canonical["analysis_set"] = canonical["visit_role"].map(_analysis_set)
@@ -1071,6 +1390,33 @@ def _build_tables(
     raw_by_study, raw_overlap_audit = _raw_phase_rows(paths)
     retro, dedup_exclusions, retro_join_audit = _join_retro_candidates(
         paths=paths, raw_by_study=raw_by_study
+    )
+    # The tripwire describes what the join selected, before curation withdraws from it, so a change
+    # in the delivery is not masked by a change in the frozen exclusion table.
+    if len(retro) != arguments.expected_retro:
+        raise ValueError(
+            f"retro count changed: {len(retro)} != {arguments.expected_retro}"
+        )
+    retro, retro_excluded = _exclude_duplicate_exams(
+        retro, exclusions, arm="retro-CAPS"
+    )
+    withdrawn = pd.concat([canonical_excluded, retro_excluded], ignore_index=True)
+    unmatched = sorted(set(exclusions["dropped_exam_id"]) - set(withdrawn))
+    if unmatched:
+        raise ValueError(
+            f"{len(unmatched)} image duplicate exclusions name exams this build never selected, so "
+            f"the frozen table no longer describes the cohort: {unmatched[:3]}"
+        )
+    surviving = set(canonical["exam_id"].map(_clean)) | set(retro["exam_id"].map(_clean))
+    orphaned = sorted(set(exclusions["retained_exam_id"]) - surviving)
+    if orphaned:
+        raise ValueError(
+            f"{len(orphaned)} image duplicate exclusions retain an exam that is not in the cohort, "
+            f"so a duplicate pair lost both members: {orphaned[:3]}"
+        )
+    # The correction runs before the fold pass, which reads the label it corrects.
+    applied_label_overrides = _apply_label_overrides(
+        overrides=_read_label_overrides(paths), canonical=canonical, retro=retro
     )
     # A SeriesInstanceUID shared with the released UChicago signal cache proves a UChicago patient and
     # a retro patient are one person. The two arms hold different visits of that person -- UChicago the
@@ -1186,10 +1532,6 @@ def _build_tables(
     retro_join_audit["cross_delivery_retro_exams_merged"] = int(
         retro_groups.isin(linked_groups).sum()
     )
-    if len(retro) != arguments.expected_retro:
-        raise ValueError(
-            f"retro count changed: {len(retro)} != {arguments.expected_retro}"
-        )
     retro["pcr"] = retro["pcr_label"].map(LABEL_MAP).astype(int)
     prior_folds_frame = (
         _read_csv(paths["previous_fold_assignments"])
@@ -1283,7 +1625,9 @@ def _build_tables(
                 "pcr_label_status": "supported" if pcr == 1 else "not_supported",
                 "pcr_label_authority": _clean(source.get("label_source"))
                 or "canonical_reviewed_label",
-                "pcr_label_confidence": "",
+                # The UChicago manifest states no confidence, so this stays empty unless a label
+                # override supplied one -- the one derived label field with no upstream source.
+                "pcr_label_confidence": _clean(source.get("pcr_label_confidence")),
                 "pcr_label_is_provisional": False,
                 "pair_gate_schema": (
                     "canonical_paired_preprocessing_contract"
@@ -1662,6 +2006,16 @@ def _build_tables(
     source_manifest = source_manifest.sort_values(
         ["cohort_component", "patient_key", "exam_id"], kind="stable"
     ).reset_index(drop=True)
+    carried_forward = _carried_forward_changes(paths, source_manifest)
+    if len(carried_forward) != arguments.expected_carried_forward_changes:
+        raise ValueError(
+            f"{len(carried_forward)} previously released exams changed a pinned column, not the "
+            f"{arguments.expected_carried_forward_changes} this build expects. Every row of "
+            "carried_forward_changes.csv invalidates work a consumer cached against that exam, so "
+            "each one has to be understood and then declared with "
+            "--expected-carried-forward-changes:\n"
+            + carried_forward.to_string(index=False)
+        )
     main_manifest = source_manifest[
         source_manifest["included_in_sarit_manifest"].map(_truthy)
     ].copy()
@@ -1802,6 +2156,9 @@ def _build_tables(
         "links": pd.DataFrame(link_rows),
         "identity_audit": identity_audit,
         "identity_links": identity_links,
+        "image_duplicate_exclusions": exclusions,
+        "pcr_label_overrides": applied_label_overrides,
+        "carried_forward_changes": carried_forward,
         "raw_overlap_audit": raw_overlap_audit,
         "retro_join_audit": retro_join_audit,
         "gate_summary": gate_summary,
@@ -2043,7 +2400,28 @@ pretreatment transfer role and do not claim an image-derived tumor mask or cente
   cohort, split, and one-per-source-patient accounting
 - `identity_overlap_audit.json`, `validation_summary.json`, `provenance.json`: leakage boundary,
   validation, and exact input/code hashes
+- `image_duplicate_exclusions.csv`, `pcr_label_overrides.csv`: the frozen curation this build
+  applied, copied into the release so the cohort can be reproduced from the release alone
+- `carried_forward_changes.csv`: every previously released exam that kept its id but changed the
+  imaging, visit date, or label behind it. Empty unless the build declared otherwise
 - `_build/input_snapshots/`: protected frozen source tables used for this release
+
+## Build lineage
+
+This release is one build from stated inputs. Through v5 the same cohort took four chained stages
+in two repositories -- build, image-content deduplication, label adjudication, raw-DICOM publish --
+each copying its predecessor forward in full to change a few tens of rows, because copying forward
+was the only way to preserve fold assignments across an edit. The builder now retains folds
+directly from a released `fold_assignments.csv` and applies the curation as inputs, so the
+deduplication and adjudication stages have no remaining work and are retired.
+
+What the chain also provided was a comparison against the release being copied. That is restored by
+`--previous-manifest`, which fails the build when an exam carried forward from an earlier release
+changes underneath its id, and by `--previous-fold-assignments`, which fails on a fold collision it
+was not told to expect.
+
+Raw DICOM payloads remain a separate additive step in `hfdp`, which owns the file-level DICOM
+inventories and the POSIX access audit that step depends on.
 
 ## Label policy
 
@@ -2145,6 +2523,16 @@ def _write_release(
         _write_csv(links, stage / "symlink_manifest.csv")
         _write_csv(
             tables["identity_links"], stage / "cross_delivery_identity_links.csv"
+        )
+        _write_csv(
+            tables["image_duplicate_exclusions"],
+            stage / "image_duplicate_exclusions.csv",
+        )
+        _write_csv(
+            tables["pcr_label_overrides"], stage / "pcr_label_overrides.csv"
+        )
+        _write_csv(
+            tables["carried_forward_changes"], stage / "carried_forward_changes.csv"
         )
         _write_json(tables["identity_audit"], stage / "identity_overlap_audit.json")
         _write_json(validation, stage / "validation_summary.json")
@@ -2374,6 +2762,38 @@ def _parser() -> argparse.ArgumentParser:
             "pre-v6 behaviour, which re-places every retro patient on every build."
         ),
     )
+    parser.add_argument(
+        "--image-duplicate-exclusions",
+        type=Path,
+        default=CURATION_ROOT / "image_duplicate_exclusions.csv",
+        help=(
+            "a frozen table of exams withdrawn as image-content duplicates of a retained exam. "
+            "Applied to both arms before any per-patient fact is measured, so a duplicate cannot "
+            "reach fold placement or the one-exam-per-patient set. Pass an empty string to build "
+            "without it, which reproduces the pre-v6 behaviour of deduplicating in a later release."
+        ),
+    )
+    parser.add_argument(
+        "--pcr-label-overrides",
+        type=Path,
+        default=CURATION_ROOT / "pcr_label_overrides.csv",
+        help=(
+            "a frozen table of pCR label corrections, applied to the upstream label fields before "
+            "the label-balanced fold pass reads them. Each row guards on the label it expects to "
+            "find, so a build fails rather than overwriting a label that changed upstream."
+        ),
+    )
+    parser.add_argument(
+        "--previous-manifest",
+        type=Path,
+        default=None,
+        help=(
+            "a released dce2d_internal_ultrafast_manifest.csv. Every exam id it shares with this "
+            "build is compared on the columns a consumer keys cached work to -- the study and "
+            "series identities, the visit date, the label -- and any change must be declared with "
+            "--expected-carried-forward-changes before the build proceeds."
+        ),
+    )
     # Tripwires, not targets: they fail the build when an input silently changes shape under it. They
     # track the defaults above, so overriding an input path usually means overriding these too.
     parser.add_argument(
@@ -2386,7 +2806,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--expected-canonical", type=int, default=240)
     parser.add_argument("--expected-retro", type=int, default=303)
-    parser.add_argument("--expected-main", type=int, default=338)
+    parser.add_argument("--expected-main", type=int, default=283)
+    parser.add_argument("--expected-carried-forward-changes", type=int, default=0)
     parser.add_argument(
         "--plan-only",
         action="store_true",
