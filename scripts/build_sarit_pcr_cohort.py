@@ -33,6 +33,10 @@ import pandas as pd
 SCHEMA = "vanguard.sarit_pcr_pretreatment_cohort.v2"
 ACCOUNTING_SCHEMA = "vanguard.sarit_pcr_pretreatment_cohort.accounting.v2"
 FOLD_SCHEMA = "vanguard.sarit_pcr_pretreatment_cohort.folds.v1"
+# Used only when a previous release's fold assignments are supplied. The retained-fold semantics are
+# genuinely different from v1 — a patient's fold is now a property of the first release that assigned
+# it, not of the current selection — so the table says so rather than reusing the v1 name.
+FOLD_SCHEMA_RETAINED = "vanguard.sarit_pcr_pretreatment_cohort.folds.v2"
 IDENTITY_SCHEMA = "vanguard.sarit_pcr_pretreatment_cohort.identity_audit.v1"
 N_FOLDS = 5
 MIN_TIMEPOINTS = 2
@@ -92,6 +96,14 @@ SNAPSHOT_ARGUMENTS = {
     "retro_raw_ingest_manifest": "retro_raw_signal_ingest_manifest.csv",
     "cross_delivery_roster": "cross_delivery_acquisition_roster.csv",
 }
+
+# Snapshotted like the rest when supplied, but a build is valid without them, so they cannot be
+# required inputs. `_input_paths` includes an entry only when its argument was actually given.
+OPTIONAL_SNAPSHOT_ARGUMENTS = {
+    "previous_fold_assignments": "previous_release_fold_assignments.csv",
+}
+
+ALL_SNAPSHOT_ARGUMENTS = {**SNAPSHOT_ARGUMENTS, **OPTIONAL_SNAPSHOT_ARGUMENTS}
 
 
 def _clean(value: object) -> str:
@@ -159,10 +171,15 @@ def _ensure_columns(frame: pd.DataFrame, required: set[str], name: str) -> None:
 
 
 def _input_paths(arguments: argparse.Namespace) -> dict[str, Path]:
-    return {
+    paths = {
         name: Path(getattr(arguments, name)).expanduser().resolve()
         for name in SNAPSHOT_ARGUMENTS
     }
+    for name in OPTIONAL_SNAPSHOT_ARGUMENTS:
+        value = getattr(arguments, name, None)
+        if _clean(value):
+            paths[name] = Path(value).expanduser().resolve()
+    return paths
 
 
 def _validate_input_paths(paths: dict[str, Path]) -> None:
@@ -482,7 +499,43 @@ def _join_retro_candidates(
     return selected, dropped, audit
 
 
-def _assign_folds(canonical: pd.DataFrame, retro: pd.DataFrame) -> pd.DataFrame:
+def _prior_folds(prior: pd.DataFrame | None) -> dict[str, int]:
+    """Read a released `fold_assignments.csv` into patient_key -> fold.
+
+    The greedy assignment below is order dependent: each patient is placed against the balance as it
+    stands at that moment, and the iteration order is a hash of the patient key. Adding patients
+    therefore interleaves newcomers among the patients an earlier release already placed, changing the
+    balance those patients saw and moving them to different folds. Measured on the v5 assignments,
+    extending the cohort re-runs 126 of the 168 additively-assigned patients into a different fold.
+
+    Nothing in the manifest would flag that. A patient silently changing fold between releases
+    invalidates every cross-validated result computed against the earlier one, so a fold, once
+    released, is treated here as a property of the release that assigned it.
+    """
+
+    if prior is None:
+        return {}
+    _ensure_columns(prior, {"patient_key", "fold"}, "previous fold assignments")
+    frame = prior[["patient_key", "fold"]].copy()
+    frame["patient_key"] = frame["patient_key"].map(_clean)
+    if frame["patient_key"].eq("").any():
+        raise ValueError("previous fold assignments contain a blank patient_key")
+    if frame["patient_key"].duplicated().any():
+        raise ValueError(
+            "previous fold assignments name a patient twice, so its released fold is ambiguous"
+        )
+    folds = frame["fold"].astype(float).astype(int)
+    outside = sorted(set(folds[~folds.between(0, N_FOLDS - 1)]))
+    if outside:
+        raise ValueError(f"previous fold assignments hold folds outside 0..{N_FOLDS - 1}: {outside}")
+    return dict(zip(frame["patient_key"], folds))
+
+
+def _assign_folds(
+    canonical: pd.DataFrame,
+    retro: pd.DataFrame,
+    prior: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     canonical_assignments = canonical[["patient_key", "pcr", "fold"]].copy()
     canonical_assignments["pcr"] = (
         canonical_assignments["pcr"].astype(float).astype(int)
@@ -493,13 +546,72 @@ def _assign_folds(canonical: pd.DataFrame, retro: pd.DataFrame) -> pd.DataFrame:
     if canonical_assignments["patient_key"].duplicated().any():
         raise ValueError("canonical patient keys are not unique")
     canonical_assignments["assignment_source"] = "canonical_fold_preserved"
-    canonical_assignments["schema"] = FOLD_SCHEMA
+    schema = FOLD_SCHEMA if prior is None else FOLD_SCHEMA_RETAINED
+    canonical_assignments["schema"] = schema
+    prior_folds = _prior_folds(prior)
+
+    # A canonical patient's fold comes from the canonical manifest, and the previous release also
+    # recorded one. They describe the same assignment, so disagreement means the two inputs are not
+    # the same lineage and neither can be trusted to be the released fold.
+    conflicts = sorted(
+        str(row.patient_key)
+        for row in canonical_assignments.itertuples(index=False)
+        if str(row.patient_key) in prior_folds
+        and prior_folds[str(row.patient_key)] != int(row.fold)
+    )
+    if conflicts:
+        raise ValueError(
+            f"{len(conflicts)} canonical patients have a different fold in the previous release, so "
+            f"the canonical manifest and the previous release disagree: {conflicts[:5]}"
+        )
+
     balance = canonical_assignments[["patient_key", "pcr", "fold"]].copy()
     records = canonical_assignments.to_dict(orient="records")
     requested = retro[["patient_key", "pcr"]].drop_duplicates().copy()
     requested["_order"] = requested["patient_key"].map(
         lambda value: _token("sarit-pcr-fold-v2", value, 64)
     )
+
+    # The two arms must name disjoint patients. The original code relied on the duplicate check at the
+    # end of this function to catch a collision; with retained folds now short-circuiting part of the
+    # loop that check can no longer see every case, so the invariant is asserted directly.
+    canonical_keys = set(canonical_assignments["patient_key"].map(_clean))
+    collisions = sorted(
+        canonical_keys.intersection(requested["patient_key"].map(_clean))
+    )
+    if collisions:
+        raise ValueError(
+            f"{len(collisions)} patients appear in both the canonical and retro arms, so one patient "
+            f"would receive two fold assignments: {collisions[:5]}"
+        )
+
+    # Retained folds are seated before any newcomer is placed, so the greedy pass below sees the whole
+    # released cohort as fixed context and only ever chooses folds for patients that have none.
+    retained = requested[
+        requested["patient_key"].map(lambda value: _clean(value) in prior_folds)
+    ]
+    for row in retained.sort_values("_order").itertuples(index=False):
+        record = {
+            "patient_key": row.patient_key,
+            "pcr": int(row.pcr),
+            "fold": int(prior_folds[_clean(row.patient_key)]),
+            "assignment_source": "prior_release_fold_preserved",
+            "schema": schema,
+        }
+        records.append(record)
+        balance = pd.concat(
+            [
+                balance,
+                pd.DataFrame(
+                    [{key: record[key] for key in ("patient_key", "pcr", "fold")}]
+                ),
+            ],
+            ignore_index=True,
+        )
+
+    requested = requested[
+        requested["patient_key"].map(lambda value: _clean(value) not in prior_folds)
+    ]
     for row in requested.sort_values("_order").itertuples(index=False):
         label_counts = balance.loc[
             balance["pcr"].eq(int(row.pcr)), "fold"
@@ -518,7 +630,7 @@ def _assign_folds(canonical: pd.DataFrame, retro: pd.DataFrame) -> pd.DataFrame:
             "pcr": int(row.pcr),
             "fold": int(fold),
             "assignment_source": "additive_label_balanced_hash_order_v1",
-            "schema": FOLD_SCHEMA,
+            "schema": schema,
         }
         records.append(record)
         balance = pd.concat(
@@ -722,7 +834,23 @@ def _build_tables(
             f"retro count changed: {len(retro)} != {arguments.expected_retro}"
         )
     retro["pcr"] = retro["pcr_label"].map(LABEL_MAP).astype(int)
-    folds = _assign_folds(canonical, retro)
+    prior_folds_frame = (
+        _read_csv(paths["previous_fold_assignments"])
+        if "previous_fold_assignments" in paths
+        else None
+    )
+    folds = _assign_folds(canonical, retro, prior=prior_folds_frame)
+    print(
+        "fold assignment: "
+        + ", ".join(
+            f"{source} {count}"
+            for source, count in folds["assignment_source"]
+            .value_counts()
+            .sort_index()
+            .items()
+        ),
+        file=sys.stderr,
+    )
     fold_index = folds.set_index("patient_key")
     retro["fold"] = retro["patient_key"].map(fold_index["fold"]).astype(int)
     identity_audit = _identity_audit(
@@ -1397,7 +1525,7 @@ def _snapshot_inputs(
     snapshot_root.mkdir(parents=True, exist_ok=True)
     records: dict[str, dict[str, str]] = {}
     for name, source in paths.items():
-        destination = snapshot_root / SNAPSHOT_ARGUMENTS[name]
+        destination = snapshot_root / ALL_SNAPSHOT_ARGUMENTS[name]
         shutil.copy2(source, destination)
         destination.chmod(0o660)
         source_hash = _sha256(source)
@@ -1780,6 +1908,17 @@ def _parser() -> argparse.ArgumentParser:
         default=Path(
             "/gpfs/data/huo-lab/Image/annawoodard/hfdp/outputs/runs/hfdp/"
             "two_series_cohort_roster_full_delivery/acquisitions.csv"
+        ),
+    )
+    parser.add_argument(
+        "--previous-fold-assignments",
+        type=Path,
+        default=None,
+        help=(
+            "a released fold_assignments.csv whose folds are retained verbatim. Any patient it names "
+            "keeps that fold and is recorded as prior_release_fold_preserved; only patients it does "
+            "not name are placed by the label-balanced hash-order pass. Omit to reproduce the "
+            "pre-v6 behaviour, which re-places every retro patient on every build."
         ),
     )
     parser.add_argument("--expected-canonical", type=int, default=137)
