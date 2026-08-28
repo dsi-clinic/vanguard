@@ -38,6 +38,10 @@ FOLD_SCHEMA = "vanguard.sarit_pcr_pretreatment_cohort.folds.v1"
 # it, not of the current selection — so the table says so rather than reusing the v1 name.
 FOLD_SCHEMA_RETAINED = "vanguard.sarit_pcr_pretreatment_cohort.folds.v2"
 IDENTITY_SCHEMA = "vanguard.sarit_pcr_pretreatment_cohort.identity_audit.v1"
+# The published crosswalk between a UChicago patient key and the retro patient key that replaced it.
+# It is the only record that the two name one person, so a consumer reconciling a v6 fold against an
+# earlier release needs it to see that the patient did not disappear, only change key.
+IDENTITY_LINK_SCHEMA = "vanguard.sarit_pcr_cross_delivery_identity_link.v1"
 N_FOLDS = 5
 MIN_TIMEPOINTS = 2
 POLICY_BASELINE_FRAMES = 5
@@ -690,6 +694,7 @@ def _assign_folds(
     canonical: pd.DataFrame,
     retro: pd.DataFrame,
     prior: pd.DataFrame | None = None,
+    inherited: dict[str, int] | None = None,
 ) -> pd.DataFrame:
     canonical_assignments = canonical[["patient_key", "pcr", "fold"]].copy()
     canonical_assignments["pcr"] = (
@@ -713,6 +718,16 @@ def _assign_folds(
     schema = FOLD_SCHEMA if prior is None else FOLD_SCHEMA_RETAINED
     canonical_assignments["schema"] = schema
     prior_folds = _prior_folds(prior)
+    # A retro patient who replaced a UChicago patient of the same person inherits that patient's fold,
+    # and it outranks any entry the previous release holds for the retro key -- that entry was assigned
+    # before the two were known to name one person.
+    inherited_folds = dict(inherited or {})
+    outside = sorted(
+        key for key, fold in inherited_folds.items() if not 0 <= int(fold) < N_FOLDS
+    )
+    if outside:
+        raise ValueError(f"inherited folds fall outside 0..{N_FOLDS - 1}: {outside}")
+    prior_folds.update(inherited_folds)
 
     # A canonical patient's fold comes from the canonical manifest, and the previous release also
     # recorded one. They describe the same assignment, so disagreement means the two inputs are not
@@ -759,7 +774,11 @@ def _assign_folds(
             "patient_key": row.patient_key,
             "pcr": int(row.pcr),
             "fold": int(prior_folds[_clean(row.patient_key)]),
-            "assignment_source": "prior_release_fold_preserved",
+            "assignment_source": (
+                "cross_delivery_identity_fold_inherited"
+                if _clean(row.patient_key) in inherited_folds
+                else "prior_release_fold_preserved"
+            ),
             "schema": schema,
         }
         records.append(record)
@@ -1055,39 +1074,112 @@ def _build_tables(
     retro, dedup_exclusions, retro_join_audit = _join_retro_candidates(
         paths=paths, raw_by_study=raw_by_study
     )
-    # A patient present in both deliveries cannot be carried twice. Keeping both copies would either
-    # split one person across two folds -- a leak between train and test -- or break the one-exam-per-
-    # patient premise of the cross-sectional set. The released UChicago exam wins: its fold is already
-    # frozen and its pCR label is reviewed, where the retro label is an unreviewed chart abstraction.
-    # This costs no patient, only the second delivery's exam of a patient the release already holds.
+    # A patient present in both deliveries cannot be carried twice: that would either split one person
+    # across two folds -- a leak between train and test -- or break the one-exam-per-patient premise of
+    # the cross-sectional set. retro-CAPS is the delivery this cohort is migrating onto, so the retro
+    # exam wins and the UChicago exam is excluded, which is the opposite of the pre-v6 resolution.
+    #
+    # The cost is real and specific: for every identity resolved so far the UChicago side holds the
+    # pretreatment exam and the retro side holds only on-treatment visits, so each link trades a
+    # pretreatment exam for a follow-up one and the patient leaves the main manifest.
+    #
+    # The retained retro patient inherits the excluded UChicago patient's fold, so a person released in
+    # an earlier cohort stays in the fold they were validated under even though their patient key
+    # changes. Without that they would be re-placed by the hash-order pass and could move.
     _, canonical_groups, alias_to_group = _cross_delivery_link_groups(
         paths=paths, canonical=canonical, canonical_pairs=canonical_pairs
     )
     retro_groups = retro["patient_id_fs"].map(alias_to_group).fillna("").astype(str)
-    shared_identity = retro_groups.ne("") & retro_groups.isin(canonical_groups)
-    if shared_identity.any():
-        shared = retro[shared_identity]
+    linked_groups = sorted(set(retro_groups[retro_groups.ne("")]) & canonical_groups)
+    canonical_groups_per_exam, _, _ = _cross_delivery_link_groups(
+        paths=paths, canonical=canonical, canonical_pairs=canonical_pairs
+    )
+    canonical_link_group = pd.Series(
+        canonical_groups_per_exam.to_numpy(), index=canonical.index
+    )
+    canonical_linked = canonical_link_group.isin(linked_groups)
+    identity_links = pd.DataFrame(
+        columns=[
+            "patient_link_group",
+            "excluded_canonical_patient_key",
+            "excluded_canonical_study_instance_uid",
+            "excluded_canonical_fold",
+            "excluded_canonical_pcr",
+            "retained_retro_patient_key",
+            "retained_retro_exams",
+            "retained_retro_analysis_sets",
+            "retained_retro_pcr",
+            "schema",
+        ]
+    )
+    inherited_folds: dict[str, int] = {}
+    if linked_groups:
+        excluded = canonical[canonical_linked].copy()
+        excluded["_link_group"] = canonical_link_group[canonical_linked]
+        retained = retro[retro_groups.isin(linked_groups)].copy()
+        retained["_link_group"] = retro_groups[retro_groups.isin(linked_groups)]
+        rows = []
+        for group in linked_groups:
+            left = excluded[excluded["_link_group"].eq(group)]
+            right = retained[retained["_link_group"].eq(group)]
+            canonical_pcr = sorted({int(float(value)) for value in left["pcr"]})
+            retro_pcr = sorted(
+                {LABEL_MAP[_clean(value)] for value in right["pcr_label"]}
+            )
+            # The label belongs to the person, so the two deliveries must agree. A disagreement is a
+            # labelling problem to resolve upstream, not something to silently resolve by arm priority.
+            if canonical_pcr != retro_pcr:
+                raise ValueError(
+                    f"cross-delivery identity {group} is labelled {canonical_pcr} by the UChicago arm "
+                    f"and {retro_pcr} by the retro arm, so the patient's pCR status is contested"
+                )
+            folds = sorted({int(float(value)) for value in left["fold"]})
+            if len(folds) != 1:
+                raise ValueError(
+                    f"cross-delivery identity {group} holds UChicago folds {folds}, so the fold the "
+                    "retained retro patient should inherit is ambiguous"
+                )
+            for patient_key in sorted(set(right["patient_key"].map(_clean))):
+                inherited_folds[patient_key] = folds[0]
+            rows.append(
+                {
+                    "patient_link_group": group,
+                    "excluded_canonical_patient_key": "|".join(
+                        sorted(set(left["patient_key"].map(_clean)))
+                    ),
+                    "excluded_canonical_study_instance_uid": "|".join(
+                        sorted(set(left["study_instance_uid"].map(_clean)))
+                    ),
+                    "excluded_canonical_fold": folds[0],
+                    "excluded_canonical_pcr": canonical_pcr[0],
+                    "retained_retro_patient_key": "|".join(
+                        sorted(set(right["patient_key"].map(_clean)))
+                    ),
+                    "retained_retro_exams": int(len(right)),
+                    "retained_retro_analysis_sets": "|".join(
+                        sorted(set(right["analysis_set"].map(_clean)))
+                    ),
+                    "retained_retro_pcr": retro_pcr[0],
+                    "schema": IDENTITY_LINK_SCHEMA,
+                }
+            )
+        identity_links = pd.DataFrame(rows)
         print(
-            f"cross-delivery identity: dropped {len(shared)} retro exams over "
-            f"{shared['patient_key'].nunique()} patients already held by the UChicago arm",
+            f"cross-delivery identity: excluded {len(excluded)} UChicago exams over "
+            f"{excluded['patient_key'].nunique()} patients in favour of {len(retained)} retro exams; "
+            f"{len(inherited_folds)} retro patients inherit a UChicago fold",
             file=sys.stderr,
         )
-        dedup_exclusions = pd.concat(
-            [
-                dedup_exclusions,
-                shared.assign(
-                    selection_status="cross_delivery_physical_identity_not_selected",
-                    reason=(
-                        "a SeriesInstanceUID shared with the released UChicago signal cache proves "
-                        "this is a patient the canonical arm already holds, whose fold is frozen"
-                    ),
-                )[list(dedup_exclusions.columns)],
-            ],
-            ignore_index=True,
-        )
-        retro = retro[~shared_identity].copy()
-    retro_join_audit["cross_delivery_identity_exams_removed"] = int(
-        shared_identity.sum()
+        canonical = canonical[~canonical_linked].copy()
+        canonical_pairs = canonical_pairs[
+            canonical_pairs["study_instance_uid"].isin(canonical["study_instance_uid"])
+        ].copy()
+    retro_join_audit["cross_delivery_identity_links"] = len(linked_groups)
+    retro_join_audit["cross_delivery_identity_canonical_exams_excluded"] = int(
+        canonical_linked.sum()
+    )
+    retro_join_audit["cross_delivery_identity_retro_exams_retained"] = int(
+        retro_groups.isin(linked_groups).sum()
     )
     if len(retro) != arguments.expected_retro:
         raise ValueError(
@@ -1099,7 +1191,9 @@ def _build_tables(
         if "previous_fold_assignments" in paths
         else None
     )
-    folds = _assign_folds(canonical, retro, prior=prior_folds_frame)
+    folds = _assign_folds(
+        canonical, retro, prior=prior_folds_frame, inherited=inherited_folds
+    )
     print(
         "fold assignment: "
         + ", ".join(
@@ -1686,6 +1780,7 @@ def _build_tables(
         "dedup_exclusions": dedup_exclusions,
         "links": pd.DataFrame(link_rows),
         "identity_audit": identity_audit,
+        "identity_links": identity_links,
         "raw_overlap_audit": raw_overlap_audit,
         "retro_join_audit": retro_join_audit,
         "gate_summary": gate_summary,
@@ -2027,6 +2122,9 @@ def _write_release(
             stage / "retro_patient_deduplication_exclusions.csv",
         )
         _write_csv(links, stage / "symlink_manifest.csv")
+        _write_csv(
+            tables["identity_links"], stage / "cross_delivery_identity_links.csv"
+        )
         _write_json(tables["identity_audit"], stage / "identity_overlap_audit.json")
         _write_json(validation, stage / "validation_summary.json")
 
@@ -2266,8 +2364,8 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--expected-canonical", type=int, default=240)
-    parser.add_argument("--expected-retro", type=int, default=291)
-    parser.add_argument("--expected-main", type=int, default=338)
+    parser.add_argument("--expected-retro", type=int, default=303)
+    parser.add_argument("--expected-main", type=int, default=327)
     parser.add_argument(
         "--plan-only",
         action="store_true",
