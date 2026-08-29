@@ -324,13 +324,26 @@ def merge_skeletons(
         structure=structure,
         iterations=dilation_radius_voxels,
     )
-    confirmed_final = merged_skeleton & hr_skeleton & ufast_dilated
-    hr_only_final = merged_skeleton & hr_skeleton & ~confirmed_final
-    ufast_size_added_final = merged_skeleton & ufast_size_added_mask & ~hr_skeleton
+    # Boolean views, not the arrays themselves: hr_skeleton arrives as the
+    # uint8 raster from rasterize_skeleton_identity, and `uint8 & bool` yields
+    # uint8, so every *_final mask below would be uint8 {0,1}. Indexing
+    # provenance_label with a uint8 array is integer fancy indexing on axis 0,
+    # not boolean masking -- it would label whole z-slabs 0 and 1 instead of
+    # the intended voxels. Cast here rather than at the top of the function so
+    # merged_skeleton/merged_support keep the exact dtype callers already save.
+    merged_bool = merged_skeleton.astype(bool)
+    hr_bool = hr_skeleton.astype(bool)
+    ufast_bool = ufast_skeleton.astype(bool)
+    ufast_size_added_bool = ufast_size_added_mask.astype(bool)
+    kinetics_added_bool = kinetics_added_mask.astype(bool)
+
+    confirmed_final = merged_bool & hr_bool & ufast_dilated
+    hr_only_final = merged_bool & hr_bool & ~confirmed_final
+    ufast_size_added_final = merged_bool & ufast_size_added_bool & ~hr_bool
     kinetics_added_final = (
-        merged_skeleton & kinetics_added_mask & ~hr_skeleton & ~ufast_size_added_mask
+        merged_bool & kinetics_added_bool & ~hr_bool & ~ufast_size_added_bool
     )
-    repair_bridge_final = merged_skeleton & ~(hr_skeleton | ufast_skeleton)
+    repair_bridge_final = merged_bool & ~(hr_bool | ufast_bool)
 
     provenance_label = np.zeros(merged_skeleton.shape, dtype=np.uint8)
     provenance_label[hr_only_final] = LABEL_HR_ONLY
@@ -338,6 +351,18 @@ def merge_skeletons(
     provenance_label[ufast_size_added_final] = LABEL_UFAST_ONLY_ADDED
     provenance_label[kinetics_added_final] = LABEL_KINETICS_ADJACENCY_ADDED
     provenance_label[repair_bridge_final] = LABEL_REPAIR_BRIDGE_ADDED
+
+    # Every merged voxel must carry exactly one provenance label and no
+    # unmerged voxel may carry one. This is what silently failed above: the
+    # label map was ~30x larger than the skeleton and never emitted labels
+    # 1-3 at all, and nothing downstream noticed.
+    labelled = int((provenance_label > 0).sum())
+    merged_voxels = int(merged_bool.sum())
+    if labelled != merged_voxels:
+        raise AssertionError(
+            f"{exam_id}: provenance labels cover {labelled} voxels but the merged "
+            f"skeleton has {merged_voxels}; every merged voxel must be labelled exactly once"
+        )
 
     provenance = {
         "exam_id": exam_id,
