@@ -31,6 +31,10 @@ import SimpleITK as sitk
 import torch
 
 from preprocessing.model import frozen_model_intensity_preprocess
+from segmentation.vessel_patch_grid import (
+    VESSEL_INPUT_DIM,
+    vessel_divisions_for_inputs,
+)
 
 if TYPE_CHECKING:
     from cohorts.base import DatasetAdapter
@@ -242,8 +246,11 @@ def run_inference_in_process(
     batch_size: int,
     num_workers: int,
     use_amp: bool,
-) -> None:
-    """Load each model once and run breast then vessel inference in-process."""
+) -> dict[str, int]:
+    """Load each model once and run breast then vessel inference in-process.
+
+    Returns the vessel patch grid actually used, so callers can record it.
+    """
     import torchio as tio
     from dataset_3d import Dataset3DDivided, Dataset3DSimple
 
@@ -275,13 +282,15 @@ def run_inference_in_process(
     # ── STEP-3: vessel ────────────────────────────────────────────────────
     vessel_unet, _, n_classes = predict_fast.build_unet("dv")
     vessel_unet = predict_fast.load_model(vessel_unet, vessel_model_path, device)
+    x_y_divisions, z_division = vessel_divisions_for_inputs(step1_dir)
+    print(f"vessel patch grid: x_y_divisions={x_y_divisions} z_division={z_division}")
     vessel_ds = Dataset3DDivided(
         image_dir=str(step1_dir),
         mask_dir=None,
         additional_input_dir=str(step2_dir),
-        input_dim=96,
-        x_y_divisions=8,
-        z_division=3,
+        input_dim=VESSEL_INPUT_DIM,
+        x_y_divisions=x_y_divisions,
+        z_division=z_division,
         transforms=tio.Compose([]),
         one_hot_mask=True,
         image_only=True,
@@ -296,6 +305,7 @@ def run_inference_in_process(
         num_workers=num_workers,
         use_amp=use_amp,
     )
+    return {"x_y_divisions": x_y_divisions, "z_division": z_division}
 
 
 def main() -> None:

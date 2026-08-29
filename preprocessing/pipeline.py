@@ -467,7 +467,7 @@ def infer_case(
     breast_dir.mkdir()
     vessel_dir.mkdir()
     try:
-        run_inference_in_process(
+        hr_grid = run_inference_in_process(
             step1_dir,
             breast_dir,
             vessel_dir,
@@ -493,7 +493,7 @@ def infer_case(
             _preprocess_ufast_phase_for_model(phase_path, ufast_step1_dir)
         ufast_breast_dir.mkdir()
         ufast_vessel_dir.mkdir()
-        run_inference_in_process(
+        ufast_grid = run_inference_in_process(
             ufast_step1_dir,
             ufast_breast_dir,
             ufast_vessel_dir,
@@ -518,6 +518,8 @@ def infer_case(
             "device": torch.cuda.get_device_name(0),
             "hr_phases": expected,
             "ufast_phases": len(ufast_phases),
+            "hr_vessel_patch_grid": hr_grid,
+            "ufast_vessel_patch_grid": ufast_grid,
         }
         _write_json(provenance_path, provenance)
     except Exception:
