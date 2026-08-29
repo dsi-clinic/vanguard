@@ -233,6 +233,107 @@ def preprocess_parallel(
     return base_name_to_case, failed
 
 
+"""Choose the vessel-inference patch grid from the volume being segmented.
+
+``Dataset3DDivided`` samples a *fixed number* of patches along each axis and turns
+that count into a stride of ``(length - input_dim) // (divisions - 1)``, so the
+stride grows with the volume rather than staying put. A hardcoded 8x8x3 grid
+therefore quietly stopped covering large acquisitions: once ``stride > input_dim``
+consecutive patches no longer touch, the volume keeps voxels no patch analyzed,
+and ``predict_vessel_batched`` refuses to divide its accumulator by a zero
+denominator.
+
+``stride <= input_dim`` is necessary but *not* sufficient. The final patch is
+pinned to ``length - input_dim`` instead of landing on the stride, and the stride
+is floored, so the last jump is ``stride + span % (divisions - 1)``. Length 289
+with 3 divisions is the smallest counterexample: stride is exactly 96, yet the
+patches end at 192 while the last one starts at 193. Coverage is therefore tested
+directly rather than predicted by a closed form.
+"""
+
+
+_VESSEL_INPUT_DIM = 96
+_VESSEL_MIN_XY_DIVISIONS = 8
+_VESSEL_MIN_Z_DIVISIONS = 3
+
+# Two offsets are the fewest that define a stride at all, and STEP-1 inputs are
+# single-channel volumes.
+_MIN_DIVISIONS = 2
+_SPATIAL_DIMENSIONS = 3
+
+
+def _axis_patch_starts(length: int, divisions: int) -> list[int]:
+    """Patch offsets ``generate_divided_boxes_dict`` produces along one axis."""
+    span = max(int(length) - _VESSEL_INPUT_DIM, 0)
+    if divisions < _MIN_DIVISIONS or span == 0:
+        return [0]
+    step = span // (divisions - 1)
+    return [
+        index * step if index != divisions - 1 else span for index in range(divisions)
+    ]
+
+
+def _axis_is_covered(length: int, divisions: int) -> bool:
+    """True when patches along one axis leave no unanalyzed voxel.
+
+    Coverage of the volume is separable: the boxes are the full cartesian product
+    of the per-axis offsets, so a voxel is analyzed exactly when each of its three
+    coordinates is covered on its own axis.
+    """
+    reach = 0
+    for start in sorted(set(_axis_patch_starts(length, divisions))):
+        if start > reach:
+            return False
+        reach = max(reach, start + _VESSEL_INPUT_DIM)
+    return reach >= max(int(length), _VESSEL_INPUT_DIM)
+
+
+def _divisions_for_axis(length: int, minimum: int) -> int:
+    """Smallest division count >= ``minimum`` that covers the axis completely.
+
+    Searched rather than solved: see the module docstring for why the obvious
+    closed form is wrong at the boundary.
+    """
+    divisions = max(int(minimum), _MIN_DIVISIONS)
+    limit = divisions + max(int(length), _VESSEL_INPUT_DIM)
+    while divisions <= limit:
+        if _axis_is_covered(length, divisions):
+            return divisions
+        divisions += 1
+    raise ValueError(f"no patch grid covers an axis of length {length}")
+
+
+def vessel_divisions_for_inputs(step1_dir: Path | str) -> tuple[int, int]:
+    """Pick ``(x_y_divisions, z_division)`` covering every volume in ``step1_dir``.
+
+    Only the ``.npy`` headers are read, so this stays cheap no matter how large
+    the volumes are.
+    """
+    from numpy.lib import format as npy_format
+
+    shapes = []
+    for path in sorted(Path(step1_dir).glob("*.npy")):
+        with path.open("rb") as handle:
+            npy_format.read_magic(handle)
+            shapes.append(npy_format.read_array_header_1_0(handle)[0])
+    if not shapes:
+        raise FileNotFoundError(f"no STEP-1 model inputs in {step1_dir}")
+    if any(len(shape) != _SPATIAL_DIMENSIONS for shape in shapes):
+        raise ValueError(f"expected 3-D STEP-1 inputs in {step1_dir}, got {shapes}")
+
+    x_y_divisions = max(
+        max(
+            _divisions_for_axis(shape[0], _VESSEL_MIN_XY_DIVISIONS),
+            _divisions_for_axis(shape[1], _VESSEL_MIN_XY_DIVISIONS),
+        )
+        for shape in shapes
+    )
+    z_division = max(
+        _divisions_for_axis(shape[2], _VESSEL_MIN_Z_DIVISIONS) for shape in shapes
+    )
+    return x_y_divisions, z_division
+
+
 def run_inference_in_process(
     step1_dir: Path,
     step2_dir: Path,
@@ -242,8 +343,11 @@ def run_inference_in_process(
     batch_size: int,
     num_workers: int,
     use_amp: bool,
-) -> None:
-    """Load each model once and run breast then vessel inference in-process."""
+) -> dict[str, int]:
+    """Load each model once and run breast then vessel inference in-process.
+
+    Returns the vessel patch grid actually used, so callers can record it.
+    """
     import torchio as tio
     from dataset_3d import Dataset3DDivided, Dataset3DSimple
 
@@ -275,13 +379,15 @@ def run_inference_in_process(
     # ── STEP-3: vessel ────────────────────────────────────────────────────
     vessel_unet, _, n_classes = predict_fast.build_unet("dv")
     vessel_unet = predict_fast.load_model(vessel_unet, vessel_model_path, device)
+    x_y_divisions, z_division = vessel_divisions_for_inputs(step1_dir)
+    print(f"vessel patch grid: x_y_divisions={x_y_divisions} z_division={z_division}")
     vessel_ds = Dataset3DDivided(
         image_dir=str(step1_dir),
         mask_dir=None,
         additional_input_dir=str(step2_dir),
-        input_dim=96,
-        x_y_divisions=8,
-        z_division=3,
+        input_dim=_VESSEL_INPUT_DIM,
+        x_y_divisions=x_y_divisions,
+        z_division=z_division,
         transforms=tio.Compose([]),
         one_hot_mask=True,
         image_only=True,
@@ -296,6 +402,7 @@ def run_inference_in_process(
         num_workers=num_workers,
         use_amp=use_amp,
     )
+    return {"x_y_divisions": x_y_divisions, "z_division": z_division}
 
 
 def main() -> None:
