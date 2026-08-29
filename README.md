@@ -99,6 +99,10 @@ References:
 
 Runtime defaults now live in [`config.py`](config.py). The YAML files under [`configs/`](configs/) only need to override the values for a specific run. On the DSI cluster, many of those defaults point at shared paths under `/net/projects2/vanguard/...`. If your environment differs, override the relevant `data_paths` values in your YAML file instead of editing code.
 
+### UChicago internal cohorts (site-specific)
+
+The UChicago ultrafast DCE cohorts are internal data and are **not** distributed with this repository. Their dataset roots, cohort composition, layout, known caveats, and restricted raw DICOM sources are documented in [`UCHICAGO.md`](UCHICAGO.md); those paths only resolve on Randi, the cluster maintained by the Biological Sciences Division of the University of Chicago. To run the same pipelines elsewhere, prepare your own dataset against the manifest and directory contract described there, or arrange access with the Karczmar lab.
+
 ## Repository Structure
 
 This repository has four main workflows.
@@ -136,7 +140,7 @@ Supporting pieces:
 - `results/`
   - compact tracked result summaries
 - `analysis/`
-  - optional notebooks and lightweight exploratory analyses that are not part of the production pipeline
+  - optional Jupyter notebooks for exploratory analysis, not part of the production pipeline; notebooks only -- Python scripts belong in `scripts/` or the owning package
 - `docs/`
   - reference documents that are helpful but not part of the main run path
 
@@ -417,6 +421,7 @@ Optional graph-extraction analysis helpers live under:
 
 ## Additional Documentation
 
+- [`UCHICAGO.md`](UCHICAGO.md) — site-specific data paths and cohorts on Randi (UChicago BSD)
 - [`docs/data_policy.md`](docs/data_policy.md)
 - [`docs/resources.md`](docs/resources.md)
 - [`docs/workflow.md`](docs/workflow.md)

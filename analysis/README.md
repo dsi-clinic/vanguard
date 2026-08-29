@@ -2,8 +2,12 @@
 
 This directory is optional. It is not part of the production pipeline.
 
-Keep only lightweight notebooks here that help explain or inspect results after
-the main workflows have run.
+**Notebooks only.** Keep only lightweight `.ipynb` notebooks here that help
+explain or inspect results after the main workflows have run. Python scripts,
+shell scripts, and `.slurm` files do not belong here even when they are one-off
+diagnostics: put Python in `scripts/` or the owning package and sbatch scripts
+in `slurm/`. The `.py` files still present in this directory predate the rule
+and are pending migration.
 
 Current notebooks:
 
